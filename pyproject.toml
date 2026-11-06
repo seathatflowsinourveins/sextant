@@ -7,7 +7,7 @@ dependencies = [
     "alpaca-py==0.44.0",
     "nautilus-trader[visualization]==2.0.0rc7",
     "pandas==3.0.6",
-    "pyarrow>=26.0.0",
+    "pyarrow==26.0.0",
     "typesafe-sdk==0.7.5",
     "requests==2.34.2",
     "edgartools==5.62.1",
