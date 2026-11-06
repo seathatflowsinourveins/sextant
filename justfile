@@ -61,6 +61,11 @@ prove:
 index:
     bash deploy/openviking/index.sh
 
+# Score `qmd search` on this repo's gold queries with qmd's own bench harness, BM25 only, no model.
+qmd-bench fixture="docs/research/2026-11-06-qmd-bench/fixture.json":
+    qmd update >&2
+    node --input-type=module -e "const { runBenchmark } = await import(process.argv[1] + '/../dist/bench/bench.js'); await runBenchmark(process.argv[2], { json: true, backends: ['bm25'], dbPath: '.qmd/index.sqlite', configPath: '.qmd/index.yml' });" "$(dirname "$(readlink -f "$(command -v qmd)")")" "{{fixture}}"
+
 # Opt into the pinned OMC plugin for this Claude session (native settings precedence).
 omc:
     claude --settings '{"env":{"DISABLE_OMC":"0"},"enabledPlugins":{"oh-my-claudecode@omc":true}}'

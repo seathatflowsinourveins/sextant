@@ -4,7 +4,7 @@
 
 **Hours.** 24/7, independent of the market calendar.
 
-**Limits.** No broker account and no order tool of any kind. Native retrieval is Context7, DeepWiki, Exa, paper-search and `qmd search` over this repo; OpenViking is a disposable local index rebuilt from the repo and serves only an explicit enhanced-dsh synthesis step. Neither reaches a blind leg ([ADR-0022](../../docs/adr/0022-memory-rag-and-enhanced-dsh.md)). `ce-bakeoff` runs fresh contexts with an independent judge; TradingAgents v0.7.0 (`e8f5503e9b86d5c2710b0c76b1f686703968c9df`) is a forward-only qualitative thesis generator with no order authority ([ADR-0015](../../docs/adr/0015-research-lane-and-strategy-sourcing.md)).
+**Limits.** No broker account and no order tool of any kind. Native retrieval is Context7, DeepWiki, Exa, paper-search and `qmd search` over this repo, queried with the source's own terms rather than a sentence ([measured](../../docs/research/2026-11-06-qmd-bench.md)); OpenViking is a disposable local index rebuilt from the repo and serves only an explicit enhanced-dsh synthesis step. Neither reaches a blind leg ([ADR-0022](../../docs/adr/0022-memory-rag-and-enhanced-dsh.md)). `ce-bakeoff` runs fresh contexts with an independent judge; TradingAgents v0.7.0 (`e8f5503e9b86d5c2710b0c76b1f686703968c9df`) is a forward-only qualitative thesis generator with no order authority ([ADR-0015](../../docs/adr/0015-research-lane-and-strategy-sourcing.md)).
 
 **What it runs.**
 - `research/sources.yaml`: citation, URL, SPDX licence, data needs, publication date, status, full pin, notes.

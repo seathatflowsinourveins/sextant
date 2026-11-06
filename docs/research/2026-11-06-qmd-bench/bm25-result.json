@@ -1,0 +1,898 @@
+{
+  "timestamp": "2026-11-06T1703",
+  "fixture": "docs/research/2026-11-06-qmd-bench/fixture.json",
+  "results": [
+    {
+      "id": "k-memory-adr",
+      "query": "memory RAG enhanced dsh",
+      "type": "exact",
+      "backends": {
+        "bm25": {
+          "precision_at_k": 1,
+          "recall": 1,
+          "recall_at_1": 1,
+          "recall_at_3": 1,
+          "recall_at_5": 1,
+          "mrr": 1,
+          "f1": 1,
+          "hits_at_k": 1,
+          "matched_files": [
+            "docs/adr/0022-memory-rag-and-enhanced-dsh.md"
+          ],
+          "unmatched_expected_files": [],
+          "total_expected": 1,
+          "latency_ms": 7,
+          "top_files": [
+            "qmd://docs/adr/0022-memory-rag-and-enhanced-dsh.md",
+            "qmd://lanes/research/README.md",
+            "qmd://docs/design.md",
+            "qmd://docs/research/2026-11-06-campaign-harvest.md",
+            "qmd://docs/research/2026-11-06-research-convergence.md",
+            "qmd://docs/adr/0024-extreme-mover-ranking-and-early-entry.md",
+            "qmd://docs/adr/0015-research-lane-and-strategy-sourcing.md",
+            "qmd://docs/adr/0027-extreme-gainer-research-package.md",
+            "qmd://docs/adr/0018-evidence-and-learning-loop.md",
+            "qmd://docs/adr/0026-tradingview-sync-and-order-presets.md"
+          ]
+        }
+      }
+    },
+    {
+      "id": "k-local-keys",
+      "query": "encrypted key store with-keys",
+      "type": "exact",
+      "backends": {
+        "bm25": {
+          "precision_at_k": 1,
+          "recall": 1,
+          "recall_at_1": 1,
+          "recall_at_3": 1,
+          "recall_at_5": 1,
+          "mrr": 1,
+          "f1": 1,
+          "hits_at_k": 1,
+          "matched_files": [
+            "docs/adr/0028-local-keys.md"
+          ],
+          "unmatched_expected_files": [],
+          "total_expected": 1,
+          "latency_ms": 1,
+          "top_files": [
+            "qmd://docs/adr/0028-local-keys.md",
+            "qmd://docs/manifest.md"
+          ]
+        }
+      }
+    },
+    {
+      "id": "k-page-hinkley",
+      "query": "Page-Hinkley",
+      "type": "exact",
+      "backends": {
+        "bm25": {
+          "precision_at_k": 1,
+          "recall": 1,
+          "recall_at_1": 1,
+          "recall_at_3": 1,
+          "recall_at_5": 1,
+          "mrr": 1,
+          "f1": 1,
+          "hits_at_k": 1,
+          "matched_files": [
+            "lanes/research/page-hinkley.md"
+          ],
+          "unmatched_expected_files": [],
+          "total_expected": 1,
+          "latency_ms": 1,
+          "top_files": [
+            "qmd://lanes/research/page-hinkley.md",
+            "qmd://lanes/research/README.md",
+            "qmd://docs/research/2026-11-06-research-convergence.md",
+            "qmd://docs/adr/0015-research-lane-and-strategy-sourcing.md"
+          ]
+        }
+      }
+    },
+    {
+      "id": "k-changepoint",
+      "query": "Bayesian online changepoint",
+      "type": "exact",
+      "backends": {
+        "bm25": {
+          "precision_at_k": 1,
+          "recall": 1,
+          "recall_at_1": 1,
+          "recall_at_3": 1,
+          "recall_at_5": 1,
+          "mrr": 1,
+          "f1": 1,
+          "hits_at_k": 1,
+          "matched_files": [
+            "lanes/research/bayesian-changepoint.md"
+          ],
+          "unmatched_expected_files": [],
+          "total_expected": 1,
+          "latency_ms": 1,
+          "top_files": [
+            "qmd://lanes/research/bayesian-changepoint.md"
+          ]
+        }
+      }
+    },
+    {
+      "id": "k-orb",
+      "query": "opening range breakout stocks in play",
+      "type": "exact",
+      "backends": {
+        "bm25": {
+          "precision_at_k": 1,
+          "recall": 1,
+          "recall_at_1": 1,
+          "recall_at_3": 1,
+          "recall_at_5": 1,
+          "mrr": 1,
+          "f1": 1,
+          "hits_at_k": 1,
+          "matched_files": [
+            "lanes/research/orb-stocks-in-play.md"
+          ],
+          "unmatched_expected_files": [],
+          "total_expected": 1,
+          "latency_ms": 3,
+          "top_files": [
+            "qmd://lanes/research/orb-stocks-in-play.md",
+            "qmd://docs/design.md"
+          ]
+        }
+      }
+    },
+    {
+      "id": "k-ema",
+      "query": "EMA cross",
+      "type": "exact",
+      "backends": {
+        "bm25": {
+          "precision_at_k": 1,
+          "recall": 1,
+          "recall_at_1": 1,
+          "recall_at_3": 1,
+          "recall_at_5": 1,
+          "mrr": 1,
+          "f1": 1,
+          "hits_at_k": 1,
+          "matched_files": [
+            "lanes/research/ema-cross.md"
+          ],
+          "unmatched_expected_files": [],
+          "total_expected": 1,
+          "latency_ms": 2,
+          "top_files": [
+            "qmd://lanes/research/ema-cross.md",
+            "qmd://docs/adr/0026-tradingview-sync-and-order-presets.md",
+            "qmd://lanes/research/README.md",
+            "qmd://docs/adr/0015-research-lane-and-strategy-sourcing.md",
+            "qmd://docs/research/2026-11-06-research-convergence.md",
+            "qmd://docs/manifest.md",
+            "qmd://docs/research/2026-11-06-saved-workflows.md",
+            "qmd://docs/adr/0021-tradingview-display.md",
+            "qmd://docs/research/2026-11-06-extreme-mover-evidence.md",
+            "qmd://docs/research/2026-11-06-research-legs/landscape-leg-deepseek.md"
+          ]
+        }
+      }
+    },
+    {
+      "id": "k-rc8",
+      "query": "Nautilus rc8 migration checklist",
+      "type": "exact",
+      "backends": {
+        "bm25": {
+          "precision_at_k": 1,
+          "recall": 1,
+          "recall_at_1": 1,
+          "recall_at_3": 1,
+          "recall_at_5": 1,
+          "mrr": 1,
+          "f1": 1,
+          "hits_at_k": 1,
+          "matched_files": [
+            "docs/research/2026-11-06-nautilus-rc8-checklist.md"
+          ],
+          "unmatched_expected_files": [],
+          "total_expected": 1,
+          "latency_ms": 2,
+          "top_files": [
+            "qmd://docs/research/2026-11-06-nautilus-rc8-checklist.md",
+            "qmd://docs/research/2026-11-06-research-convergence.md",
+            "qmd://docs/research/2026-11-06-research-data-briefs.md",
+            "qmd://docs/research/2026-11-06-legs-convergence.md"
+          ]
+        }
+      }
+    },
+    {
+      "id": "k-exit-study",
+      "query": "exit study hold variants",
+      "type": "exact",
+      "backends": {
+        "bm25": {
+          "precision_at_k": 1,
+          "recall": 1,
+          "recall_at_1": 1,
+          "recall_at_3": 1,
+          "recall_at_5": 1,
+          "mrr": 1,
+          "f1": 1,
+          "hits_at_k": 1,
+          "matched_files": [
+            "docs/research/2026-11-06-exit-study-41.md"
+          ],
+          "unmatched_expected_files": [],
+          "total_expected": 1,
+          "latency_ms": 2,
+          "top_files": [
+            "qmd://docs/research/2026-11-06-exit-study-41.md",
+            "qmd://docs/adr/0025-gain-protection-and-fast-exit.md",
+            "qmd://lanes/sim/README.md",
+            "qmd://docs/design.md",
+            "qmd://docs/manifest.md",
+            "qmd://docs/adr/0019-validation-and-merit.md",
+            "qmd://docs/research/2026-11-06-extreme-mover-evidence.md",
+            "qmd://docs/research/2026-11-06-exit-study-41/appendix-a.md",
+            "qmd://docs/research/2026-11-06-research-legs/landscape-leg-deepseek.md"
+          ]
+        }
+      }
+    },
+    {
+      "id": "k-skfolio",
+      "query": "skfolio allocator",
+      "type": "exact",
+      "backends": {
+        "bm25": {
+          "precision_at_k": 1,
+          "recall": 1,
+          "recall_at_1": 1,
+          "recall_at_3": 1,
+          "recall_at_5": 1,
+          "mrr": 1,
+          "f1": 1,
+          "hits_at_k": 1,
+          "matched_files": [
+            "docs/adr/0012-portfolio-management.md"
+          ],
+          "unmatched_expected_files": [],
+          "total_expected": 1,
+          "latency_ms": 2,
+          "top_files": [
+            "qmd://docs/adr/0012-portfolio-management.md",
+            "qmd://lanes/sim/README.md",
+            "qmd://docs/design.md"
+          ]
+        }
+      }
+    },
+    {
+      "id": "k-auto-leverage",
+      "query": "auto-leverage sizing",
+      "type": "exact",
+      "backends": {
+        "bm25": {
+          "precision_at_k": 1,
+          "recall": 1,
+          "recall_at_1": 1,
+          "recall_at_3": 1,
+          "recall_at_5": 1,
+          "mrr": 1,
+          "f1": 1,
+          "hits_at_k": 1,
+          "matched_files": [
+            "docs/adr/0011-sizing-and-auto-leverage.md"
+          ],
+          "unmatched_expected_files": [],
+          "total_expected": 1,
+          "latency_ms": 2,
+          "top_files": [
+            "qmd://docs/adr/0011-sizing-and-auto-leverage.md",
+            "qmd://docs/research/2026-11-06-campaign-harvest.md",
+            "qmd://docs/adr/0016-options.md",
+            "qmd://docs/adr/0012-portfolio-management.md",
+            "qmd://docs/design.md",
+            "qmd://docs/adr/0026-tradingview-sync-and-order-presets.md",
+            "qmd://docs/handbook/practices.md",
+            "qmd://docs/adr/0015-research-lane-and-strategy-sourcing.md",
+            "qmd://docs/adr/0025-gain-protection-and-fast-exit.md",
+            "qmd://docs/adr/0017-jev-judgments.md"
+          ]
+        }
+      }
+    },
+    {
+      "id": "k-rate-limits",
+      "query": "order rate limits pacer",
+      "type": "exact",
+      "backends": {
+        "bm25": {
+          "precision_at_k": 1,
+          "recall": 1,
+          "recall_at_1": 1,
+          "recall_at_3": 1,
+          "recall_at_5": 1,
+          "mrr": 1,
+          "f1": 1,
+          "hits_at_k": 1,
+          "matched_files": [
+            "docs/adr/0009-order-rate-limits.md"
+          ],
+          "unmatched_expected_files": [],
+          "total_expected": 1,
+          "latency_ms": 3,
+          "top_files": [
+            "qmd://docs/adr/0009-order-rate-limits.md",
+            "qmd://docs/adr/0010-risk-guard-pacing-and-halt.md",
+            "qmd://docs/handbook/philosophy.md",
+            "qmd://lanes/paper/README.md",
+            "qmd://docs/research/2026-11-06-live-gates.md",
+            "qmd://lanes/live/README.md",
+            "qmd://docs/research/2026-11-06-nautilus-rc8-checklist.md",
+            "qmd://docs/design.md",
+            "qmd://docs/handbook/practices.md",
+            "qmd://docs/research/2026-11-06-research-convergence.md"
+          ]
+        }
+      }
+    },
+    {
+      "id": "k-ao",
+      "query": "agent orchestrator",
+      "type": "exact",
+      "backends": {
+        "bm25": {
+          "precision_at_k": 1,
+          "recall": 1,
+          "recall_at_1": 1,
+          "recall_at_3": 1,
+          "recall_at_5": 1,
+          "mrr": 1,
+          "f1": 1,
+          "hits_at_k": 1,
+          "matched_files": [
+            "docs/research/2026-11-06-agent-orchestrator.md"
+          ],
+          "unmatched_expected_files": [],
+          "total_expected": 1,
+          "latency_ms": 3,
+          "top_files": [
+            "qmd://docs/research/2026-11-06-agent-orchestrator.md",
+            "qmd://docs/research/2026-11-06-campaign-harvest.md",
+            "qmd://docs/manifest.md",
+            "qmd://docs/research/2026-11-06-saved-workflows.md",
+            "qmd://docs/research/2026-11-05-foundations-legs/BRIEF.md",
+            "qmd://docs/research/2026-11-05-foundations-legs/leg-gpt.md",
+            "qmd://docs/research/2026-11-06-research-legs/landscape-leg-deepseek.md",
+            "qmd://docs/start.md",
+            "qmd://docs/adr/0023-harness-rules-carried.md",
+            "qmd://docs/handbook/practices.md"
+          ]
+        }
+      }
+    },
+    {
+      "id": "k-memsearch",
+      "query": "memsearch",
+      "type": "exact",
+      "backends": {
+        "bm25": {
+          "precision_at_k": 1,
+          "recall": 1,
+          "recall_at_1": 0,
+          "recall_at_3": 0.5,
+          "recall_at_5": 1,
+          "mrr": 0.3333333333333333,
+          "f1": 1,
+          "hits_at_k": 2,
+          "matched_files": [
+            "docs/research/2026-11-06-legs-convergence.md",
+            "docs/adr/0022-memory-rag-and-enhanced-dsh.md"
+          ],
+          "unmatched_expected_files": [],
+          "total_expected": 2,
+          "latency_ms": 1,
+          "top_files": [
+            "qmd://docs/research/2026-11-06-research-legs/memory-leg-deepseek.md",
+            "qmd://docs/research/2026-11-06-research-convergence.md",
+            "qmd://docs/research/2026-11-06-legs-convergence.md",
+            "qmd://docs/adr/0022-memory-rag-and-enhanced-dsh.md"
+          ]
+        }
+      }
+    },
+    {
+      "id": "k-tv-limit",
+      "query": "TradingView plain LIMIT bracket",
+      "type": "exact",
+      "backends": {
+        "bm25": {
+          "precision_at_k": 1,
+          "recall": 1,
+          "recall_at_1": 1,
+          "recall_at_3": 1,
+          "recall_at_5": 1,
+          "mrr": 1,
+          "f1": 1,
+          "hits_at_k": 1,
+          "matched_files": [
+            "lanes/tradingview/README.md"
+          ],
+          "unmatched_expected_files": [],
+          "total_expected": 1,
+          "latency_ms": 1,
+          "top_files": [
+            "qmd://lanes/tradingview/README.md",
+            "qmd://lanes/paper/README.md",
+            "qmd://docs/design.md"
+          ]
+        }
+      }
+    },
+    {
+      "id": "k-jev",
+      "query": "Jev TypeSafe judgments",
+      "type": "exact",
+      "backends": {
+        "bm25": {
+          "precision_at_k": 1,
+          "recall": 1,
+          "recall_at_1": 1,
+          "recall_at_3": 1,
+          "recall_at_5": 1,
+          "mrr": 1,
+          "f1": 1,
+          "hits_at_k": 1,
+          "matched_files": [
+            "docs/adr/0017-jev-judgments.md"
+          ],
+          "unmatched_expected_files": [],
+          "total_expected": 1,
+          "latency_ms": 3,
+          "top_files": [
+            "qmd://docs/adr/0017-jev-judgments.md",
+            "qmd://docs/handbook/options-jev.md",
+            "qmd://docs/research/2026-11-05-foundations-legs/leg-gpt.md",
+            "qmd://docs/research/2026-11-05-foundations-legs/leg-deepseek.md",
+            "qmd://lanes/options/README.md",
+            "qmd://docs/manifest.md",
+            "qmd://docs/research/2026-11-05-foundations-legs/BRIEF.md",
+            "qmd://docs/research/2026-11-06-research-legs/landscape-leg-deepseek.md",
+            "qmd://docs/design.md"
+          ]
+        }
+      }
+    },
+    {
+      "id": "q-owner-orders",
+      "query": "can the bot cancel or resize an order the owner placed himself",
+      "type": "semantic",
+      "backends": {
+        "bm25": {
+          "precision_at_k": 0,
+          "recall": 0,
+          "recall_at_1": 0,
+          "recall_at_3": 0,
+          "recall_at_5": 0,
+          "mrr": 0,
+          "f1": 0,
+          "hits_at_k": 0,
+          "matched_files": [],
+          "unmatched_expected_files": [
+            "docs/adr/0007-custody-and-order-writing.md"
+          ],
+          "total_expected": 1,
+          "latency_ms": 1,
+          "top_files": []
+        }
+      }
+    },
+    {
+      "id": "q-secrets",
+      "query": "where do API secrets live on the local machine",
+      "type": "semantic",
+      "backends": {
+        "bm25": {
+          "precision_at_k": 0,
+          "recall": 0,
+          "recall_at_1": 0,
+          "recall_at_3": 0,
+          "recall_at_5": 0,
+          "mrr": 0,
+          "f1": 0,
+          "hits_at_k": 0,
+          "matched_files": [],
+          "unmatched_expected_files": [
+            "docs/adr/0028-local-keys.md"
+          ],
+          "total_expected": 1,
+          "latency_ms": 3,
+          "top_files": [
+            "qmd://docs/adr/0001-sextant-foundation.md",
+            "qmd://docs/adr/0023-harness-rules-carried.md",
+            "qmd://docs/research/2026-11-06-campaign-harvest.md",
+            "qmd://docs/manifest.md"
+          ]
+        }
+      }
+    },
+    {
+      "id": "q-live-promotion",
+      "query": "what has to happen before a strategy trades real money",
+      "type": "semantic",
+      "backends": {
+        "bm25": {
+          "precision_at_k": 0,
+          "recall": 0,
+          "recall_at_1": 0,
+          "recall_at_3": 0,
+          "recall_at_5": 0,
+          "mrr": 0,
+          "f1": 0,
+          "hits_at_k": 0,
+          "matched_files": [],
+          "unmatched_expected_files": [
+            "docs/adr/0020-live-lane.md",
+            "lanes/live/README.md"
+          ],
+          "total_expected": 2,
+          "latency_ms": 3,
+          "top_files": [
+            "qmd://docs/research/2026-11-05-foundations-legs/leg-gpt.md"
+          ]
+        }
+      }
+    },
+    {
+      "id": "q-sell-breach",
+      "query": "when do we sell after price drops below the protective level",
+      "type": "semantic",
+      "backends": {
+        "bm25": {
+          "precision_at_k": 0,
+          "recall": 0,
+          "recall_at_1": 0,
+          "recall_at_3": 0,
+          "recall_at_5": 0,
+          "mrr": 0,
+          "f1": 0,
+          "hits_at_k": 0,
+          "matched_files": [],
+          "unmatched_expected_files": [
+            "docs/adr/0005-exit-engine.md",
+            "docs/adr/0025-gain-protection-and-fast-exit.md"
+          ],
+          "total_expected": 2,
+          "latency_ms": 1,
+          "top_files": [
+            "qmd://docs/handbook/practices.md"
+          ]
+        }
+      }
+    },
+    {
+      "id": "q-reenter",
+      "query": "buying the same stock back after we sold it",
+      "type": "semantic",
+      "backends": {
+        "bm25": {
+          "precision_at_k": 0,
+          "recall": 0,
+          "recall_at_1": 0,
+          "recall_at_3": 0,
+          "recall_at_5": 0,
+          "mrr": 0,
+          "f1": 0,
+          "hits_at_k": 0,
+          "matched_files": [],
+          "unmatched_expected_files": [
+            "docs/adr/0006-reentry-and-rotation.md"
+          ],
+          "total_expected": 1,
+          "latency_ms": 1,
+          "top_files": [
+            "qmd://docs/design.md"
+          ]
+        }
+      }
+    },
+    {
+      "id": "q-ranking",
+      "query": "how are stocks that are about to jump picked at the open",
+      "type": "semantic",
+      "backends": {
+        "bm25": {
+          "precision_at_k": 0,
+          "recall": 0,
+          "recall_at_1": 0,
+          "recall_at_3": 0,
+          "recall_at_5": 0,
+          "mrr": 0,
+          "f1": 0,
+          "hits_at_k": 0,
+          "matched_files": [],
+          "unmatched_expected_files": [
+            "docs/adr/0003-ranking-and-feeds.md",
+            "docs/adr/0024-extreme-mover-ranking-and-early-entry.md"
+          ],
+          "total_expected": 2,
+          "latency_ms": 1,
+          "top_files": []
+        }
+      }
+    },
+    {
+      "id": "q-overfit",
+      "query": "how do we know a backtest result is not overfitting",
+      "type": "semantic",
+      "backends": {
+        "bm25": {
+          "precision_at_k": 0,
+          "recall": 0,
+          "recall_at_1": 0,
+          "recall_at_3": 0,
+          "recall_at_5": 0,
+          "mrr": 0,
+          "f1": 0,
+          "hits_at_k": 0,
+          "matched_files": [],
+          "unmatched_expected_files": [
+            "docs/adr/0019-validation-and-merit.md"
+          ],
+          "total_expected": 1,
+          "latency_ms": 1,
+          "top_files": []
+        }
+      }
+    },
+    {
+      "id": "q-options",
+      "query": "are we allowed to trade option contracts",
+      "type": "semantic",
+      "backends": {
+        "bm25": {
+          "precision_at_k": 0.5,
+          "recall": 0.5,
+          "recall_at_1": 0,
+          "recall_at_3": 0.5,
+          "recall_at_5": 0.5,
+          "mrr": 0.5,
+          "f1": 0.5,
+          "hits_at_k": 1,
+          "matched_files": [
+            "docs/adr/0016-options.md"
+          ],
+          "unmatched_expected_files": [
+            "lanes/options/README.md"
+          ],
+          "total_expected": 2,
+          "latency_ms": 3,
+          "top_files": [
+            "qmd://docs/adr/0014-features-and-regime-models.md",
+            "qmd://docs/adr/0016-options.md",
+            "qmd://docs/adr/0012-portfolio-management.md",
+            "qmd://docs/adr/0017-jev-judgments.md",
+            "qmd://docs/adr/0021-tradingview-display.md",
+            "qmd://docs/research/2026-11-05-foundations-legs/leg-deepseek.md",
+            "qmd://docs/adr/0002-philosophy-and-lanes.md",
+            "qmd://docs/adr/0020-live-lane.md",
+            "qmd://docs/manifest.md",
+            "qmd://docs/design.md"
+          ]
+        }
+      }
+    },
+    {
+      "id": "q-ibkr",
+      "query": "which broker executes orders today and when does Interactive Brokers get used",
+      "type": "semantic",
+      "backends": {
+        "bm25": {
+          "precision_at_k": 0,
+          "recall": 0,
+          "recall_at_1": 0,
+          "recall_at_3": 0,
+          "recall_at_5": 0,
+          "mrr": 0,
+          "f1": 0,
+          "hits_at_k": 0,
+          "matched_files": [],
+          "unmatched_expected_files": [
+            "docs/adr/0008-broker-roles.md"
+          ],
+          "total_expected": 1,
+          "latency_ms": 2,
+          "top_files": [
+            "qmd://docs/research/2026-11-05-foundations-legs/leg-gpt.md",
+            "qmd://docs/design.md"
+          ]
+        }
+      }
+    },
+    {
+      "id": "q-lessons",
+      "query": "where do lessons learned from a session get written down",
+      "type": "semantic",
+      "backends": {
+        "bm25": {
+          "precision_at_k": 0,
+          "recall": 0,
+          "recall_at_1": 0,
+          "recall_at_3": 0,
+          "recall_at_5": 0,
+          "mrr": 0,
+          "f1": 0,
+          "hits_at_k": 0,
+          "matched_files": [],
+          "unmatched_expected_files": [
+            "docs/adr/0018-evidence-and-learning-loop.md",
+            "docs/handbook/practices.md"
+          ],
+          "total_expected": 2,
+          "latency_ms": 2,
+          "top_files": []
+        }
+      }
+    },
+    {
+      "id": "q-new-tool",
+      "query": "can I add a library that has no upstream source",
+      "type": "semantic",
+      "backends": {
+        "bm25": {
+          "precision_at_k": 0,
+          "recall": 0,
+          "recall_at_1": 0,
+          "recall_at_3": 0,
+          "recall_at_5": 0,
+          "mrr": 0,
+          "f1": 0,
+          "hits_at_k": 0,
+          "matched_files": [],
+          "unmatched_expected_files": [
+            "docs/adr/0001-sextant-foundation.md",
+            "docs/handbook/philosophy.md"
+          ],
+          "total_expected": 2,
+          "latency_ms": 4,
+          "top_files": [
+            "qmd://docs/research/2026-11-06-research-convergence.md",
+            "qmd://docs/manifest.md",
+            "qmd://docs/adr/0027-extreme-gainer-research-package.md",
+            "qmd://docs/adr/0006-reentry-and-rotation.md",
+            "qmd://docs/adr/0004-entry.md",
+            "qmd://docs/research/2026-11-06-research-legs/memory-leg-deepseek.md",
+            "qmd://docs/design.md"
+          ]
+        }
+      }
+    },
+    {
+      "id": "q-data",
+      "query": "which vendor gives historical prices including delisted tickers",
+      "type": "semantic",
+      "backends": {
+        "bm25": {
+          "precision_at_k": 0,
+          "recall": 0,
+          "recall_at_1": 0,
+          "recall_at_3": 0,
+          "recall_at_5": 0,
+          "mrr": 0,
+          "f1": 0,
+          "hits_at_k": 0,
+          "matched_files": [],
+          "unmatched_expected_files": [
+            "docs/adr/0013-us-equity-data-stack.md"
+          ],
+          "total_expected": 1,
+          "latency_ms": 1,
+          "top_files": [
+            "qmd://docs/design.md"
+          ]
+        }
+      }
+    },
+    {
+      "id": "q-halt",
+      "query": "what stops all trading when losses pile up",
+      "type": "semantic",
+      "backends": {
+        "bm25": {
+          "precision_at_k": 0,
+          "recall": 0,
+          "recall_at_1": 0,
+          "recall_at_3": 0,
+          "recall_at_5": 0,
+          "mrr": 0,
+          "f1": 0,
+          "hits_at_k": 0,
+          "matched_files": [],
+          "unmatched_expected_files": [
+            "docs/adr/0010-risk-guard-pacing-and-halt.md"
+          ],
+          "total_expected": 1,
+          "latency_ms": 1,
+          "top_files": []
+        }
+      }
+    },
+    {
+      "id": "q-start",
+      "query": "first steps setting up a new WSL machine",
+      "type": "semantic",
+      "backends": {
+        "bm25": {
+          "precision_at_k": 1,
+          "recall": 1,
+          "recall_at_1": 1,
+          "recall_at_3": 1,
+          "recall_at_5": 1,
+          "mrr": 1,
+          "f1": 1,
+          "hits_at_k": 1,
+          "matched_files": [
+            "docs/start.md"
+          ],
+          "unmatched_expected_files": [],
+          "total_expected": 1,
+          "latency_ms": 3,
+          "top_files": [
+            "qmd://docs/start.md",
+            "qmd://docs/manifest.md",
+            "qmd://docs/research/2026-11-06-campaign-harvest.md",
+            "qmd://docs/design.md"
+          ]
+        }
+      }
+    },
+    {
+      "id": "q-chart",
+      "query": "can a chart alert place an order",
+      "type": "semantic",
+      "backends": {
+        "bm25": {
+          "precision_at_k": 0.5,
+          "recall": 0.5,
+          "recall_at_1": 0.5,
+          "recall_at_3": 0.5,
+          "recall_at_5": 0.5,
+          "mrr": 1,
+          "f1": 0.5,
+          "hits_at_k": 1,
+          "matched_files": [
+            "docs/adr/0021-tradingview-display.md"
+          ],
+          "unmatched_expected_files": [
+            "lanes/tradingview/README.md"
+          ],
+          "total_expected": 2,
+          "latency_ms": 3,
+          "top_files": [
+            "qmd://docs/adr/0021-tradingview-display.md",
+            "qmd://docs/adr/0026-tradingview-sync-and-order-presets.md",
+            "qmd://docs/design.md"
+          ]
+        }
+      }
+    }
+  ],
+  "summary": {
+    "bm25": {
+      "avg_precision": 0.5666666666666667,
+      "avg_recall": 0.5666666666666667,
+      "avg_recall_at_1": 0.5166666666666667,
+      "avg_recall_at_3": 0.55,
+      "avg_recall_at_5": 0.5666666666666667,
+      "avg_mrr": 0.5611111111111112,
+      "avg_f1": 0.5666666666666667,
+      "avg_latency_ms": 2.1333333333333333
+    }
+  }
+}
