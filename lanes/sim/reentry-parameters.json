@@ -1,0 +1,245 @@
+[
+  {
+    "name": "cooldown_seconds",
+    "unit": "seconds",
+    "value": null,
+    "source": "northstar-lanes@00203275944a22655b3e14b221cfde9a265d549a:docs/adr/0007-reentry-and-rotation.md R1; Sextant ADR-0006",
+    "calibration_state": "UNCALIBRATED",
+    "availability": "UNAVAILABLE",
+    "last_change": "2026-11-06"
+  },
+  {
+    "name": "retry_rank_band",
+    "unit": "rank",
+    "value": null,
+    "source": "northstar-lanes@00203275944a22655b3e14b221cfde9a265d549a:docs/adr/0007-reentry-and-rotation.md R2; Sextant ADR-0006",
+    "calibration_state": "UNCALIBRATED",
+    "availability": "UNAVAILABLE",
+    "last_change": "2026-11-06"
+  },
+  {
+    "name": "rotation_rank_band",
+    "unit": "rank",
+    "value": null,
+    "source": "northstar-lanes@00203275944a22655b3e14b221cfde9a265d549a:docs/adr/0007-reentry-and-rotation.md R2; Sextant ADR-0006",
+    "calibration_state": "UNCALIBRATED",
+    "availability": "UNAVAILABLE",
+    "last_change": "2026-11-06"
+  },
+  {
+    "name": "reentry_min_confidence",
+    "unit": "confidence fraction",
+    "value": null,
+    "source": "northstar-lanes@00203275944a22655b3e14b221cfde9a265d549a:docs/adr/0007-reentry-and-rotation.md Confidence; Sextant ADR-0006",
+    "calibration_state": "UNCALIBRATED",
+    "availability": "UNAVAILABLE",
+    "last_change": "2026-11-06"
+  },
+  {
+    "name": "confidence_size_floor",
+    "unit": "risk multiplier",
+    "value": null,
+    "source": "northstar-lanes@00203275944a22655b3e14b221cfde9a265d549a:docs/adr/0007-reentry-and-rotation.md Confidence / ADR-0004 N5; Sextant ADR-0006",
+    "calibration_state": "UNCALIBRATED",
+    "availability": "UNAVAILABLE",
+    "last_change": "2026-11-06"
+  },
+  {
+    "name": "rotation_lift_margin_bps",
+    "unit": "basis points of notional",
+    "value": null,
+    "source": "northstar-lanes@00203275944a22655b3e14b221cfde9a265d549a:docs/adr/0007-reentry-and-rotation.md R4; Sextant ADR-0006",
+    "calibration_state": "UNCALIBRATED",
+    "availability": "UNAVAILABLE",
+    "last_change": "2026-11-06"
+  },
+  {
+    "name": "rotation_score_ratio",
+    "unit": "score multiple",
+    "value": null,
+    "source": "northstar-lanes@00203275944a22655b3e14b221cfde9a265d549a:docs/adr/0007-reentry-and-rotation.md R4 / ADR-0004 N6; Sextant ADR-0006",
+    "calibration_state": "UNCALIBRATED",
+    "availability": "UNAVAILABLE",
+    "last_change": "2026-11-06"
+  },
+  {
+    "name": "whipsaw_stopouts_max",
+    "unit": "consecutive pre-arm stop-outs",
+    "value": null,
+    "source": "northstar-lanes@00203275944a22655b3e14b221cfde9a265d549a:docs/adr/0007-reentry-and-rotation.md R3a; Sextant ADR-0006",
+    "calibration_state": "UNCALIBRATED",
+    "availability": "UNAVAILABLE",
+    "last_change": "2026-11-06"
+  },
+  {
+    "name": "reclaim_lookback_s",
+    "unit": "seconds",
+    "value": null,
+    "source": "northstar-lanes@00203275944a22655b3e14b221cfde9a265d549a:docs/adr/0007-reentry-and-rotation.md R3; Sextant ADR-0006",
+    "calibration_state": "UNCALIBRATED",
+    "availability": "UNAVAILABLE",
+    "last_change": "2026-11-06"
+  },
+  {
+    "name": "reclaim_trades_count",
+    "unit": "eligible trades",
+    "value": null,
+    "source": "northstar-lanes@00203275944a22655b3e14b221cfde9a265d549a:docs/adr/0007-reentry-and-rotation.md R3; Sextant ADR-0006",
+    "calibration_state": "UNCALIBRATED",
+    "availability": "UNAVAILABLE",
+    "last_change": "2026-11-06"
+  },
+  {
+    "name": "reclaim_trades_span_s",
+    "unit": "seconds",
+    "value": null,
+    "source": "northstar-lanes@00203275944a22655b3e14b221cfde9a265d549a:docs/adr/0007-reentry-and-rotation.md R3; Sextant ADR-0006",
+    "calibration_state": "UNCALIBRATED",
+    "availability": "UNAVAILABLE",
+    "last_change": "2026-11-06"
+  },
+  {
+    "name": "reclaim_max_above_buffers",
+    "unit": "buffers in [0,1]",
+    "value": null,
+    "source": "northstar-lanes@00203275944a22655b3e14b221cfde9a265d549a:docs/adr/0007-reentry-and-rotation.md R3; Sextant ADR-0006",
+    "calibration_state": "UNCALIBRATED",
+    "availability": "UNAVAILABLE",
+    "last_change": "2026-11-06"
+  },
+  {
+    "name": "reclaim_hold_s",
+    "unit": "seconds",
+    "value": null,
+    "source": "northstar-lanes@00203275944a22655b3e14b221cfde9a265d549a:docs/adr/0007-reentry-and-rotation.md R3; Sextant ADR-0006",
+    "calibration_state": "UNCALIBRATED",
+    "availability": "UNAVAILABLE",
+    "last_change": "2026-11-06"
+  },
+  {
+    "name": "reentry_max",
+    "unit": "campaign attempts; live only",
+    "value": null,
+    "source": "northstar-lanes@00203275944a22655b3e14b221cfde9a265d549a:docs/adr/0007-reentry-and-rotation.md R6; Sextant ADR-0006",
+    "calibration_state": "UNCALIBRATED",
+    "availability": "UNAVAILABLE",
+    "last_change": "2026-11-06"
+  },
+  {
+    "name": "flush_min_depth",
+    "unit": "fraction of sell price",
+    "value": null,
+    "source": "northstar-lanes@00203275944a22655b3e14b221cfde9a265d549a:docs/adr/0007-reentry-and-rotation.md R3b; Sextant ADR-0006",
+    "calibration_state": "UNCALIBRATED",
+    "availability": "UNAVAILABLE",
+    "last_change": "2026-11-06"
+  },
+  {
+    "name": "flush_window_s",
+    "unit": "seconds",
+    "value": null,
+    "source": "northstar-lanes@00203275944a22655b3e14b221cfde9a265d549a:docs/adr/0007-reentry-and-rotation.md R3b; Sextant ADR-0006",
+    "calibration_state": "UNCALIBRATED",
+    "availability": "UNAVAILABLE",
+    "last_change": "2026-11-06"
+  },
+  {
+    "name": "climax_window_s",
+    "unit": "seconds",
+    "value": null,
+    "source": "northstar-lanes@00203275944a22655b3e14b221cfde9a265d549a:docs/adr/0007-reentry-and-rotation.md R3b; Sextant ADR-0006",
+    "calibration_state": "UNCALIBRATED",
+    "availability": "UNAVAILABLE",
+    "last_change": "2026-11-06"
+  },
+  {
+    "name": "climax_ratio",
+    "unit": "sell-volume multiple",
+    "value": null,
+    "source": "northstar-lanes@00203275944a22655b3e14b221cfde9a265d549a:docs/adr/0007-reentry-and-rotation.md R3b; Sextant ADR-0006",
+    "calibration_state": "UNCALIBRATED",
+    "availability": "UNAVAILABLE",
+    "last_change": "2026-11-06"
+  },
+  {
+    "name": "oversell_hold_s",
+    "unit": "seconds",
+    "value": null,
+    "source": "northstar-lanes@00203275944a22655b3e14b221cfde9a265d549a:docs/adr/0007-reentry-and-rotation.md R3b; Sextant ADR-0006",
+    "calibration_state": "UNCALIBRATED",
+    "availability": "UNAVAILABLE",
+    "last_change": "2026-11-06"
+  },
+  {
+    "name": "buy_flow_ratio",
+    "unit": "classified buy/sell ratio",
+    "value": null,
+    "source": "northstar-lanes@00203275944a22655b3e14b221cfde9a265d549a:docs/adr/0007-reentry-and-rotation.md R3b; Sextant ADR-0006",
+    "calibration_state": "UNCALIBRATED",
+    "availability": "UNAVAILABLE",
+    "last_change": "2026-11-06"
+  },
+  {
+    "name": "flow_window_s",
+    "unit": "seconds",
+    "value": null,
+    "source": "northstar-lanes@00203275944a22655b3e14b221cfde9a265d549a:docs/adr/0007-reentry-and-rotation.md R3b; Sextant ADR-0006",
+    "calibration_state": "UNCALIBRATED",
+    "availability": "UNAVAILABLE",
+    "last_change": "2026-11-06"
+  },
+  {
+    "name": "oversell_max_above_buffers",
+    "unit": "buffers",
+    "value": null,
+    "source": "northstar-lanes@00203275944a22655b3e14b221cfde9a265d549a:docs/adr/0007-reentry-and-rotation.md R3b; Sextant ADR-0006",
+    "calibration_state": "UNCALIBRATED",
+    "availability": "UNAVAILABLE",
+    "last_change": "2026-11-06"
+  },
+  {
+    "name": "chase_cap_fraction",
+    "unit": "fraction of entry",
+    "value": null,
+    "source": "northstar-lanes@00203275944a22655b3e14b221cfde9a265d549a:docs/adr/0007-reentry-and-rotation.md R3b / ADR-0005 X5; Sextant ADR-0006",
+    "calibration_state": "UNCALIBRATED",
+    "availability": "UNAVAILABLE",
+    "last_change": "2026-11-06"
+  },
+  {
+    "name": "catalyst_live_window_s",
+    "unit": "seconds",
+    "value": null,
+    "source": "northstar-lanes@00203275944a22655b3e14b221cfde9a265d549a:docs/adr/0007-reentry-and-rotation.md Confidence; Sextant ADR-0006",
+    "calibration_state": "UNCALIBRATED",
+    "availability": "UNAVAILABLE",
+    "last_change": "2026-11-06"
+  },
+  {
+    "name": "climax_scale",
+    "unit": "normalization scale",
+    "value": null,
+    "source": "northstar-lanes@00203275944a22655b3e14b221cfde9a265d549a:docs/adr/0007-reentry-and-rotation.md Confidence; Sextant ADR-0006",
+    "calibration_state": "UNCALIBRATED",
+    "availability": "UNAVAILABLE",
+    "last_change": "2026-11-06"
+  },
+  {
+    "name": "flow_scale",
+    "unit": "normalization scale",
+    "value": null,
+    "source": "northstar-lanes@00203275944a22655b3e14b221cfde9a265d549a:docs/adr/0007-reentry-and-rotation.md Confidence; Sextant ADR-0006",
+    "calibration_state": "UNCALIBRATED",
+    "availability": "UNAVAILABLE",
+    "last_change": "2026-11-06"
+  },
+  {
+    "name": "climax_baseline_min",
+    "unit": "minutes",
+    "value": null,
+    "source": "northstar-lanes@00203275944a22655b3e14b221cfde9a265d549a:docs/adr/0007-reentry-and-rotation.md Confidence; Sextant ADR-0006",
+    "calibration_state": "UNCALIBRATED",
+    "availability": "UNAVAILABLE",
+    "last_change": "2026-11-06"
+  }
+]
