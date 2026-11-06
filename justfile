@@ -45,6 +45,10 @@ shelf:
 ao *args:
     bash deploy/wsl/ao.sh {{args}}
 
+# Inside the clean distro only: the Sextant GitHub App's own rate budget for AO and the lane tabs. See docs/start.md.
+gh-app *args:
+    bash deploy/wsl/github-app.sh {{args}}
+
 # Run every manifest row's proof. pytest does the running and the counting.
 prove:
     uv run --frozen pytest tests/proofs
