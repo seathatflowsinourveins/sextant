@@ -1,0 +1,438 @@
+{
+  "alias_outcomes": {
+    "acquired": 122,
+    "active-unknown": 22,
+    "bankrupt": 19,
+    "delisted": 11,
+    "renamed": 91
+  },
+  "archive_sha256": "f581ca7f771bf20ef05e212ce88aaaacda7325c640500d63926b23a0516d0577",
+  "artifacts_sha256": "352875c68957ccc783a83b972eb049a493eeb334a0301b752c6401f914742ce0",
+  "biases": [
+    "retrospective_selection",
+    "weekly_daily_mixed",
+    "survivorship_unresolved"
+  ],
+  "blockers": {
+    "availability_clocks": "Historical receipt/publication/first-print clocks unavailable in seed",
+    "delisting_acceptance": "10-exit, independent sample and recycled-ticker receipts unavailable",
+    "ordinary_controls": "All-stock PIT stock-days and a frozen control protocol unavailable",
+    "pit_membership": "Dated share-class master, actions, scope and rights receipts unavailable",
+    "pre_ignition_labels": "Causal onset receipts and a source-backed frozen protocol unavailable",
+    "scanner_archive": "October 27-November 6 archive unavailable in clean checkout",
+    "trial_ledger": "Cumulative TrialLog/custody unavailable; no replacement ledger created"
+  },
+  "calendar": {
+    "exchange_verified": false,
+    "sessions": 1436,
+    "source_member": "extreme-gainer-research-package/harness/research/regime-gate-backtest/lane-A-supplement-spx.csv"
+  },
+  "correction_rows": 26,
+  "coverage": [
+    {
+      "observed_spx_sessions": 252,
+      "selected_gainer": {
+        "dates": 52,
+        "events": 52,
+        "selection": "weekly_leader",
+        "unrepresented_dates_count": 200,
+        "unrepresented_dates_sha256": "ddd31d7ea4a0f35be8363a48f1d222dccdf728502878f2c3f9ab8f873813547b"
+      },
+      "selected_loser": {
+        "dates": 52,
+        "events": 52,
+        "selection": "weekly_leader",
+        "unrepresented_dates_count": 200,
+        "unrepresented_dates_sha256": "a6e715428cb3f62365d293a77fee352d0e95cd9a0a1703982fb93e6227f544c1"
+      },
+      "year": "2021"
+    },
+    {
+      "observed_spx_sessions": 251,
+      "selected_gainer": {
+        "dates": 52,
+        "events": 52,
+        "selection": "weekly_leader",
+        "unrepresented_dates_count": 199,
+        "unrepresented_dates_sha256": "a164f4c35abbe78d2cd533a0e963d9af5e0a235f7f1c46d45f762429a91c9c66"
+      },
+      "selected_loser": {
+        "dates": 52,
+        "events": 52,
+        "selection": "weekly_leader",
+        "unrepresented_dates_count": 199,
+        "unrepresented_dates_sha256": "f17b87441955759bad099922af3558ea493c312d6405f7ee7cbcabf74500b186"
+      },
+      "year": "2022"
+    },
+    {
+      "observed_spx_sessions": 250,
+      "selected_gainer": {
+        "dates": 51,
+        "events": 51,
+        "selection": "weekly_leader",
+        "unrepresented_dates_count": 199,
+        "unrepresented_dates_sha256": "a976dd727fdc689f63f6972d98a83295e7779949b9b1df9037e4c595bd1f00ba"
+      },
+      "selected_loser": {
+        "dates": 52,
+        "events": 52,
+        "selection": "weekly_leader",
+        "unrepresented_dates_count": 198,
+        "unrepresented_dates_sha256": "4a32417b1caba54cfe8bd80fe5e448a106a8d8537ac504b14af295367fee0316"
+      },
+      "year": "2023"
+    },
+    {
+      "observed_spx_sessions": 252,
+      "selected_gainer": {
+        "dates": 235,
+        "events": 279,
+        "selection": "daily_leader_collection",
+        "unrepresented_dates_count": 17,
+        "unrepresented_dates_sha256": "5090eaa5b95636c6dc35eef0a249174fa6eb72052020a07ebc3ecb6e5e612d63"
+      },
+      "selected_loser": {
+        "dates": 23,
+        "events": 24,
+        "selection": "selected_collapse",
+        "unrepresented_dates_count": 229,
+        "unrepresented_dates_sha256": "e4de37b2a6e3ece241caf48a04dd897265a952970c12637f304c41a80407b1d2"
+      },
+      "year": "2024"
+    },
+    {
+      "observed_spx_sessions": 250,
+      "selected_gainer": {
+        "dates": 241,
+        "events": 281,
+        "selection": "daily_leader_collection",
+        "unrepresented_dates_count": 9,
+        "unrepresented_dates_sha256": "b9afd7fd9480f362f2e8c9b9ed557c09c6ce6988768d03c54bd140a1f3240a53"
+      },
+      "selected_loser": {
+        "dates": 24,
+        "events": 26,
+        "selection": "selected_collapse",
+        "unrepresented_dates_count": 226,
+        "unrepresented_dates_sha256": "fbe76cd51b329e205d4bc2546fabda38446519b8240dcfa1a4c76f7c8135f7e0"
+      },
+      "year": "2025"
+    },
+    {
+      "observed_spx_sessions": 181,
+      "selected_gainer": {
+        "dates": 176,
+        "events": 242,
+        "selection": "daily_leader_collection",
+        "unrepresented_dates_count": 5,
+        "unrepresented_dates_sha256": "6c20838948e8bae4e2c93679c54155510d68f478acfa1b6b91b36e64d9408237"
+      },
+      "selected_loser": {
+        "dates": 9,
+        "events": 9,
+        "selection": "selected_collapse",
+        "unrepresented_dates_count": 172,
+        "unrepresented_dates_sha256": "cd47a8a633e257003b49ea04d2aadab0df74ce194e16973580dfdacdc2401a61"
+      },
+      "year": "2026"
+    }
+  ],
+  "distinct_gainer_dates": 807,
+  "events": {
+    "selected_gainer": 957,
+    "selected_loser": 215
+  },
+  "forward_analysis_rows": 678,
+  "forward_exclude_flags": 8,
+  "forward_observed_returns": {
+    "Ret_T1_Pct": 671,
+    "Ret_T20_Pct": 646,
+    "Ret_T5_Pct": 662
+  },
+  "forward_status": {
+    "EVENT_BAR_MISSING": 6,
+    "NO_DATA": 265,
+    "OK": 686
+  },
+  "implementation_sha": "007c98736036aa145e87d1ab60b53ea603be6081",
+  "implementation_source_sha256": "64144e46eddbb6f275af12ca6be02c259dcd738de8a6882a57852493319833d3",
+  "inputs": {
+    "extreme-gainer-research-package/datasets/alias-map.csv": {
+      "blank_fields": {
+        "Alias_Symbol": 152,
+        "Date": 0,
+        "Notes": 0,
+        "Outcome_Type": 0,
+        "Resolved_YN": 0,
+        "Source_URL": 22,
+        "Successor_Company": 47,
+        "Ticker": 0
+      },
+      "bytes": 74124,
+      "date_range": [
+        "2021-01-06",
+        "2026-06-23"
+      ],
+      "delimiter": ",",
+      "rows": 265,
+      "sha256": "6a75792c73faa572434346af0f79dbbf87008960d89431cb7fab235f714099da"
+    },
+    "extreme-gainer-research-package/datasets/discrepancy-resolution.csv": {
+      "blank_fields": {
+        "Correct_Gain_Pct": 1,
+        "Dataset_Gain_Pct": 0,
+        "Date": 0,
+        "Evidence_URLs": 0,
+        "Notes": 0,
+        "Ticker": 0,
+        "Verdict": 0,
+        "Yahoo_Gain_Pct": 0
+      },
+      "bytes": 12477,
+      "date_range": [
+        "2022-05-23",
+        "2026-09-21"
+      ],
+      "delimiter": ",",
+      "rows": 26,
+      "sha256": "1e06239b659f4fb0838a3c3c40c97bd71b31bd38f147536a4d7676008e3b0a42"
+    },
+    "extreme-gainer-research-package/datasets/extreme-gainers-2021.csv": {
+      "blank_fields": {
+        "Catalyst_Category": 0,
+        "Catalyst_Description": 0,
+        "Date": 0,
+        "Float_Condition": 0,
+        "Follow_Through_5d": 0,
+        "Gain_Pct": 0,
+        "Gov_Policy_Driven": 0,
+        "MktCap_Tier": 0,
+        "Prior_Close": 0,
+        "Source_URL": 0,
+        "Ticker": 0,
+        "Volume_Multiple": 0
+      },
+      "bytes": 34838,
+      "date_range": [
+        "2021-01-06",
+        "2021-12-31"
+      ],
+      "delimiter": "|",
+      "rows": 52,
+      "sha256": "b33b87aa99266802b55e44b729ee91d719bbeedf5efb38965d06367182a9746a"
+    },
+    "extreme-gainer-research-package/datasets/extreme-gainers-2022.csv": {
+      "blank_fields": {
+        "Catalyst_Category": 0,
+        "Catalyst_Description": 0,
+        "Date": 0,
+        "Float_Condition": 0,
+        "Follow_Through_5d": 0,
+        "Gain_Pct": 0,
+        "Gov_Policy_Driven": 0,
+        "MktCap_Tier": 0,
+        "Prior_Close": 0,
+        "Source_URL": 0,
+        "Ticker": 0,
+        "Volume_Multiple": 0
+      },
+      "bytes": 37082,
+      "date_range": [
+        "2022-01-04",
+        "2022-12-29"
+      ],
+      "delimiter": "|",
+      "rows": 52,
+      "sha256": "e569114df6b92946a887c4987c6248033b46f45462f54a0547b2e59a8b874dd5"
+    },
+    "extreme-gainer-research-package/datasets/extreme-gainers-2023.csv": {
+      "blank_fields": {
+        "Catalyst_Category": 0,
+        "Catalyst_Description": 0,
+        "Date": 0,
+        "Float_Condition": 0,
+        "Follow_Through_5d": 0,
+        "Gain_Pct": 0,
+        "Gov_Policy_Driven": 0,
+        "MktCap_Tier": 0,
+        "Prior_Close": 0,
+        "Source_URL": 0,
+        "Ticker": 0,
+        "Volume_Multiple": 0
+      },
+      "bytes": 33890,
+      "date_range": [
+        "2023-01-03",
+        "2023-12-27"
+      ],
+      "delimiter": "|",
+      "rows": 51,
+      "sha256": "6fca85bd1ff0e8df3cd88e44a69a54108c08b90f808a51ad197b0bf569c65104"
+    },
+    "extreme-gainer-research-package/datasets/extreme-gainers-2024.csv": {
+      "blank_fields": {
+        "Catalyst_Category": 0,
+        "Catalyst_Description": 0,
+        "Date": 0,
+        "Float_Condition": 0,
+        "Follow_Through_5d": 0,
+        "Gain_Pct": 0,
+        "Gov_Policy_Driven": 0,
+        "MktCap_Tier": 0,
+        "Prior_Close": 0,
+        "Source_URL": 0,
+        "Ticker": 0,
+        "Volume_Multiple": 0
+      },
+      "bytes": 182802,
+      "date_range": [
+        "2024-01-02",
+        "2024-12-31"
+      ],
+      "delimiter": "|",
+      "rows": 279,
+      "sha256": "4a1091607eab6594e34a2b5951664b7570b8a27dc813d5de732412da65a47640"
+    },
+    "extreme-gainer-research-package/datasets/extreme-gainers-2025-2026.csv": {
+      "blank_fields": {
+        "Approx": 0,
+        "Catalyst_Category": 0,
+        "Catalyst_Description": 0,
+        "Date": 0,
+        "Float_Condition": 0,
+        "Gain_Pct": 0,
+        "Gov_Policy_Driven": 0,
+        "Notes": 232,
+        "Source": 0,
+        "Ticker": 0,
+        "Volume_Multiple": 0
+      },
+      "bytes": 222795,
+      "date_range": [
+        "2025-01-02",
+        "2026-09-22"
+      ],
+      "delimiter": ",",
+      "rows": 523,
+      "sha256": "14bda9b4d15590fdedcd70ad957d8494082de3eeb6b0d24ef7efd1118e7f01d5"
+    },
+    "extreme-gainer-research-package/datasets/extreme-losers-2021-2026.csv": {
+      "blank_fields": {
+        "Catalyst_Category": 0,
+        "Catalyst_Description": 0,
+        "Date": 0,
+        "Follow_Through_5d": 0,
+        "Gov_Policy_Driven": 0,
+        "Loss_Pct": 0,
+        "MktCap_Tier": 0,
+        "Source_URL": 0,
+        "Ticker": 0
+      },
+      "bytes": 91616,
+      "date_range": [
+        "2021-01-08",
+        "2026-09-03"
+      ],
+      "delimiter": "|",
+      "rows": 215,
+      "sha256": "b5b83e703d02ad9edbe6f36d6e2c573e70afc8d04f65920dcfe058e60952ee75"
+    },
+    "extreme-gainer-research-package/datasets/forward-returns-2021-2026.csv": {
+      "blank_fields": {
+        "Close_Location": 279,
+        "Computed_Gain_Pct": 281,
+        "Date": 0,
+        "Day_Range_Pct": 281,
+        "Discrepancy_Flag": 925,
+        "Ev_Close": 278,
+        "Ev_High": 278,
+        "Ev_Low": 278,
+        "Ev_Open": 278,
+        "Ev_Volume": 278,
+        "Gain_Discrep_Pct": 281,
+        "Gain_Pct_Dataset": 0,
+        "Gap_Pct": 281,
+        "Notes": 664,
+        "Prev_Close": 275,
+        "Ret_T1_Pct": 278,
+        "Ret_T20_Pct": 305,
+        "Ret_T5_Pct": 289,
+        "Status": 0,
+        "T1_Date": 278,
+        "T20_Date": 305,
+        "T5_Date": 289,
+        "Ticker": 0,
+        "Ticker_Used": 265
+      },
+      "bytes": 152366,
+      "date_range": [
+        "2021-01-06",
+        "2026-09-22"
+      ],
+      "delimiter": ",",
+      "rows": 957,
+      "sha256": "d4f80668ea33191a955d2b86b125e2d4dfcbe3263421410117920e73fde48ec0"
+    },
+    "extreme-gainer-research-package/datasets/forward-returns-recovered-supplement.csv": {
+      "blank_fields": {
+        "Alias_Used": 0,
+        "Data_Source": 0,
+        "Date": 0,
+        "T1_Pct": 0,
+        "T20_Pct": 0,
+        "T5_Pct": 0,
+        "Ticker": 0
+      },
+      "bytes": 7592,
+      "date_range": [
+        "2021-01-06",
+        "2026-06-23"
+      ],
+      "delimiter": ",",
+      "rows": 77,
+      "sha256": "753099801ccd94c95a5a7225b0080a21cd9a6e212daf40dc9b8954d4009cc512"
+    },
+    "extreme-gainer-research-package/harness/research/regime-gate-backtest/lane-A-supplement-spx.csv": {
+      "blank_fields": {
+        "Date": 0,
+        "SPX_Close": 0,
+        "source": 0
+      },
+      "bytes": 151433,
+      "date_range": [
+        "2021-01-04",
+        "2026-09-30"
+      ],
+      "delimiter": ",",
+      "rows": 1442,
+      "sha256": "cb280cf59e3c08b45bc73cdf8bd6ef48e6797a8aadd4e6e708b4f71b8ff3d5ad"
+    }
+  },
+  "ordinary_control_count": null,
+  "pit_verified": false,
+  "pre_ignition_label_count": null,
+  "readme_recent_dates": 416,
+  "recent_gainer_dates": 417,
+  "scope": "selected_seed_metadata_only",
+  "source": "https://github.com/seathatflowsinourveins/sextant/releases/tag/seed-research-2026-10-09",
+  "summary_sha256": "c3ccd8177894d47bc323dcc7cea0bf9b3ed2068ebb41e6441c13181863a9e107",
+  "survivor_only": true,
+  "trial_accounting": {
+    "cumulative_n": null,
+    "effective_n": null,
+    "historical_seed_trials": null,
+    "inference_eligible": false,
+    "ledger_binding": null,
+    "new_strategy_trials": 0
+  },
+  "verification": {
+    "all_selected_session_hashes_checked": true,
+    "artifact_hashes": 1438,
+    "events": 1172,
+    "input_member_hashes": 11,
+    "session_manifests": 1436,
+    "unrepresented_calendar_dates": 496
+  },
+  "verified_at": "2026-11-06T14:53:55.285608+00:00"
+}

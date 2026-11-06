@@ -1,0 +1,9 @@
+# Candidate history: selection and availability survive reconciliation
+
+Lesson from [#42's seed audit](../research/2026-11-06-candidate-history.md), applying [ADR-0027](../adr/0027-extreme-gainer-research-package.md) and [ADR-0013](../adr/0013-us-equity-data-stack.md): a selected event history and a historical ranking population have different denominators. The original source fields and weekly/daily selection must survive every join. A missing seed event on a calendar date establishes neither no mover nor an ordinary negative; selected losers are not ordinary controls.
+
+An alias annotation is research evidence, not a dated share-class match. Keep the event's original ticker, missing returns and correction prose. Never infer the old entity from today's price series. A vendor label alone cannot clear Sextant's dated-master/delisting acceptance, and an economic listing interval does not establish when it was known.
+
+Historical event dates, first prints, detector flags, source publication, receipt and actual knowledge time are separate. If a clock is absent, retain null and keep the cohort ineligible for inference. Report unknown cumulative trials as unknown; an audit's zero new strategy runs is not the historical search count. The canonical TrialLog remains the single accounting source.
+
+The executable witness is `tests/proofs/test_candidate_history.py`; the research command and recorded evidence are in the audit note. The changed rule is the candidate-history entry in [practices](practices.md#evidence-and-learning). Revisit when source-labelled dated identities, actual clocks, frozen controls and a canonical ledger receipt arrive; do not fill gaps from fixtures or the archive's fitted weights.
