@@ -13,6 +13,7 @@
     "superpowers@superpowers-dev": true,
     "compound-engineering@compound-engineering-plugin": true,
     "typesafe@typesafe-ai": true,
+    "claude-hud@claude-hud": true,
     "oh-my-claudecode@omc": false,
     "pyright-lsp@sextant-lsp": true,
     "typescript-lsp@sextant-lsp": true
@@ -39,6 +40,14 @@
         "source": "github",
         "repo": "typesafe-ai/skills",
         "ref": "v0.6.2"
+      },
+      "autoUpdate": false
+    },
+    "claude-hud": {
+      "source": {
+        "source": "github",
+        "repo": "jarrodwatts/claude-hud",
+        "ref": "v0.15.0"
       },
       "autoUpdate": false
     },

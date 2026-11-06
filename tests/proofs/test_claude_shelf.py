@@ -109,6 +109,16 @@ def test_typesafe_uses_its_native_plugin() -> None:
     )
 
 
+def test_claude_hud_is_pinned_and_leaves_the_status_line_to_orca() -> None:
+    _plugin(
+        "claude-hud@claude-hud",
+        "jarrodwatts/claude-hud",
+        "v0.15.0",
+        "b86e1c3e5255880578de4b7cc87dc383228c2a18",
+    )
+    assert "statusLine" not in _json(".claude/settings.json")
+
+
 def test_omc_is_disabled_until_the_native_session_override() -> None:
     _plugin(
         "oh-my-claudecode@omc",
@@ -275,11 +285,13 @@ def test_the_shelf_installs_what_settings_declares_from_the_main_checkout(tmp_pa
         "marketplace add EveryInc/compound-engineering-plugin#compound-engineering-v3.36.0"
         " --scope user",
         "marketplace add typesafe-ai/skills#v0.6.2 --scope user",
+        "marketplace add jarrodwatts/claude-hud#v0.15.0 --scope user",
         "marketplace add Yeachan-Heo/oh-my-claudecode#v5.7.30 --scope user",
         "marketplace add ./.claude/lsp --scope user",
         "install superpowers@superpowers-dev --scope local",
         "install compound-engineering@compound-engineering-plugin --scope local",
         "install typesafe@typesafe-ai --scope local",
+        "install claude-hud@claude-hud --scope local",
         "install pyright-lsp@sextant-lsp --scope local",
         "install typescript-lsp@sextant-lsp --scope local",
     ]

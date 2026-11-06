@@ -20,6 +20,11 @@
       "repo": "Yeachan-Heo/oh-my-claudecode",
       "ref": "v5.7.30",
       "sha": "14cd0fe92fbe376fab6c89b333b7896811986d2d"
+    },
+    "claude-hud@claude-hud": {
+      "repo": "jarrodwatts/claude-hud",
+      "ref": "v0.15.0",
+      "sha": "b86e1c3e5255880578de4b7cc87dc383228c2a18"
     }
   },
   "skills": {
