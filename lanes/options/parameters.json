@@ -1,0 +1,50 @@
+[
+  {
+    "name": "relevance_min",
+    "unit": "probability",
+    "value": "0.7",
+    "source": "northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:configs/paper/profiles.yaml jev_catalyst_relevance_min; ADR-0017 J5",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-10-31"
+  },
+  {
+    "name": "negative_min",
+    "unit": "probability",
+    "value": "0.8",
+    "source": "northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:configs/paper/profiles.yaml jev_catalyst_negative_min; ADR-0017 J5",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-10-31"
+  },
+  {
+    "name": "positive_min",
+    "unit": "probability",
+    "value": "0.7",
+    "source": "northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:configs/paper/profiles.yaml jev_catalyst_positive_min; ADR-0017 J5",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-10-31"
+  },
+  {
+    "name": "priority_max",
+    "unit": "priority multiplier",
+    "value": "1.25",
+    "source": "northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:configs/paper/profiles.yaml jev_catalyst_priority_max; ADR-0017 J5",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-10-31"
+  },
+  {
+    "name": "request_budget_ms",
+    "unit": "milliseconds",
+    "value": "200",
+    "source": "northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:configs/paper/profiles.yaml jev_catalyst_request_budget_ms; ADR-0017 J5",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-10-31"
+  },
+  {
+    "name": "event_max_age_s",
+    "unit": "seconds",
+    "value": "86400",
+    "source": "northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:configs/paper/profiles.yaml jev_catalyst_event_max_age_s; ADR-0017 J5",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-10-31"
+  }
+]
