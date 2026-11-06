@@ -29,6 +29,10 @@ secrets:
 prove:
     uv run --frozen pytest tests/proofs
 
+# The trading path: research card, backtest, sim replay, ledger, merit page.
+slice:
+    uv run --frozen python -m sextant.backtest.thin_slice
+
 # Push this branch, open its PR from a filled-in template, turn on auto-merge.
 pr title body_file:
     git push -u origin HEAD
