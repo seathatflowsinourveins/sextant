@@ -354,3 +354,24 @@ def test_access_probe_makes_one_bounded_read_and_records_no_entitlement(tmp_path
     assert fixture.calls == [("TICKERS", {"ticker": "TWO", "limit": 1, "format": "csv"})]
     assert receipt["http_status"] == 200 and receipt["entitlement_verified"] is False
     assert receipt["mode"] == "offline_fixture"
+
+
+def test_row_11_admits_the_empty_member_manifest_at_its_reported_hash(tmp_path: Path) -> None:
+    # The #42/#73 seam: row 11's loader reads row 4's manifest only at the receipt's hash,
+    # yields no members until acceptance, and keeps the selection survivor_only.
+    from datetime import date
+
+    from sextant.data.universe import manifest_universe
+
+    result, _ = _report(tmp_path)
+    path = tmp_path / "report/universe_manifest.json"
+    universe = manifest_universe(
+        path,
+        sha256=result["artifacts"]["universe_manifest.json"],
+        start=date(2021, 1, 4),
+        end=date(2025, 1, 3),
+    )
+    selection = universe.universe_for_date(date(2025, 1, 3))
+    assert selection.symbols == ()
+    assert selection.provenance.report_fields()["survivor_only"] is True
+    assert selection.provenance.pit_verified is False
