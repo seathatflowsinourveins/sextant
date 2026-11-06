@@ -47,6 +47,7 @@ KNOWN=(
   # One line because --sealed-stdin carries one value line; the old store did the same for its App keys
   # (northstar@0243050704565abaf3a95f0f09613cb974a331e5:scripts/keys.sh:77-78, GITHUB_APP_*_KEY_B64).
   SEXTANT_GITHUB_APP_KEY_B64
+  SEXTANT_LEDGER_DEPLOY_KEY_B64 # the ledger branch's one writer (#102): base64 of an ed25519 deploy key, read only by `just ledger-append`
 )
 
 [[ "$(uname -s)" == Linux ]] || {
