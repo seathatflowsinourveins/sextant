@@ -57,6 +57,10 @@ omniroute *args:
 ao *args:
     bash deploy/wsl/ao.sh {{args}}
 
+# Inside the clean distro only: OmniRoute's per-runtime keys: status, due or renew. See issue #94.
+omni-keys *args:
+    python3 -I scripts/omni_keys.py {{args}}
+
 # Inside the clean distro only: the Sextant GitHub App's own rate budget for AO and the lane tabs. See docs/start.md.
 gh-app *args:
     bash deploy/wsl/github-app.sh {{args}}
