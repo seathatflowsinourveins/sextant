@@ -28,6 +28,25 @@ KNOWN=(
   IB_PAPER_PASSWORD
   IB_PAPER_ACCOUNT_ID
   ALPHA_VANTAGE_API_KEY
+  # T9's box 2, the Mac's Keychain-only names the owner chose to move (sextant#58). Registry and comments
+  # carried from northstar@0243050704565abaf3a95f0f09613cb974a331e5:scripts/keys.sh:48-75. Not the two
+  # GITHUB_APP_NORTHSTAR_* keys: they stay with northstar (owner, 2026-11-06: "clean sota").
+  ANTHROPIC_API_KEY_1 # Console API keys, never injected into an interactive claude
+  ANTHROPIC_API_KEY_2
+  ANTHROPIC_API_KEY_3
+  ANTHROPIC_API_KEY_4
+  OPENAI_API_KEY
+  META_API_KEY # Meta Model API (Muse)
+  DATABENTO_API_KEY
+  COHERE_API_KEY # research and eval reranker arms only; never trading or live
+  VOYAGE_API_KEY # research and eval reranker arms only; never trading or live
+  # The owner's Sharadar subscription (owner, 2026-11-06: "Add my Sharadar key"), for row 4's dated universe.
+  # The name the official client reads: Nasdaq/data-link-python@1.0.4 431094f8:nasdaqdatalink/api_config.py:3,98.
+  NASDAQ_DATA_LINK_API_KEY # research data only; never trading or live
+  # The Sextant GitHub App's private key, one line of base64 (owner, 2026-11-06: "Yes, create a Sextant App").
+  # One line because --sealed-stdin carries one value line; the old store did the same for its App keys
+  # (northstar@0243050704565abaf3a95f0f09613cb974a331e5:scripts/keys.sh:77-78, GITHUB_APP_*_KEY_B64).
+  SEXTANT_GITHUB_APP_KEY_B64
 )
 
 [[ "$(uname -s)" == Linux ]] || {

@@ -30,3 +30,6 @@ GitHub Environment secrets reach jobs on GitHub. They can't reach a native tab i
 - **A device with live keys:** owner, Phase 7. Choose one with no agents, as the plan says.
 - **The new Mac:** it needs the Keychain path from the same source, added then.
 - **An agent reads or misuses a key:** rotate at the vendor, and put the affected keys behind a sandbox.
+
+## Amendment, 2026-11-06: T9's Mac-only names
+The owner chose to move the Mac's Keychain-only names into `sextant` (northstar#968, sextant#58). Box 1 is `ALPHA_VANTAGE_API_KEY`, already registered. Box 2's nine are registered here: `ANTHROPIC_API_KEY_1` to `_4`, `OPENAI_API_KEY`, `META_API_KEY`, `DATABENTO_API_KEY`, `COHERE_API_KEY` and `VOYAGE_API_KEY`, carried from northstar@0243050704565abaf3a95f0f09613cb974a331e5:`scripts/keys.sh:48-75`. The two `GITHUB_APP_NORTHSTAR_*` keys stay with northstar (owner: "clean sota"). The transport is the sealed `age` box of northstar ADR-0063's 2026-11-05 amendment. The ws side drops ciphertext on `/mnt/wsl/sextant/keys/t9-box-N/`, so `sextant` never connects to an old-lane service, as AGENTS.md requires. Only ciphertext to a one-time key touches the mount, and the private half never touches a file.
