@@ -33,6 +33,10 @@ accept:
 orca-update:
     bash deploy/wsl/update-orca.sh
 
+# Inside the clean distro only: git's upkeep and Orca's daily lifecycle sweep. See docs/start.md.
+lifecycle:
+    bash deploy/wsl/lifecycle.sh
+
 # Run every manifest row's proof. pytest does the running and the counting.
 prove:
     uv run --frozen pytest tests/proofs

@@ -101,6 +101,7 @@ have_account codex || orca-ide account add --agent codex
 for profile in "$HOME"/.config/orca/claude-profiles/*/home; do
   [ -d "$profile" ] && no_prompts "$profile"
 done
+bash deploy/wsl/lifecycle.sh 2>&1 | tee -a "$log"
 just accept 2>&1 | tee -a "$log" || echo "Some acceptance checks failed. The lead reads them first."
 note "starting the lead"
 orca-ide agent launch --agent claude --surface terminal --worktree "path:$PWD" --json \

@@ -23,6 +23,11 @@ Then follow the new distro's first login: sign in to GitHub, add the Orca server
 New-NetFirewallHyperVRule -Name 'Sextant-Orca-6771' -DisplayName 'Sextant Orca TCP 6771' -Direction Inbound -VMCreatorId '{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}' -Protocol TCP -LocalPorts 6771
 ```
 
+**Staying clean.** Setup runs `just lifecycle` once.
+- **git's own upkeep:** `fetch.prune` drops branches GitHub deleted at merge, and `git maintenance start` puts this repo on git's scheduled upkeep.
+- **A daily Orca automation:** the `Lifecycle sweep` runs in this checkout, never in a worktree of its own ([Orca's automations](https://github.com/stablyai/orca/blob/a162e08b29b2883b02d8a0dfcc99e26c80b2cfe7/docs/site/content/docs/cli/automations.mdx)). Its precheck skips the run when there's nothing to do.
+- **What the sweep does:** it removes worktrees whose PRs merged, along with their branches. It deletes only branches that are merged, and keeps the rest with a note on issue #35. When a newer Orca release has been out three days, it opens a PR moving the pin.
+
 **Updating Orca.** The app's *Update Orca on the server host* can't update this server, because Orca leaves a `.deb` install to its host ([its updater](https://github.com/stablyai/orca/blob/a162e08b29b2883b02d8a0dfcc99e26c80b2cfe7/src/main/updater/lifecycle/updater-remote-status.ts#L33-L45)). A PR moves the pin in `deploy/wsl/sextant.user-data`; then `just orca-update` in the distro installs that package and reinstalls Orca's service, which restarts the server. Tabs keep running, since the terminal host outlives a server restart ([Orca's docs](https://github.com/stablyai/orca/blob/a162e08b29b2883b02d8a0dfcc99e26c80b2cfe7/docs/site/content/docs/remote-servers.mdx#L187)).
 
 If a step stops, the window says so and waits. A session outside the distro can read what happened in `/mnt/wsl/sextant/first-login.log`, which never holds the pairing link or a sign-in, and fix it on GitHub. You press Enter to pull the fix and try again, and you don't type a command.
