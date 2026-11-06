@@ -10,6 +10,7 @@ on:
     - cron: "17 6 * * *"
   workflow_dispatch:
 permissions:
+  actions: read
   contents: read
   issues: write
   pull-requests: read
@@ -32,13 +33,16 @@ jobs:
         with:
           push: never
           env: GH_TOKEN
-          runCmd: just sync && (uv run --frozen pytest tests/proofs -q 2>&1 | tail -40)
+          runCmd: just sync && bash -c 'set -o pipefail; uv run --frozen pytest tests/proofs 2>&1 | tail -40'
+      # A failed proof fails its own step and turns the job red. The issue still updates.
       - name: Median merge time
+        if: ${{ !cancelled() }}
         uses: github/issue-metrics@671528652402b9b8a33da44b5c693b3161bc090f # v5.0.3
         env:
           GH_TOKEN: ${{ github.token }}
           SEARCH_QUERY: repo:${{ github.repository }} is:pr is:merged
       - name: Compose
+        if: ${{ !cancelled() }}
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -51,7 +55,8 @@ jobs:
             echo "Stop adding layers if median merge time passes 1 hour over the last 20 PRs, or proven rows stop rising across 20 merged PRs."
             cat issue_metrics.md
           } > scoreboard.md
-      - uses: peter-evans/create-issue-from-file@fca9117c27cdc29c6c4db3b86c48e4115a786710 # v6.0.0
+      - if: ${{ !cancelled() }}
+        uses: peter-evans/create-issue-from-file@fca9117c27cdc29c6c4db3b86c48e4115a786710 # v6.0.0
         with:
           issue-number: ${{ vars.SCOREBOARD_ISSUE }}
           title: Scoreboard

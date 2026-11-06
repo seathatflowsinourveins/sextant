@@ -41,6 +41,7 @@ Quoted here, not re-researched:
 The private-range firewall is the smallest adaptation of a cited upstream, because Anthropic and Trail of Bits ship allowlists and the owner chose open web. Its manifest row says where we looked.
 
 ## Consequences and residuals
+- The read-only binds stop direct edits, not an agent replacing the writable `.git` parent, as upstream's README also says. So the host runs no git or script in a working copy an agent has used.
 - A malicious page could trick a no-prompt agent into sending out what is in its sandbox: sign-ins and agent keys, never broker keys. Use low-limit, rotatable keys. Owner accepted.
 - Environment secrets reach GitHub's VMs during a job, so a review key must be low-limit and rotatable. Broker keys wait for the local runner. The live device is chosen at Phase 7, preferring one with no agents.
 - API review bills per use at DeepSeek's and Anthropic's rates, and Actions compute beyond Pro's included $18 a month bills at $0.006 a Linux minute (GitHub billing docs, read 2026-11-05). Not yet measured on this repo.

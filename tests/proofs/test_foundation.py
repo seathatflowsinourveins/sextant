@@ -41,7 +41,7 @@ def test_sandbox_is_the_upstream_template() -> None:
     assert _sha(body) == "61fb7595307fc4d9ab69de9ab3048555d9d3f13314c96097b2901842f38c7b42"
 
 
-def test_agent_cannot_edit_host_run_paths() -> None:
+def test_template_read_only_binds_are_kept() -> None:
     config = json.loads(_read(".devcontainer/devcontainer.json"))
     mounts = " ".join(config["mounts"])
     for target in ("/workspace/.devcontainer", "/workspace/.git/config", "/workspace/.git/hooks"):
@@ -74,8 +74,8 @@ def test_runtimes_match_their_pins() -> None:
 
 
 def test_source_rule_is_enforced() -> None:
-    assert "dangerfile.js" in (WORKFLOWS / "review.yml").read_text()
-    assert "Never self-invent" in _read("dangerfile.js")
+    """tests/repo/test_dangerfile.py runs the rule itself. This row proves `review` runs it."""
+    assert "--dangerfile dangerfile.js --failOnErrors" in (WORKFLOWS / "review.yml").read_text()
     assert "Self-invention" in _read(".github/review/head.md")
 
 
@@ -99,6 +99,7 @@ def test_ci_gives_pr_code_no_secret_and_no_cache() -> None:
     assert "runs-on: ubuntu-" in ci
     assert "secrets." not in ci
     assert "enable-cache: false" in ci
+    assert "package-manager-cache: false" in ci
     assert ci.count("persist-credentials: false") == ci.count("actions/checkout@")
     assert re.search(r"^permissions:\n  contents: read\n", ci, re.MULTILINE)
 
@@ -110,19 +111,29 @@ def test_every_action_is_pinned() -> None:
 
 
 def test_gitleaks_is_wired() -> None:
-    assert "gitleaks" in _run("gitleaks", "version").stderr + "gitleaks"
+    assert _run("gitleaks", "version").returncode == 0
     assert "gitleaks" in _read("justfile")
     assert "gitleaks" in _read(".githooks/pre-commit")
 
 
 def test_rulesets_are_active() -> None:
     rulesets = {item["name"]: item for item in _gh(f"{REPO}/rulesets")}
-    assert {"main", "live", "ledger"} <= rulesets.keys()
     assert all(rulesets[name]["enforcement"] == "active" for name in ("main", "live", "ledger"))
-    main = _gh(f"{REPO}/rulesets/{rulesets['main']['id']}")
-    checks = next(r for r in main["rules"] if r["type"] == "required_status_checks")["parameters"]
-    assert checks["strict_required_status_checks_policy"] is False
-    assert {c["integration_id"] for c in checks["required_status_checks"]} == {15368}
+
+    def rules(name: str) -> dict:
+        full = _gh(f"{REPO}/rulesets/{rulesets[name]['id']}")
+        return {rule["type"]: rule.get("parameters", {}) for rule in full["rules"]}
+
+    def checks(name: str) -> set[tuple[str, int]]:
+        required = rules(name)["required_status_checks"]
+        assert required["strict_required_status_checks_policy"] is False
+        return {(c["context"], c["integration_id"]) for c in required["required_status_checks"]}
+
+    assert checks("main") == {("ci", 15368), ("review", 15368)}
+    assert checks("live") == {("ci", 15368), ("review", 15368), ("promotion-record", 15368)}
+    assert {"update", "deletion", "non_fast_forward"} <= rules("ledger").keys()
+    for name in ("main", "live"):
+        assert {"pull_request", "deletion", "non_fast_forward"} <= rules(name).keys()
 
 
 def test_environments_restrict_branches() -> None:

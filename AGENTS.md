@@ -29,7 +29,7 @@ Everything here comes from a SOTA source: a maintained repo or framework at a pi
 ## Start
 On the host: `devc up`, then `devc shell`, from [trailofbits/claude-code-devcontainer](https://github.com/trailofbits/claude-code-devcontainer). Host needs Docker and the Dev Containers CLI.
 Inside: `claude`, `codex` or `dsh`, with no permission prompts, because the container is the sandbox.
-Run only `devc` on the host. Never run a script from a working copy an agent has written to.
+Run only `devc` on the host. Never run git or a script on the host in a working copy an agent has used: the read-only binds do not stop an agent replacing `.git`, as Trail of Bits' README says. Work reaches the host through GitHub.
 
 ## Where things live
 - `docs/manifest.md`: every pick and practice, with its pinned source and its proof.

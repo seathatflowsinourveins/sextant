@@ -116,16 +116,22 @@ COPY --chown=vscode:vscode post_install.py /opt/post_install.py
 # --- Sextant layer. Everything above is trailofbits/claude-code-devcontainer@062e9e77 apart from the
 # --- uv pin. Each line's source is in docs/manifest.md.
 ARG JUST_VERSION=1.59.0
-ARG JUST_SHA256=409044617b6f06517c1035e55ca38c8c856ff8b650e41bc2aa1ef82d5903a23e
 ARG GITLEAKS_VERSION=8.30.1
-ARG GITLEAKS_SHA256=551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
 ARG ACTIONLINT_VERSION=1.7.12
-ARG ACTIONLINT_SHA256=8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
 USER root
-RUN fetch() { curl -fsSL "$1" -o /tmp/tool.tgz && echo "$2  /tmp/tool.tgz" | sha256sum -c - && tar -xzf /tmp/tool.tgz -C /usr/local/bin "$3" && rm /tmp/tool.tgz; } \
-  && fetch "https://github.com/casey/just/releases/download/${JUST_VERSION}/just-${JUST_VERSION}-x86_64-unknown-linux-musl.tar.gz" "$JUST_SHA256" just \
-  && fetch "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" "$GITLEAKS_SHA256" gitleaks \
-  && fetch "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" "$ACTIONLINT_SHA256" actionlint
+RUN case "$(dpkg --print-architecture)" in \
+    amd64) just_arch=x86_64-unknown-linux-musl; just_sha=409044617b6f06517c1035e55ca38c8c856ff8b650e41bc2aa1ef82d5903a23e; \
+      gl_arch=linux_x64; gl_sha=551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb; \
+      al_arch=linux_amd64; al_sha=8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8 ;; \
+    arm64) just_arch=aarch64-unknown-linux-musl; just_sha=23871b1702bfd550fb5f901778fd4290ecf2ee034a45a889fbe96d89b188086d; \
+      gl_arch=linux_arm64; gl_sha=e4a487ee7ccd7d3a7f7ec08657610aa3606637dab924210b3aee62570fb4b080; \
+      al_arch=linux_arm64; al_sha=325e971b6ba9bfa504672e29be93c24981eeb1c07576d730e9f7c8805afff0c6 ;; \
+    *) echo "unsupported architecture" >&2; exit 1 ;; \
+  esac \
+  && fetch() { curl -fsSL "$1" -o /tmp/tool.tgz && echo "$2  /tmp/tool.tgz" | sha256sum -c - && tar -xzf /tmp/tool.tgz -C /usr/local/bin "$3" && rm /tmp/tool.tgz; } \
+  && fetch "https://github.com/casey/just/releases/download/${JUST_VERSION}/just-${JUST_VERSION}-${just_arch}.tar.gz" "$just_sha" just \
+  && fetch "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_${gl_arch}.tar.gz" "$gl_sha" gitleaks \
+  && fetch "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_${al_arch}.tar.gz" "$al_sha" actionlint
 # Sudo only for the firewall, as in anthropics/claude-code@v2.1.318:.devcontainer/Dockerfile.
 COPY init-firewall.sh /usr/local/bin/init-firewall.sh
 RUN chmod 0755 /usr/local/bin/init-firewall.sh \
@@ -133,6 +139,6 @@ RUN chmod 0755 /usr/local/bin/init-firewall.sh \
   && chmod 0440 /etc/sudoers.d/vscode
 USER vscode
 COPY --chown=vscode:vscode agents/ /opt/agents/
-RUN cd /opt/agents && npm ci --no-audit --no-fund && mkdir -p "$HOME/.codex" "$HOME/.dsh"
+RUN cd /opt/agents && npm ci --no-audit --no-fund && mkdir -p "$HOME/.codex" "$HOME/.dsh" "$HOME/.config/gh"
 ENV PATH="/opt/agents/node_modules/.bin:$PATH"
 RUN claude install 2.1.318
