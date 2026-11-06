@@ -6,9 +6,10 @@ cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 
 dockerfile=.devcontainer/Dockerfile
 agents="$HOME/.local/share/sextant-agents"
+host_tools="$HOME/.local/share/sextant-host-tools"
 qmd="$HOME/.local/share/sextant-qmd"
 fnm_dir="$HOME/.fnm"
-export PATH="$agents/node_modules/.bin:$qmd/node_modules/.bin:$fnm_dir/aliases/default/bin:$fnm_dir:$HOME/.local/bin:$PATH"
+export PATH="$agents/node_modules/.bin:$host_tools/node_modules/.bin:$qmd/node_modules/.bin:$fnm_dir/aliases/default/bin:$fnm_dir:$HOME/.local/bin:$PATH"
 
 # The login window is the one place nobody else can see, so progress and failures go where another
 # session can read them and fix them on GitHub. Never the pairing step or a sign-in.
@@ -42,7 +43,82 @@ mkdir -p "$qmd"
 cp .devcontainer/qmd/package.json .devcontainer/qmd/package-lock.json "$qmd/"
 (cd "$qmd" && npm ci --no-audit --no-fund)
 
+# pnpm for dsh's profile installs and the Dev Containers CLI, in their own lock.
+mkdir -p "$host_tools"
+cp deploy/wsl/dsh/package.json deploy/wsl/dsh/package-lock.json "$host_tools/"
+(cd "$host_tools" && npm ci --ignore-scripts --no-audit --no-fund)
+
+# Docker alone cannot run the template: its documented self-install supplies devc.
+devc_template="$HOME/.local/share/sextant-devcontainer"
+template_repo=$(jq -r '.devcontainer_template.repository' deploy/wsl/host-tools.json)
+template_pin=$(jq -r '.devcontainer_template.commit' deploy/wsl/host-tools.json)
+[ -d "$devc_template/.git" ] || git clone --no-checkout "$template_repo" "$devc_template"
+git -C "$devc_template" fetch --depth 1 origin "$template_pin"
+git -C "$devc_template" checkout --detach "$template_pin"
+bash "$devc_template/install.sh" self-install
+
+# Rootless Docker, the user's own daemon (docs.docker.com/engine/security/rootless/, read 2026-11-06).
+docker context inspect rootless > /dev/null 2>&1 || dockerd-rootless-setuptool.sh install
+docker context use rootless > /dev/null
+
+# dsh-tui's documented profile install, with the hook packages Orca's dsh row loads from each profile.
+mapfile -t plugins < <(jq -r '.devDependencies | to_entries[] | .key + "@" + .value' config/dsh/package.json)
+profile_dir="$HOME/.dsh/profiles/dsh-tui"
+mkdir -p "$profile_dir"
+[ -f "$profile_dir/pnpm-workspace.yaml" ] || cp deploy/wsl/dsh/pnpm-workspace.yaml "$profile_dir/"
+dsh plugin --profile dsh-tui add --save-exact "${plugins[@]}" "$PWD/config/dsh"
+# Orca's dsh agent runs this launcher; keep it on PATH without a local wrapper.
+ln -sfn "$profile_dir/node_modules/@deepseek-harness-tui/dsh-tui/bin/dsh-tui.js" "$HOME/.local/bin/dsh-tui"
+
+# Exactly the release checksums already reviewed in the sandbox Dockerfile.
+tool_archive=$(mktemp)
+arch_pins=$(sed -n '/^    amd64) /,/;;/p' "$dockerfile")
+for tool in gitleaks actionlint; do
+  case "$tool" in
+    gitleaks) repo=gitleaks/gitleaks; key=gl; pin=GITLEAKS_VERSION ;;
+    actionlint) repo=rhysd/actionlint; key=al; pin=ACTIONLINT_VERSION ;;
+  esac
+  version=$(sed -n "s/^ARG $pin=//p" "$dockerfile")
+  arch=$(sed -n "s/.*${key}_arch=\\([^;]*\\);.*/\\1/p" <<< "$arch_pins")
+  checksum=$(sed -n "s/.*${key}_sha=\\([a-f0-9]*\\).*/\\1/p" <<< "$arch_pins")
+  curl -fsSL "https://github.com/$repo/releases/download/v$version/${tool}_${version}_${arch}.tar.gz" -o "$tool_archive"
+  printf '%s  %s\n' "$checksum" "$tool_archive" | sha256sum -c -
+  tar -xzf "$tool_archive" -C "$HOME/.local/bin" "$tool"
+done
+rm -f "$tool_archive"
+git config core.hooksPath .githooks
+
+# Disposable research retrieval: checksum-bound wheels, the pinned embedding model and image, a user service.
+python_version=$(sed -n 's/^requires-python = ">=\([^,]*\),.*/\1/p' pyproject.toml)
+pins=deploy/openviking/pins.json
+uv tool install --python "$python_version" "$(jq -r '.openviking | .wheel + "#sha256=" + .sha256' "$pins")"
+# The same full-SHA source the Claude shelf's .mcp.json runs; the tagged wheel resolves an incompatible mcp 2.
+uv tool install --python "$python_version" "$(jq -r '."paper-search-mcp".source' "$pins")"
+# Its CLI README: non-interactive shells need a saved display language (~/.openviking/ovcli.settings.conf).
+ov language en
+model_dir="$HOME/.local/share/sextant-openviking/models"
+mkdir -p "$model_dir" "$HOME/.config/systemd/user"
+model=$(jq -r '.embedding.file' "$pins")
+model_sha=$(jq -r '.embedding.sha256' "$pins")
+if ! printf '%s  %s\n' "$model_sha" "$model_dir/$model" | sha256sum --check --status; then
+  model_url=$(jq -r '.embedding | "https://huggingface.co/" + .repository + "/resolve/" + .revision + "/" + .file' "$pins")
+  curl -fL "$model_url" -o "$model_dir/$model.download"
+  printf '%s  %s\n' "$model_sha" "$model_dir/$model.download" | sha256sum -c -
+  mv "$model_dir/$model.download" "$model_dir/$model"
+fi
+docker compose -f deploy/openviking/compose.yaml up -d
+sed "s|%h/sextant/deploy|$PWD/deploy|" deploy/openviking/openviking.service \
+  > "$HOME/.config/systemd/user/sextant-openviking.service"
+systemctl --user daemon-reload
+systemctl --user enable --now sextant-openviking.service
+# An installed-but-failed service is not a completed setup.
+embedding_url=$(jq -r '.embedding.dense.api_base' deploy/openviking/ov.conf)
+curl -fsS --retry 30 --retry-all-errors --retry-delay 2 "${embedding_url%/v1}/health" -o /dev/null
+retrieval_url=$(jq -r '.url' deploy/openviking/ovcli.conf)
+curl -fsS --retry 30 --retry-all-errors --retry-delay 2 "$retrieval_url/health" | jq -e '.healthy == true' > /dev/null
+
 uv sync --frozen
+just index
 }
 install_tools 2>&1 | tee -a "$log"
 

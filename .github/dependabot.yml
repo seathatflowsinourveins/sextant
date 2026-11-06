@@ -1,7 +1,7 @@
 version: 2
 updates:
   - package-ecosystem: npm
-    directory: /.devcontainer/agents
+    directories: [/.devcontainer/agents, /deploy/wsl/dsh, /config/dsh]
     schedule: { interval: daily }
     cooldown: { default-days: 3 }
     open-pull-requests-limit: 2

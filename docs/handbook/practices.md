@@ -63,7 +63,7 @@
 
 ## Harness
 
-- One manifest row per pick or practice, with pin, application and `just prove` command; nothing enters without one and a stopped practice is deleted. [ADR-0001](../adr/0001-sextant-foundation.md)
+- One manifest row per pick or practice, with pin, application and `just prove` command; nothing enters without one and a stopped practice is deleted. When merging parallel lane work, retain main's rows and append the lane's new rows at the end of their existing section. [ADR-0001](../adr/0001-sextant-foundation.md); lead direction for [PR #70](https://github.com/seathatflowsinourveins/sextant/pull/70), 2026-11-06; [merge lesson](retrieval.md)
 - A PR lands through squash auto-merge only when ci, source and review pass. Danger enforces the manifest/source rule in source; gh-aw supplies review. These run from the base branch, so the PR cannot change its own checks. [ADR-0001](../adr/0001-sextant-foundation.md)
 - Keep always-loaded rules short and enforce boundaries instead of hooks; the only hooks are the secret scan and the skills runtime. [ADR-0001](../adr/0001-sextant-foundation.md)
 - Agent sessions remain local. ci, source and gh-aw review run on GitHub-hosted runners; ci executes PR code with a read-only token, no secrets and no caches. A local runner is deferred until a job needs a private network or broker connection. [ADR-0001](../adr/0001-sextant-foundation.md)

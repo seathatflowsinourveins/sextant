@@ -111,12 +111,18 @@ def test_every_action_is_pinned() -> None:
     for workflow in WORKFLOWS.glob("*.yml"):
         for action in re.findall(r"uses:\s*(\S+)", workflow.read_text()):
             assert re.search(r"@([0-9a-f]{40}|sha256:[0-9a-f]{64})$", action), action
+    setup = _read("deploy/wsl/setup.sh")
+    assert "pin=ACTIONLINT_VERSION" in setup and "key=al" in setup
+    assert '"$checksum" "$tool_archive" | sha256sum -c -' in setup
 
 
 def test_gitleaks_is_wired() -> None:
     assert _run("gitleaks", "version").returncode == 0
     assert "gitleaks" in _read("justfile")
     assert "gitleaks" in _read(".githooks/pre-commit")
+    setup = _read("deploy/wsl/setup.sh")
+    assert "pin=GITLEAKS_VERSION" in setup and "key=gl" in setup
+    assert "git config core.hooksPath .githooks" in setup
 
 
 def test_rulesets_are_active() -> None:
@@ -151,6 +157,8 @@ def test_dependabot_covers_every_ecosystem() -> None:
     for ecosystem in ("npm", "uv", "docker", "github-actions", "devcontainers"):
         assert f"package-ecosystem: {ecosystem}" in dependabot
     assert dependabot.count("cooldown") == 6
+    for path in ("/.devcontainer/agents", "/.devcontainer/qmd", "/deploy/wsl/dsh", "/config/dsh"):
+        assert path in dependabot
 
 
 def test_scoreboard_uses_upstream_actions() -> None:

@@ -53,6 +53,10 @@ gh-app *args:
 prove:
     uv run --frozen pytest tests/proofs
 
+# Import a disposable copy of the committed research docs into local OpenViking.
+index:
+    bash deploy/openviking/index.sh
+
 # Opt into the pinned OMC plugin for this Claude session (native settings precedence).
 omc:
     claude --settings '{"env":{"DISABLE_OMC":"0"},"enabledPlugins":{"oh-my-claudecode@omc":true}}'
