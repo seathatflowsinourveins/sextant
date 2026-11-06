@@ -45,6 +45,14 @@ reflection:
 shelf:
     bash deploy/wsl/shelf.sh
 
+# Inside the clean distro only: issue #62's pinned native Orca CLI roster.
+lane-runtimes:
+    bash deploy/wsl/lane-runtimes/install.sh
+
+# Durable fresh router, through upstream's own systemd unit generator; run from main after handover.
+omniroute *args:
+    bash deploy/wsl/lane-runtimes/service.sh {{args}}
+
 # Inside the clean distro only: AO at its pin, its daemon tab, and the hand-off of a lane PR. See docs/start.md.
 ao *args:
     bash deploy/wsl/ao.sh {{args}}

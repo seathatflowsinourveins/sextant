@@ -18,6 +18,11 @@ KNOWN=(
   EXA_API_KEY
   CONTEXT7_API_KEY
   TYPESAFE_API_KEY
+  OMNIROUTE_API_KEY # fresh Sextant router's client key, not an old-campaign lane key
+  OMNIROUTE_JWT_SECRET
+  OMNIROUTE_API_KEY_SECRET
+  OMNIROUTE_STORAGE_ENCRYPTION_KEY
+  OMNIROUTE_CLI_SALT
   ALPACA_PAPER_1_API_KEY # one writer per account: no orders from here before a handover the owner confirms
   ALPACA_PAPER_1_SECRET_KEY
   ALPACA_PAPER_2_API_KEY
