@@ -142,3 +142,11 @@ def test_scoreboard_uses_upstream_actions() -> None:
     scoreboard = (WORKFLOWS / "scoreboard.yml").read_text()
     assert "github/issue-metrics@" in scoreboard
     assert "peter-evans/create-issue-from-file@" in scoreboard
+
+
+def test_lessons_keep_their_seed_and_stay_append_only() -> None:
+    lines = _read("docs/handbook/lessons.jsonl").splitlines(True)
+    assert _sha("".join(lines[:130])) == (
+        "c9c2dd40ff547fdc5625e59b8d286610b991317578390678277d775ebfa4d4d0"
+    )
+    assert {json.loads(line)["schema"] for line in lines} == {"northstar.handbook.lesson/1"}

@@ -1,0 +1,169 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://northstar.invalid/handbook/lesson-v1.schema.json",
+  "title": "North Star handbook lesson/1",
+  "$comment": "Contract: DESIGN.md, Source of truth and Compounding loop fields. Canonical home and widening: lead ruling https://github.com/seathatflowsinourveins/northstar/issues/15#issuecomment-6507541956, read 2026-10-29. The existing 15 required fields, including nullable sample_size, stay unchanged; parameter-change metadata is optional. Mirrors src/northstar_trading/research/handbook/core.py validation. Use core.schema_validator() to assert custom formats (JSON Schema 2020-12 validation sections 6.1.1 and 7); generic validators may ignore them. Cross-record id/identity uniqueness and ordered supersession, duplicate JSON keys and nonfinite JSON tokens are log/parser checks, not single-record assertions. All $ref targets are local; the $id is an identifier, not a network resource.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "id",
+    "area",
+    "subject",
+    "session_date",
+    "recorded_at",
+    "result",
+    "sample_size",
+    "evidence",
+    "lesson",
+    "change",
+    "next",
+    "status",
+    "supersedes",
+    "source"
+  ],
+  "properties": {
+    "schema": {
+      "const": "northstar.handbook.lesson/1"
+    },
+    "id": {
+      "$ref": "#/$defs/text",
+      "pattern": "^[a-z0-9][a-z0-9._-]*$"
+    },
+    "area": {
+      "$comment": "DESIGN.md: union of the original areas and the nightly-tuning areas, per the 2026-10-29 lead ruling.",
+      "enum": ["strategies", "exits", "catalysts", "symbol-classes", "owner-b", "execution", "live", "ranking", "entries", "sizing", "data", "events", "risk"]
+    },
+    "subject": {
+      "$ref": "#/$defs/text"
+    },
+    "session_date": {
+      "$ref": "#/$defs/text",
+      "format": "date",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+    },
+    "recorded_at": {
+      "$ref": "#/$defs/timestamp"
+    },
+    "result": {
+      "$comment": "DESIGN.md:15; source handbook_core.py:146-147 requires the sign, colon, whitespace and explanation, not just a sign enum.",
+      "$ref": "#/$defs/text",
+      "pattern": "^(positive|negative|inconclusive):[\u0009-\u000d\u001c-\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+[^\u0009-\u000d\u001c-\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]"
+    },
+    "sample_size": {
+      "$comment": "DESIGN.md:15,39: null is unknown, 0 is known. Source sample() requires type(value) is int; format prevents a decoded 1.0 from passing JSON Schema's mathematical integer definition.",
+      "anyOf": [
+        {"type": "integer", "minimum": 0, "format": "northstar-sample-size"},
+        {"type": "null"}
+      ]
+    },
+    "evidence": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "ref", "as_of"],
+        "properties": {
+          "kind": {
+            "enum": ["performance-manifest", "learning-manifest", "reflection-report", "pr", "bead", "research-note", "experiment"]
+          },
+          "ref": {"$ref": "#/$defs/reference"},
+          "as_of": {"$ref": "#/$defs/timestamp"}
+        }
+      }
+    },
+    "lesson": {
+      "$ref": "#/$defs/text"
+    },
+    "change": {
+      "type": "object",
+      "$comment": "what/ref remain required and nullable. Optional param/profile/from/to/registry_version are nonblank trimmed strings; parameter values retain the registry's decimal-string representation, never float coercions. This is recorded research metadata, not a configuration action.",
+      "additionalProperties": false,
+      "required": ["what", "ref"],
+      "properties": {
+        "what": {"$ref": "#/$defs/nullableText"},
+        "ref": {
+          "anyOf": [{"$ref": "#/$defs/reference"}, {"type": "null"}]
+        },
+        "param": {"$ref": "#/$defs/text"},
+        "profile": {"$ref": "#/$defs/text"},
+        "from": {"$ref": "#/$defs/text"},
+        "to": {"$ref": "#/$defs/text"},
+        "registry_version": {"$ref": "#/$defs/text"}
+      }
+    },
+    "next": {
+      "$ref": "#/$defs/nullableText"
+    },
+    "status": {
+      "enum": ["open", "confirmed", "refuted", "adopted", "superseded"]
+    },
+    "supersedes": {
+      "$ref": "#/$defs/nullableText",
+      "$comment": "DESIGN.md:10-11: a new record points to an earlier id. The log validator enforces earlier, unreplaced, same-area and same-subject; this field alone is nullable trimmed text, not a stricter slug."
+    },
+    "source": {
+      "$comment": "paper-reflect producer output maps to reflection-runner; paper-reflect is not a stored enum value.",
+      "enum": ["seed-v0", "reflection-runner", "lead", "owner", "nightly-tuning", "replay", "tca"]
+    },
+    "hypothesis_id": {
+      "$comment": "DESIGN.md:21-24: absent or null remains unknown; no registry lookup here.",
+      "$ref": "#/$defs/nullableText"
+    },
+    "adr_refs": {
+      "$comment": "DESIGN.md:24; source handbook_core.py:159-167 accepts distinct ADR-\\d{4} strings, including Python Unicode decimal digits.",
+      "$ref": "#/$defs/adrList"
+    },
+    "contradicts_adr": {
+      "$comment": "DESIGN.md:25,33: caller routes new contradictions to the lead; the appender sends no messages.",
+      "$ref": "#/$defs/adrList"
+    },
+    "live_stage": {
+      "$comment": "Union of two different stage taxonomies, not interchangeable authorization. northstar@619452ad155a6be131a54ef9c315cdefb43a41bf:docs/decisions/0053-live-lane-automated-evidence-gated.md:117 defines 0 Shadow (stored as shadow); :118 defines 1 Minimum size (stage-1); :119 defines 2 Scale by evidence (stage-2); :120 defines 3 Target size (stage-3). northstar-trading@d02a51c322ac35dab402aac12f421708eef40deb:docs/adr/0011-execution-exits-and-reentry.md:44,122 defines Stage A fixed-entry exit contrast (stage-a); :44,132 defines Stage B reclaim contrast (stage-b); :46 also names Stage 0 shadow and Stage 1. none is the existing no-stage sentinel, not an ADR stage; null/absence means unknown. No stage-n is defined by either ADR. Sources read 2026-10-29.",
+      "enum": ["none", "shadow", "stage-1", "stage-2", "stage-3", "stage-a", "stage-b", null]
+    },
+    "origin_lane": {
+      "$comment": "Optional, not nullable. paper-a/b/c and ibkr-paper identify paper profiles. alpaca and ibkr are legacy coarse values retained for existing records; new profile lessons use the precise paper lane.",
+      "enum": ["research", "alpaca", "ibkr", "live", "lead", "owner", "paper-a", "paper-b", "paper-c", "ibkr-paper"]
+    },
+    "bead": {
+      "$comment": "DESIGN.md:30: source accepts nullable trimmed text, not a stricter northstar-trading prefix.",
+      "$ref": "#/$defs/nullableText"
+    }
+  },
+  "$defs": {
+    "text": {
+      "$comment": "Source text(): nonempty, Python-str.strip()-trimmed strings, no U+0000..U+001F or U+007F. Explicit Unicode whitespace ranges preserve Python's boundary behavior without imposing ASCII-only text.",
+      "type": "string",
+      "minLength": 1,
+      "allOf": [
+        {"not": {"pattern": "[\u0000-\u001f\u007f]"}},
+        {"not": {"pattern": "^[\u0009-\u000d\u001c-\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]|[\u0009-\u000d\u001c-\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]$"}}
+      ]
+    },
+    "nullableText": {
+      "anyOf": [{"$ref": "#/$defs/text"}, {"type": "null"}]
+    },
+    "reference": {
+      "$comment": "DESIGN.md:15-16 and source reference(): local reference or a literal lowercase https:// prefix; protocol-relative URLs and every other scheme refused. No URI/hostname existence or normalization is imposed.",
+      "$ref": "#/$defs/text",
+      "not": {
+        "anyOf": [
+          {"pattern": "^//"},
+          {"pattern": "^(?!https://)[a-zA-Z][a-zA-Z0-9+.-]*:"}
+        ]
+      }
+    },
+    "timestamp": {
+      "$comment": "DESIGN.md:14-15 says ISO; source iso_time() accepts exactly datetime.fromisoformat with explicit timezone (including basic/week forms, non-T separators and second/fractional offsets), not only RFC3339 date-time. The custom format must be enabled via core.schema_validator().",
+      "$ref": "#/$defs/text",
+      "format": "northstar-aware-iso-time"
+    },
+    "adrList": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 8, "maxLength": 8, "pattern": "^ADR-", "format": "northstar-adr"}
+    }
+  }
+}
