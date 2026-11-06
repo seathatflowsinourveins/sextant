@@ -1,6 +1,6 @@
 # ADR-0001: Sextant is built only from SOTA sources
 
-Status: accepted, 2026-11-05. Drafted by Claude Code 2.1.318, `claude-opus-5-5`, max. Cross-family review: see the PR that lands this file.
+Status: accepted, 2026-11-05. Drafted by Claude Code 2.1.318, `claude-opus-5-5`, max. Cross-family review: see the PR that lands this file. Picks: [foundations convergence](../research/2026-11-05-foundations-convergence.md), two blind legs from two families.
 
 ## Context
 The earlier campaign measured 8,393 tracked files, about 71 KB of rules per session, 17 hook entries, 108 deny rules, 1,130 open beads and 64 open PRs (northstar `35069bf281afb11fdbb87bde1ad66c77f7f0aca3`, measured 2026-11-05). Its last 100 merged PRs took a median of 3.2 hours once opened, so the delay was the local work before merge.
