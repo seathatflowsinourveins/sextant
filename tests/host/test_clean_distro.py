@@ -96,3 +96,17 @@ def test_orca_is_at_the_pin_and_runs_as_its_own_service() -> None:
     environment = _run("systemctl", "--user", "show", "orca-serve", "-p", "Environment").stdout
     assert "ORCA_TERMINAL_MEMORY_MAX=16G" in environment
     assert "ORCA_TERMINAL_MEMORY_SWAP_MAX=0" in environment
+
+
+def test_the_claude_shelf_is_installed_here() -> None:
+    """`just shelf`: each plugin the settings enable is installed and on; OMC stays off."""
+    settings = json.loads((ROOT / ".claude" / "settings.json").read_text())
+    want = {name for name, on in settings["enabledPlugins"].items() if on}
+    listed = json.loads(_run("claude", "plugin", "list", "--json").stdout)
+    have = {plugin["id"] for plugin in listed if plugin["enabled"] and plugin["scope"] != "session"}
+    assert want <= have, "run `just shelf`"
+    assert "oh-my-claudecode@omc" not in have
+    known = json.loads(
+        (Path.home() / ".claude" / "plugins" / "known_marketplaces.json").read_text()
+    )
+    assert known["sextant-lsp"]["source"]["path"] == str(ROOT / ".claude" / "lsp")

@@ -2,7 +2,9 @@
 
 import hashlib
 import json
+import os
 import shlex
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -237,3 +239,50 @@ def test_official_typescript_lsp_is_a_verbatim_pinned_plugin_with_its_binaries()
     _lsp("typescript-lsp", "typescript-language-server")
     _package("typescript-language-server", "6.0.3")
     _package("typescript", "7.0.2")
+
+
+SHELF = """#!/usr/bin/env bash
+echo "$PWD ${0##*/} $*" >> "$FAKE_LOG"
+case "${0##*/} $*" in
+  "git worktree list --porcelain") printf 'worktree %s\\n\\nworktree /other\\n' "$FAKE_MAIN" ;;
+esac
+"""
+
+
+def test_the_shelf_installs_what_settings_declares_from_the_main_checkout(tmp_path: Path) -> None:
+    """`just shelf`: marketplaces at user scope, enabled plugins at local scope, OMC left off."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for name in ("claude", "git"):
+        (bin_dir / name).write_text(SHELF)
+        (bin_dir / name).chmod(0o755)
+    log = tmp_path / "calls"
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "FAKE_LOG": str(log),
+        "FAKE_MAIN": str(ROOT),
+    }
+    run = subprocess.run(
+        ["bash", str(ROOT / "deploy/wsl/shelf.sh")], env=env, capture_output=True, text=True
+    )
+    assert run.returncode == 0, run.stderr
+    claude = [line for line in log.read_text().splitlines() if " claude " in line]
+    assert all(line.startswith(f"{ROOT} claude plugin ") for line in claude)
+    calls = [line.split(" claude plugin ", 1)[1] for line in claude]
+    assert calls == [
+        "marketplace add obra/superpowers#v7.0.2 --scope user",
+        "marketplace add EveryInc/compound-engineering-plugin#compound-engineering-v3.36.0"
+        " --scope user",
+        "marketplace add typesafe-ai/skills#v0.6.2 --scope user",
+        "marketplace add Yeachan-Heo/oh-my-claudecode#v5.7.30 --scope user",
+        "marketplace add ./.claude/lsp --scope user",
+        "install superpowers@superpowers-dev --scope local",
+        "install compound-engineering@compound-engineering-plugin --scope local",
+        "install typesafe@typesafe-ai --scope local",
+        "install pyright-lsp@sextant-lsp --scope local",
+        "install typescript-lsp@sextant-lsp --scope local",
+    ]
+    assert "bash deploy/wsl/shelf.sh" in (ROOT / "deploy/wsl/setup.sh").read_text()
+    assert "\nshelf:\n" in (ROOT / "justfile").read_text()
+    assert ".claude/settings.local.json" in (ROOT / ".gitignore").read_text().splitlines()

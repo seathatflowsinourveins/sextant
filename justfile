@@ -37,6 +37,10 @@ orca-update:
 lifecycle:
     bash deploy/wsl/lifecycle.sh
 
+# Inside the clean distro only: install the Claude shelf .claude/settings.json declares. See docs/start.md.
+shelf:
+    bash deploy/wsl/shelf.sh
+
 # Run every manifest row's proof. pytest does the running and the counting.
 prove:
     uv run --frozen pytest tests/proofs
