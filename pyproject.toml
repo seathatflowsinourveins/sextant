@@ -9,7 +9,7 @@ dependencies = ["nautilus-trader[visualization]==2.0.0rc7"]
 dev = ["pytest==9.2.0", "ruff==0.17.4", "zizmor==1.32.0"]
 
 [build-system]
-requires = ["uv_build>=0.13,<0.14"]
+requires = ["uv_build>=0.13.7,<0.14"]
 build-backend = "uv_build"
 
 [tool.ruff]
