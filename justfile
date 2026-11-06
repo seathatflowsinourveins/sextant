@@ -37,6 +37,10 @@ orca-update:
 lifecycle:
     bash deploy/wsl/lifecycle.sh
 
+# Inside the clean distro only: the verified reflection, Orca's automation behind its session/merge precheck (#114).
+reflection:
+    bash deploy/wsl/reflection.sh
+
 # Inside the clean distro only: install the Claude shelf .claude/settings.json declares. See docs/start.md.
 shelf:
     bash deploy/wsl/shelf.sh
