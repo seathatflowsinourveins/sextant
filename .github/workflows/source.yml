@@ -1,0 +1,29 @@
+# The repo's first rule: every PR names its source. Danger runs from the base branch, so a PR cannot
+# change the rule it is checked under, and nothing from the PR runs here. Source: danger/danger-js.
+name: source
+on:
+  pull_request_target: # zizmor: ignore[dangerous-triggers] see docs/adr/0001-sextant-foundation.md
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+concurrency:
+  group: source-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - name: Every change names its source
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: npx --yes "danger@$(jq -r .dependencies.danger .devcontainer/agents/package.json)" ci --dangerfile dangerfile.js --failOnErrors

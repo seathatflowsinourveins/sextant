@@ -15,10 +15,10 @@ The owner's direction, verbatim:
 - "high quality sota autmation, with our practice built form sota foundations with cited sources form sota repos and references."
 
 ## Decision
-1. **Never self-invent.** Every mechanism and strategy names its source in `docs/manifest.md`. `dangerfile.js` and the `review` check refuse a PR without one, and self-invention is P0 in review.
+1. **Never self-invent.** Every mechanism and strategy names its source in `docs/manifest.md`. `dangerfile.js`, run by the `source` check, refuses a PR without one, and self-invention is P0 in review.
 2. **Compound and self-maintain.** Lessons feed back through PRs, and the harness keeps itself current.
 3. **Boundaries, not hooks.** The sandbox is a dev container, gates are GitHub rulesets, and keys are Environment secrets. Zero project hooks.
-4. **A PR lands on `ci` and `review` alone,** with squash auto-merge and no up-to-date rule. Both run from the base branch with `pull_request_target`, so a PR cannot change its own checks. PR code runs only in `ci`, on a clean GitHub-hosted VM with a read-only token, no secrets and no caches. zizmor's `dangerous-triggers` audit is ignored on those lines for this reason.
+4. **A PR lands on `ci`, `source` and `review` alone,** with squash auto-merge and no up-to-date rule. All run from the base branch with `pull_request_target`, so a PR cannot change its own checks. PR code runs only in `ci`, on a clean GitHub-hosted VM with a read-only token, no secrets and no caches. zizmor's `dangerous-triggers` audit is ignored on those lines for this reason.
 
 ## Requests that override earlier northstar records
 Quoted here, not re-researched:
@@ -34,8 +34,10 @@ Quoted here, not re-researched:
 - **Launchers:** `devc` instead of self-written `up` and `agent`.
 - **Checks on GitHub-hosted runners,** not a local runner. The owner, asked directly after the old campaign's lead objected to host changes on a machine running paper accounts: "1 if that is sota moves, this repo meant to be sota clean one compare to the lead adrs convergneced that taking days landing and yet no siginificant progross proven". It uses Actions compute, not cloud agents: the plan's "no cloud" still holds for sessions and bots. A local runner returns when a job needs a private network, at paper or live.
 - **GPT review waits.** The owner allows a subscription through OmniRoute and a dashboard API key. A GitHub-hosted VM cannot reach a local router, so OmniRoute waits for a local runner, and GPT stays in local agent sessions until then.
-- **Review routing and effort follow risk,** on the owner's direction ("dsh can be used and gpt via omni,anthropic via api only when quality needed. sota smart routing and suitable efforts"): dsh reviews every PR, and Claude through the API joins at max effort on a risk path or a dsh-written PR.
-- **The verdict is the upstream rubric's `overall_correctness`.** From round three only a P0 blocks and the rest become issues, the plan's rule, so a PR cannot loop for ever. No upstream has a round limit. This one line in `review.yml` is the owner-approved plan's, not a mechanism of its own.
+- **Review runs on gh-aw,** the pick of both research legs (J1), on the owner's rule ("EVERY HARNESS,EVERY ACTIONS NEED TO BE BUILT FORM SOTA SOURCES ITSELF"). Each reviewer sets the `review` check with gh-aw's `create-check-run`, which replaces the hand-written verdict. The plan's bound stays, as an instruction: from a PR's third reviewed commit only a P0 fails.
+- **One reviewer per PR, always the other family,** on the owner's direction ("dsh can be used and gpt via omni,anthropic via api only when quality needed") and "QUALITT AND SOTANESS ITSELF RATHER THAN SECURITY OVEREGINNERING". This replaces the plan's two reviewers on a risk path. Two reviewers would share one GitHub identity and one check name, so the later verdict would overwrite the earlier. The `live` branch keeps its promotion record and two-family review, which Phase 7 designs.
+- **dsh runs through gh-aw's unsupported sample engine.** gh-aw lists it with no compatibility commitment, and it reaches DeepSeek through gh-aw's documented custom Anthropic endpoint. `strict: false` is what lets that endpoint take this repo's key, and it needs a private repo. The firewall still keeps the key out of the agent's sandbox.
+- **Threat detection is off in both reviewers.** gh-aw's default detection engine is Copilot, whose sign-in is not admitted for this, and a second model on every PR is more than the owner asked for. A reviewer's verdict is therefore not screened for prompt injection, a residual of reading PR text.
 
 ## One adaptation with no upstream to copy
 The private-range firewall is the smallest adaptation of a cited upstream, because Anthropic and Trail of Bits ship allowlists and the owner chose open web. Its manifest row says where we looked.
@@ -48,6 +50,9 @@ The private-range firewall is the smallest adaptation of a cited upstream, becau
 - Anyone who can merge to `live` could reach the live key, so `live` needs a promotion record and two-family review.
 
 ## Revisit when
+- The first PR touching `src/sextant/execution` or `src/sextant/risk`: decide how a second family reviews it. Owner: the lead.
+- gh-aw ships a supported dsh engine, DeepSeek publishes a definition, or the sample stops working: move to it. Owner: the lead.
+- A PR's text is found to have steered a reviewer: turn threat detection on with a non-Copilot engine. Owner: the lead.
 - Median merge time passes 1 hour over the last 20 PRs, open PRs pass 10, or proven rows stop rising across 20 merged PRs: adding layers stops until the blocker is fixed. Owner: the lead.
 - A candidate in the manifest's Watching list hits its trigger. Owner: the lead.
 - A new release of a pinned upstream changes a mechanism we rely on: `refresh-manifest` or Dependabot opens a PR. Owner: the lead.

@@ -14,8 +14,8 @@ Everything here comes from a SOTA source: a maintained repo or framework at a pi
 - Every trading trade-off is decided by replay, sim or paper evidence, never by reasoning alone. Every arm and run counts in one trial ledger.
 
 ## Landing
-- Work on a branch. `just pr "title" body.md` opens the PR from the template and turns on auto-merge. `ci` and `review` decide. Nothing else does.
-- Review follows risk: dsh reviews every PR, and Claude joins on a risk path. A dsh-authored PR adds the line `Agent-Family dsh` to its body, so Claude reviews it instead.
+- Work on a branch. `just pr "title" body.md` opens the PR from the template and turns on auto-merge. `ci`, `source` and `review` decide. Nothing else does.
+- The other family reviews, through gh-aw: dsh by default. A dsh-authored PR adds the line `Agent-Family dsh` to its body, so Claude reviews it instead.
 - Never push to `main`. If `main` goes red, revert.
 - Tracking is GitHub Issues only.
 

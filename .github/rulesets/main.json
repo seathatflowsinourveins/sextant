@@ -25,7 +25,8 @@
         "do_not_enforce_on_create": false,
         "required_status_checks": [
           { "context": "ci", "integration_id": 15368 },
-          { "context": "review", "integration_id": 15368 }
+          { "context": "review", "integration_id": 15368 },
+          { "context": "source", "integration_id": 15368 }
         ]
       }
     }

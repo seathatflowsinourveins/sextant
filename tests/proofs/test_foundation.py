@@ -74,17 +74,20 @@ def test_runtimes_match_their_pins() -> None:
 
 
 def test_source_rule_is_enforced() -> None:
-    """tests/repo/test_dangerfile.py runs the rule itself. This row proves `review` runs it."""
-    assert "--dangerfile dangerfile.js --failOnErrors" in (WORKFLOWS / "review.yml").read_text()
-    assert "Self-invention" in _read(".github/review/head.md")
+    """tests/repo/test_dangerfile.py runs the rule itself. This row proves `source` runs it."""
+    assert "--dangerfile dangerfile.js --failOnErrors" in (WORKFLOWS / "source.yml").read_text()
+    assert "Self-invention" in _read(".github/workflows/shared/review-rules.md")
 
 
-def test_review_uses_pinned_upstream_action() -> None:
-    review = (WORKFLOWS / "review.yml").read_text()
-    assert "anthropics/claude-code-action@c0949c50a78c1ec8ce2647db36629b870e715d0c" in review
-    assert "--profile headless" in review
-    assert "dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d" in review
-    assert "pull_request_target" in review
+def test_review_is_compiled_by_gh_aw_and_sets_the_required_check() -> None:
+    for name, engine in (("review", "id: deepseek-harness"), ("review-claude", "engine: claude")):
+        source = (WORKFLOWS / f"{name}.md").read_text()
+        assert engine in source
+        assert "pull_request_target" in source
+        assert re.search(r"create-check-run:\n\s+name: review\n", source)
+        assert '"compiler_version":"v1.0.1"' in (WORKFLOWS / f"{name}.lock.yml").read_text()
+    sample = (WORKFLOWS / "shared" / "deepseek-harness.md").read_text()
+    assert 'version: "0.2.2-rc.1"' in sample
 
 
 def test_rubric_is_verbatim_upstream() -> None:
@@ -129,8 +132,9 @@ def test_rulesets_are_active() -> None:
         assert required["strict_required_status_checks_policy"] is False
         return {(c["context"], c["integration_id"]) for c in required["required_status_checks"]}
 
-    assert checks("main") == {("ci", 15368), ("review", 15368)}
-    assert checks("live") == {("ci", 15368), ("review", 15368), ("promotion-record", 15368)}
+    required = {("ci", 15368), ("review", 15368), ("source", 15368)}
+    assert checks("main") == required
+    assert checks("live") == required | {("promotion-record", 15368)}
     assert {"update", "deletion", "non_fast_forward"} <= rules("ledger").keys()
     for name in ("main", "live"):
         assert {"pull_request", "deletion", "non_fast_forward"} <= rules(name).keys()

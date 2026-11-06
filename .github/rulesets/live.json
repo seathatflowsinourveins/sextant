@@ -26,6 +26,7 @@
         "required_status_checks": [
           { "context": "ci", "integration_id": 15368 },
           { "context": "review", "integration_id": 15368 },
+          { "context": "source", "integration_id": 15368 },
           { "context": "promotion-record", "integration_id": 15368 }
         ]
       }

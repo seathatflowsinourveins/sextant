@@ -1,0 +1,11 @@
+# `gh aw compile` generates the two lock files, and upstream owns what is in them. Their trigger is
+# explained in docs/adr/0001-sextant-foundation.md. Every workflow written here is still audited in full.
+rules:
+  dangerous-triggers:
+    ignore:
+      - review.lock.yml
+      - review-claude.lock.yml
+  adhoc-packages:
+    ignore:
+      - review.lock.yml
+      - review-claude.lock.yml
