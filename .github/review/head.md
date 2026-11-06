@@ -10,7 +10,7 @@ Use the rubric's P0 to P3. These are always P0, and any P0 makes the patch incor
 - **Self-invention, the repo's first rule:** a mechanism, workflow step, skill or strategy with no SOTA source named at a pinned commit, docs page with read date, or paper. Check that the cited source really does what the PR says, at that pin.
 - a secret, key or token in a file, log, command line or URL;
 - a way to place a live order other than the `live` environment's job;
-- weakening a gate without saying so and why: rulesets, required checks, workflows, `deploy/job-guard.sh`, the firewall or the sandbox settings;
+- weakening a gate without saying so and why: rulesets, required checks, workflows, the firewall or the sandbox settings;
 - an unrequested destructive action on data or on the repo;
 - floats for money in execution or risk code.
 

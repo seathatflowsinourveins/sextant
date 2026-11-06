@@ -1,11 +1,13 @@
-# Publishes rows proven and median merge time to the pinned issue. pytest counts the proofs,
-# github/issue-metrics measures the PRs, peter-evans/create-issue-from-file updates the issue.
+# Publishes rows proven and median merge time to the pinned issue. The proofs run in the real
+# sandbox image, so this builds it, and that is why it runs daily rather than on every merge.
+# pytest counts, github/issue-metrics measures, peter-evans/create-issue-from-file updates the issue.
 name: scoreboard
 on:
   push:
     branches: [main]
+    paths: ["docs/manifest.md", "tests/proofs/**", ".devcontainer/**"]
   schedule:
-    - cron: "17 * * * *"
+    - cron: "17 6 * * *"
   workflow_dispatch:
 permissions:
   contents: read
@@ -16,29 +18,22 @@ concurrency:
   cancel-in-progress: true
 jobs:
   scoreboard:
-    runs-on: [self-hosted, sextant]
-    timeout-minutes: 30
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
-        with:
-          node-version: "24"
-      - name: Prove every manifest row
+      - name: Prove every manifest row, in the sandbox
         id: prove
         uses: devcontainers/ci@513af61f4de4f75d37e4438f184ba4358f0fc1ca # v0.3.1900000450
         env:
           GH_TOKEN: ${{ github.token }}
         with:
           push: never
-          skipContainerUserIdUpdate: true
-          env: |
-            GH_TOKEN
-            UV_PROJECT_ENVIRONMENT=/tmp/venv
-            PYTEST_ADDOPTS=-p no:cacheprovider
+          env: GH_TOKEN
           runCmd: just sync && (just prove 2>&1 | tail -1)
-      - name: Median merge time and open PRs
+      - name: Median merge time
         uses: github/issue-metrics@671528652402b9b8a33da44b5c693b3161bc090f # v5.0.3
         env:
           GH_TOKEN: ${{ github.token }}

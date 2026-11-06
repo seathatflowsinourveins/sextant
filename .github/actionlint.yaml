@@ -1,4 +1,0 @@
-# Documented config: rhysd/actionlint@v1.7.12 docs/config.md.
-self-hosted-runner:
-  labels:
-    - sextant

@@ -19,7 +19,7 @@ env:
   GH_REPO: ${{ github.repository }}
 jobs:
   review:
-    runs-on: [self-hosted, sextant]
+    runs-on: ubuntu-24.04
     environment:
       name: review
       deployment: false
@@ -47,9 +47,8 @@ jobs:
               - 'lanes/live/**'
               - '.devcontainer/**'
               - '.github/**'
-              - 'deploy/**'
               - 'dangerfile.js'
-      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
       - name: Every change names its source
@@ -77,22 +76,11 @@ jobs:
           safety-strategy: read-only
           allow-bot-users: dependabot[bot]
       - name: dsh reviews
-        id: dsh
         if: steps.paths.outputs.risk == 'true' || contains(github.event.pull_request.body, 'Agent-Family codex')
-        uses: devcontainers/ci@513af61f4de4f75d37e4438f184ba4358f0fc1ca # v0.3.1900000450
         env:
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-        with:
-          push: never
-          skipContainerUserIdUpdate: true
-          env: |
-            DEEPSEEK_API_KEY
-          runCmd: dsh --profile headless - < .review/prompt.md
-      - name: Keep dsh's answer
-        if: steps.dsh.outcome == 'success'
-        env:
-          ANSWER: ${{ steps.dsh.outputs.runCmdOutput }}
-        run: printf '%s\n' "$ANSWER" > .review/dsh.json
+          DSH_TELEMETRY_DISABLED: "1"
+        run: npx --yes "@deepseek-ai/dsh@$(jq -r '.dependencies["@deepseek-ai/dsh"]' .devcontainer/agents/package.json)" --profile headless - < .review/prompt.md > .review/dsh.json
       - name: Report on the PR, and decide
         if: ${{ !cancelled() }}
         env:

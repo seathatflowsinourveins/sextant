@@ -35,5 +35,5 @@ Run only `devc` on the host. Never run a script from a working copy an agent has
 - `docs/manifest.md`: every pick and practice, with its pinned source and its proof.
 - `docs/adr/`: one-page decisions. `docs/research/`: load-bearing evidence. `docs/handbook/`: philosophy and lessons.
 - `tests/proofs/`: `just prove` runs one test per manifest row. `tests/repo/`: size budgets, in `just ci`.
-- `.github/`: workflows, rulesets, review prompt. `deploy/`: the runner.
+- `.github/`: workflows, rulesets, review prompt.
 - `src/sextant/`: trading code. `lanes/`: per-lane config.

@@ -2,7 +2,6 @@
 
 import hashlib
 import json
-import os
 import re
 import subprocess
 from pathlib import Path
@@ -36,8 +35,10 @@ def test_sandbox_is_the_upstream_template() -> None:
     assert _sha(_read(".devcontainer/.zshrc")) == (
         "0788e061b87afde6d0e7243e1aa2b93952c1fcdc82125278f5ac503142a5bec2"
     )
+    # FROM lines are left out, because Dependabot moves those pins.
     upstream_part = _read(".devcontainer/Dockerfile").split("# --- Sextant layer")[0]
-    assert _sha(upstream_part) == "f01d25dc9f7e5bf64bc1338835f8b1d695f52ca471b14633f013b310e3cc8860"
+    body = "".join(line for line in upstream_part.splitlines(True) if not line.startswith("FROM "))
+    assert _sha(body) == "61fb7595307fc4d9ab69de9ab3048555d9d3f13314c96097b2901842f38c7b42"
 
 
 def test_agent_cannot_edit_host_run_paths() -> None:
@@ -90,36 +91,26 @@ def test_rubric_is_verbatim_upstream() -> None:
     )
 
 
-def test_ci_runs_pr_code_only_in_the_container() -> None:
+def test_ci_gives_pr_code_no_secret_and_no_cache() -> None:
     ci = (WORKFLOWS / "ci.yml").read_text()
     assert "pull_request_target" in ci
-    assert "devcontainers/ci@513af61f4de4f75d37e4438f184ba4358f0fc1ca" in ci
-    run_lines = re.findall(r"^\s+run:", ci, re.MULTILINE)
-    assert run_lines == [], "a host-side run step would execute beside PR code"
+    assert "runs-on: ubuntu-" in ci
+    assert "secrets." not in ci
+    assert "enable-cache: false" in ci
+    assert ci.count("persist-credentials: false") == ci.count("actions/checkout@")
+    assert re.search(r"^permissions:\n  contents: read\n", ci, re.MULTILINE)
 
 
 def test_every_action_is_pinned() -> None:
     for workflow in WORKFLOWS.glob("*.yml"):
         for action in re.findall(r"uses:\s*(\S+)", workflow.read_text()):
-            assert re.search(r"@[0-9a-f]{40}$", action), f"{workflow.name}: {action}"
+            assert re.search(r"@([0-9a-f]{40}|sha256:[0-9a-f]{64})$", action), action
 
 
 def test_gitleaks_is_wired() -> None:
     assert "gitleaks" in _run("gitleaks", "version").stderr + "gitleaks"
     assert "gitleaks" in _read("justfile")
     assert "gitleaks" in _read(".githooks/pre-commit")
-
-
-def test_runner_version_is_pinned() -> None:
-    assert re.search(r"RUNNER_SHA256=[0-9a-f]{64}", _read("deploy/runner.env"))
-
-
-def test_job_guard_runs_only_mains_workflows() -> None:
-    guard = str(ROOT / "deploy" / "job-guard.sh")
-    good = "seathatflowsinourveins/sextant/.github/workflows/ci.yml@refs/heads/main"
-    bad = "seathatflowsinourveins/sextant/.github/workflows/ci.yml@refs/heads/branch"
-    assert _run("bash", guard, env={**os.environ, "GITHUB_WORKFLOW_REF": good}).returncode == 0
-    assert _run("bash", guard, env={**os.environ, "GITHUB_WORKFLOW_REF": bad}).returncode != 0
 
 
 def test_rulesets_are_active() -> None:
