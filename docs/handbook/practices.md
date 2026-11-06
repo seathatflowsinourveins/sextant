@@ -15,7 +15,7 @@
 - Enter the first leg: a non-decreasing run of eligible trades inside `first_leg_window_s`, no more than `first_leg_max_move` above the quiet price; a lower trade restarts the run. [ADR-0004](../adr/0004-entry.md)
 - A missing ATR or VWAP makes extension UNKNOWN, never "not extended"; a fresh spike high is never the entry. [ADR-0004](../adr/0004-entry.md)
 - Freeze the buying-power basis at segment start with the segment identity; no read of buying power means no entry. [ADR-0004](../adr/0004-entry.md)
-- Send LIMIT at the ask, `extended_hours` outside RTH, reprice at most `entry_chase_bps`, cancel at `entry_ttl_s`, never market. [ADR-0004](../adr/0004-entry.md)
+- Send LIMIT at the ask, `extended_hours` outside RTH with `time_in_force` `day` or `gtc`, reprice at most `entry_chase_bps`, cancel at `entry_ttl_s`, never market. [ADR-0004](../adr/0004-entry.md)
 - Size from planned risk, not from conviction: `stop_distance = entry − initial_trigger + chase_cap_fraction × entry`, bounded by fresh buying power and a flow-share cap. [ADR-0004](../adr/0004-entry.md), [ADR-0011](../adr/0011-sizing-and-auto-leverage.md)
 - Keep mover slots `ceil(0.4 × cap)` and hold the top `3 ×` quota in the candidate pool; custody fills first, potential fills second, unused mover slots pass over. [ADR-0024](../adr/0024-extreme-mover-ranking-and-early-entry.md)
 
