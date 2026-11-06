@@ -120,7 +120,7 @@ def test_partial_fill_reprice_respects_full_position_caps(
         surge=Surge(IID, "fixture-segment", START, START, START + 120 * SEC, D("9.90"), "TEST"),
         params=params(stop_ref_fraction="0.1", flow_share_window_s="1"),
         latency_model=StaticLatencyModel(insert_latency_nanos=500_000_000),
-        fill_model=LimitOrderPartialFillModel(),
+        fill_model=LimitOrderPartialFillModel(prob_fill_on_limit=1.0, prob_slippage=0.0),
     )
     assert len(result.orders) == 1
     assert result.orders[0]["quantity"] == quantity
