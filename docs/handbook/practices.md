@@ -53,6 +53,7 @@
 ## Evidence and learning
 
 - Reconcile selected seeds without changing their weekly/daily selection, raw missingness or dated tickers. An unrepresented session is not a negative, selected losers are not ordinary controls, and unknown availability or cumulative trials remain null. [ADR-0027](../adr/0027-extreme-gainer-research-package.md); [lesson and witness](candidate-history.md)
+- Size historical ticks from each frozen event/control window's actual minute `n`, with measured raw-trades/`n` and quotes/raw-trades ratios; missing inputs keep acquisition held. A past reservation does not reopen a closed trial on the current canonical ledger tip. [Onset preflight and proofs](../research/2026-11-06-onset-detection.md)
 - Every exit leaves its counterfactual: hold-to-now, matched hold-flat, managed policy, managed plus re-entry, and each shadow arm, with n, censoring and costs at 1× and stressed. [ADR-0018](../adr/0018-evidence-and-learning-loop.md)
 - Each tunable value has a registry row and source. A sourced value without calibration is an uncalibrated starting value, never measured success. If the value or its authority is missing, keep it unavailable; fixtures supply no default authority. Reviewed changes occur between sessions, and nightly tuning only proposes. [ADR-0018](../adr/0018-evidence-and-learning-loop.md)
 - One cumulative trial ledger, tiers never pooled, history never reset, rejected variants kept. [ADR-0018](../adr/0018-evidence-and-learning-loop.md)

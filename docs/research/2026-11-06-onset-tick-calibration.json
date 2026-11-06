@@ -1,0 +1,87 @@
+{
+  "byte_samples": [
+    {
+      "elapsed_wall_seconds": "12.885271958017256",
+      "events": 627279,
+      "fetch_wall_seconds": "9.053327125147916",
+      "http_pages": 81,
+      "http_requests": 81,
+      "kind": "trades",
+      "parquet_bytes": 8512226,
+      "parquet_bytes_per_event": "13.57007966152222535745657036",
+      "raw_bytes": 61007407,
+      "raw_bytes_per_event": "97.25721250033876472829474604",
+      "symbol": "AAPL"
+    },
+    {
+      "elapsed_wall_seconds": "28.265032708994113",
+      "events": 648720,
+      "fetch_wall_seconds": "23.636637666029856",
+      "http_pages": 85,
+      "http_requests": 85,
+      "kind": "quotes",
+      "parquet_bytes": 5456633,
+      "parquet_bytes_per_event": "8.411383956098162535454433346",
+      "raw_bytes": 74818629,
+      "raw_bytes_per_event": "115.3326997780244173140954495",
+      "symbol": "AAPL"
+    }
+  ],
+  "data_day": "2026-10-23",
+  "inputs": {
+    "/mnt/wsl/research-data/research-artifacts/mac-research-cache/ticks/ticks/probe-20261025/catalog/data/quotes/AAPL.ALPACA/2026-10-23T12-00-00-110656226Z_2026-10-23T12-59-59-437904386Z.parquet": "7f80915fe84bd585ee1e37c9f2f1c1579a679707ee4d8100a17d1ed68a44bd2c",
+    "/mnt/wsl/research-data/research-artifacts/mac-research-cache/ticks/ticks/probe-20261025/catalog/data/quotes/AAPL.ALPACA/2026-10-23T13-00-01-407207080Z_2026-10-23T13-59-59-955344189Z.parquet": "f1cfff2a33dbfce170148eb02cc3274e9aa91a9862cea570abddcd4a8ec4f2a8",
+    "/mnt/wsl/research-data/research-artifacts/mac-research-cache/ticks/ticks/probe-20261025/catalog/data/quotes/AAPL.ALPACA/2026-10-23T16-00-00-008668451Z_2026-10-23T16-59-59-583928902Z.parquet": "1d8a47231689b02df2937f058fa943c9b71c22fa59836522489a992775f41385",
+    "/mnt/wsl/research-data/research-artifacts/mac-research-cache/ticks/ticks/probe-20261025/catalog/data/quotes/AAPL.ALPACA/2026-10-23T20-00-00-000370866Z_2026-10-23T20-59-47-635173041Z.parquet": "501d3ee4b6090d473b58337aefe22f0a7c2905f6a0aa15b3a4627b15ad1fed3b",
+    "/mnt/wsl/research-data/research-artifacts/mac-research-cache/ticks/ticks/probe-20261025/catalog/data/trades/AAPL.ALPACA/2026-10-23T12-00-03-145698224Z_2026-10-23T12-59-59-438410131Z.parquet": "855c23f2607d79c133262222278a1b29184c9c4801898a6b45b857f45e4db8db",
+    "/mnt/wsl/research-data/research-artifacts/mac-research-cache/ticks/ticks/probe-20261025/catalog/data/trades/AAPL.ALPACA/2026-10-23T13-00-01-533603415Z_2026-10-23T13-59-59-997801174Z.parquet": "42290892ad330ba3db8a02167e525f0d8a72ca12fb57a5437011912ec3a37aa0",
+    "/mnt/wsl/research-data/research-artifacts/mac-research-cache/ticks/ticks/probe-20261025/catalog/data/trades/AAPL.ALPACA/2026-10-23T16-00-00-022857965Z_2026-10-23T16-59-59-985965385Z.parquet": "b72f6efa7846d97da088d972cbef3566a8526a752a2abf791568bf669930a305",
+    "/mnt/wsl/research-data/research-artifacts/mac-research-cache/ticks/ticks/probe-20261025/catalog/data/trades/AAPL.ALPACA/2026-10-23T20-00-00-036793229Z_2026-10-23T20-59-47-635705184Z.parquet": "1edb5153782fc664439a6eee6a60e5eb261053698675111b91fd1cfcedd897f0",
+    "/mnt/wsl/research-data/research-artifacts/mac-research-cache/ticks/ticks/probe-20261025/reports/sizing-1792910930392645000.json": "9f596a9389f97f68de80dbba4c2a3063150fe7e9960bf78d9d327d15ed85b671"
+  },
+  "limitations": [
+    "one liquid symbol across four sessions; no seed/cohort calibration guarantee",
+    "native ts_init=ts_event is synthetic replay timing, not historical receipt latency",
+    "full event/control window n totals are unavailable; no full-cohort request authorized"
+  ],
+  "scope": "offline historical-archive sizing; not representative seed-cohort evidence",
+  "source_report_sha256": "9f596a9389f97f68de80dbba4c2a3063150fe7e9960bf78d9d327d15ed85b671",
+  "windows": [
+    {
+      "end_exclusive": "2026-10-23T12:05:00+00:00",
+      "quotes": 200,
+      "quotes_per_trade": "0.9174311926605504587155963303",
+      "session": "PRE",
+      "start": "2026-10-23T12:00:00+00:00",
+      "symbol": "AAPL",
+      "trades": 218
+    },
+    {
+      "end_exclusive": "2026-10-23T13:35:00+00:00",
+      "quotes": 38195,
+      "quotes_per_trade": "0.7760056887444128403088175538",
+      "session": "RTH_OPEN",
+      "start": "2026-10-23T13:30:00+00:00",
+      "symbol": "AAPL",
+      "trades": 49220
+    },
+    {
+      "end_exclusive": "2026-10-23T16:05:00+00:00",
+      "quotes": 7161,
+      "quotes_per_trade": "0.7728253831210878480466220591",
+      "session": "RTH_MID",
+      "start": "2026-10-23T16:00:00+00:00",
+      "symbol": "AAPL",
+      "trades": 9266
+    },
+    {
+      "end_exclusive": "2026-10-23T20:05:00+00:00",
+      "quotes": 346,
+      "quotes_per_trade": "0.4601063829787234042553191489",
+      "session": "POST",
+      "start": "2026-10-23T20:00:00+00:00",
+      "symbol": "AAPL",
+      "trades": 752
+    }
+  ]
+}

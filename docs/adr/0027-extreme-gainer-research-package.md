@@ -29,6 +29,15 @@ The package contains a multi-year collection of selected movers, source-linked d
 | S: upstream storage practice | northstar-trading@8256c16c31dc:docs/adr/0007-storage-and-data-catalog.md, Decision 1; amendments 2026-11-01/11-05 | Nautilus `ParquetDataCatalog`, one writer, immutable receipts; synthetic capture evidence does not establish operational completeness. |
 
 ## Changes for Sextant
+
+- Owner addition on #130 (2026-11-06): size historical trades and event-ordered quotes for seed/control onset windows before any pull, using their actual minute `n` and measured quote/trade calibration. Record rows, bytes, calls against 200/min, wall/stop times and the dated entitlement check. Missing windows, controls or `n` keep the pull held. Minute bars do not establish first-second entry or B's protection sequence; tick replay is separate evidence from installed broker behavior.
+
+Owner ruling for #130, verbatim via #58 (2026-11-06): "that zip is only a start point, we need to using sota referneces, repos, backtest platfrom, stratgies templates, naut native features etc as only sources of truth".
+
+- #130's primary references are River Page-Hinkley 0.26.1 at `64285b9dd6c606804753235fe992bcf25b9856ee`, Adams–MacKay arXiv:0710.3742v1, and Zarattini–Barbon–Aziz DOI 10.2139/ssrn.4729284's published Stocks in Play opening relative-volume screen. Label each adaptation; K2/K3 are house incumbent E0 comparisons, not truth. Record compute admission on each card actually run.
+- The frozen follow-ons are ADWIN, oracle-checked Lee–Mykland, symmetric CUSUM once an executable reference exists, and OFI/VPIN once their inputs exist. Missing sources/inputs stay unavailable; no tuning or invented replacements.
+- The zip supplies event identities/dates only; re-derive prices, actions, float and timing from historical Alpaca/Sharadar evidence, excluding zip weights/exit ladders. Use native BacktestNode/BacktestEngine over the one ParquetDataCatalog, native VWAP/ATR where applicable, and an `upstream checked:` or `none exists:` line in each arm. #129's landed syntheses govern native-feature choices. Historical REST only, with hashed reserve/outcome hand-offs through #102 before runs; this ruling grants no stream, order, admission or promotion.
+
 The owner admits this archive as a starting source only. Correct the design's claim that no multi-year list exists, while retaining the missing complete PIT ranking universe; exact replacements are in the handoff's `DESIGN-CHANGES.md`.
 Newest owner rulings, verbatim from COMMON.md (2026-11-05/06):
 - "our compounding learning,reflecting, memory/rag etc need to be clean enhacned with sotarepos,adrs harvest with previous convergenced campaign but clean sota architecture never bloat, including the harness rules, our trading philosophy 24/5 24/7 and always previous stated limit ,1000trades/min live lane and 200 paper, 3000for ibkr paper and live"
