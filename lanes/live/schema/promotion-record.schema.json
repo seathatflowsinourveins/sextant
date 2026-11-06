@@ -1,0 +1,40 @@
+{
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["schema", "promotion_id", "strategy", "lane", "instrument_id", "kind", "stage", "head_sha", "verify", "engine_gate"],
+  "properties": {
+    "schema": {"const": "northstar.live.promotion/1"},
+    "promotion_id": {"type": "string", "minLength": 1},
+    "strategy": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+    "lane": {"type": "string", "minLength": 1},
+    "instrument_id": {"type": "string", "minLength": 1},
+    "kind": {"enum": ["paper_proven", "owner_plan", "drill"]},
+    "stage": {"type": "integer", "minimum": 0, "maximum": 3},
+    "head_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "verify": {
+      "type": "object",
+      "required": ["slug", "head_sha", "verdict"],
+      "properties": {
+        "slug": {"type": "string", "minLength": 1},
+        "head_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "verdict": {"enum": ["PASS", "PASS-WITH-NITS"]}
+      }
+    },
+    "engine_gate": {
+      "type": "object",
+      "required": ["kind", "date"],
+      "properties": {
+        "kind": {"enum": ["final", "owner_ack_rc"]},
+        "date": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$", "format": "date"}
+      }
+    },
+    "owner_instruction": {"type": ["string", "null"]}
+  },
+  "allOf": [{
+    "if": {"properties": {"kind": {"const": "owner_plan"}}},
+    "then": {
+      "required": ["owner_instruction"],
+      "properties": {"owner_instruction": {"type": "string", "minLength": 1}}
+    }
+  }]
+}

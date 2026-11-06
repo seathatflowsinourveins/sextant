@@ -1,0 +1,25 @@
+{
+  "type": "object",
+  "required": ["deployments"],
+  "additionalProperties": false,
+  "properties": {
+    "deployments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["strategy", "lane", "params", "record"],
+        "additionalProperties": false,
+        "properties": {
+          "strategy": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+          "lane": {"type": "string", "minLength": 1},
+          "params": {
+            "type": "object",
+            "required": ["instrument_id"],
+            "properties": {"instrument_id": {"type": "string", "minLength": 1}}
+          },
+          "record": {"type": "string", "minLength": 1}
+        }
+      }
+    }
+  }
+}
