@@ -47,6 +47,8 @@ def test_nothing_here_waits_on_a_prompt() -> None:
     settings = json.loads((Path.home() / ".claude" / "settings.json").read_text())
     assert settings["permissions"]["defaultMode"] == "bypassPermissions"
     assert settings["skipDangerousModePermissionPrompt"] is True
+    # Claude Code stays at the pin; bumps come by PR.
+    assert settings["env"]["DISABLE_AUTOUPDATER"] == "1"
     login = _run("gh", "auth", "status").stdout
     assert "'workflow'" in login and "'user'" in login
 

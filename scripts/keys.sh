@@ -18,6 +18,11 @@ KNOWN=(
   EXA_API_KEY
   CONTEXT7_API_KEY
   TYPESAFE_API_KEY
+  OMNIROUTE_API_KEY # fresh Sextant router's client key, not an old-campaign lane key
+  OMNIROUTE_JWT_SECRET
+  OMNIROUTE_API_KEY_SECRET
+  OMNIROUTE_STORAGE_ENCRYPTION_KEY
+  OMNIROUTE_CLI_SALT
   ALPACA_PAPER_1_API_KEY # one writer per account: no orders from here before a handover the owner confirms
   ALPACA_PAPER_1_SECRET_KEY
   ALPACA_PAPER_2_API_KEY
@@ -47,6 +52,7 @@ KNOWN=(
   # One line because --sealed-stdin carries one value line; the old store did the same for its App keys
   # (northstar@0243050704565abaf3a95f0f09613cb974a331e5:scripts/keys.sh:77-78, GITHUB_APP_*_KEY_B64).
   SEXTANT_GITHUB_APP_KEY_B64
+  SEXTANT_LEDGER_DEPLOY_KEY_B64 # the ledger branch's one writer (#102): base64 of an ed25519 deploy key, read only by `just ledger-append`
 )
 
 [[ "$(uname -s)" == Linux ]] || {

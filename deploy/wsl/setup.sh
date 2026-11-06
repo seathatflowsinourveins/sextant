@@ -125,10 +125,12 @@ install_tools 2>&1 | tee -a "$log"
 # No prompt anywhere in this distro. Orca already launches every agent with its bypass flag
 # (stablyai/orca@a162e08b29b2883b02d8a0dfcc99e26c80b2cfe7:docs/site/content/docs/agents/supported.mdx). These answer Claude's own
 # dialog up front, for plain tabs and for Orca's managed accounts, whose settings live apart.
+# Claude Code stays at this repo's pin: bumps arrive as PRs (AGENTS.md Rule 2), so its background updater is
+# off. DISABLE_AUTOUPDATER: code.claude.com/docs/en/env-vars, read 2026-11-06; manual `claude install` still works.
 no_prompts() {
   mkdir -p "$1"
   [ -f "$1/settings.json" ] || echo '{}' > "$1/settings.json"
-  jq '.permissions.defaultMode = "bypassPermissions" | .skipDangerousModePermissionPrompt = true' \
+  jq '.permissions.defaultMode = "bypassPermissions" | .skipDangerousModePermissionPrompt = true | .env.DISABLE_AUTOUPDATER = "1"' \
     "$1/settings.json" > "$1/settings.json.new"
   mv "$1/settings.json.new" "$1/settings.json"
 }

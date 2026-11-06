@@ -6,6 +6,8 @@
 
 **Accounts and limits.**
 
+C's [profile preregistration](../../docs/research/2026-11-06-paper-c-profile-preregistration.md) defines the replay/sim comparison; execution and ledger binding remain NOT_RUN, and the owner approves any proposed profile before use.
+
 | Lane | Account | Shape | Limit | Source |
 |---|---|---|---|---|
 | A | Alpaca paper, isolated | Full factor stack in paired with/without arms; Tier L 1.0%, rank ceilings 2×/1.5×/1×, 5 names, mover quota 2 | 200 requests/min, 180 actions/min | [ADR-0009](../../docs/adr/0009-order-rate-limits.md), [limits](../limits.yaml), [ADR-0002](../../docs/adr/0002-philosophy-and-lanes.md) |

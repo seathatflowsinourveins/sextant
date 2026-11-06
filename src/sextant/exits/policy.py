@@ -7,8 +7,9 @@ The Decimal-only, pure-function shape follows the nearest carried code,
 northstar-trading@8256c16c31dc:src/northstar_trading/strategies/exit_manager/rules.py. The order
 lifecycle stays in Nautilus (see engine.py).
 
-Every parameter is an UNCALIBRATED registry row (REGISTRY below). None has a default here: a caller
-that lacks a value has no authority to trade on one (AGENTS.md Rule 2).
+Every parameter is an UNCALIBRATED registry row (REGISTRY below) with its recorded start and
+source. ExitParams has no defaults: a caller takes `ExitParams.starts()` or names every value. A row
+with no recorded start stays unavailable (AGENTS.md Rule 2).
 """
 
 from __future__ import annotations
@@ -31,29 +32,31 @@ class Row:
     state: str = "UNCALIBRATED"
 
 
+T19 = (
+    "northstar-trading@7c5f852a2816bbaa5896241a93bab9de7cf7bb4f:"
+    "docs/adr/0019-managed-exits-and-ranked-reentry.md"
+)
+LANES = "northstar-lanes@00203275944a22655b3e14b221cfde9a265d549a:src/northstar_lanes/parameters.py"
+
+# Paper starts as recorded at their sources; a start is never measured success (Rule 2).
 REGISTRY: tuple[Row, ...] = (
-    Row("prearm_buffer_fraction", "fraction of entry", None, f"{ADR} X2"),
-    Row("prearm_range_multiple", "multiple of R_w", None, f"{ADR} X2"),
-    Row("prearm_range_window_s", "seconds", None, f"{ADR} X2"),
-    Row("gain_lock_giveback_fraction", "fraction of H-entry", None, f"{ADR} X2"),
-    Row("breach_persist_count", "observations", None, f"{ADR} X4"),
-    Row("breach_persist_span_s", "seconds", None, f"{ADR} X4"),
-    Row("chase_cap_fraction", "fraction of last", None, f"{ADR} X5"),
-    Row("chase_min_interval_s", "seconds", None, f"{ADR} X5"),
+    Row("prearm_buffer_fraction", "fraction of entry", Decimal("0.01"), f"{T19}:251"),
+    Row("prearm_range_multiple", "multiple of R_w", Decimal(1), f"{T19}:252"),
+    Row("prearm_range_window_s", "seconds", Decimal(10), f"{T19}:253"),
+    Row("gain_lock_giveback_fraction", "fraction of H-entry", Decimal("0.1"), f"{T19}:140"),
+    Row("breach_persist_count", "observations", Decimal(3), f"{T19}:100"),
+    Row("breach_persist_span_s", "seconds", Decimal(1), f"{T19}:100"),
     Row(
-        "take_profit_above_h_fraction",
-        "fraction of H",
-        Decimal("0.10"),
-        f"{ADR} X5, '0.10/0.02 starts'",
+        "chase_cap_fraction",
+        "fraction of last",
+        Decimal("0.01"),
+        "implied by ADR-0019:296 (trading@7c5f852a), not a recorded start (lead ruling, #98)",
     ),
-    Row(
-        "take_profit_step_fraction",
-        "fraction of H",
-        Decimal("0.02"),
-        f"{ADR} X5, '0.10/0.02 starts'",
-    ),
-    Row("backstop_min_separation_fraction", "fraction", None, f"{ADR} X6"),
-    Row("quote_max_age_s", "seconds", None, f"{ADR} X2"),
+    Row("chase_min_interval_s", "seconds", None, f"{ADR} X5; no value at either pin (#98)"),
+    Row("take_profit_above_h_fraction", "fraction of H", Decimal("0.10"), f"{ADR} X5"),
+    Row("take_profit_step_fraction", "fraction of H", Decimal("0.02"), f"{ADR} X5"),
+    Row("backstop_min_separation_fraction", "fraction", Decimal("0.05"), f"{T19}:107"),
+    Row("quote_max_age_s", "seconds (RTH; 2 outside)", Decimal(1), f"{LANES}:15"),
 )
 
 
@@ -68,7 +71,7 @@ class ExitParams:
     breach_persist_count: int
     breach_persist_span_s: Decimal
     chase_cap_fraction: Decimal
-    chase_min_interval_s: Decimal
+    chase_min_interval_s: Decimal | None  # None: unavailable, so the chase is off
     take_profit_above_h_fraction: Decimal
     take_profit_step_fraction: Decimal
     backstop_min_separation_fraction: Decimal
@@ -77,6 +80,8 @@ class ExitParams:
     def __post_init__(self) -> None:
         for f in fields(self):
             value = getattr(self, f.name)
+            if f.name == "chase_min_interval_s" and value is None:
+                continue
             if f.name == "breach_persist_count":
                 if not isinstance(value, int) or value < 1:
                     raise ValueError("breach_persist_count must be an int >= 1")
@@ -88,6 +93,16 @@ class ExitParams:
         if self.take_profit_above_h_fraction <= self.take_profit_step_fraction:
             raise ValueError("take_profit_above_h_fraction must exceed take_profit_step_fraction")
 
+    @classmethod
+    def starts(cls) -> ExitParams:
+        """Every row at its recorded start. A row without one stays unavailable (None)."""
+        values: dict[str, object] = {row.name: row.start for row in REGISTRY}
+        values["breach_persist_count"] = int(Decimal(str(values["breach_persist_count"])))
+        missing = [k for k, v in values.items() if v is None and k != "chase_min_interval_s"]
+        if missing:
+            raise ValueError(f"no recorded start: {missing}")
+        return cls(**values)  # type: ignore[arg-type]
+
 
 # X2: the trigger.
 def noise_floor(one_tick: Decimal, spread: Decimal) -> Decimal:
@@ -95,10 +110,22 @@ def noise_floor(one_tick: Decimal, spread: Decimal) -> Decimal:
 
 
 def buffer(
-    one_tick: Decimal, spread: Decimal, entry: Decimal, range_w: Decimal | None, p: ExitParams
+    one_tick: Decimal,
+    spread: Decimal,
+    entry: Decimal,
+    range_w: Decimal | None,
+    p: ExitParams,
+    *,
+    range_estimable: bool = True,
 ) -> Decimal | None:
-    """max(one_tick, spread, f*entry, m*R_w). Unknown R_w makes it unknown unless m is zero."""
-    if range_w is None and p.prearm_range_multiple != 0:
+    """max(one_tick, spread, f*entry, m*R_w). Unknown R_w makes it unknown unless m is zero.
+
+    `range_estimable=False` drops the range term where the data cannot estimate it (minute bars,
+    #98 B3); dropping a max term can only tighten the trigger.
+    """
+    if not range_estimable:
+        range_w = None
+    elif range_w is None and p.prearm_range_multiple != 0:
         return None
     range_term = ZERO if range_w is None else p.prearm_range_multiple * range_w
     return max(one_tick, spread, p.prearm_buffer_fraction * entry, range_term)

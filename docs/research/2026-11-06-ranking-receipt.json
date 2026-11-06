@@ -1,0 +1,421 @@
+{
+  "k2": {
+    "inference_eligible": false,
+    "pit_cohort": null,
+    "preregistration": null,
+    "status": "NOT_RUN",
+    "trial_ledger_binding": null
+  },
+  "missed_movers": {
+    "activity_complete": false,
+    "counts": {
+      "activity_unresolved": 5,
+      "candidates": 18,
+      "manifest_only_no_arm": 9,
+      "observed_plus_5_percent": 11
+    },
+    "coverage_complete": false,
+    "primary_table_bytes": 3707,
+    "primary_table_sha256": "77d88d67f4b2e729a70c851656a7e69d3b927f0da8a8c1d4d03c6263a1ae4117",
+    "raw_replay": "NOT_RUN",
+    "status": "RETAINED_ARTIFACT_RECOUNT_AND_TABLE_RENDER_ONLY",
+    "universe_complete": false,
+    "why_counts": {
+      "no_premarket_carrier": 2,
+      "not_ranked_in_time": 4,
+      "rth_mover_not_premarket": 7,
+      "tier_or_liquidity_excluded": 5
+    }
+  },
+  "missed_movers_snapshot_identities": [
+    {
+      "path": "/mnt/wsl/research-data/scanner-mac-history/snapshots/2026-10-27/20261027T084937960584Z.json",
+      "sha256": "60681e62d2e1645ebadcec1e8f58c2df9b3565425d1341e00af57ef91223ba08",
+      "status": "HASH_MATCH_READ_ONLY"
+    },
+    {
+      "path": "/mnt/wsl/research-data/scanner-mac-history/snapshots/2026-10-27/20261027T085305108235Z.json",
+      "sha256": "06c493ae5b9bd724fed94e3686a3926ef87ef4c1ccc258794cfe077847533bc2",
+      "status": "NOT_CHECKED"
+    },
+    {
+      "path": "/mnt/wsl/research-data/scanner-mac-history/snapshots/2026-10-27/20261027T085805775625Z.json",
+      "sha256": "9e500aff4ab333dde48b8e4e1d9e811275022837cddaf4b99b8b1e31f88f1266",
+      "status": "NOT_CHECKED"
+    },
+    {
+      "path": "/mnt/wsl/research-data/scanner-mac-history/snapshots/2026-10-27/20261027T090305923269Z.json",
+      "sha256": "93760588bedd9bf158d89deb9411ebbceca57b173ceba8db002f6bd065c99b71",
+      "status": "NOT_CHECKED"
+    },
+    {
+      "path": "/mnt/wsl/research-data/scanner-mac-history/snapshots/2026-10-27/20261027T090806745227Z.json",
+      "sha256": "df1dcab6b6ed4bbc20f57e4509eb87da5a11d74ede5eaed3d7919173dbe5af77",
+      "status": "NOT_CHECKED"
+    },
+    {
+      "path": "/mnt/wsl/research-data/scanner-mac-history/snapshots/2026-10-27/20261027T091306578743Z.json",
+      "sha256": "35a9708af7c6a6aeaa7347d0c1a7114da88867656a27aea0d068a05805c97a49",
+      "status": "NOT_CHECKED"
+    },
+    {
+      "path": "/mnt/wsl/research-data/scanner-mac-history/snapshots/2026-10-27/20261027T091806967033Z.json",
+      "sha256": "f346232f33f8b4b59df8283ef8ba75a102e011940b941ddef08a0e3551b8b8bc",
+      "status": "NOT_CHECKED"
+    },
+    {
+      "path": "/mnt/wsl/research-data/scanner-mac-history/snapshots/2026-10-27/20261027T092306997376Z.json",
+      "sha256": "0ea74043fbb014971b8f22c9693e6817629f3476bff0977f9ebe62f3761cf253",
+      "status": "NOT_CHECKED"
+    },
+    {
+      "path": "/mnt/wsl/research-data/scanner-mac-history/snapshots/2026-10-27/20261027T092809033347Z.json",
+      "sha256": "0acb2e1a3d0906696c4a903f5eef34ab83eb0781b3fcf08614085dadf64ac089",
+      "status": "NOT_CHECKED"
+    },
+    {
+      "path": "/mnt/wsl/research-data/scanner-mac-history/snapshots/2026-10-27/20261027T093307430007Z.json",
+      "sha256": "5ce47caea25a6167bfa983c28b4556689368a5477e8a41d9dfb35647888a33a1",
+      "status": "NOT_CHECKED"
+    },
+    {
+      "path": "/mnt/wsl/research-data/scanner-mac-history/snapshots/2026-10-27/20261027T093806982445Z.json",
+      "sha256": "11646c1af8949b2100a86f72aafd4eaaf9bf88d0389ad301b1d914389dbbc8b4",
+      "status": "NOT_CHECKED"
+    },
+    {
+      "path": "/mnt/wsl/research-data/scanner-mac-history/snapshots/2026-10-27/20261027T094306677519Z.json",
+      "sha256": "8c7b1764bd73820c5e48c79ccfbf669ee3f97e4ad5a26810f2276cc61526d12d",
+      "status": "NOT_CHECKED"
+    },
+    {
+      "path": "/mnt/wsl/research-data/scanner-mac-history/snapshots/2026-10-27/20261027T094806978933Z.json",
+      "sha256": "5d62efbb516da32cf856b698782e42fe78d96e97710d49cd10f7b81aff22c79f",
+      "status": "NOT_CHECKED"
+    },
+    {
+      "path": "/mnt/wsl/research-data/scanner-mac-history/snapshots/2026-10-27/20261027T095307200859Z.json",
+      "sha256": "70fca435d744f6e23e4127d2e72f68435b712a44f5627ae5d88574476bc3afdd",
+      "status": "NOT_CHECKED"
+    },
+    {
+      "path": "/mnt/wsl/research-data/scanner-mac-history/snapshots/2026-10-27/20261027T095806670658Z.json",
+      "sha256": "cd203785a0a41f48ad1bf84b336f2eca1017e051bbc6c7e536f1a53858c8fcfc",
+      "status": "NOT_CHECKED"
+    },
+    {
+      "path": "/mnt/wsl/research-data/scanner-mac-history/snapshots/2026-10-27/20261027T100306839285Z.json",
+      "sha256": "37f4eca1493cb1a1d135313a83e93afe66d1c66b5958397e563a1375dfbba95f",
+      "status": "NOT_CHECKED"
+    },
+    {
+      "path": "/mnt/wsl/research-data/scanner-mac-history/snapshots/2026-10-27/20261027T100806960001Z.json",
+      "sha256": "bfc3a4b2646e63a64cad907fc66f9eb70641c9e5639c9b945e63240c65f6f675",
+      "status": "NOT_CHECKED"
+    },
+    {
+      "path": "/mnt/wsl/research-data/scanner-mac-history/snapshots/2026-10-27/20261027T101307400190Z.json",
+      "sha256": "db915b2653d70285e2553860a174728ed130f886500604ff03eb95c96b571553",
+      "status": "NOT_CHECKED"
+    },
+    {
+      "path": "/mnt/wsl/research-data/scanner-mac-history/snapshots/2026-10-27/20261027T101807688531Z.json",
+      "sha256": "de1a73ba4c1491507e7f22dec9ed7af86be76999f2c66eb3370688c61a452d92",
+      "status": "NOT_CHECKED"
+    },
+    {
+      "path": "/mnt/wsl/research-data/scanner-mac-history/snapshots/2026-10-27/20261027T102307054308Z.json",
+      "sha256": "a9a2d0965665aafabfab5bb602ca5b8a0c7d84714c80740ba4fde0e9c7d8ed21",
+      "status": "NOT_CHECKED"
+    },
+    {
+      "path": "/mnt/wsl/research-data/scanner-mac-history/snapshots/2026-10-27/20261027T102808180183Z.json",
+      "sha256": "b2834c51c2efb4a0c1e19fb763482fd0bea1bc91e5ed08574eed56b7e8266e2b",
+      "status": "NOT_CHECKED"
+    },
+    {
+      "path": "/mnt/wsl/research-data/scanner-mac-history/snapshots/2026-10-27/20261027T103309057047Z.json",
+      "sha256": "eb4ad89608f9332cc9d6aabd0297194fc37424dbeab89aedd94c8ee6dbd82a06",
+      "status": "NOT_CHECKED"
+    },
+    {
+      "path": "/mnt/wsl/research-data/scanner-mac-history/snapshots/2026-10-27/20261027T103809416956Z.json",
+      "sha256": "9c864cdbfcd1ff210ede65dce0d3c00b5bd4fbc10d0da65c72babe52a347337e",
+      "status": "NOT_CHECKED"
+    },
+    {
+      "path": "/mnt/wsl/research-data/scanner-mac-history/snapshots/2026-10-27/20261027T104309669914Z.json",
+      "sha256": "8b8fe74ee1363afaea28af87ec5ed37713d3a97fcdc5e45774f9d0af8a8e87a9",
+      "status": "NOT_CHECKED"
+    },
+    {
+      "path": "/mnt/wsl/research-data/scanner-mac-history/snapshots/2026-10-27/20261027T104809405410Z.json",
+      "sha256": "9f5ef3d614e471413800814e5b9a018a0211042fb11edf911a8956de763e3ec1",
+      "status": "NOT_CHECKED"
+    },
+    {
+      "path": "/mnt/wsl/research-data/scanner-mac-history/snapshots/2026-10-27/20261027T105309443029Z.json",
+      "sha256": "32f63f0026cda5832002b0c918086c7316fca0bf09b758695f534586aa546656",
+      "status": "NOT_CHECKED"
+    },
+    {
+      "path": "/mnt/wsl/research-data/scanner-mac-history/snapshots/2026-10-27/20261027T105809990692Z.json",
+      "sha256": "27f3b417f049a77f9565ead4e0e1629de5ee5aaef46fe46ac60bacaf6ba3583d",
+      "status": "HASH_MATCH_READ_ONLY"
+    },
+    {
+      "path": "/mnt/wsl/research-data/scanner-mac-history/snapshots/2026-10-27/20261027T110309670218Z.json",
+      "sha256": "217c60882c47debdc3da9842ee5a9811b643db8642d143e2ea24a61cf6ef0365",
+      "status": "NOT_CHECKED"
+    },
+    {
+      "path": "/mnt/wsl/research-data/scanner-mac-history/snapshots/2026-10-27/20261027T110810000555Z.json",
+      "sha256": "36db62b0a0a79eac6bf9e4a79aec0a1e627109b4500120c10733441bb8a27ec9",
+      "status": "NOT_CHECKED"
+    },
+    {
+      "path": "/mnt/wsl/research-data/scanner-mac-history/snapshots/2026-10-27/20261027T111309730623Z.json",
+      "sha256": "c64d6318a772e7f6129755179677b63013fe64d538f76af95c92f035c6bdbd5b",
+      "status": "NOT_CHECKED"
+    },
+    {
+      "path": "/mnt/wsl/research-data/scanner-mac-history/snapshots/2026-10-27/20261027T111810441347Z.json",
+      "sha256": "5be4bf2fcd4e837b1b6011037c51d12637d75cef3e43ee28cf7029036da26e31",
+      "status": "NOT_CHECKED"
+    },
+    {
+      "path": "/mnt/wsl/research-data/scanner-mac-history/snapshots/2026-10-27/20261027T112309929845Z.json",
+      "sha256": "564ac0e00e18ec5e03f952896f56ced094fe41d066f4ebf014ccdc0e57bf1fa0",
+      "status": "NOT_CHECKED"
+    },
+    {
+      "path": "/mnt/wsl/research-data/scanner-mac-history/snapshots/2026-10-27/20261027T112811561297Z.json",
+      "sha256": "f6bfc7b465f48f643ff1e28c10000f7166d60ac74696203ff9080ff5d896d76e",
+      "status": "NOT_CHECKED"
+    },
+    {
+      "path": "/mnt/wsl/research-data/scanner-mac-history/snapshots/2026-10-27/20261027T113311773023Z.json",
+      "sha256": "b5fb950c0a0051d923c1077e9cb07bd2d13dc7f52cbd5e5390858694148f32c5",
+      "status": "NOT_CHECKED"
+    },
+    {
+      "path": "/mnt/wsl/research-data/scanner-mac-history/snapshots/2026-10-27/20261027T113813025004Z.json",
+      "sha256": "37bd8d81714090a1b928dbfdda8f4d5cc942dd47579a4358a8687bc4719cfd6d",
+      "status": "NOT_CHECKED"
+    },
+    {
+      "path": "/mnt/wsl/research-data/scanner-mac-history/snapshots/2026-10-27/20261027T114314339049Z.json",
+      "sha256": "de38f522a8b7aa017ee9abe33010d5e000ff6c0b174c96207bfc65a373eeb75b",
+      "status": "NOT_CHECKED"
+    },
+    {
+      "path": "/mnt/wsl/research-data/scanner-mac-history/snapshots/2026-10-27/20261027T114812265614Z.json",
+      "sha256": "0a53d1f9cfb6eb11b7cc5fafee6990fe490087126f29547717ac455b94417d54",
+      "status": "NOT_CHECKED"
+    },
+    {
+      "path": "/mnt/wsl/research-data/scanner-mac-history/snapshots/2026-10-27/20261027T115312587409Z.json",
+      "sha256": "c33a4496049b5a259047c20d2ae31b88b1bf6f17c68ea21a6e821cbb1ab6a06f",
+      "status": "NOT_CHECKED"
+    },
+    {
+      "path": "/mnt/wsl/research-data/scanner-mac-history/snapshots/2026-10-27/20261027T115813252262Z.json",
+      "sha256": "36c1f5c6f784c1ce1f3259f1955e7864559656d097cb1eebd1c94252a0955a9c",
+      "status": "NOT_CHECKED"
+    },
+    {
+      "path": "/mnt/wsl/research-data/scanner-mac-history/snapshots/2026-10-27/20261027T120316633066Z.json",
+      "sha256": "d55cd4b375b18c2cae18bff89723ed8ca16d410c9fac38d27c160d9dff377cca",
+      "status": "NOT_CHECKED"
+    },
+    {
+      "path": "/mnt/wsl/research-data/scanner-mac-history/snapshots/2026-10-27/20261027T120813392882Z.json",
+      "sha256": "f7b33551411c3fcbde750398cff0dd602a1bed5cac849ad1c9b43e354e31ffa4",
+      "status": "NOT_CHECKED"
+    },
+    {
+      "path": "/mnt/wsl/research-data/scanner-mac-history/snapshots/2026-10-27/20261027T121312677123Z.json",
+      "sha256": "6638d19753636779d3a9ce422e86af909e93a0ec0928505d438fdc2b54d02b5f",
+      "status": "NOT_CHECKED"
+    },
+    {
+      "path": "/mnt/wsl/research-data/scanner-mac-history/snapshots/2026-10-27/20261027T121812811146Z.json",
+      "sha256": "fee02bc185e2e0749bb7f91a3cda57f63a94c133e3f37a6aa2bf204e6482dde3",
+      "status": "NOT_CHECKED"
+    },
+    {
+      "path": "/mnt/wsl/research-data/scanner-mac-history/snapshots/2026-10-27/20261027T122313040834Z.json",
+      "sha256": "9962ecd65ea63a86aa5755ebef6b78ccc58a61f501c269a3fbbfae5312a50e8c",
+      "status": "NOT_CHECKED"
+    },
+    {
+      "path": "/mnt/wsl/research-data/scanner-mac-history/snapshots/2026-10-27/20261027T122813115477Z.json",
+      "sha256": "4204a56b1461491799e4acff69de3a6248cadd7a337607d8abdead0cddda9a3c",
+      "status": "NOT_CHECKED"
+    },
+    {
+      "path": "/mnt/wsl/research-data/scanner-mac-history/snapshots/2026-10-27/20261027T123313944088Z.json",
+      "sha256": "32e0219105e224c9b678ece50a1ae9d0113c43a0aa8aadf8e329cd671f0b25c9",
+      "status": "NOT_CHECKED"
+    },
+    {
+      "path": "/mnt/wsl/research-data/scanner-mac-history/snapshots/2026-10-27/20261027T123812701158Z.json",
+      "sha256": "1b73b888a5f46dafbf1e4b2cbc7a7840f77c67c50e33baa6fa3a3bfe21c161df",
+      "status": "NOT_CHECKED"
+    },
+    {
+      "path": "/mnt/wsl/research-data/scanner-mac-history/snapshots/2026-10-27/20261027T124312454851Z.json",
+      "sha256": "990fda069ce0299d31cf8f3ba02f474dcd30015ff4b039478ebabf196b15bdf2",
+      "status": "NOT_CHECKED"
+    },
+    {
+      "path": "/mnt/wsl/research-data/scanner-mac-history/snapshots/2026-10-27/20261027T124813158497Z.json",
+      "sha256": "9ea274d7c879554cd0ccd21dbcfc2fe66d6726782578335aa1848947714e82ac",
+      "status": "NOT_CHECKED"
+    },
+    {
+      "path": "/mnt/wsl/research-data/scanner-mac-history/snapshots/2026-10-27/20261027T125312840378Z.json",
+      "sha256": "de0e734f5fd7d7aa5bb8f0b11662c9a69b41466e3bb818a734b51054cceb6ec6",
+      "status": "NOT_CHECKED"
+    },
+    {
+      "path": "/mnt/wsl/research-data/scanner-mac-history/snapshots/2026-10-27/20261027T125813037708Z.json",
+      "sha256": "2f324ed7ab980019d7f60cd004f5b26660b19b3461b51ff464a8fbad6c9b1eb8",
+      "status": "HASH_MATCH_READ_ONLY"
+    },
+    {
+      "path": "/mnt/wsl/research-data/scanner-mac-history/snapshots/2026-10-27/20261027T130314064544Z.json",
+      "sha256": "b494b8fad0bfdbbdf5c0771ecad2566cbd6ed75d8af5aef928c14fbfa55dee91",
+      "status": "NOT_CHECKED"
+    },
+    {
+      "path": "/mnt/wsl/research-data/scanner-mac-history/snapshots/2026-10-27/20261027T130817365622Z.json",
+      "sha256": "f5e036fc4cae80a04200afd870e8c20231b6774508f2704f8b81ebda0f05c8ca",
+      "status": "NOT_CHECKED"
+    },
+    {
+      "path": "/mnt/wsl/research-data/scanner-mac-history/snapshots/2026-10-27/20261027T131317894473Z.json",
+      "sha256": "2542cffbf5178b25c4c8f0f6eac791c4c2d598d5f275d7921913f2ae07fd7135",
+      "status": "NOT_CHECKED"
+    },
+    {
+      "path": "/mnt/wsl/research-data/scanner-mac-history/snapshots/2026-10-27/20261027T131818985618Z.json",
+      "sha256": "b85a9dcaf782f387ca2830f188de23119ffe4c88ec71edbe1fa0ca809597b314",
+      "status": "NOT_CHECKED"
+    },
+    {
+      "path": "/mnt/wsl/research-data/scanner-mac-history/snapshots/2026-10-27/20261027T132319827574Z.json",
+      "sha256": "88c69b9d034b95d33d1e5e4811a4af4b47637fd2c7368280a722393a2fecafbd",
+      "status": "NOT_CHECKED"
+    },
+    {
+      "path": "/mnt/wsl/research-data/scanner-mac-history/snapshots/2026-10-27/20261027T132818395537Z.json",
+      "sha256": "6e94a100500be6af980ab75ec52b3c577318548c56ed7515a64945f8aa15a63c",
+      "status": "NOT_CHECKED"
+    }
+  ],
+  "missing_inputs_and_outputs": [
+    {
+      "path": "/var/folders/mm/89t0pg6n0wd8s18c3n47gm880000gn/T/missed-movers-20261027.vDNtDL/inputs/market/manifest.json",
+      "sha256": "6ee04a3a4a9341c71917ec13bd5b2135a681bf9eb858c8a466073a674086deff",
+      "status": "NOT_REACHABLE"
+    },
+    {
+      "path": "/var/folders/mm/89t0pg6n0wd8s18c3n47gm880000gn/T/missed-movers-20261027.vDNtDL/inputs/market/bars_1min.json",
+      "sha256": "c0629f20704c9884cf47ffad2a022f32febaf015c29918faa9d57953c7f6347a",
+      "status": "NOT_REACHABLE"
+    },
+    {
+      "path": "/var/folders/mm/89t0pg6n0wd8s18c3n47gm880000gn/T/missed-movers-20261027.vDNtDL/inputs/market/daily.json",
+      "sha256": "a3e2d8054333274c2fab8d6730893e64a328b2151f036455c138b3b2c0f3cf59",
+      "status": "NOT_REACHABLE"
+    },
+    {
+      "path": "/var/folders/mm/89t0pg6n0wd8s18c3n47gm880000gn/T/missed-movers-20261027.vDNtDL/inputs/owner.md",
+      "sha256": "7c7a2951b01c8ea522d878c07c1986e39d73a27a4b2d559dcdef5d965a41fd2c",
+      "status": "NOT_REACHABLE"
+    },
+    {
+      "path": "/var/folders/mm/89t0pg6n0wd8s18c3n47gm880000gn/T/scanner-recall-16ptau61/baseline.json",
+      "sha256": "bc5012a4a3aa22e11d0e73ef139141c27834d608c9c1b5070328cddca8026349",
+      "status": "NOT_REACHABLE"
+    },
+    {
+      "path": "/var/folders/mm/89t0pg6n0wd8s18c3n47gm880000gn/T/scanner-recall-16ptau61/baseline-complete.json",
+      "sha256": "edb405efb179edcd24ae283aaecd81b5ad8c5c1439e8f446c2d059325b145b1e",
+      "status": "NOT_REACHABLE"
+    },
+    {
+      "path": "/var/folders/mm/89t0pg6n0wd8s18c3n47gm880000gn/T/scanner-recall-16ptau61/after-final.json",
+      "sha256": "a5bac61c73920d1c1ade74e3b53749d9ec2ce1cbdcfa8dea8218755a434f2ea5",
+      "status": "NOT_REACHABLE"
+    }
+  ],
+  "note": "57 M27 snapshot identities are not S27's 52-snapshot selection; do not pool witnesses. No market/strategy trial was run.",
+  "read_date": "2026-11-06",
+  "saved_scanner_marks": [
+    {
+      "hash_authority": "not published in S27; do not infer from snapshots",
+      "path": "/mnt/wsl/research-data/scanner-mac-history/marks/2026-10-27/20261027T084937960584Z.json",
+      "sha256": null,
+      "status": "PERMISSION_DENIED"
+    },
+    {
+      "hash_authority": "not published in S27; do not infer from snapshots",
+      "path": "/mnt/wsl/research-data/scanner-mac-history/marks/2026-10-27/20261027T105809990692Z.json",
+      "sha256": null,
+      "status": "PERMISSION_DENIED"
+    },
+    {
+      "hash_authority": "not published in S27; do not infer from snapshots",
+      "path": "/mnt/wsl/research-data/scanner-mac-history/marks/2026-10-27/20261027T125813037708Z.json",
+      "sha256": null,
+      "status": "PERMISSION_DENIED"
+    }
+  ],
+  "saved_scanner_recall": {
+    "04:30": null,
+    "07:00": {
+      "at_100": 28,
+      "at_30": 10,
+      "truth": 50
+    },
+    "09:00": {
+      "at_100": 15,
+      "at_30": 4,
+      "truth": 50
+    },
+    "earliest": {
+      "at_100": 25,
+      "at_30": 6,
+      "truth": 41
+    },
+    "partial_replay_delta_percentage_points": "0",
+    "raw_replay": "NOT_RUN",
+    "required_missing_input": "exact own marks",
+    "status": "RECORDED_ONLY"
+  },
+  "source_files": {
+    "2026-10-27-missed-movers.json": {
+      "bytes": 3268669,
+      "sha256": "ea2316fb0211d6d07ba406192231ca2fa097ab3fc0e239c9c4399d7ab6e24d10"
+    },
+    "2026-10-27-missed-movers.md": {
+      "bytes": 21995,
+      "sha256": "dccbdf80117d39343352e312c6bb1b594c293256abec35d363f9a3fe3c5bd365"
+    },
+    "2026-10-27-scanner-recall.md": {
+      "bytes": 18983,
+      "sha256": "c1b90b10a8c6b73909f6f4a8a9a2a5a1dbea648809455e6553fb8e87bb9ff4c2"
+    },
+    "missed_movers_day.py": {
+      "bytes": 31549,
+      "sha256": "a023f9254716b0cd5bce8361d2cc7fb97d275433a98c93e61d737ff759978e45"
+    },
+    "scanner_recall.py": {
+      "bytes": 12315,
+      "sha256": "87d75f5bc624cd116dff586b50d251dc5e50255929c670189fe09e9a7c070d4c"
+    }
+  },
+  "upstream": "seathatflowsinourveins/northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa"
+}
