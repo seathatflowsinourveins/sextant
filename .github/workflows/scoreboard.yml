@@ -32,7 +32,7 @@ jobs:
         with:
           push: never
           env: GH_TOKEN
-          runCmd: just sync && (just prove 2>&1 | tail -1)
+          runCmd: just sync && (uv run --frozen pytest tests/proofs -q 2>&1 | tail -40)
       - name: Median merge time
         uses: github/issue-metrics@671528652402b9b8a33da44b5c693b3161bc090f # v5.0.3
         env:
@@ -45,7 +45,7 @@ jobs:
           PROVEN: ${{ steps.prove.outputs.runCmdOutput }}
         run: |
           {
-            echo "## Proven rows"; echo '```'; printf '%s\n' "$PROVEN" | tail -1; echo '```'
+            echo "## Proven rows"; echo '```'; printf '%s\n' "$PROVEN" | grep -E '^(FAILED|ERROR)|[0-9]+ (passed|failed)' | cut -c1-200; echo '```'
             echo "## Open PRs: $(gh pr list --state open --json number --jq length)  (stop adding layers above 10)"
             echo "## Repo: $(git count-objects -vH | awk '/size-pack/{print $2,$3}'), $(git ls-files | wc -l) files"
             echo "Stop adding layers if median merge time passes 1 hour over the last 20 PRs, or proven rows stop rising across 20 merged PRs."

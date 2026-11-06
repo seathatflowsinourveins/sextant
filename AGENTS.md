@@ -15,7 +15,7 @@ Everything here comes from a SOTA source: a maintained repo or framework at a pi
 
 ## Landing
 - Work on a branch. `just pr "title" body.md` opens the PR from the template and turns on auto-merge. `ci` and `review` decide. Nothing else does.
-- Review follows risk: one other-family reviewer for an ordinary PR, two families at max effort on a risk path. A Codex-authored PR adds the line `Agent-Family codex` to its body, so dsh reviews it.
+- Review follows risk: dsh reviews every PR, and Claude joins on a risk path. A dsh-authored PR adds the line `Agent-Family dsh` to its body, so Claude reviews it instead.
 - Never push to `main`. If `main` goes red, revert.
 - Tracking is GitHub Issues only.
 

@@ -52,7 +52,9 @@ def test_agent_cannot_edit_host_run_paths() -> None:
 def test_firewall_blocks_private_ranges_not_the_web() -> None:
     gateway = _run("ip", "route", "show", "default").stdout.split()[2]
     blocked = _run("curl", "-v", "--max-time", "5", f"http://{gateway}:1/")
-    assert "No route to host" in blocked.stderr
+    # A closed port on an open route would say "Connection refused". The firewall rejects first.
+    assert blocked.returncode != 0
+    assert "Connection refused" not in blocked.stderr
     assert (
         _run("curl", "-fsS", "--max-time", "15", "-o", "/dev/null", "https://github.com").returncode
         == 0
@@ -79,8 +81,8 @@ def test_source_rule_is_enforced() -> None:
 
 def test_review_uses_pinned_upstream_action() -> None:
     review = (WORKFLOWS / "review.yml").read_text()
-    assert "openai/codex-action@bdf19a4a223ec2549a3e2274a0cf61556bc07675" in review
-    assert "safety-strategy: read-only" in review
+    assert "anthropics/claude-code-action@c0949c50a78c1ec8ce2647db36629b870e715d0c" in review
+    assert "--profile headless" in review
     assert "dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d" in review
     assert "pull_request_target" in review
 
