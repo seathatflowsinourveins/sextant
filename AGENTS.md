@@ -1,6 +1,6 @@
 # Sextant
 
-One focus: rank extreme movers as they start, enter early, protect gains, sell fast on the first persistent non-noise breach, then re-enter or rotate. Replay, sim and recorded paper fills decide merit. US equities, options research and Jev serve that focus. Read [the design](docs/design.md), [philosophy](docs/handbook/philosophy.md) and [practices](docs/handbook/practices.md).
+One focus, in `docs/design.md`'s words: rank the most potential extreme movers as they start, enter the first rising second, protect gains with following broker-held protection, sell fast on the first persistent non-noise breach, then re-enter or rotate. Every lane names the step its row serves, and the queue follows that path: ranking, entry, exit, custody, ledger and merit, data and PIT, then the paper lanes, B first. Replay, sim and recorded paper fills decide merit. US equities, options research and Jev serve that focus. Read [the design](docs/design.md), [philosophy](docs/handbook/philosophy.md) and [practices](docs/handbook/practices.md).
 
 ## Rule 1: never self-invent
 Everything here comes from a SOTA source: a maintained repo or framework at a pinned commit, a runtime or SDK, an official docs page with its read date, converged research, or, for trading, an upstream template or a cited paper. That covers the harness, the automation, the skills, the research method itself, and every strategy, option design and Jev judgment.
