@@ -74,6 +74,7 @@ def build_plan(
     fee_model: Any,
     latency_model: Any,
     authority: str,
+    fill_model: Any = None,
 ) -> SandboxPlan:
     if not bindings or any(
         len({getattr(binding, key) for binding in bindings}) != len(bindings)
@@ -103,6 +104,7 @@ def build_plan(
             reject_stop_orders=True,
             fee_model=fee_model,
             latency_model=latency_model,
+            fill_model=fill_model,
         )
         for binding in bindings
     }
@@ -134,7 +136,13 @@ class PrestreamFeedFactory(DataClientFactory):
         )
 
 
-def build_shell(plan: SandboxPlan, *, arm_id: str, strategies: tuple) -> LiveNode:
+def build_shell(
+    plan: SandboxPlan,
+    *,
+    arm_id: str,
+    strategies: tuple,
+    strategy_ids: frozenset[str] | None = None,
+) -> LiveNode:
     """Build only. Live-feed activation and strategy/ledger acceptance remain separate."""
     if plan.connection_state != "DISABLED":
         raise ValueError("this build has no connection authority")
@@ -142,9 +150,17 @@ def build_shell(plan: SandboxPlan, *, arm_id: str, strategies: tuple) -> LiveNod
     if len(matching) != 1:
         raise ValueError("one registered arm per native S node required")
     binding = matching[0]
-    expected = {binding.strategy_id}
+    expected = {binding.strategy_id} if strategy_ids is None else set(strategy_ids)
+    if strategy_ids is not None and any(
+        not name.startswith(binding.order_namespace + ".") for name in strategy_ids
+    ):
+        raise ValueError("declared strategy fleet must retain its arm namespace")
     identities = [str(strategy.strategy_id) for strategy in strategies]
-    if len(identities) != len(set(identities)) or set(identities) - expected:
+    if (
+        len(identities) != len(set(identities))
+        or set(identities) - expected
+        or (strategy_ids is not None and set(identities) != expected)
+    ):
         raise ValueError("strategy identity differs from sandbox bindings")
     builder = (
         LiveNode.builder(

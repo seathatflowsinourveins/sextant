@@ -1,0 +1,866 @@
+{
+  "calibration": "UNCALIBRATED",
+  "controls": [
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "request_budget",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@b3fbdd4:tests/proofs/custody/conftest.py (synthetic only); seathatflowsinourveins/northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:configs/lanes.yaml:alpaca-paper-b; Sextant ADR-0009 R2",
+      "unit": "count",
+      "value": 180
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "broker_limit",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@b3fbdd4:tests/proofs/custody/conftest.py (synthetic only); seathatflowsinourveins/northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:configs/lanes.yaml:alpaca-paper-b; Sextant ADR-0009 R2",
+      "unit": "count",
+      "value": 200
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "window_s",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@b3fbdd4:tests/proofs/custody/conftest.py (synthetic only); seathatflowsinourveins/northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:src/northstar_trading/lanes.py:PacerBudget; 60 seconds per minute",
+      "unit": "seconds",
+      "value": "60"
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "burst_fraction",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@b3fbdd4:tests/proofs/custody/conftest.py (synthetic only); seathatflowsinourveins/northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:src/northstar_trading/execution/pacer.py:OrderPacer.for_budget; Sextant ADR-0010 G4",
+      "unit": "ratio",
+      "value": "0.1"
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "cancel_timeout_s",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@b3fbdd4:tests/proofs/custody/conftest.py (synthetic only); seathatflowsinourveins/northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:src/northstar_trading/risk/guard.py:RiskLimits; Sextant ADR-0010 G1",
+      "unit": "seconds",
+      "value": "10"
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "cancel_retry_s",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@b3fbdd4:tests/proofs/custody/conftest.py (synthetic only); seathatflowsinourveins/northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:src/northstar_trading/risk/guard.py:RiskLimits",
+      "unit": "seconds",
+      "value": "5"
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "flatten_tick_s",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@b3fbdd4:tests/proofs/custody/conftest.py (synthetic only); seathatflowsinourveins/northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:src/northstar_trading/risk/actor.py:FLATTEN_TICK_NS; Sextant ADR-0010 G1",
+      "unit": "seconds",
+      "value": "2"
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "backoff_base_s",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@b3fbdd4:tests/proofs/custody/conftest.py (synthetic only); seathatflowsinourveins/northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:src/nautilus_alpaca/pacing.py:RequestPacer",
+      "unit": "seconds",
+      "value": "1"
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "backoff_max_s",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@b3fbdd4:tests/proofs/custody/conftest.py (synthetic only); seathatflowsinourveins/northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:src/nautilus_alpaca/pacing.py:RequestPacer",
+      "unit": "seconds",
+      "value": "30"
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "reserve_per_open_position",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@b3fbdd4:tests/proofs/custody/conftest.py (synthetic only); seathatflowsinourveins/northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:docs/adr/0015-owner-entry-paper-exit-manager.md; Sextant ADR-0007 C4: reserve authority remains unverified",
+      "unit": "request_tokens_per_position",
+      "value": 1
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "reserve_per_exiting_position",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@b3fbdd4:tests/proofs/custody/conftest.py (synthetic only); seathatflowsinourveins/northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:docs/adr/0015-owner-entry-paper-exit-manager.md; Sextant ADR-0007 C4: reserve authority remains unverified",
+      "unit": "request_tokens_per_position",
+      "value": 1
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "observation_reminder_s",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@b3fbdd4:tests/proofs/custody/conftest.py (synthetic only); seathatflowsinourveins/northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:src/northstar_trading/safeguards/__init__.py:REMINDER_NS",
+      "unit": "seconds",
+      "value": "300"
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "observation_max_edges",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@b3fbdd4:tests/proofs/custody/conftest.py (synthetic only); seathatflowsinourveins/northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:src/northstar_trading/safeguards/__init__.py:MAX_OBSERVATIONS",
+      "unit": "count",
+      "value": 500
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "observation_money_step_fraction",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@b3fbdd4:tests/proofs/custody/conftest.py (synthetic only); seathatflowsinourveins/northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:src/northstar_trading/safeguards/__init__.py:gate; Sextant ADR-0010 G8",
+      "unit": "ratio",
+      "value": "0.01"
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "observation_leverage_step",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@b3fbdd4:tests/proofs/custody/conftest.py (synthetic only); seathatflowsinourveins/northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:src/northstar_trading/risk/actor.py; Sextant ADR-0010 G8",
+      "unit": "leverage_multiple",
+      "value": "0.01"
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "max_cancel_retries",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@b3fbdd4:tests/proofs/custody/conftest.py (synthetic only); seathatflowsinourveins/northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:src/nautilus_alpaca/order_reducer.py:CancelAttempt; Sextant ADR-0007 recovery bounds K=config.max_retries default 3",
+      "unit": "count",
+      "value": 3
+    }
+  ],
+  "entry": [
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "first_leg_window_s",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@4770af0473e019f6190425dfeaf6146ad8bb6d20:tests/proofs/entry/conftest.py (synthetic only)",
+      "unit": "seconds",
+      "value": "120"
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "first_leg_trades_count",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@4770af0473e019f6190425dfeaf6146ad8bb6d20:tests/proofs/entry/conftest.py (synthetic only)",
+      "unit": "count",
+      "value": 3
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "first_leg_span_s",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@4770af0473e019f6190425dfeaf6146ad8bb6d20:tests/proofs/entry/conftest.py (synthetic only)",
+      "unit": "seconds",
+      "value": "1"
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "first_leg_max_move",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@4770af0473e019f6190425dfeaf6146ad8bb6d20:tests/proofs/entry/conftest.py (synthetic only)",
+      "unit": "ratio",
+      "value": "0.10"
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "entry_max_vwap_extension_atr",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@4770af0473e019f6190425dfeaf6146ad8bb6d20:tests/proofs/entry/conftest.py (synthetic only)",
+      "unit": "ratio",
+      "value": "2"
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "entry_chase_bps",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@4770af0473e019f6190425dfeaf6146ad8bb6d20:tests/proofs/entry/conftest.py (synthetic only)",
+      "unit": "basis_points",
+      "value": "10"
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "entry_ttl_s",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@4770af0473e019f6190425dfeaf6146ad8bb6d20:tests/proofs/entry/conftest.py (synthetic only)",
+      "unit": "seconds",
+      "value": "5"
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "reclaim_lookback_s",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@4770af0473e019f6190425dfeaf6146ad8bb6d20:tests/proofs/entry/conftest.py (synthetic only)",
+      "unit": "seconds",
+      "value": "30"
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "reclaim_trades_count",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@4770af0473e019f6190425dfeaf6146ad8bb6d20:tests/proofs/entry/conftest.py (synthetic only)",
+      "unit": "count",
+      "value": 3
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "reclaim_trades_span_s",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@4770af0473e019f6190425dfeaf6146ad8bb6d20:tests/proofs/entry/conftest.py (synthetic only)",
+      "unit": "seconds",
+      "value": "1"
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "reclaim_hold_s",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@4770af0473e019f6190425dfeaf6146ad8bb6d20:tests/proofs/entry/conftest.py (synthetic only)",
+      "unit": "seconds",
+      "value": "2"
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "reclaim_max_above_buffers",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@4770af0473e019f6190425dfeaf6146ad8bb6d20:tests/proofs/entry/conftest.py (synthetic only)",
+      "unit": "ratio",
+      "value": "1"
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "atr_period",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@4770af0473e019f6190425dfeaf6146ad8bb6d20:tests/proofs/entry/conftest.py (synthetic only)",
+      "unit": "count",
+      "value": 3
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "atr_bar_minutes",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@4770af0473e019f6190425dfeaf6146ad8bb6d20:tests/proofs/entry/conftest.py (synthetic only)",
+      "unit": "minutes",
+      "value": 1
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "max_data_age_s",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@4770af0473e019f6190425dfeaf6146ad8bb6d20:tests/proofs/entry/conftest.py (synthetic only)",
+      "unit": "seconds",
+      "value": "5"
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "bp_target_fraction",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@4770af0473e019f6190425dfeaf6146ad8bb6d20:tests/proofs/entry/conftest.py (synthetic only)",
+      "unit": "ratio",
+      "value": "1"
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "stop_ref_fraction",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@4770af0473e019f6190425dfeaf6146ad8bb6d20:tests/proofs/entry/conftest.py (synthetic only)",
+      "unit": "ratio",
+      "value": "0.01"
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "portfolio_slots",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@4770af0473e019f6190425dfeaf6146ad8bb6d20:tests/proofs/entry/conftest.py (synthetic only)",
+      "unit": "count",
+      "value": 5
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "stopout_size_decay",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@4770af0473e019f6190425dfeaf6146ad8bb6d20:tests/proofs/entry/conftest.py (synthetic only)",
+      "unit": "ratio",
+      "value": "0.5"
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "stopout_size_floor",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@4770af0473e019f6190425dfeaf6146ad8bb6d20:tests/proofs/entry/conftest.py (synthetic only)",
+      "unit": "ratio",
+      "value": "0.25"
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "confidence_size_floor",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@4770af0473e019f6190425dfeaf6146ad8bb6d20:tests/proofs/entry/conftest.py (synthetic only)",
+      "unit": "ratio",
+      "value": "0.5"
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "chase_cap_fraction",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@4770af0473e019f6190425dfeaf6146ad8bb6d20:tests/proofs/entry/conftest.py (synthetic only)",
+      "unit": "ratio",
+      "value": "0.01"
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "flow_share_cap",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@4770af0473e019f6190425dfeaf6146ad8bb6d20:tests/proofs/entry/conftest.py (synthetic only)",
+      "unit": "ratio",
+      "value": "0.05"
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "flow_share_window_s",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@4770af0473e019f6190425dfeaf6146ad8bb6d20:tests/proofs/entry/conftest.py (synthetic only)",
+      "unit": "seconds",
+      "value": "60"
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "covered_flow_window_s",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@4770af0473e019f6190425dfeaf6146ad8bb6d20:tests/proofs/entry/conftest.py (synthetic only)",
+      "unit": "seconds",
+      "value": "2"
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "covered_flow_baseline_min",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@4770af0473e019f6190425dfeaf6146ad8bb6d20:tests/proofs/entry/conftest.py (synthetic only)",
+      "unit": "minutes",
+      "value": "1"
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "covered_flow_ratio",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@4770af0473e019f6190425dfeaf6146ad8bb6d20:tests/proofs/entry/conftest.py (synthetic only)",
+      "unit": "ratio",
+      "value": "1"
+    }
+  ],
+  "entry_pin": "4770af0473e019f6190425dfeaf6146ad8bb6d20",
+  "execution": [
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "starting_balance",
+      "scope": "FIXTURE_ONLY",
+      "source": "northstar-trading@8256c16c31dc:sim_lanes/sandbox_witness.py; Sextant entry/custody native fixture; no measured costs",
+      "unit": "fixture unit",
+      "value": "100000 USD"
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "leverage",
+      "scope": "FIXTURE_ONLY",
+      "source": "northstar-trading@8256c16c31dc:sim_lanes/sandbox_witness.py; Sextant entry/custody native fixture; no measured costs",
+      "unit": "fixture unit",
+      "value": "1"
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "maker_rate",
+      "scope": "FIXTURE_ONLY",
+      "source": "northstar-trading@8256c16c31dc:sim_lanes/sandbox_witness.py; Sextant entry/custody native fixture; no measured costs",
+      "unit": "fixture unit",
+      "value": "0"
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "taker_rate",
+      "scope": "FIXTURE_ONLY",
+      "source": "northstar-trading@8256c16c31dc:sim_lanes/sandbox_witness.py; Sextant entry/custody native fixture; no measured costs",
+      "unit": "fixture unit",
+      "value": "0"
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "insert_latency_ns",
+      "scope": "FIXTURE_ONLY",
+      "source": "northstar-trading@8256c16c31dc:sim_lanes/sandbox_witness.py; Sextant entry/custody native fixture; no measured costs",
+      "unit": "count",
+      "value": 500000000
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "cancel_latency_ns",
+      "scope": "FIXTURE_ONLY",
+      "source": "northstar-trading@8256c16c31dc:sim_lanes/sandbox_witness.py; Sextant entry/custody native fixture; no measured costs",
+      "unit": "count",
+      "value": 500000000
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "update_latency_ns",
+      "scope": "FIXTURE_ONLY",
+      "source": "northstar-trading@8256c16c31dc:sim_lanes/sandbox_witness.py; Sextant entry/custody native fixture; no measured costs",
+      "unit": "count",
+      "value": 500000000
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "base_latency_ns",
+      "scope": "FIXTURE_ONLY",
+      "source": "northstar-trading@8256c16c31dc:sim_lanes/sandbox_witness.py; Sextant entry/custody native fixture; no measured costs",
+      "unit": "count",
+      "value": 0
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "seed",
+      "scope": "FIXTURE_ONLY",
+      "source": "northstar-trading@8256c16c31dc:sim_lanes/sandbox_witness.py; Sextant entry/custody native fixture; no measured costs",
+      "unit": "count",
+      "value": 42
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "prob_fill_on_limit",
+      "scope": "FIXTURE_ONLY",
+      "source": "Nautilus rc7 55c0e82053142bce3a5cba4de4221d3929c2d3bc DefaultFillModel; synthetic only",
+      "unit": "probability",
+      "value": "1"
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "prob_slippage",
+      "scope": "FIXTURE_ONLY",
+      "source": "Nautilus rc7 55c0e82053142bce3a5cba4de4221d3929c2d3bc DefaultFillModel; synthetic only",
+      "unit": "probability",
+      "value": "0"
+    }
+  ],
+  "exit": [
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "prearm_buffer_fraction",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@445614d:backtest/exit_witness.py FIXTURE (synthetic only)",
+      "unit": "fixture unit",
+      "value": "0.002"
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "prearm_range_multiple",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@445614d:backtest/exit_witness.py FIXTURE (synthetic only)",
+      "unit": "fixture unit",
+      "value": "0"
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "prearm_range_window_s",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@445614d:backtest/exit_witness.py FIXTURE (synthetic only)",
+      "unit": "fixture unit",
+      "value": "60"
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "gain_lock_giveback_fraction",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@445614d:backtest/exit_witness.py FIXTURE (synthetic only)",
+      "unit": "fixture unit",
+      "value": "0.25"
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "breach_persist_count",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@445614d:backtest/exit_witness.py FIXTURE (synthetic only)",
+      "unit": "count",
+      "value": 3
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "breach_persist_span_s",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@445614d:backtest/exit_witness.py FIXTURE (synthetic only)",
+      "unit": "fixture unit",
+      "value": "2"
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "chase_cap_fraction",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@445614d:backtest/exit_witness.py FIXTURE (synthetic only)",
+      "unit": "fixture unit",
+      "value": "0.001"
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "chase_min_interval_s",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@445614d:backtest/exit_witness.py FIXTURE (synthetic only)",
+      "unit": "fixture unit",
+      "value": "1"
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "take_profit_above_h_fraction",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@445614d:backtest/exit_witness.py FIXTURE (synthetic only)",
+      "unit": "fixture unit",
+      "value": "0.10"
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "take_profit_step_fraction",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@445614d:backtest/exit_witness.py FIXTURE (synthetic only)",
+      "unit": "fixture unit",
+      "value": "0.02"
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "backstop_min_separation_fraction",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@445614d:backtest/exit_witness.py FIXTURE (synthetic only)",
+      "unit": "fixture unit",
+      "value": "0.02"
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "quote_max_age_s",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@445614d:backtest/exit_witness.py FIXTURE (synthetic only)",
+      "unit": "fixture unit",
+      "value": "5"
+    }
+  ],
+  "ranking": [
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "mover_min_move",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@2ba6ce1:tests/proofs/test_ranking.py (synthetic only)",
+      "unit": "fixture unit",
+      "value": "0.03"
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "mover_min_trades_accel",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@2ba6ce1:tests/proofs/test_ranking.py (synthetic only)",
+      "unit": "fixture unit",
+      "value": "1.5"
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "mover_min_dvol_ratio",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@2ba6ce1:tests/proofs/test_ranking.py (synthetic only)",
+      "unit": "fixture unit",
+      "value": "3"
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "move_1m_window_s",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@2ba6ce1:tests/proofs/test_ranking.py (synthetic only)",
+      "unit": "count",
+      "value": 60
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "move_5m_window_s",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@2ba6ce1:tests/proofs/test_ranking.py (synthetic only)",
+      "unit": "count",
+      "value": 300
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "trades_accel_window_s",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@2ba6ce1:tests/proofs/test_ranking.py (synthetic only)",
+      "unit": "count",
+      "value": 60
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "trades_accel_baseline_min",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@2ba6ce1:tests/proofs/test_ranking.py (synthetic only)",
+      "unit": "count",
+      "value": 5
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "publish_min_interval_s",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@2ba6ce1:tests/proofs/test_ranking.py (synthetic only)",
+      "unit": "count",
+      "value": 1
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "generation_max_age_s",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@2ba6ce1:tests/proofs/test_ranking.py (synthetic only)",
+      "unit": "count",
+      "value": 2
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "heartbeat_max_age_s",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@2ba6ce1:tests/proofs/test_ranking.py (synthetic only)",
+      "unit": "count",
+      "value": 2
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "input_max_age_s",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@2ba6ce1:tests/proofs/test_ranking.py (synthetic only)",
+      "unit": "count",
+      "value": 2
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "top_n",
+      "scope": "FIXTURE_ONLY",
+      "source": "sextant@2ba6ce1:tests/proofs/test_ranking.py (synthetic only)",
+      "unit": "count",
+      "value": 2
+    }
+  ],
+  "reentry": [
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "cooldown_seconds",
+      "scope": "FIXTURE_ONLY",
+      "source": "ADR-0006; owning reentry proof fixtures, synthetic only",
+      "unit": "fixture unit",
+      "value": "2"
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "retry_rank_band",
+      "scope": "FIXTURE_ONLY",
+      "source": "ADR-0006; owning reentry proof fixtures, synthetic only",
+      "unit": "count",
+      "value": 5
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "rotation_rank_band",
+      "scope": "FIXTURE_ONLY",
+      "source": "ADR-0006; owning reentry proof fixtures, synthetic only",
+      "unit": "count",
+      "value": 10
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "reentry_min_confidence",
+      "scope": "FIXTURE_ONLY",
+      "source": "ADR-0006; owning reentry proof fixtures, synthetic only",
+      "unit": "fixture unit",
+      "value": "0.6"
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "confidence_size_floor",
+      "scope": "FIXTURE_ONLY",
+      "source": "ADR-0006; owning reentry proof fixtures, synthetic only",
+      "unit": "fixture unit",
+      "value": "0.25"
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "rotation_lift_margin_bps",
+      "scope": "FIXTURE_ONLY",
+      "source": "ADR-0006; owning reentry proof fixtures, synthetic only",
+      "unit": "fixture unit",
+      "value": "10"
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "rotation_score_ratio",
+      "scope": "FIXTURE_ONLY",
+      "source": "ADR-0006; owning reentry proof fixtures, synthetic only",
+      "unit": "fixture unit",
+      "value": "1.2"
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "whipsaw_stopouts_max",
+      "scope": "FIXTURE_ONLY",
+      "source": "ADR-0006; owning reentry proof fixtures, synthetic only",
+      "unit": "count",
+      "value": 2
+    }
+  ],
+  "schema": "sextant.sandbox.replay-fixture/1",
+  "scope": "FIXTURE_ONLY",
+  "tape": [
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "start",
+      "scope": "FIXTURE_ONLY",
+      "source": "owning module/native fixture event shapes; FIXTURE_ONLY",
+      "unit": "fixture unit",
+      "value": "2026-10-27T13:30:00+00:00"
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "length_s",
+      "scope": "FIXTURE_ONLY",
+      "source": "owning module/native fixture event shapes; FIXTURE_ONLY",
+      "unit": "count",
+      "value": 430
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "surge_s",
+      "scope": "FIXTURE_ONLY",
+      "source": "owning module/native fixture event shapes; FIXTURE_ONLY",
+      "unit": "count",
+      "value": 360
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "kill_s",
+      "scope": "FIXTURE_ONLY",
+      "source": "owning module/native fixture event shapes; FIXTURE_ONLY",
+      "unit": "count",
+      "value": 371
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "trade_size",
+      "scope": "FIXTURE_ONLY",
+      "source": "owning module/native fixture event shapes; FIXTURE_ONLY",
+      "unit": "count",
+      "value": 1000
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "quote_size",
+      "scope": "FIXTURE_ONLY",
+      "source": "owning module/native fixture event shapes; FIXTURE_ONLY",
+      "unit": "count",
+      "value": 10000
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "owner_limit",
+      "scope": "FIXTURE_ONLY",
+      "source": "owning module/native fixture event shapes; FIXTURE_ONLY",
+      "unit": "fixture unit",
+      "value": "1.00"
+    },
+    {
+      "calibration": "UNCALIBRATED",
+      "last_change": "2026-11-06",
+      "name": "source",
+      "scope": "FIXTURE_ONLY",
+      "source": "owning module/native fixture event shapes; FIXTURE_ONLY",
+      "unit": "fixture unit",
+      "value": "Native synthetic entry/ranking/exit/custody mechanism proofs; NOT recorded market events"
+    }
+  ]
+}
