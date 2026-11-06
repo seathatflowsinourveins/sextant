@@ -9,13 +9,20 @@
 #     --delete-branch`, the last step of Orca's own lifecycle (docs/site/content/docs/model/worktrees.mdx).
 set -Eeuo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
+# The main checkout, which git lists first (git-worktree(1)), so the sweep never points at a worktree it removes.
+cd "$(git worktree list --porcelain | sed -n '1s/^worktree //p')"
 
 git config fetch.prune true
 git maintenance start
 
 name="Lifecycle sweep"
-if orca-ide automations list --json | jq -e --arg name "$name" '.result.automations[] | select(.name == $name)' > /dev/null; then
-  echo "Orca automation \"$name\" is already set."
+# An existing sweep takes this checkout's current prompt and precheck, by Orca's own `automations edit`
+# (same pin, src/cli/specs/automations.ts), so a merged change to either reaches the scheduled run.
+id=$(orca-ide automations list --json | jq -r --arg name "$name" '.result.automations[] | select(.name == $name) | .id' | head -n 1)
+if [ -n "$id" ]; then
+  orca-ide automations edit "$id" --precheck "bash $PWD/deploy/wsl/lifecycle-precheck.sh" --precheck-timeout 120 \
+    --prompt "$(cat deploy/wsl/lifecycle-prompt.md)" --json > /dev/null
+  echo "Orca automation \"$name\" is set, with this checkout's prompt and precheck."
   exit 0
 fi
 orca-ide automations create --name "$name" --trigger daily --time 05:00 --timezone America/New_York \

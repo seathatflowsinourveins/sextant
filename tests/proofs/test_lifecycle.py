@@ -17,10 +17,12 @@ FAKE = """#!/usr/bin/env bash
 echo "${0##*/} $*" >> "$FAKE_LOG"
 case "${0##*/} $*" in
   "orca-ide automations list --json")
-    if [ -f "$FAKE_STATE" ]; then echo '{"result": {"automations": [{"name": "Lifecycle sweep"}]}}'
+    if [ -f "$FAKE_STATE" ]; then
+      echo '{"result": {"automations": [{"id": "a1", "name": "Lifecycle sweep"}]}}'
     else echo '{"result": {"automations": []}}'; fi ;;
   "orca-ide automations create"*) touch "$FAKE_STATE" ;;
   "gh release view"*) echo "$FAKE_RELEASE" ;;
+  "git worktree list --porcelain") printf 'worktree %s\\n' "${FAKE_MAIN:-$PWD}" ;;
 esac
 """
 
@@ -63,6 +65,7 @@ def test_setting_up_the_sweep_twice_makes_one(tmp_path: Path) -> None:
         "PATH": f"{bin_dir}:{os.environ['PATH']}",
         "FAKE_LOG": str(log),
         "FAKE_STATE": str(tmp_path / "created"),
+        "FAKE_MAIN": str(ROOT),
     }
     for _ in range(2):
         run = subprocess.run(["bash", str(LIFECYCLE)], env=env, capture_output=True, text=True)
@@ -71,6 +74,9 @@ def test_setting_up_the_sweep_twice_makes_one(tmp_path: Path) -> None:
     assert calls.count("git config fetch.prune true") == 2
     assert calls.count("git maintenance start") == 2
     assert sum(call.startswith("orca-ide automations create") for call in calls) == 1
+    edits = [call for call in calls if call.startswith("orca-ide automations edit a1 ")]
+    assert len(edits) == 1, "the second run brings the existing sweep to this checkout's prompt"
+    assert "--prompt" in edits[0] and "lifecycle-precheck.sh" in edits[0]
 
 
 def test_the_precheck_runs_the_sweep_only_when_there_is_work(tmp_path: Path) -> None:
