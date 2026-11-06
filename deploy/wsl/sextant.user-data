@@ -24,7 +24,7 @@ write_files:
     default=sextant
 - path: /etc/profile.d/sextant-path.sh
   content: |
-    export PATH="$HOME/.local/share/sextant-agents/node_modules/.bin:$HOME/.fnm/aliases/default/bin:$HOME/.local/bin:$PATH"
+    export PATH="$HOME/.local/share/sextant-agents/node_modules/.bin:$HOME/.local/share/sextant-qmd/node_modules/.bin:$HOME/.fnm/aliases/default/bin:$HOME/.local/bin:$PATH"
     export DSH_PERMISSION_MODE=danger-full-access DSH_TELEMETRY_DISABLED=1
 - path: /etc/profile.d/sextant-first-login.sh
   content: |

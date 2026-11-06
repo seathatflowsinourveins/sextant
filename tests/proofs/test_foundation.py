@@ -150,7 +150,7 @@ def test_dependabot_covers_every_ecosystem() -> None:
     dependabot = _read(".github/dependabot.yml")
     for ecosystem in ("npm", "uv", "docker", "github-actions", "devcontainers"):
         assert f"package-ecosystem: {ecosystem}" in dependabot
-    assert dependabot.count("cooldown") == 5
+    assert dependabot.count("cooldown") == 6
 
 
 def test_scoreboard_uses_upstream_actions() -> None:

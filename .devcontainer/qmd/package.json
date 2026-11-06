@@ -1,0 +1,8 @@
+{
+  "name": "sextant-qmd",
+  "private": true,
+  "description": "tobi/qmd for lexical repo retrieval (ADR-0022). Its own tree, as upstream's `npm install -g`, because qmd's typescript peer differs from the agents tree's.",
+  "dependencies": {
+    "@tobilu/qmd": "2.8.3"
+  }
+}

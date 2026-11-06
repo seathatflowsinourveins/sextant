@@ -6,8 +6,9 @@ cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 
 dockerfile=.devcontainer/Dockerfile
 agents="$HOME/.local/share/sextant-agents"
+qmd="$HOME/.local/share/sextant-qmd"
 fnm_dir="$HOME/.fnm"
-export PATH="$agents/node_modules/.bin:$fnm_dir/aliases/default/bin:$fnm_dir:$HOME/.local/bin:$PATH"
+export PATH="$agents/node_modules/.bin:$qmd/node_modules/.bin:$fnm_dir/aliases/default/bin:$fnm_dir:$HOME/.local/bin:$PATH"
 
 # The login window is the one place nobody else can see, so progress and failures go where another
 # session can read them and fix them on GitHub. Never the pairing step or a sign-in.
@@ -37,6 +38,9 @@ curl -fsSL https://claude.ai/install.sh | bash -s "$claude_version"
 mkdir -p "$agents"
 cp .devcontainer/agents/package.json .devcontainer/agents/package-lock.json "$agents/"
 (cd "$agents" && npm ci --no-audit --no-fund)
+mkdir -p "$qmd"
+cp .devcontainer/qmd/package.json .devcontainer/qmd/package-lock.json "$qmd/"
+(cd "$qmd" && npm ci --no-audit --no-fund)
 
 uv sync --frozen
 }
