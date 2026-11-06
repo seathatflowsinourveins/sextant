@@ -1,0 +1,42 @@
+{
+  "mcpServers": {
+    "context7": {
+      "type": "stdio",
+      "command": "context7-mcp",
+      "env": {
+        "CONTEXT7_API_KEY": "${CONTEXT7_API_KEY:-}"
+      }
+    },
+    "deepwiki": {
+      "type": "http",
+      "url": "https://mcp.deepwiki.com/mcp"
+    },
+    "exa": {
+      "type": "stdio",
+      "command": "exa-mcp-server",
+      "env": {
+        "EXA_API_KEY": "${EXA_API_KEY:-}"
+      }
+    },
+    "paper-search": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": [
+        "--from",
+        "git+https://github.com/openags/paper-search-mcp@cab1b5cc276a0cd004a0044003926a6440088049",
+        "paper-search-mcp"
+      ]
+    },
+    "playwright": {
+      "type": "stdio",
+      "command": "playwright-mcp",
+      "args": ["--headless", "--isolated"]
+    },
+    "codegraph": {
+      "type": "stdio",
+      "command": "codegraph",
+      "args": ["serve", "--mcp"],
+      "alwaysLoad": true
+    }
+  }
+}

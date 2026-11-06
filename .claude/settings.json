@@ -6,6 +6,57 @@
     "CLAUDE_CODE_WORKFLOW_MAX_CONCURRENT_AGENTS": "8",
     "DISABLE_TELEMETRY": "1",
     "DISABLE_ERROR_REPORTING": "1",
-    "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY": "1"
-  }
+    "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY": "1",
+    "DISABLE_OMC": "1"
+  },
+  "enabledPlugins": {
+    "superpowers@superpowers-dev": true,
+    "compound-engineering@compound-engineering-plugin": true,
+    "typesafe@typesafe-ai": true,
+    "oh-my-claudecode@omc": false,
+    "pyright-lsp@sextant-lsp": true,
+    "typescript-lsp@sextant-lsp": true
+  },
+  "extraKnownMarketplaces": {
+    "superpowers-dev": {
+      "source": {
+        "source": "github",
+        "repo": "obra/superpowers",
+        "ref": "v7.0.2"
+      },
+      "autoUpdate": false
+    },
+    "compound-engineering-plugin": {
+      "source": {
+        "source": "github",
+        "repo": "EveryInc/compound-engineering-plugin",
+        "ref": "compound-engineering-v3.36.0"
+      },
+      "autoUpdate": false
+    },
+    "typesafe-ai": {
+      "source": {
+        "source": "github",
+        "repo": "typesafe-ai/skills",
+        "ref": "v0.6.2"
+      },
+      "autoUpdate": false
+    },
+    "omc": {
+      "source": {
+        "source": "github",
+        "repo": "Yeachan-Heo/oh-my-claudecode",
+        "ref": "v5.7.30"
+      },
+      "autoUpdate": false
+    },
+    "sextant-lsp": {
+      "source": {
+        "source": "directory",
+        "path": "./.claude/lsp"
+      },
+      "autoUpdate": false
+    }
+  },
+  "enableAllProjectMcpServers": true
 }

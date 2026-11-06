@@ -29,6 +29,10 @@ secrets:
 prove:
     uv run --frozen pytest tests/proofs
 
+# Opt into the pinned OMC plugin for this Claude session (native settings precedence).
+omc:
+    claude --settings '{"env":{"DISABLE_OMC":"0"},"enabledPlugins":{"oh-my-claudecode@omc":true}}'
+
 # The trading path: research card, backtest, sim replay, ledger, merit page.
 slice:
     uv run --frozen python -m sextant.backtest.thin_slice
