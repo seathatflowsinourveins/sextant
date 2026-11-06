@@ -44,7 +44,7 @@ uv sync --frozen
 install_tools 2>&1 | tee -a "$log"
 
 # No prompt anywhere in this distro. Orca already launches every agent with its bypass flag
-# (stablyai/orca@v1.4.246:docs/site/content/docs/agents/supported.mdx). These answer Claude's own
+# (stablyai/orca@55ccff19ad4cd8ba28b6f3d2be798c1e626a2c2c:docs/site/content/docs/agents/supported.mdx). These answer Claude's own
 # dialog up front, for plain tabs and for Orca's managed accounts, whose settings live apart.
 no_prompts() {
   mkdir -p "$1"
