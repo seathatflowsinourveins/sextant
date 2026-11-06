@@ -1,0 +1,197 @@
+{
+  "schemaVersion": 1,
+  "claudeVersion": "2.1.318",
+  "startedAt": "2026-11-06T18:42:53.893Z",
+  "durationSeconds": 333,
+  "costUsd": 3.4677404000000003,
+  "partial": false,
+  "suite": {
+    "root": "/tmp/sextant-53-skill-evals-staged-v3/trading",
+    "ablation": "with-without",
+    "modelOverride": "claude-opus-5-5",
+    "judgeModel": "claude-opus-5-5",
+    "caseFilter": "paper-journal",
+    "threshold": 1,
+    "concurrency": 3,
+    "plugins": [
+      {
+        "name": "sextant-trading-shelf",
+        "path": "/tmp/sextant-53-skill-evals-staged-v3/trading"
+      }
+    ]
+  },
+  "cases": [
+    {
+      "name": "paper-journal",
+      "dir": "evals/paper-journal",
+      "source": "case_yaml",
+      "promptMarkdown": "Help me register this investment thesis in a trading journal and define its lifecycle: a research idea awaiting evidence, no open position, and an unresolved review date. State what should be tracked as it moves from screening to review and eventual closure. Do not create or alter any real position.",
+      "runsPerCase": 3,
+      "timeoutSeconds": 3600,
+      "maxTurns": 200,
+      "graders": [
+        {
+          "name": "skill-fired",
+          "type": "tool_used",
+          "weight": 1,
+          "config": {
+            "tool": "Skill",
+            "input_match": "\"skill\"\\s*:\\s*\"(?:[\\w-]+:)?trader-memory-core\""
+          }
+        }
+      ],
+      "arms": {
+        "with": [
+          {
+            "score": 1,
+            "passed": true,
+            "turns": 15,
+            "costUsd": 0.8601748,
+            "judgeCostUsd": 0,
+            "durationSeconds": 207,
+            "startedAt": "2026-11-06T18:42:53.939Z",
+            "error": null,
+            "tracePath": "/tmp/claude-eval-bcIahK/out/trace.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "skill-fired",
+                "passed": true,
+                "weight": 1,
+                "explanation": "Skill called 1x (expected 1..∞)",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          },
+          {
+            "score": 1,
+            "passed": true,
+            "turns": 19,
+            "costUsd": 0.9476012000000001,
+            "judgeCostUsd": 0,
+            "durationSeconds": 239,
+            "startedAt": "2026-11-06T18:42:53.939Z",
+            "error": null,
+            "tracePath": "/tmp/claude-eval-Kv1SxX/out/trace.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "skill-fired",
+                "passed": true,
+                "weight": 1,
+                "explanation": "Skill called 1x (expected 1..∞)",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          },
+          {
+            "score": 1,
+            "passed": true,
+            "turns": 18,
+            "costUsd": 0.921447,
+            "judgeCostUsd": 0,
+            "durationSeconds": 201,
+            "startedAt": "2026-11-06T18:42:53.939Z",
+            "error": null,
+            "tracePath": "/tmp/claude-eval-H1xylG/out/trace.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "skill-fired",
+                "passed": true,
+                "weight": 1,
+                "explanation": "Skill called 1x (expected 1..∞)",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          }
+        ],
+        "without": [
+          {
+            "score": 0,
+            "passed": false,
+            "turns": 2,
+            "costUsd": 0.268098,
+            "judgeCostUsd": 0,
+            "durationSeconds": 108,
+            "startedAt": "2026-11-06T18:46:15.316Z",
+            "error": null,
+            "tracePath": "/tmp/claude-eval-8sHeQX/out/trace.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "skill-fired",
+                "passed": false,
+                "weight": 1,
+                "explanation": "Skill called 0x (expected 1..∞)",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          },
+          {
+            "score": 0,
+            "passed": false,
+            "turns": 3,
+            "costUsd": 0.234042,
+            "judgeCostUsd": 0,
+            "durationSeconds": 92,
+            "startedAt": "2026-11-06T18:46:21.146Z",
+            "error": null,
+            "tracePath": "/tmp/claude-eval-7x09Sp/out/trace.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "skill-fired",
+                "passed": false,
+                "weight": 1,
+                "explanation": "Skill called 0x (expected 1..∞)",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          },
+          {
+            "score": 0,
+            "passed": false,
+            "turns": 3,
+            "costUsd": 0.23637740000000004,
+            "judgeCostUsd": 0,
+            "durationSeconds": 93,
+            "startedAt": "2026-11-06T18:46:53.079Z",
+            "error": null,
+            "tracePath": "/tmp/claude-eval-qbNncw/out/trace.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "skill-fired",
+                "passed": false,
+                "weight": 1,
+                "explanation": "Skill called 0x (expected 1..∞)",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          }
+        ]
+      },
+      "aggregates": {
+        "score": 1,
+        "passRate": 1,
+        "scoreWithout": 0,
+        "passRateWithout": 0,
+        "delta": 1
+      }
+    }
+  ],
+  "aggregates": {
+    "casesTotal": 1,
+    "casesPassed": 1,
+    "overallScore": 1,
+    "overallPassRate": 1,
+    "meanDelta": 1
+  }
+}

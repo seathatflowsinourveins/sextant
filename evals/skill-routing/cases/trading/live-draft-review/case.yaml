@@ -1,0 +1,26 @@
+{
+  "schema_version": "1.1",
+  "name": "live-draft-review",
+  "tags": [
+    "live"
+  ],
+  "execution": {
+    "prompt": "Review this strategy draft for plausibility, overfitting, sample adequacy and realistic execution before anyone considers a live promotion. Draft: opening-range continuation, many filters tuned on one month, no untouched holdout, no slippage study and no verified invalidation. Return a review verdict and the evidence gaps. No promotion or execution is authorized.",
+    "allowed_tools": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Skill"
+    ],
+    "append_system_prompt": "Read-only fixture evaluation: no orders, broker/data endpoints, credential access, file writes, shell commands or publication. Missing evidence stays unavailable. Give a concise response for the requested planning or review task.",
+    "timeout_seconds": 3600
+  },
+  "graders": [
+    {
+      "name": "skill-fired",
+      "type": "tool_used",
+      "tool": "Skill",
+      "input_match": "\"skill\"\\s*:\\s*\"(?:[\\w-]+:)?edge-strategy-reviewer\""
+    }
+  ]
+}

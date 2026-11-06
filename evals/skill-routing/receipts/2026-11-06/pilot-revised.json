@@ -1,0 +1,81 @@
+{
+  "schemaVersion": 1,
+  "claudeVersion": "2.1.318",
+  "startedAt": "2026-11-06T17:40:32.710Z",
+  "durationSeconds": 311,
+  "costUsd": 0.7719508,
+  "partial": false,
+  "suite": {
+    "root": "/tmp/sextant-53-skill-evals-staged-v2/trading",
+    "ablation": "none",
+    "modelOverride": "claude-opus-5-5",
+    "judgeModel": "claude-opus-5-5",
+    "caseFilter": "sim-backtest",
+    "threshold": 1,
+    "concurrency": 1,
+    "plugins": [
+      {
+        "name": "sextant-trading-shelf",
+        "path": "/tmp/sextant-53-skill-evals-staged-v2/trading"
+      }
+    ]
+  },
+  "cases": [
+    {
+      "name": "sim-backtest",
+      "dir": "evals/sim-backtest",
+      "source": "case_yaml",
+      "promptMarkdown": "Plan a historical backtest for a US-equity opening-range strategy. Cover parameter robustness, slippage and costs, look-ahead bias and a walk-forward holdout. Give the first three checks needed before a sim experiment; do not execute a test or fetch data.",
+      "runsPerCase": 3,
+      "timeoutSeconds": 3600,
+      "maxTurns": 10,
+      "graders": [
+        {
+          "name": "skill-fired",
+          "type": "tool_used",
+          "weight": 1,
+          "config": {
+            "tool": "Skill",
+            "input_match": "\"skill\"\\s*:\\s*\"(?:[\\w-]+:)?backtest-expert\""
+          }
+        }
+      ],
+      "arms": {
+        "with": [
+          {
+            "score": 1,
+            "passed": true,
+            "turns": 5,
+            "costUsd": 0.7719508,
+            "judgeCostUsd": 0,
+            "durationSeconds": 311,
+            "startedAt": "2026-11-06T17:40:32.751Z",
+            "error": null,
+            "tracePath": "/tmp/claude-eval-iO3PAj/out/trace.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "skill-fired",
+                "passed": true,
+                "weight": 1,
+                "explanation": "Skill called 1x (expected 1..∞)",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          }
+        ]
+      },
+      "aggregates": {
+        "score": 1,
+        "passRate": 1
+      }
+    }
+  ],
+  "aggregates": {
+    "casesTotal": 1,
+    "casesPassed": 1,
+    "overallScore": 1,
+    "overallPassRate": 1
+  }
+}

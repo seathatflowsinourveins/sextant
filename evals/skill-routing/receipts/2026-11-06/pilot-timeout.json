@@ -1,0 +1,108 @@
+{
+  "schemaVersion": 1,
+  "claudeVersion": "2.1.319",
+  "startedAt": "2026-11-06T17:29:43.144Z",
+  "durationSeconds": 600,
+  "costUsd": 0.24491900000000003,
+  "partial": false,
+  "suite": {
+    "root": "/tmp/sextant-53-skill-smoke",
+    "ablation": "with-without",
+    "modelOverride": "claude-opus-5-5",
+    "judgeModel": "claude-opus-5-5",
+    "threshold": 1,
+    "concurrency": 1,
+    "plugins": [
+      {
+        "name": "sextant-trading-shelf",
+        "path": "/tmp/sextant-53-skill-smoke"
+      }
+    ]
+  },
+  "cases": [
+    {
+      "name": "sim-backtest-planning",
+      "dir": "evals/sim",
+      "source": "case_yaml",
+      "promptMarkdown": "Plan a historical backtest for a US-equity opening-range strategy. I need a way to test parameter robustness, realistic slippage and costs, look-ahead bias and a walk-forward holdout before we consider a sim experiment. No trading, downloads or execution is requested.",
+      "runsPerCase": 3,
+      "timeoutSeconds": 300,
+      "maxTurns": 10,
+      "graders": [
+        {
+          "name": "skill-fired",
+          "type": "tool_used",
+          "weight": 1,
+          "config": {
+            "tool": "Skill",
+            "input_match": "\"skill\"\\s*:\\s*\"(?:[\\w-]+:)?backtest-expert\""
+          }
+        }
+      ],
+      "arms": {
+        "with": [
+          {
+            "score": 1,
+            "passed": true,
+            "turns": 3,
+            "costUsd": 0.20189420000000002,
+            "judgeCostUsd": 0,
+            "durationSeconds": 300,
+            "startedAt": "2026-11-06T17:29:43.173Z",
+            "error": "timed out after 300s",
+            "tracePath": "/tmp/claude-eval-fqnobR/out/trace.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "skill-fired",
+                "passed": true,
+                "weight": 1,
+                "explanation": "Skill called 1x (expected 1..∞)",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          }
+        ],
+        "without": [
+          {
+            "score": 0,
+            "passed": false,
+            "turns": 1,
+            "costUsd": 0.0430248,
+            "judgeCostUsd": 0,
+            "durationSeconds": 300,
+            "startedAt": "2026-11-06T17:34:43.408Z",
+            "error": "timed out after 300s",
+            "tracePath": "/tmp/claude-eval-Pu2HQP/out/trace.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "skill-fired",
+                "passed": false,
+                "weight": 1,
+                "explanation": "Skill called 0x (expected 1..∞)",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          }
+        ]
+      },
+      "aggregates": {
+        "score": 1,
+        "passRate": 1,
+        "scoreWithout": 0,
+        "passRateWithout": 0,
+        "delta": 1
+      }
+    }
+  ],
+  "aggregates": {
+    "casesTotal": 1,
+    "casesPassed": 1,
+    "overallScore": 1,
+    "overallPassRate": 1,
+    "meanDelta": 1
+  }
+}

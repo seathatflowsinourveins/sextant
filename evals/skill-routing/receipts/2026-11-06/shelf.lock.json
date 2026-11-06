@@ -1,0 +1,144 @@
+{
+  "readDate": "2026-11-06",
+  "plugins": {
+    "superpowers@superpowers-dev": {
+      "repo": "obra/superpowers",
+      "ref": "v7.0.2",
+      "sha": "22f0b463e7a5e579904dd6211a520321035526f7"
+    },
+    "compound-engineering@compound-engineering-plugin": {
+      "repo": "EveryInc/compound-engineering-plugin",
+      "ref": "compound-engineering-v3.36.0",
+      "sha": "7dc50943bbf959dbe6a93a175e41e5fff8395e00"
+    },
+    "typesafe@typesafe-ai": {
+      "repo": "typesafe-ai/skills",
+      "ref": "v0.6.2",
+      "sha": "302eea662c54bca6730873fe245bec1d69ebc23d"
+    },
+    "oh-my-claudecode@omc": {
+      "repo": "Yeachan-Heo/oh-my-claudecode",
+      "ref": "v5.7.30",
+      "sha": "14cd0fe92fbe376fab6c89b333b7896811986d2d"
+    },
+    "claude-hud@claude-hud": {
+      "repo": "jarrodwatts/claude-hud",
+      "ref": "v0.15.0",
+      "sha": "b86e1c3e5255880578de4b7cc87dc383228c2a18"
+    }
+  },
+  "skills": {
+    "repo": "tradermonty/claude-trading-skills",
+    "sha": "d8e71ce2f0b069eb5b6fca352857c168c35e6c46",
+    "files": {
+      "backtest-expert/references/failed_tests.md": "84fe35cd098a2d2fdc000d68f2277d9474aa7cdcd5a0f1b6566b78e7a77ef34e",
+      "backtest-expert/references/methodology.md": "eb2a73ca5cab78c19572c23ad102e414983f513db89d4fcce9ff59735fde8ac6",
+      "backtest-expert/requirements.txt": "73634381ea0c101acafd6fe5bcea1a7a111af65b6c0cab4ad8a998476db095ec",
+      "backtest-expert/scripts/evaluate_backtest.py": "cffb9ae1e2a619c9722af38dbf5d831cb04bef961f295695796f992309b79e06",
+      "backtest-expert/scripts/tests/conftest.py": "e10033aa10fcd683aa69ac2c5c53894c63194fd884ce6a06c6cac6013bd57822",
+      "backtest-expert/scripts/tests/test_evaluate_backtest.py": "6aa5c7c7c3b91f9f551390a3536d5e9024145e9c995925cf0002616249e825de",
+      "backtest-expert/SKILL.md": "f2c9ce6501b574cdf1cc35b757b5dfc3cb5e234222af84e67ce07775dfdc689d",
+      "edge-strategy-designer/agents/openai.yaml": "b7a78ed9a7977d56436313ca48ea2403e7bc2f53e3f847908ef0ea7583c2a465",
+      "edge-strategy-designer/references/strategy_draft_schema.md": "60c710b724544d97d58758e4592e1ae716f2420a8ff6b5f5e7e4258df7b048c8",
+      "edge-strategy-designer/requirements.txt": "71ec7989f88a466d6dd6217a88a055e968c81bd98d9a386ba69d04ddf256e78b",
+      "edge-strategy-designer/scripts/design_strategy_drafts.py": "433265b82939be5da54d28b42320b28a3e46ce0c307a920786ab02f9d8d4a0e0",
+      "edge-strategy-designer/scripts/tests/conftest.py": "c5b02ce5fb1630b6e8d5a7e40cd0049f23eaadf7be11d03d92ff3187a585d4ee",
+      "edge-strategy-designer/scripts/tests/test_design_strategy_drafts_coverage.py": "7813a9a4a441631216a6d757bc4ad865f3fa70e45012e06eb89e90aaf6f5e8b4",
+      "edge-strategy-designer/scripts/tests/test_design_strategy_drafts.py": "2966702d6ef80ce7dd0aac2a375ce34a7b0f45e9c542341730a41153d9d3765a",
+      "edge-strategy-designer/SKILL.md": "f73918b3935d8b83caed48ef914d2bf126ea2f7f5cfff85b34d28351abc163eb",
+      "edge-strategy-reviewer/assets/bias_checklist.yaml": "224805efe559b4040820c0d3909afef881c7a7f897359852bca7fe4febc21aa6",
+      "edge-strategy-reviewer/references/overfitting_checklist.md": "3cee0ba89aa3a7a9dd78405d8a627d173d04faa649458edfb0f895f8fc3cdaec",
+      "edge-strategy-reviewer/references/review_criteria.md": "2eb2c90288a0525678c82b8071d752d6e18d77e1255a8c4af0d375cc5f1dea79",
+      "edge-strategy-reviewer/requirements.txt": "71ec7989f88a466d6dd6217a88a055e968c81bd98d9a386ba69d04ddf256e78b",
+      "edge-strategy-reviewer/scripts/review_strategy_drafts.py": "28a4728c59e548f8d8f1cad95b043707e169af712455ce1ffdabc4148a88b7e4",
+      "edge-strategy-reviewer/scripts/tests/conftest.py": "5c59d044f85219eeb6585471d37f37cc10b03822274cdeebe94521c4f351f7be",
+      "edge-strategy-reviewer/scripts/tests/test_review_strategy_drafts.py": "69a02efc4622f91d8a2ec319fb8b88a14bcd266924bc6c26cce6376bb90fc6db",
+      "edge-strategy-reviewer/SKILL.md": "b893b68ca083804841e579c2fd8c0d6a2defdd25909304e255526c608f2352cd",
+      "pre-trade-discipline-gate/references/discipline_gate_framework.md": "24c767eca9da4b797cdcb64b8f4ac5171acd6d772edaa4d90075a8fc7492239b",
+      "pre-trade-discipline-gate/requirements.txt": "71ec7989f88a466d6dd6217a88a055e968c81bd98d9a386ba69d04ddf256e78b",
+      "pre-trade-discipline-gate/scripts/check_pre_trade_discipline.py": "90cdab67c30758ba29270a4cfb011eb55537b7d9dfe063e590c4aaae3c5f1cc4",
+      "pre-trade-discipline-gate/scripts/tests/conftest.py": "bf8f2fafdeb68639c307d22ada355774a14dae591f5620d3577c823cc024fbf5",
+      "pre-trade-discipline-gate/scripts/tests/test_check_pre_trade_discipline.py": "7e002356fa788cddb5abb99dcc318bb31011fc6bbae8b634fac4b38bff591aed",
+      "pre-trade-discipline-gate/SKILL.md": "cd33ad056ae3a612e1bff3b46c5c4366c6f73ba15f33127283f4579890c84962",
+      "trader-memory-core/assets/postmortem_template.md": "9800800da86820109ab36ffc84050048c5c7969b6e6973a65b4e4b2b0c5b45d6",
+      "trader-memory-core/references/field_mapping.md": "207a1720c9490600d94cc383bff0559b139989b9bf0bc33ee4e70a8c4b74d145",
+      "trader-memory-core/references/thesis_lifecycle.md": "2c59601a0a03bbe3b47569af487109596c1f8a3c74dc96c7cdd03db29b29d3c8",
+      "trader-memory-core/requirements.txt": "d034fef60ee8cd616327cced018ee81f9e419567cd89ce0dcf78713556975dd5",
+      "trader-memory-core/schemas/thesis.schema.json": "31d773f782e49f03710f33df22fb25e743d6302d5073496f7d6eff030374208f",
+      "trader-memory-core/scripts/fmp_price_adapter.py": "89fea1992139787c6027769e1f7e29d6c34cc5b70302e8d9b55792460e6e43f7",
+      "trader-memory-core/scripts/tests/conftest.py": "664ab4863149b64be1b218e74f138f104483d9b348bc86b095ce6063d0777ab2",
+      "trader-memory-core/scripts/tests/test_fmp_price_adapter.py": "a16c8c4187e8207fbdf4a64315df21e100685960d7f22c4f99e1bba57c576535",
+      "trader-memory-core/scripts/tests/test_thesis_ingest.py": "a69bf8c1ae93cf599dceeaa7753e22786760a6cee1ac61237e9e5d193a9b16b0",
+      "trader-memory-core/scripts/tests/test_thesis_review.py": "4b19258dd9e5a97f0d889310fde321c200c062c9d208f06365e83f29a34d4ed2",
+      "trader-memory-core/scripts/tests/test_thesis_store_futures.py": "cff41ab659724adaa2595a9ccd1117d9e10153fd3a3c536566257bec7f9a771f",
+      "trader-memory-core/scripts/tests/test_thesis_store.py": "5e95331fdc2ad18abd45c781de7759a2d6b68b22c8d8f8f9344e1c51e1922188",
+      "trader-memory-core/scripts/tests/test_trader_memory_cli.py": "9905a2566c5e0501b96d0aa1f340677d92c3ffca44b8c3ffaa71b1f8b955141c",
+      "trader-memory-core/scripts/thesis_ingest.py": "067cc595ea552108c21618c5874b47519d101bff828eeb70e53a6d8ab6807d21",
+      "trader-memory-core/scripts/thesis_review.py": "e54ae549f6962d092a2486082b0fb6d2f9901823478ac5e4a8b12c8ed8399252",
+      "trader-memory-core/scripts/thesis_store.py": "943f1c8e1be03718dd48750973c8fc5980536f6bfb76630ac9f138eba4ed1a02",
+      "trader-memory-core/scripts/trader_memory_cli.py": "1e7e849e36257057728b813c7b1b31a700eb7d61ce67f221df4e1e6c42c617b6",
+      "trader-memory-core/SKILL.md": "0708e12b2134f18e6ceeedc2e3520a2929b3144e0d64fe118ac64f9c23dad1f5",
+      "signal-postmortem/references/feedback-integration.md": "740974884c9bcb51f62480e4f5a58f3b84abc0ae9920fbda873db415a2b23c7f",
+      "signal-postmortem/references/outcome-classification.md": "2e82dca7d2a847f2c3560227778e298f15f3a4da581b8e6b137f297c468d9f1a",
+      "signal-postmortem/requirements.txt": "18b5cfdab437ba11fe037dff1efa4e25c2df2c991e2d07c3490b216ef8bb7b7c",
+      "signal-postmortem/scripts/postmortem_analyzer.py": "13704a229dd51266f7790dd22e5a2b31de0b28a25a8ab8461c10137bf43dbbc8",
+      "signal-postmortem/scripts/postmortem_recorder.py": "7386184cb74009ddd5e7e83fcf682630472872a385be7d35e6c096ec3ed94f94",
+      "signal-postmortem/scripts/tests/conftest.py": "b461e7542759ed3047b72acc9fc3c336261b7405a1106afac69b7371307ee51a",
+      "signal-postmortem/scripts/tests/test_cli_workflow.py": "c9eb8d73aa55a13f6be6dfd8d852af834d4a0f070bea4a0f81a601e2d7414e29",
+      "signal-postmortem/scripts/tests/test_postmortem_analyzer.py": "ce7aea437bd899164131e5c7f0a4fc75a2875268cc7f17923819fdfa13b8308d",
+      "signal-postmortem/scripts/tests/test_postmortem_recorder.py": "384a3740858548d5a425641bab085829370defb5ffa8abdff6465f9505ece30c",
+      "signal-postmortem/SKILL.md": "719ed5ee385d6a859ad3e147d5517ef1388fc9e5eb7fff2e8ff8cd32cef82acf",
+      "options-strategy-advisor/README.md": "8955dce11f4eb49cf19550d25a47232753fc88a1dd18a33300c7d5dfa36745ea",
+      "options-strategy-advisor/references/black_scholes_methodology.md": "75d0054746ef9411be918af80df88df08b4aa6ecc38735bd82f10569e4fc02b9",
+      "options-strategy-advisor/requirements.txt": "2e2e9bf5e8cd309d1846c9bf051544317ee53cbdf965a218ddebe2365c39b9e7",
+      "options-strategy-advisor/scripts/black_scholes.py": "c0acf1d906a86115ef3e94b489b8e2699aaed0ca33c0290e53371a8e55e4a9d8",
+      "options-strategy-advisor/scripts/tests/conftest.py": "1638bee2ef0443f5ba6e84f271177ca903aab2bf2cfe69a8ac9b34f135cdf96a",
+      "options-strategy-advisor/scripts/tests/test_black_scholes.py": "239a40ec9099ed8db8a1e09fc2915cbdbf200b1b57f748eec2dfba292a3c6ca4",
+      "options-strategy-advisor/scripts/tests/test_fmp_endpoints.py": "76a91dff636ea64a9b8265885a77335a40ffd9f640f5c2591c4058d174d5496a",
+      "options-strategy-advisor/SKILL.md": "ab885b1a1464f1e6f526d1492ce835a7aafdae1742f3c159ca03c255b25e8ea3",
+      "LICENSE.tradermonty": "87c93cde8c3a000c19b0c790cd4f7a4e4cb8da5bc6b11e0939bf6df99e245d15"
+    }
+  },
+  "lsp": {
+    "repo": "anthropics/claude-plugins-official",
+    "sha": "cb421c81df4274fd28fd1ead817bc6ffea723fed",
+    "files": {
+      "pyright-lsp/.claude-plugin/plugin.json": "2cf083ce0ec6aa27c25ba7dd3b1cc37868f899f1bd77a9431949703e888c4c1d",
+      "pyright-lsp/LICENSE": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "pyright-lsp/README.md": "06831f5f4397506f295857d4de98bd0ceeeb23b2546168c3c0029c5e03782cf0",
+      "typescript-lsp/.claude-plugin/plugin.json": "9dc64ac773c9a25c6fd856b856568db58033540073cbe06c743eca501d27005c",
+      "typescript-lsp/LICENSE": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "typescript-lsp/README.md": "adeb3592417e4b8fa6d05a3cb199b41fb38b80f590167bfef2b8688d00644685"
+    }
+  },
+  "mcp": {
+    "context7": {
+      "repo": "upstash/context7",
+      "ref": "@upstash/context7-mcp@4.5.0",
+      "sha": "a138857cc23f0abaf214b72b15d974e61598369b"
+    },
+    "deepwiki": {
+      "url": "https://mcp.deepwiki.com/mcp",
+      "docs": "https://docs.devin.ai/work-with-devin/deepwiki-mcp",
+      "readDate": "2026-11-06"
+    },
+    "exa": {
+      "repo": "exa-labs/exa-mcp-server",
+      "sha": "93c0d5e1fecfc1ec9bf70fa9f3633962a1f2fa8a"
+    },
+    "paper-search": {
+      "repo": "openags/paper-search-mcp",
+      "sha": "cab1b5cc276a0cd004a0044003926a6440088049"
+    },
+    "playwright": {
+      "repo": "microsoft/playwright-mcp",
+      "ref": "v0.0.84",
+      "sha": "be26c080edfae7c761db1e757c4aff9f6453b4d7"
+    },
+    "codegraph": {
+      "repo": "colbymchenry/codegraph",
+      "ref": "v1.6.2",
+      "sha": "6560052a6f856855d3f71eee838fd66ccfa4285d"
+    }
+  }
+}
