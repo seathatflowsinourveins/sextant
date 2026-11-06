@@ -9,6 +9,7 @@ PINS = {
     "northstar": (
         "b384d298d217d3f8d9aa83356994629536a34795",
         "6957af5d6f06b0a1be82b97a8246dea51c9dce3f",
+        "0243050704565abaf3a95f0f09613cb974a331e5",
     ),
     "northstar-lanes": (
         "00203275944a22655b3e14b221cfde9a265d549a",

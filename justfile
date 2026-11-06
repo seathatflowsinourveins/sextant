@@ -55,7 +55,7 @@ gh-app *args:
 
 # Run every manifest row's proof. pytest does the running and the counting.
 prove:
-    uv run --frozen pytest tests/proofs
+    uv run --frozen pytest tests/proofs -m ""
 
 # Import a disposable copy of the committed research docs into local OpenViking.
 index:

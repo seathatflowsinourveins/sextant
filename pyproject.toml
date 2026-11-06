@@ -32,9 +32,16 @@ select = ["E", "F", "I", "B", "UP", "S", "RUF"]
 ignore = ["S101", "S603", "S607"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests/repo", "tests/proofs/test_thin_slice.py", "tests/proofs/test_exit_engine.py", "tests/proofs/test_claude_shelf.py", "tests/proofs/test_workflows.py", "tests/proofs/test_candidate_history.py", "tests/proofs/test_exit_study_41.py", "tests/proofs/test_research_sources.py", "tests/proofs/test_options_jev.py", "tests/proofs/test_replay.py", "tests/proofs/test_reentry.py", "tests/proofs/test_sharadar_coverage.py"]
+testpaths = ["tests/repo", "tests/proofs"]
+# Proofs that need the devcontainer itself (its firewall, sudo rule and pinned runtimes) and the ones that need the maintainer's own tools
+# are deselected by default, so `ci` runs everything else. `just prove` adds them back with an empty
+# `-m ""`, which overrides this one. pytest docs, "Registering marks" and "Specifying which tests to run".
+markers = [
+  "container: needs the sandbox container; deselected by default outside it",
+  "local: needs the maintainer's own tools or login (the gitleaks binary, gh admin reads); deselected by default, so CI's read-only token skips it",
+]
 pythonpath = ["src"]
-addopts = "-q"
+addopts = "-q -m 'not container and not local'"
 
 [tool.pyright]
 include = ["src", "tests"]

@@ -9,6 +9,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).parents[2]
 LOCK = ROOT / ".devcontainer" / "qmd" / "package-lock.json"
 INTEGRITY = "sha512-zjfVwrObPB618B6x8SdhlGv/tX9OxRHsbQnr5DUtBvqPK6HGQ27lM+9/BAY5okpjrHVnW56hLyDkqoTcsrVLzA=="  # noqa: E501
@@ -35,6 +37,7 @@ def test_project_index_stays_in_the_tree_and_derived() -> None:
     assert ".qmd/index.sqlite*" in (ROOT / ".gitignore").read_text().splitlines()
 
 
+@pytest.mark.local
 def test_qmd_search_finds_the_decision_without_a_model(tmp_path: Path) -> None:
     binary = shutil.which("qmd")
     assert binary, "qmd is not on PATH; run deploy/wsl/setup.sh or use the sandbox image"
