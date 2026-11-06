@@ -1,0 +1,88 @@
+{
+  "recorded_at": "2026-11-06T15:39:21+00:00",
+  "issue": 54,
+  "source_release": "https://github.com/seathatflowsinourveins/sextant/releases/tag/research-legs-2026-11-06",
+  "qualified_GPT_status": "pending: ultra leg commissioned 2026-11-06",
+  "coordinator_disposition": "Orca msg_7baf9f882417: do not count provisional GPT legs; commission independent ultra replacements; land ready work and list this under Not verified",
+  "dsh": {
+    "version": "0.2.2-rc.1",
+    "source_commit": "66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db",
+    "configured_provider": "deepseek-official",
+    "configured_model": "deepseek-v4-pro",
+    "configured_effort": "max",
+    "patch_path": "docs/research/2026-11-06-research-legs/blind-max.yml",
+    "patch_sha256": "d211359c27b14d7e819a56a25534b5bfb2c72aaf30651402ed60cd4e378cccca",
+    "launcher": "scripts/with-keys.sh --strict -k DEEPSEEK_API_KEY -- dsh --profile headless --patch <patch> --permission-mode workspace-write --approval-policy never --json -",
+    "sibling_tmp_visibility": "landscape shell sandbox could not see the parent patch or stars TSV; loader consumed the patch before launch, and the leg refreshed stars itself",
+    "retrieval": "stock headless profile; no house MCP/OpenViking or other leg supplied"
+  },
+  "owner_stars": {
+    "count": 387,
+    "sha256": "ca5f02c3bea8696eeeaf72b95dc3633ed0cf0f263a24f8a1606e3cd4394560a5",
+    "historical_snapshot_comparison": "unverified here"
+  },
+  "legs": [
+    {
+      "job": "landscape",
+      "family": "DeepSeek",
+      "path": "docs/research/2026-11-06-research-legs/landscape-leg-deepseek.md",
+      "sha256": "ae15a1b8e2a7c82fd0a5ae2f728bf676e387a8d608bcc7f17852dd86892a935e",
+      "lines": 258,
+      "line_budget": 500,
+      "session_id": "session-2ed5a8db-f0c8-460b-b9c8-6d1219c80a00",
+      "process_exit_code": 0,
+      "other_report_paths_in_tool_calls": [],
+      "new_synthesis_ADR_text_seen": false,
+      "events_sha256": "aece56ceb2b8a323eb4323bfc4ca187a38e2cf978b3008df0c48719411ec2953",
+      "launch_prompt_sha256": "938063936a86728a8e3a607c902cece97e7a9753d70d43bddd44fddef37d973b"
+    },
+    {
+      "job": "memory",
+      "family": "DeepSeek",
+      "path": "docs/research/2026-11-06-research-legs/memory-leg-deepseek.md",
+      "sha256": "f47fdcf80002842749fafe3fa477af6d7aca4e1b6aa2dbd8d53e46025cce9f68",
+      "lines": 72,
+      "line_budget": 200,
+      "session_id": "session-61ff1c52-3022-4962-843c-5ecd4abd28e1",
+      "process_exit_code": 0,
+      "other_report_paths_in_tool_calls": [],
+      "new_synthesis_ADR_text_seen": false,
+      "events_sha256": "2b04a1e0232b66c3e26f905ddf3631175a550df559f34674c32634d29b0d124c",
+      "launch_prompt_sha256": "092dfe730269590b6bc37e8d4f75bf7cf5c0eb7cb577e74a002d446efa9cf0f6"
+    }
+  ],
+  "release_inputs": [
+    {
+      "asset": "landscape-leg-gpt.md",
+      "sha256": "90ca818a900343f3f0bff316458184a2de223ed1f4f58921227c9bc7ab454900",
+      "qualifying_GPT_leg": false
+    },
+    {
+      "asset": "memory-leg-gpt.md",
+      "sha256": "e35d8d4099635aa61262f4065a0c0e0db9da5f8012f2b45a042f53357f67e666",
+      "qualifying_GPT_leg": false
+    },
+    {
+      "asset": "memory-leg-claude.md",
+      "sha256": "5186fd984fdc6d3a44e228594eafdd7987a27e8362a0cb4ea2b25d5705cff14c",
+      "qualifying_GPT_leg": null
+    },
+    {
+      "asset": "data-leg-claude.md",
+      "sha256": "ddd53c935e2fc2dc5a6461fdea4dc36dc2f9f4ef08ff42f5d42992d8c8caa1f5",
+      "qualifying_GPT_leg": null
+    },
+    {
+      "asset": "landscape-BRIEF-deepseek.md",
+      "sha256": "253323ae84db86471b73baef074a4cb224443ed4f5f65ad582bfd39e4f83ddaf",
+      "qualifying_GPT_leg": null
+    },
+    {
+      "asset": "memory-BRIEF.md",
+      "sha256": "f85ff170e6bea2e6a37de4e4bcafa9b8ff11b05d5a9536dcda9d11f3e2cb5e2d",
+      "qualifying_GPT_leg": null
+    }
+  ],
+  "new_strategy_trials": 0,
+  "historical_trial_count": null
+}

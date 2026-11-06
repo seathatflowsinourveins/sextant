@@ -16,6 +16,7 @@
 
 ## Context
 The owner's tight-exit requirement and the economics are separate facts. [ADR-0024](0024-extreme-mover-ranking-and-early-entry.md) carries the newest extreme-mover ruling verbatim; the [evidence note](../research/2026-11-06-extreme-mover-evidence.md) preserves the negative replays.
+**2026-11-06 clarification (#54):** XR29's control holds each entered position to **15:55 ET**; call it **hold-to-15:55**, distinct from the zero-position hold-flat/no-trade control. This corrects terminology, not the protection policy or the negative comparison.
 
 ## Decision
 - **Managed trigger, X2–X3:** `buffer=max(one_tick, eligible_spread, prearm_buffer_fraction×entry, prearm_range_multiple×R_w)`; before arming, `trail=max(buffer, setup_gap)`. With eligible running high H, `gain_lock=max(entry+c_RT, H-max(noise_floor, g×(H-entry)))`, where `noise_floor=max(one_tick, eligible_spread)`. `R_w` is the eligible-trade range over the configured window; `setup_gap=entry-initial_trigger` comes from the setup. The trigger is `max(previous_trigger, H-trail, gain_lock if armed)`; it never loosens. Chandelier is a counterfactual in this lanes policy, not another trigger term.
@@ -31,7 +32,7 @@ The owner's tight-exit requirement and the economics are separate facts. [ADR-00
 | Claim | Source (repo@sha:path, section or line) | Basis |
 |---|---|---|
 | Trigger, arming, persisted breach and dynamic limit | northstar-lanes@00203275944a:docs/adr/0006-exit-engine.md, X2–X7 and November 3 fold | Owner rulings; secure-gains GPT/Google convergence; NautilusTrader 2.0.0rc7 modify/OCO seams; all parameters UNCALIBRATED |
-| Negative holding comparison and unknown economics | northstar-trading@8256c16c31dc:docs/research/2026-10-29-b-exit-replay.md, §§1–3/r2; northstar-lanes@00203275944a:docs/adr/0003-philosophy-and-operating-principles.md, Confidence | 1,025 paired entries; “in history, hold-flat beat every active-exit variant”; “Unknown: whether early entry plus a tight trigger plus re-entry beats hold-flat net of costs” |
+| Negative holding comparison and unknown economics | northstar-trading@8256c16c31dc:docs/research/2026-10-29-b-exit-replay.md, §§1–3/r2; northstar-lanes@00203275944a:docs/adr/0003-philosophy-and-operating-principles.md, Confidence | 1,025 paired entries: holding to 15:55 beat every active-exit variant. The separate philosophy's no-trade control and unknown full-policy economics remain unchanged. |
 | B exceptions, fill-cost target and gaps | northstar-trading@8256c16c31dc:docs/adr/0015-owner-entry-paper-exit-manager.md, November 3 (2)–(4), November 5 owner pointer | Owner/lead rulings; measured PLTG failure; scoped upstream OrderEmulator and Alpaca order semantics |
 | Native release and PMG tests | northstar-trading@8256c16c31dc:docs/research/2026-10-23-qfk33-emulated-trailing-activation.md, six-case output; 2026-11-02-pmg-trail-c5.md, protection first; 2026-11-02-pmg-trail-c5-r3.md, handovers | NautilusTrader 2.0.0rc7 native-stub tests; Chandelier reference as read in source; no broker-fill guarantee |
 | Later stricter-gain variants | northstar-trading@8256c16c31dc:docs/research/2026-11-03-b-gain-protection-replay.md, §§1/3/7 | Actual ExitManager/native matching; Wilder SAR (1978); vendor tiers explicitly secondary; 2 minute opportunities, qualified tick n=0, NOT ESTIMABLE |

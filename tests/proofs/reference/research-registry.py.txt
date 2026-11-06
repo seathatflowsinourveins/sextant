@@ -1,0 +1,210 @@
+"""Load the ADR-0020 source registry offline, with licence recorded (ADR-0032), never a gate.
+
+ADR-0032 (2026-10-20), ``docs/decisions/0032-private-experimental-quality-only-evaluation.md``
+in the northstar harness, lines 3-12 and 21, makes licences informational in this private environment.
+Pins and port attribution remain metadata requirements. Informational notes flag later commercial
+or shared use, not permission to distribute. A passing check validates declarations, not the truth
+of a licence, a pin or a source's research claims. No trading clients or upstream fetches are involved.
+"""
+
+from __future__ import annotations
+
+import re
+from collections.abc import Mapping
+from contextlib import suppress
+from dataclasses import dataclass
+from datetime import date, datetime
+from pathlib import Path, PurePosixPath
+from typing import Any, cast
+
+DEFAULT_SOURCES = Path(__file__).resolve().parents[3] / "research" / "sources.yaml"
+USES = frozenset({"template", "port", "clean-room", "ideas-only", "research-reference"})
+STATUSES = frozenset({"candidate", "replicating", "tested", "rejected", "stale"})
+LICENCE_NOTES = {
+    "copyleft": "copyleft: review share-alike obligations before distribution or shared use",
+    "non-commercial": "non-commercial: review terms before commercial or shared use",
+    "no-licence": "no-licence: terms unasserted; review before commercial or shared use",
+}
+_REQUIRED = frozenset(
+    {
+        "id",
+        "title",
+        "citation",
+        "url",
+        "spdx",
+        "use",
+        "data_needs",
+        "published",
+        "status",
+        "pin",
+        "notes",
+        "fits",
+    }
+)
+_OPTIONAL = frozenset({"attribution", "origin"})
+
+
+class RegistryError(ValueError):
+    """The registry's metadata or requested source use violates its schema."""
+
+
+@dataclass(frozen=True)
+class Pin:
+    repo: str
+    tag: str
+    commit: str
+    path: str
+
+
+@dataclass(frozen=True)
+class Source:
+    id: str
+    title: str
+    citation: str
+    url: str
+    spdx: str
+    use: str
+    data_needs: tuple[str, ...]
+    published: date | None
+    status: str
+    pin: Pin | None
+    notes: str
+    fits: tuple[str, ...]
+    attribution: str | None = None
+    origin: str | None = None
+
+    @property
+    def licence_flags(self) -> tuple[str, ...]:
+        """Flag declared licence families for later use; never determine source admissibility."""
+        identifiers = re.findall(r"[A-Za-z0-9.+-]+", self.spdx.upper())
+        flags = []
+        if any(identifier.startswith(("GPL-", "AGPL-", "LGPL-")) for identifier in identifiers):
+            flags.append("copyleft")
+        if any(identifier.startswith(("CC-BY-NC-", "POLYFORM-NONCOMMERCIAL-")) for identifier in identifiers):
+            flags.append("non-commercial")
+        if {"NOASSERTION", "NONE", "LICENSEREF-NOLICENSE"}.intersection(identifiers):
+            flags.append("no-licence")
+        return tuple(flags)
+
+    @property
+    def licence_note(self) -> str | None:
+        """Computed informational reminder, not a legal assessment or a validation rule."""
+        return "; ".join(LICENCE_NOTES[flag] for flag in self.licence_flags) or None
+
+
+def _mapping(value: object, label: str) -> Mapping[str, Any]:
+    if not isinstance(value, Mapping) or not all(isinstance(key, str) for key in value):
+        raise RegistryError(f"{label} must be a mapping with string keys")
+    return cast(Mapping[str, Any], value)
+
+
+def _text(value: object, label: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise RegistryError(f"{label} must be non-empty text")
+    return value.strip()
+
+
+def _strings(value: object, label: str) -> tuple[str, ...]:
+    if not isinstance(value, list) or not value:
+        raise RegistryError(f"{label} must be a non-empty list of strings")
+    return tuple(_text(item, label) for item in value)
+
+
+def _published(value: object, label: str) -> date | None:
+    if value is None:
+        return None
+    if isinstance(value, date) and not isinstance(value, datetime):
+        return value
+    if isinstance(value, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+        with suppress(ValueError):
+            return date.fromisoformat(value)
+    raise RegistryError(f"{label} must be an ISO date (YYYY-MM-DD) or null when unverified")
+
+
+def _pin(value: object, label: str) -> Pin | None:
+    if value is None:
+        return None
+    spec = _mapping(value, label)
+    fields = {"repo", "tag", "commit", "path"}
+    if set(spec) != fields:
+        raise RegistryError(f"{label} must contain repo, tag, commit and path")
+    pin = Pin(**{field: _text(spec[field], f"{label}.{field}") for field in fields})
+    if re.fullmatch(r"[0-9a-fA-F]{40}", pin.commit) is None:
+        raise RegistryError(f"{label}.commit must be a full 40-hex commit SHA")
+    path = PurePosixPath(pin.path)
+    if path.is_absolute() or ".." in path.parts or not path.parts:
+        raise RegistryError(f"{label}.path must be a non-empty repo-relative path")
+    return pin
+
+
+def _validate_use(source: Source) -> None:
+    label = f"source {source.id!r}"
+    if source.use == "template" and source.pin is None:
+        raise RegistryError(f"{label}: template requires a full pin (repo, tag, commit, path)")
+    if source.use == "port":
+        if source.attribution is None:
+            raise RegistryError(f"{label}: port requires attribution text")
+        if source.pin is None and source.status not in {"candidate", "stale"}:
+            raise RegistryError(f"{label}: port requires a full pin (repo, tag, commit, path)")
+
+
+def _source(raw: object, index: int) -> Source:
+    spec = _mapping(raw, f"sources[{index}]")
+    label = f"source {spec.get('id', index)!r}"
+    if missing := _REQUIRED - spec.keys():
+        raise RegistryError(f"{label}: missing fields: {', '.join(sorted(missing))}")
+    if unknown := spec.keys() - (_REQUIRED | _OPTIONAL):
+        raise RegistryError(f"{label}: unknown fields: {', '.join(sorted(unknown))}")
+    text = {
+        key: _text(spec[key], f"{label}.{key}")
+        for key in ("id", "title", "citation", "url", "spdx", "use", "status", "notes")
+    }
+    if re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", text["id"]) is None:
+        raise RegistryError(f"{label}.id must be a lower-case hyphenated identifier")
+    if text["use"] not in USES:
+        raise RegistryError(f"{label}.use must be one of {', '.join(sorted(USES))}; production is not a use")
+    if text["status"] not in STATUSES:
+        raise RegistryError(f"{label}.status must be one of {', '.join(sorted(STATUSES))}")
+    source = Source(
+        **text,
+        data_needs=_strings(spec["data_needs"], f"{label}.data_needs"),
+        published=_published(spec["published"], f"{label}.published"),
+        pin=_pin(spec["pin"], f"{label}.pin"),
+        fits=_strings(spec["fits"], f"{label}.fits"),
+        attribution=_text(spec["attribution"], f"{label}.attribution") if "attribution" in spec else None,
+        origin=_text(spec["origin"], f"{label}.origin") if "origin" in spec else None,
+    )
+    _validate_use(source)
+    return source
+
+
+def validate_registry(document: object) -> dict[str, Source]:
+    """Validate metadata with licence recorded (ADR-0032); return sources indexed by unique id.
+
+    Unpinned candidate/stale ports remain inventory with attribution, not permission to port
+    unverified code. Other ports and all templates require a full pin. Licences never restrict use.
+    """
+    spec = _mapping(document, "registry")
+    version = spec.get("schema_version")
+    if not isinstance(version, int) or isinstance(version, bool) or version != 1:
+        raise RegistryError("registry.schema_version must be 1")
+    if not isinstance(spec.get("sources"), list):
+        raise RegistryError("registry.sources must be a list")
+    sources: dict[str, Source] = {}
+    for index, raw in enumerate(spec["sources"]):
+        source = _source(raw, index)
+        if source.id in sources:
+            raise RegistryError(f"duplicate source id: {source.id!r}")
+        sources[source.id] = source
+    return sources
+
+
+def load_registry(path: str | Path = DEFAULT_SOURCES) -> dict[str, Source]:
+    """Read YAML using the repo's existing PyYAML dependency and validate its declarations."""
+    import yaml
+
+    try:
+        document = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    except (yaml.YAMLError, ValueError) as exc:
+        raise RegistryError(f"{path}: invalid YAML: {exc}") from exc
+    return validate_registry(document)

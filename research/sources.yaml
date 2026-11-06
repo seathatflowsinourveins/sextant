@@ -1,0 +1,100 @@
+{
+  "schema_version": 1,
+  "sources": [
+    {
+      "id": "nautilus-ema-cross",
+      "title": "NautilusTrader EMA cross tutorial",
+      "citation": "NautilusTrader v2.0.0rc7, docs/tutorials/ema_cross.py; maintained plumbing baseline only.",
+      "url": "https://github.com/nautechsystems/nautilus_trader/blob/55c0e82053142bce3a5cba4de4221d3929c2d3bc/docs/tutorials/ema_cross.py",
+      "spdx": "LGPL-3.0",
+      "use": "template",
+      "data_needs": [
+        "bars",
+        "trade-ticks"
+      ],
+      "published": null,
+      "status": "candidate",
+      "pin": {
+        "repo": "https://github.com/nautechsystems/nautilus_trader",
+        "tag": "v2.0.0rc7",
+        "commit": "55c0e82053142bce3a5cba4de4221d3929c2d3bc",
+        "path": "docs/tutorials/ema_cross.py"
+      },
+      "notes": "Existing ETHUSDT thin slice only; source publication date not asserted. US mover/PIT and OSAP/JKP/HXZ screens unverified; no new compute admitted. See lanes/research/ema-cross.md.",
+      "fits": [
+        "pipeline-control"
+      ]
+    },
+    {
+      "id": "orb-stocks-in-play",
+      "title": "Stocks in Play five-minute opening-range breakout",
+      "citation": "Zarattini, Barbon and Aziz, A Profitable Day Trading Strategy for the U.S. Equity Market, SFI 24-98, DOI 10.2139/ssrn.4729284.",
+      "url": "https://doi.org/10.2139/ssrn.4729284",
+      "spdx": "NOASSERTION",
+      "use": "research-reference",
+      "data_needs": [
+        "dated-universe",
+        "unadjusted-intraday",
+        "corporate-actions",
+        "availability-clocks",
+        "quotes",
+        "costs"
+      ],
+      "published": null,
+      "status": "candidate",
+      "pin": null,
+      "notes": "Author PDF SHA-256 9423012e9f0199e3f6925c500725815c236d7ddbdd7500d50d10bac2be745e91; title page first version 2024-02-16 is not verified dissemination of the retrieved version. Candidate RTH comparison, not first-second detection; long/short result does not prove long-only. No compute admitted. See lanes/research/orb-stocks-in-play.md.",
+      "fits": [
+        "rth-comparison-reference"
+      ]
+    },
+    {
+      "id": "river-page-hinkley",
+      "title": "River Page-Hinkley drift detector",
+      "citation": "River 0.26.1, river/drift/page_hinkley.py, citing Page (1954) and Sebastiao-Fernandes (2017).",
+      "url": "https://github.com/online-ml/river/blob/64285b9dd6c606804753235fe992bcf25b9856ee/river/drift/page_hinkley.py",
+      "spdx": "BSD-3-Clause",
+      "use": "research-reference",
+      "data_needs": [
+        "eligible-trades",
+        "availability-clocks",
+        "own-symbol-baseline",
+        "frozen-protocol"
+      ],
+      "published": null,
+      "status": "candidate",
+      "pin": {
+        "repo": "https://github.com/online-ml/river",
+        "tag": "0.26.1",
+        "commit": "64285b9dd6c606804753235fe992bcf25b9856ee",
+        "path": "river/drift/page_hinkley.py"
+      },
+      "notes": "Generic detector, no trading-return result. No wrapper, threshold, normalization or source-default authority adopted. OSAP/JKP/HXZ strategy screen not established. No compute admitted. See lanes/research/page-hinkley.md.",
+      "fits": [
+        "onset-component-reference"
+      ]
+    },
+    {
+      "id": "bayesian-online-changepoint",
+      "title": "Bayesian online changepoint detection",
+      "citation": "Ryan Prescott Adams and David J. C. MacKay (2007), Bayesian Online Changepoint Detection, arXiv:0710.3742v1.",
+      "url": "https://arxiv.org/abs/0710.3742v1",
+      "spdx": "NOASSERTION",
+      "use": "research-reference",
+      "data_needs": [
+        "causal-observation-model",
+        "hazard-specification",
+        "eligible-trades",
+        "availability-clocks",
+        "frozen-protocol"
+      ],
+      "published": "2007-10-19",
+      "status": "candidate",
+      "pin": null,
+      "notes": "Versioned paper only; no repository implementation adopted. Hazard/model/thresholds and historical inputs unavailable. No US extreme-mover return result, OSAP/JKP/HXZ pass or compute admission asserted. See lanes/research/bayesian-changepoint.md.",
+      "fits": [
+        "onset-method-reference"
+      ]
+    }
+  ]
+}
