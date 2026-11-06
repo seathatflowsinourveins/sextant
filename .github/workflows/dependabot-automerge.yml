@@ -1,0 +1,21 @@
+# GitHub's documented Dependabot auto-merge pattern. Minor and patch bumps land by the same checks
+# as any PR. nautilus-trader and alpaca-py are bumped by hand: dependabot.yml ignores them.
+name: dependabot-automerge
+on:
+  pull_request_target: # zizmor: ignore[dangerous-triggers] reads metadata only, runs no PR code
+    types: [opened, reopened]
+permissions:
+  contents: write
+  pull-requests: write
+jobs:
+  automerge:
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: [self-hosted, sextant]
+    steps:
+      - id: meta
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+      - if: steps.meta.outputs.update-type != 'version-update:semver-major'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: gh pr merge --auto --squash "$PR_URL"

@@ -1,0 +1,123 @@
+# Enforces the first rule and cross-family review, from the base branch, so a PR cannot weaken them.
+# The PR is data here: nothing from it runs. Pattern: openai/codex-action@v1.13 README.
+# An ordinary PR gets one other-family reviewer at high effort; a risk path gets both at max.
+name: review
+on:
+  pull_request_target: # zizmor: ignore[dangerous-triggers] see docs/adr/0001-sextant-foundation.md
+    types: [opened, synchronize, reopened, ready_for_review]
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+concurrency:
+  group: review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+env:
+  BASE_SHA: ${{ github.event.pull_request.base.sha }}
+  HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+  PR: ${{ github.event.pull_request.number }}
+  GH_REPO: ${{ github.repository }}
+jobs:
+  review:
+    runs-on: [self-hosted, sextant]
+    environment:
+      name: review
+      deployment: false
+    timeout-minutes: 60
+    steps:
+      - name: Trusted rules, from the base branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: The PR's tree, as data
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: .review/pr
+          ref: ${{ env.HEAD_SHA }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Does it touch a risk path?
+        id: paths
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          filters: |
+            risk:
+              - 'src/sextant/execution/**'
+              - 'src/sextant/risk/**'
+              - 'lanes/live/**'
+              - '.devcontainer/**'
+              - '.github/**'
+              - 'deploy/**'
+              - 'dangerfile.js'
+      - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
+        with:
+          node-version: "24"
+      - name: Every change names its source
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: npx --yes "danger@$(jq -r .dependencies.danger .devcontainer/agents/package.json)" ci --dangerfile dangerfile.js --failOnErrors
+      - name: Prepare the diff and the prompt
+        run: |
+          git -C .review/pr diff "$BASE_SHA...$HEAD_SHA" > .review/pr.diff
+          cat .github/review/head.md .github/review/rubric.md > .review/prompt.md
+      - name: Pin Codex to the lockfile's version
+        id: pin
+        run: echo "codex=$(jq -r '.dependencies["@openai/codex"]' .devcontainer/agents/package.json)" >> "$GITHUB_OUTPUT"
+      - name: Codex reviews
+        if: steps.paths.outputs.risk == 'true' || !contains(github.event.pull_request.body, 'Agent-Family codex')
+        uses: openai/codex-action@bdf19a4a223ec2549a3e2274a0cf61556bc07675 # v1.13
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          prompt-file: .review/prompt.md
+          output-file: .review/codex.json
+          output-schema-file: .github/review/schema.json
+          codex-version: ${{ steps.pin.outputs.codex }}
+          model: gpt-6.1-sol
+          effort: ${{ steps.paths.outputs.risk == 'true' && 'max' || 'high' }}
+          safety-strategy: read-only
+          allow-bot-users: dependabot[bot]
+      - name: dsh reviews
+        id: dsh
+        if: steps.paths.outputs.risk == 'true' || contains(github.event.pull_request.body, 'Agent-Family codex')
+        uses: devcontainers/ci@513af61f4de4f75d37e4438f184ba4358f0fc1ca # v0.3.1900000450
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        with:
+          push: never
+          skipContainerUserIdUpdate: true
+          env: |
+            DEEPSEEK_API_KEY
+          runCmd: dsh --profile headless - < .review/prompt.md
+      - name: Keep dsh's answer
+        if: steps.dsh.outcome == 'success'
+        env:
+          ANSWER: ${{ steps.dsh.outputs.runCmdOutput }}
+        run: printf '%s\n' "$ANSWER" > .review/dsh.json
+      - name: Report on the PR, and decide
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "### Review of \`$HEAD_SHA\`"
+            for answer in .review/codex.json .review/dsh.json; do
+              [ -f "$answer" ] || continue
+              echo "#### $answer"; echo '```json'; cat "$answer"; echo; echo '```'
+            done
+          } > .review/comment.md
+          gh pr comment "$PR" --body-file .review/comment.md
+          # The verdict is the upstream rubric's. From round three only a P0 blocks, and the rest
+          # becomes an issue, so a PR cannot loop for ever (owner-approved plan; ADR-0001).
+          rounds=$(gh pr view "$PR" --json comments --jq '[.comments[] | select(.body | startswith("### Review of"))] | length')
+          answers=$(find .review -maxdepth 1 -name '*.json')
+          [ -n "$answers" ]
+          for answer in $answers; do
+            if [ "$rounds" -lt 3 ]; then
+              jq -e '.overall_correctness == "patch is correct"' "$answer"
+            else
+              jq -e '[.findings[] | select(.priority == 0)] | length == 0' "$answer"
+              if ! jq -e '.findings | length == 0' "$answer" > /dev/null; then
+                gh issue create --title "Review follow-up from PR #$PR" --body-file .review/comment.md
+              fi
+            fi
+          done

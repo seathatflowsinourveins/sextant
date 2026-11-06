@@ -1,0 +1,32 @@
+[project]
+name = "sextant"
+version = "0.1.0"
+description = "Clean, trading-focused agent harness built only from SOTA upstreams"
+requires-python = ">=3.13,<3.14"
+dependencies = []
+
+[dependency-groups]
+dev = ["pytest==9.2.0", "ruff==0.17.4", "zizmor==1.32.0"]
+
+[build-system]
+requires = ["uv_build>=0.13,<0.14"]
+build-backend = "uv_build"
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+extend-exclude = [".devcontainer/post_install.py"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "S", "RUF"]
+ignore = ["S101", "S603", "S607"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests/repo"]
+pythonpath = ["src"]
+addopts = "-q"
+
+[tool.pyright]
+include = ["src", "tests"]
+pythonVersion = "3.13"
+typeCheckingMode = "standard"

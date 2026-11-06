@@ -1,0 +1,5 @@
+# The dev container is the sandbox, so Codex runs unattended inside it.
+model = "gpt-6.1-sol"
+model_reasoning_effort = "max"
+approval_policy = "never"
+sandbox_mode = "danger-full-access"
