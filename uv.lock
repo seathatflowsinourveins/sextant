@@ -750,6 +750,36 @@ wheels = [
 ]
 
 [[package]]
+name = "river"
+version = "0.26.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "narwhals" },
+    { name = "numpy" },
+    { name = "scipy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/1b/08/ac646151985321dd05681f46983f6bffc9fe4f67792809d38853adeb8699/river-0.26.1.tar.gz", hash = "sha256:2326f87f396801cfd8672ac02d9f9731c10e936696e7a0a1f89a378b994fba3f", size = 5134600, upload-time = "2026-08-21T15:18:07.667Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/72/97/06efe1ff86719c7795da4bbe4858a6032198cf17c3eab0513ed8daca9c49/river-0.26.1-cp311-abi3-macosx_10_13_universal2.whl", hash = "sha256:aee5694761a47f9e9b778ea43de081d8d5aab30bc13bcf517a99ff8d06cd5494", size = 3088870, upload-time = "2026-08-21T15:16:27.254Z" },
+    { url = "https://files.pythonhosted.org/packages/30/54/10f73d793a8d99489ca0e20978772db4f1fdb87f0cc962d671045e667293/river-0.26.1-cp311-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:e3763be62b25771c90d6d2f31b308b327161ac55b1bd89f586753c4900ac8159", size = 2717985, upload-time = "2026-08-21T15:16:29.748Z" },
+    { url = "https://files.pythonhosted.org/packages/03/5e/f4b227182c966d4c3d679998f563ea9abd732cc522cb48c199c5a9dd83da/river-0.26.1-cp311-abi3-manylinux_2_28_ppc64le.whl", hash = "sha256:bfd0db079394bdee34d26bf1aca248b760426a8775228204e62f69be862768d8", size = 2777838, upload-time = "2026-08-21T15:16:32.034Z" },
+    { url = "https://files.pythonhosted.org/packages/ad/81/734c929e8c49aeebc5b163769941ee5c74db53ba689a8708654c810189cb/river-0.26.1-cp311-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:e178d2d20ec1ba7228bd5d89fa8b70cd302b95e73a3c8a5e528153ecc678a019", size = 2733262, upload-time = "2026-08-21T15:16:34.06Z" },
+    { url = "https://files.pythonhosted.org/packages/69/1a/f242ca4d312a878bc897f947366373a9ad80f175d8fa70d0c706a2cd1361/river-0.26.1-cp311-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:7283a73ef5eda7d7b691e45f979992a9b46dfdecd34b4beaf39dc4a0053b6160", size = 2783893, upload-time = "2026-08-21T15:16:36.173Z" },
+    { url = "https://files.pythonhosted.org/packages/82/f3/8574c7adad0fa7a04e082363ecfacab26fe52dc7779e1ea4e84f26068af2/river-0.26.1-cp311-abi3-musllinux_1_2_ppc64le.whl", hash = "sha256:2a85895c0315ee802d6d57a16ecda3269e7e212d92259165c8e4712317c109c8", size = 2819124, upload-time = "2026-08-21T15:16:38.07Z" },
+    { url = "https://files.pythonhosted.org/packages/6b/5b/080a63e57c66f5d73a800a366c9cc7a0b414eb8a108e6857aac0661144eb/river-0.26.1-cp311-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:2716e0d4777a04bffe65eb9e405306220b8b589e89cef70a8ccaa97fa39346c5", size = 2815211, upload-time = "2026-08-21T15:16:40.011Z" },
+    { url = "https://files.pythonhosted.org/packages/33/69/fac8e5f737bc86512c9ae7b3b61b866281c21a37f1301b1fa830a269c868/river-0.26.1-cp311-abi3-win_amd64.whl", hash = "sha256:350c936608c4125181ef60528eaa103ec491a8f6e1fa6445b7e153325c5adb3a", size = 2634647, upload-time = "2026-08-21T15:16:41.947Z" },
+    { url = "https://files.pythonhosted.org/packages/8e/98/511f9f2cc8309224c16241a0d854fc9b52882e92ed65a560a6700aab877f/river-0.26.1-cp313-cp313-macosx_10_13_universal2.whl", hash = "sha256:f621a45ba68ddff2bbcb7e9c01afdb2c30c4074896a2c2ad4a86016e619c072b", size = 3126011, upload-time = "2026-08-21T15:17:15.938Z" },
+    { url = "https://files.pythonhosted.org/packages/fa/ec/28924139b673db31cf70add43c4e28253174850c8caa5c37efc4652083c3/river-0.26.1-cp313-cp313-manylinux_2_28_aarch64.whl", hash = "sha256:a9d636bb5b34bb38efba14dfc99dbfe170d273e0b289e4ad666dd4d1dbdb2882", size = 2733777, upload-time = "2026-08-21T15:17:17.663Z" },
+    { url = "https://files.pythonhosted.org/packages/6b/d1/052bfdb68466368207f6ce7b198568a78a299b58b55ffdbb236a98f8f52d/river-0.26.1-cp313-cp313-manylinux_2_28_ppc64le.whl", hash = "sha256:07075503334bf7b94f655d25c8daddf668402ee83fedb66c8227f42dbe1e6cd2", size = 2781646, upload-time = "2026-08-21T15:17:19.909Z" },
+    { url = "https://files.pythonhosted.org/packages/b4/57/5687c489bcb116c3f905d5d1a78fac6ffee749bf56f43576da59e07e0963/river-0.26.1-cp313-cp313-manylinux_2_28_x86_64.whl", hash = "sha256:7d8e6aa749f06e6bd71835ef722c14627bbb049f6929f5bc0d8a65dcd813ad4b", size = 2744689, upload-time = "2026-08-21T15:17:21.659Z" },
+    { url = "https://files.pythonhosted.org/packages/af/a3/cf9048ef8ecfe3e184e49ae57ca2212d98d690148860c4b5efa50e86d1cb/river-0.26.1-cp313-cp313-musllinux_1_2_aarch64.whl", hash = "sha256:a370b9b826c07969ecbf8a925d333986fe845ccce0139f2198f8e383d22f5858", size = 2798645, upload-time = "2026-08-21T15:17:23.71Z" },
+    { url = "https://files.pythonhosted.org/packages/a6/9a/cdb63a5df664bd2fcca733e865f3f3db5eaf4a5fd43894bd73ce697f70d6/river-0.26.1-cp313-cp313-musllinux_1_2_ppc64le.whl", hash = "sha256:9823e0a6079bb8a10ea29ae39871f966038fff6bd922ec28e395dc875ca529c0", size = 2823525, upload-time = "2026-08-21T15:17:25.873Z" },
+    { url = "https://files.pythonhosted.org/packages/f9/84/bb1dc61dff753785fb2a49417f99687812bd93f3da79136eb75a0ec4207b/river-0.26.1-cp313-cp313-musllinux_1_2_x86_64.whl", hash = "sha256:1dcf18f8491fa6bb32a69dafba919ca121b4360d7aa772b70d43258158cf092a", size = 2826341, upload-time = "2026-08-21T15:17:27.752Z" },
+    { url = "https://files.pythonhosted.org/packages/fe/aa/ba96efb77d4fe45cc8e3a65a9c245ea919d9e332aa6112fcf710a977faa3/river-0.26.1-cp313-cp313-pyemscripten_2025_0_wasm32.whl", hash = "sha256:b116caccf194a30ee82080c998d42559ec1dd3f2ee8d5e3b2a38689404b4bd66", size = 2476937, upload-time = "2026-08-21T15:17:29.71Z" },
+    { url = "https://files.pythonhosted.org/packages/68/60/9a4e10fa1fb3e5593d98682183377b530d61e24a4df56de10bec4af01f33/river-0.26.1-cp313-cp313-win_amd64.whl", hash = "sha256:7739633e63e57a28a62127e2d8c20fbcacbc30058df4467aaf5ad043fd5a5abe", size = 2636760, upload-time = "2026-08-21T15:17:31.745Z" },
+]
+
+[[package]]
 name = "ruff"
 version = "0.17.4"
 source = { registry = "https://pypi.org/simple" }
@@ -775,6 +805,27 @@ wheels = [
 ]
 
 [[package]]
+name = "scipy"
+version = "1.18.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/7e/74/66de6258867beb2ef08f35f9f2ac017a52cacd5081714d239ff1a442d458/scipy-1.18.1.tar.gz", hash = "sha256:52c4b7422442aba924d03ad4019852b08a92e64ea187b933135687bfe2747307", size = 30781235, upload-time = "2026-08-21T23:28:50.599Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b6/55/4540ee0f9c42a9ad7109d0d1a8cc70de54c3572b01c6693a2b1c70e90ceb/scipy-1.18.1-cp313-cp313-macosx_10_15_x86_64.whl", hash = "sha256:3ab3523da44749156e1f68b464dc56af11ae4cbc5c739a49d05f32b982eca9f3", size = 31089958, upload-time = "2026-08-21T23:24:35.8Z" },
+    { url = "https://files.pythonhosted.org/packages/2a/f5/769f36d14922b8071a43e95d24d18b6bdafad10d7f5cf647867e1ac052bc/scipy-1.18.1-cp313-cp313-macosx_12_0_arm64.whl", hash = "sha256:e6fb6a55cc0ba97b59a1f288fb86dc6fce8bdfc0fffcbfd015e3a954bf2a2d93", size = 28715106, upload-time = "2026-08-21T23:24:40.775Z" },
+    { url = "https://files.pythonhosted.org/packages/9a/d7/21d890274f75ea37a8209d5519e72da3da90302e3b9fb8397a0918386a62/scipy-1.18.1-cp313-cp313-macosx_14_0_arm64.whl", hash = "sha256:ea324d9dd34c38bfb9bec8ca4d1b407db97dbb74029f566b8e322b1b6fe56fe6", size = 20456846, upload-time = "2026-08-21T23:24:45.066Z" },
+    { url = "https://files.pythonhosted.org/packages/ec/01/798430ecea2e78ec7c02663d5f71c007bb6abeca931080debd40d7fa55ea/scipy-1.18.1-cp313-cp313-macosx_14_0_x86_64.whl", hash = "sha256:75b00eb8fb802090aa903f4ea1c7f5a584779f967361e68b7e98e531cc2d7174", size = 23087986, upload-time = "2026-08-21T23:24:49.539Z" },
+    { url = "https://files.pythonhosted.org/packages/e6/5f/4634e9d35c68496e4e34cb6946eafab044458e6cedab42b40b6588e475b6/scipy-1.18.1-cp313-cp313-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:d416b16cccfd70fbf62400e84d0bb2f4e6af519a45557f1692c749b37f14b315", size = 33998146, upload-time = "2026-08-21T23:24:54.714Z" },
+    { url = "https://files.pythonhosted.org/packages/41/48/6450ed9243315322bbc19ac57b9b70d66a20bf1d38d124c96bc4bf6af9ea/scipy-1.18.1-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:fdaf5ea890a6183d0565f51a61799d67081bd5b1cf03c5f4b3fd3732108625c9", size = 35312578, upload-time = "2026-08-21T23:25:00.44Z" },
+    { url = "https://files.pythonhosted.org/packages/00/bd/bf5a4be6a3525676499f6dff307991739ff6fdcad1481b1aeb6745339f58/scipy-1.18.1-cp313-cp313-musllinux_1_2_aarch64.whl", hash = "sha256:c825cef2f49e46753726a7181a8e199804a912b29519ada542c6ebc654951899", size = 35612621, upload-time = "2026-08-21T23:25:06.144Z" },
+    { url = "https://files.pythonhosted.org/packages/bd/4e/3c45c33e00a77996c4b1cb707929f833ba7b1d522ee29f882512c330676d/scipy-1.18.1-cp313-cp313-musllinux_1_2_x86_64.whl", hash = "sha256:e3b417bf8c2c7c16e8f58ad91db17783ec911ac16e7b50eb6eab6e809b4f5b07", size = 37457323, upload-time = "2026-08-21T23:25:12.483Z" },
+    { url = "https://files.pythonhosted.org/packages/93/0e/e0348fbc0dbab65c114cf78957e7dfeb49f8e8b556b4d930cc12ff195e18/scipy-1.18.1-cp313-cp313-win_amd64.whl", hash = "sha256:559ed65f60c1af5a03f3912605a1b5114f522c7c32fb23c3376ae8f03219fe28", size = 36622841, upload-time = "2026-08-21T23:25:18.722Z" },
+    { url = "https://files.pythonhosted.org/packages/50/a8/6a77f5f267c555108f0a864b6db714363dab567a8266422a79a385f9232b/scipy-1.18.1-cp313-cp313-win_arm64.whl", hash = "sha256:cd479fc04dd9401e3b4f49e76518768ef99c4f517a98c284eb091fd725719adf", size = 24399315, upload-time = "2026-08-21T23:25:23.458Z" },
+]
+
+[[package]]
 name = "sextant"
 version = "0.1.0"
 source = { editable = "." }
@@ -785,6 +836,7 @@ dependencies = [
     { name = "pandas" },
     { name = "pyarrow" },
     { name = "requests" },
+    { name = "river" },
     { name = "typesafe-sdk" },
 ]
 
@@ -803,6 +855,7 @@ requires-dist = [
     { name = "pandas", specifier = "==3.0.6" },
     { name = "pyarrow", specifier = "==26.0.0" },
     { name = "requests", git = "https://github.com/psf/requests?rev=6e83187b8feb273ed4c6cdab5efd8d54901dfab3" },
+    { name = "river", specifier = "==0.26.1" },
     { name = "typesafe-sdk", specifier = "==0.7.5" },
 ]
 
