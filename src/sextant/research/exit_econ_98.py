@@ -255,11 +255,16 @@ def implementation_sha() -> str:
         return "unknown"
 
 
-def run(inputs: Path, out: Path, *, limit: int | None = None) -> dict[str, Any]:
+METRICS = ("n", "mean_bps", "median_bps", "win_rate", "pnl_units")
+CONTROLS = ("hold_flat", f"{C5}-tape", f"{C5}-study")
+
+
+def prepare(inputs: Path, catalog_dir: Path, *, limit: int | None = None) -> dict[str, Any]:
+    """Inputs, catalog, cohort and the controls' marks, once; any number of arms reuse them."""
     hashes = x41.verify_inputs(inputs)
     study: Any = x41.load_study()
     bars_path = inputs / x41.BARS
-    catalog = x41.write_catalog(bars_path, out / "catalog")
+    catalog = x41.write_catalog(bars_path, catalog_dir)
     bars = x41.catalog_bars(catalog, bars_path, study)
     if bars != study.load_bars(bars_path):
         raise ValueError("catalog bars differ from the study's own loader")
@@ -274,94 +279,128 @@ def run(inputs: Path, out: Path, *, limit: int | None = None) -> dict[str, Any]:
     primary = [e for e in entries if e.day < "2026-10-29" and hold[e.key].price is not None]
     if limit is not None:
         primary = primary[:limit]
-    c5_marks = {e.key: study.replay(e, data[e.symbol], c5) for e in primary}
     minutes: dict[str, list[Minute]] = defaultdict(list)
     for symbol, bar_rows in bars.items():
         for b in bar_rows:
-            close_ns = to_ns(b.at) + 60 * SEC
-            minutes[symbol].append(Minute(close_ns, b.o, b.h, b.l, b.c))
+            minutes[symbol].append(Minute(to_ns(b.at) + 60 * SEC, b.o, b.h, b.l, b.c))
+    return {
+        "hashes": hashes,
+        "study": study,
+        "primary": primary,
+        "cohort": len(primary),
+        "hold": hold,
+        "c5_marks": {e.key: study.replay(e, data[e.symbol], c5) for e in primary},
+        "minutes": minutes,
+    }
+
+
+def _attribution(rows: list[dict[str, Any]], key: str) -> dict[str, Any]:
+    groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        groups[row[key]["label"]].append(row[key])
+    total = len(rows)
+    return {
+        label: {
+            "n": len(g),
+            "managed_mean_bps": str(
+                sum((Decimal(r["managed"]) for r in g), Decimal(0)) / len(g) * BPS
+            ),
+            "hold_mean_bps": str(sum((Decimal(r["hold"]) for r in g), Decimal(0)) / len(g) * BPS),
+            "gap_contribution_bps": str(
+                sum((Decimal(r["managed"]) - Decimal(r["hold"]) for r in g), Decimal(0))
+                / total
+                * BPS
+            ),
+            "tp_touched": sum(r["tp_touched"] for r in g),
+        }
+        for label, g in sorted(groups.items())
+    }
+
+
+def evaluate(
+    ctx: dict[str, Any], params: ExitParams, *, range_estimable: bool, arm: str
+) -> dict[str, Any]:
+    """One arm over the whole cohort at both costs, with its attribution and the controls."""
+    study, hold, c5_marks, minutes = ctx["study"], ctx["hold"], ctx["c5_marks"], ctx["minutes"]
+    values: dict[str, list[Decimal]] = defaultdict(list)
+    per_entry: list[dict[str, Any]] = []
+    for e in ctx["primary"]:
+        flat_ns = to_ns(study.boundary(e.day, 15, 55))
+        by_close = {m.close_ns: m for m in minutes[e.symbol]}
+        held = held_minutes(minutes[e.symbol], to_ns(e.at), flat_ns)
+        row: dict[str, Any] = {"key": e.key, "symbol": e.symbol, "day": e.day, "arm": arm}
+        for c_bps in COSTS:
+            c = c_bps / BPS
+            result = run_entry(
+                e, minutes[e.symbol], flat_ns, c_bps, params, range_estimable=range_estimable
+            )
+            sells = [x for x in result["events"] if x["event"] == "sell_fill"]
+            kinds = [x["event"] for x in result["events"] if x["event"].startswith("breach")]
+            sold = sum((Decimal(x["qty"]) for x in sells), Decimal(0))
+            if sold == e.qty:
+                price = sum(Decimal(x["price"]) * Decimal(x["qty"]) for x in sells) / sold
+                label = kinds[0].removeprefix("breach_sell_")
+                exit_ns = max(int(x["ts"]) for x in sells)
+                managed = _net(price / e.price, c, exit_paid=True)
+            elif sold == 0:
+                price, label, exit_ns = hold[e.key].price, "flat_1555", flat_ns
+                managed = _net(price / e.price, c, exit_paid=False)
+            else:
+                raise ArithmeticError(f"partial managed exit: {e.key}")
+            held_ = study.net_return(e, hold[e.key].price, c_bps)
+            if label == "flat_1555" and managed != held_:
+                raise ArithmeticError(f"a 15:55 flat must equal hold: {e.key}")
+            mark = c5_marks[e.key]
+            if mark.reason == "flat":
+                c5_tape = study.net_return(e, mark.price, c_bps)
+            else:  # the signal bar's proxy bid at the study's exit time
+                signal = by_close[to_ns(mark.at)]
+                c5_tape = _net(
+                    proxy_bid(signal, c_bps, broker_tick(e.price)) / e.price, c, exit_paid=True
+                )
+            c5_study = study.net_return(e, mark.price, c_bps)
+            row[str(c_bps)] = {
+                "label": label,
+                "exit": str(price),
+                "managed": str(managed),
+                "hold": str(held_),
+                "c5_tape": str(c5_tape),
+                "c5_study": str(c5_study),
+                "tp_touched": take_profit_touch(e, held, exit_ns, params),
+            }
+            values[f"arm/{c_bps}"].append(managed)
+            values[f"hold_flat/{c_bps}"].append(held_)
+            values[f"{C5}-tape/{c_bps}"].append(c5_tape)
+            values[f"{C5}-study/{c_bps}"].append(c5_study)
+        per_entry.append(row)
+    costs = [str(c) for c in COSTS]
+    return {
+        "per_entry": per_entry,
+        "arm": {
+            **{c: _summary(values[f"arm/{c}"]) for c in costs},
+            "attribution": {c: _attribution(per_entry, c) for c in costs},
+        },
+        "controls": {
+            name: {c: _summary(values[f"{name}/{c}"]) for c in costs} for name in CONTROLS
+        },
+    }
+
+
+def run(inputs: Path, out: Path, *, limit: int | None = None) -> dict[str, Any]:
+    ctx = prepare(inputs, out / "catalog", limit=limit)
     params = ExitParams.starts()
     arms: dict[str, dict[str, Any]] = {}
+    attribution: dict[str, Any] = {}
     per_entry: list[dict[str, Any]] = []
     for range_estimable, arm in ARMS:
-        rows: dict[str, list[Decimal]] = defaultdict(list)
-        for e in primary:
-            flat_ns = to_ns(study.boundary(e.day, 15, 55))
-            by_close = {m.close_ns: m for m in minutes[e.symbol]}
-            held = held_minutes(minutes[e.symbol], to_ns(e.at), flat_ns)
-            row: dict[str, Any] = {"key": e.key, "symbol": e.symbol, "day": e.day, "arm": arm}
-            for c_bps in COSTS:
-                c = c_bps / BPS
-                result = run_entry(
-                    e, minutes[e.symbol], flat_ns, c_bps, params, range_estimable=range_estimable
-                )
-                sells = [x for x in result["events"] if x["event"] == "sell_fill"]
-                kinds = [x["event"] for x in result["events"] if x["event"].startswith("breach")]
-                sold = sum((Decimal(x["qty"]) for x in sells), Decimal(0))
-                if sold == e.qty:
-                    price = sum(Decimal(x["price"]) * Decimal(x["qty"]) for x in sells) / sold
-                    label = kinds[0].removeprefix("breach_sell_")
-                    exit_ns = max(int(x["ts"]) for x in sells)
-                    managed = _net(price / e.price, c, exit_paid=True)
-                elif sold == 0:
-                    price, label, exit_ns = hold[e.key].price, "flat_1555", flat_ns
-                    managed = _net(price / e.price, c, exit_paid=False)
-                else:
-                    raise ArithmeticError(f"partial managed exit: {e.key}")
-                held_ = study.net_return(e, hold[e.key].price, c_bps)
-                if label == "flat_1555" and managed != held_:
-                    raise ArithmeticError(f"a 15:55 flat must equal hold: {e.key}")
-                mark = c5_marks[e.key]
-                if mark.reason == "flat":
-                    c5_tape = study.net_return(e, mark.price, c_bps)
-                else:  # the signal bar's proxy bid at the study's exit time
-                    signal = by_close[to_ns(mark.at)]
-                    c5_tape = _net(
-                        proxy_bid(signal, c_bps, broker_tick(e.price)) / e.price, c, exit_paid=True
-                    )
-                row[str(c_bps)] = {
-                    "label": label,
-                    "exit": str(price),
-                    "managed": str(managed),
-                    "hold": str(held_),
-                    "c5_tape": str(c5_tape),
-                    "c5_study": str(study.net_return(e, mark.price, c_bps)),
-                    "tp_touched": take_profit_touch(e, held, exit_ns, params),
-                }
-                rows[f"{arm}/{c_bps}"].append(managed)
-                if arm == ARMS[0][1]:  # the controls do not depend on the arm
-                    rows[f"hold_flat/{c_bps}"].append(held_)
-                    rows[f"{C5}-tape/{c_bps}"].append(c5_tape)
-                    rows[f"{C5}-study/{c_bps}"].append(study.net_return(e, mark.price, c_bps))
-            per_entry.append(row)
-        for name, values in rows.items():
-            arms[name] = _summary(values)
-    attribution: dict[str, Any] = {}
-    for (_estimable, arm), c_bps in ((a, c) for a in ARMS for c in COSTS):
-        key = str(c_bps)
-        groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
-        mine = [row for row in per_entry if row["arm"] == arm]
-        for row in mine:
-            groups[row[key]["label"]].append(row[key])
-        total = len(mine)
-        attribution[f"{arm}/{key}"] = {
-            label: {
-                "n": len(g),
-                "managed_mean_bps": str(
-                    sum((Decimal(r["managed"]) for r in g), Decimal(0)) / len(g) * BPS
-                ),
-                "hold_mean_bps": str(
-                    sum((Decimal(r["hold"]) for r in g), Decimal(0)) / len(g) * BPS
-                ),
-                "gap_contribution_bps": str(
-                    sum((Decimal(r["managed"]) - Decimal(r["hold"]) for r in g), Decimal(0))
-                    / total
-                    * BPS
-                ),
-                "tp_touched": sum(r["tp_touched"] for r in g),
-            }
-            for label, g in sorted(groups.items())
-        }
+        result = evaluate(ctx, params, range_estimable=range_estimable, arm=arm)
+        per_entry += result["per_entry"]
+        for c in (str(c) for c in COSTS):
+            arms[f"{arm}/{c}"] = result["arm"][c]
+            attribution[f"{arm}/{c}"] = result["arm"]["attribution"][c]
+            if arm == ARMS[0][1]:  # the controls do not depend on the arm
+                for name in CONTROLS:
+                    arms[f"{name}/{c}"] = result["controls"][name][c]
     report = {
         "issue": 98,
         "execution_model": MODEL,
@@ -371,9 +410,9 @@ def run(inputs: Path, out: Path, *, limit: int | None = None) -> dict[str, Any]:
         "params_hash": hashlib.sha256(
             json.dumps({k: str(v) for k, v in asdict(params).items()}, sort_keys=True).encode()
         ).hexdigest(),
-        "inputs": hashes,
+        "inputs": ctx["hashes"],
         "study": f"{x41.STUDY} sha256:{x41.STUDY_SHA256}",
-        "cohort": len(primary),
+        "cohort": ctx["cohort"],
         "arms": arms,
         "attribution": attribution,
     }

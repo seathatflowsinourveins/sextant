@@ -1,0 +1,526 @@
+{
+  "axes": {
+    "gain_lock_giveback_fraction": [
+      "0",
+      "0.1",
+      "0.25"
+    ],
+    "prearm_buffer_fraction": [
+      "0.005",
+      "0.01",
+      "0.02"
+    ],
+    "prearm_range_multiple": [
+      "0.5",
+      "1",
+      "2"
+    ]
+  },
+  "axis_sources": {
+    "gain_lock_giveback_fraction": "northstar-trading@7c5f852a2816bbaa5896241a93bab9de7cf7bb4f:docs/adr/0019-managed-exits-and-ranked-reentry.md:140",
+    "prearm_buffer_fraction": "northstar-trading@7c5f852a2816bbaa5896241a93bab9de7cf7bb4f:docs/adr/0019-managed-exits-and-ranked-reentry.md:251",
+    "prearm_range_multiple": "northstar-trading@7c5f852a2816bbaa5896241a93bab9de7cf7bb4f:docs/adr/0019-managed-exits-and-ranked-reentry.md:252"
+  },
+  "cells": [
+    {
+      "cell": "b0.005-m0.5-g0",
+      "params": {
+        "backstop_min_separation_fraction": "0.05",
+        "breach_persist_count": "3",
+        "breach_persist_span_s": "1",
+        "chase_cap_fraction": null,
+        "chase_min_interval_s": null,
+        "gain_lock_giveback_fraction": "0",
+        "prearm_buffer_fraction": "0.005",
+        "prearm_range_multiple": "0.5",
+        "prearm_range_window_s": "10",
+        "quote_max_age_s": "1",
+        "take_profit_above_h_fraction": "0.10",
+        "take_profit_step_fraction": "0.02"
+      }
+    },
+    {
+      "cell": "b0.005-m0.5-g0.1",
+      "params": {
+        "backstop_min_separation_fraction": "0.05",
+        "breach_persist_count": "3",
+        "breach_persist_span_s": "1",
+        "chase_cap_fraction": null,
+        "chase_min_interval_s": null,
+        "gain_lock_giveback_fraction": "0.1",
+        "prearm_buffer_fraction": "0.005",
+        "prearm_range_multiple": "0.5",
+        "prearm_range_window_s": "10",
+        "quote_max_age_s": "1",
+        "take_profit_above_h_fraction": "0.10",
+        "take_profit_step_fraction": "0.02"
+      }
+    },
+    {
+      "cell": "b0.005-m0.5-g0.25",
+      "params": {
+        "backstop_min_separation_fraction": "0.05",
+        "breach_persist_count": "3",
+        "breach_persist_span_s": "1",
+        "chase_cap_fraction": null,
+        "chase_min_interval_s": null,
+        "gain_lock_giveback_fraction": "0.25",
+        "prearm_buffer_fraction": "0.005",
+        "prearm_range_multiple": "0.5",
+        "prearm_range_window_s": "10",
+        "quote_max_age_s": "1",
+        "take_profit_above_h_fraction": "0.10",
+        "take_profit_step_fraction": "0.02"
+      }
+    },
+    {
+      "cell": "b0.005-m1-g0",
+      "params": {
+        "backstop_min_separation_fraction": "0.05",
+        "breach_persist_count": "3",
+        "breach_persist_span_s": "1",
+        "chase_cap_fraction": null,
+        "chase_min_interval_s": null,
+        "gain_lock_giveback_fraction": "0",
+        "prearm_buffer_fraction": "0.005",
+        "prearm_range_multiple": "1",
+        "prearm_range_window_s": "10",
+        "quote_max_age_s": "1",
+        "take_profit_above_h_fraction": "0.10",
+        "take_profit_step_fraction": "0.02"
+      }
+    },
+    {
+      "cell": "b0.005-m1-g0.1",
+      "params": {
+        "backstop_min_separation_fraction": "0.05",
+        "breach_persist_count": "3",
+        "breach_persist_span_s": "1",
+        "chase_cap_fraction": null,
+        "chase_min_interval_s": null,
+        "gain_lock_giveback_fraction": "0.1",
+        "prearm_buffer_fraction": "0.005",
+        "prearm_range_multiple": "1",
+        "prearm_range_window_s": "10",
+        "quote_max_age_s": "1",
+        "take_profit_above_h_fraction": "0.10",
+        "take_profit_step_fraction": "0.02"
+      }
+    },
+    {
+      "cell": "b0.005-m1-g0.25",
+      "params": {
+        "backstop_min_separation_fraction": "0.05",
+        "breach_persist_count": "3",
+        "breach_persist_span_s": "1",
+        "chase_cap_fraction": null,
+        "chase_min_interval_s": null,
+        "gain_lock_giveback_fraction": "0.25",
+        "prearm_buffer_fraction": "0.005",
+        "prearm_range_multiple": "1",
+        "prearm_range_window_s": "10",
+        "quote_max_age_s": "1",
+        "take_profit_above_h_fraction": "0.10",
+        "take_profit_step_fraction": "0.02"
+      }
+    },
+    {
+      "cell": "b0.005-m2-g0",
+      "params": {
+        "backstop_min_separation_fraction": "0.05",
+        "breach_persist_count": "3",
+        "breach_persist_span_s": "1",
+        "chase_cap_fraction": null,
+        "chase_min_interval_s": null,
+        "gain_lock_giveback_fraction": "0",
+        "prearm_buffer_fraction": "0.005",
+        "prearm_range_multiple": "2",
+        "prearm_range_window_s": "10",
+        "quote_max_age_s": "1",
+        "take_profit_above_h_fraction": "0.10",
+        "take_profit_step_fraction": "0.02"
+      }
+    },
+    {
+      "cell": "b0.005-m2-g0.1",
+      "params": {
+        "backstop_min_separation_fraction": "0.05",
+        "breach_persist_count": "3",
+        "breach_persist_span_s": "1",
+        "chase_cap_fraction": null,
+        "chase_min_interval_s": null,
+        "gain_lock_giveback_fraction": "0.1",
+        "prearm_buffer_fraction": "0.005",
+        "prearm_range_multiple": "2",
+        "prearm_range_window_s": "10",
+        "quote_max_age_s": "1",
+        "take_profit_above_h_fraction": "0.10",
+        "take_profit_step_fraction": "0.02"
+      }
+    },
+    {
+      "cell": "b0.005-m2-g0.25",
+      "params": {
+        "backstop_min_separation_fraction": "0.05",
+        "breach_persist_count": "3",
+        "breach_persist_span_s": "1",
+        "chase_cap_fraction": null,
+        "chase_min_interval_s": null,
+        "gain_lock_giveback_fraction": "0.25",
+        "prearm_buffer_fraction": "0.005",
+        "prearm_range_multiple": "2",
+        "prearm_range_window_s": "10",
+        "quote_max_age_s": "1",
+        "take_profit_above_h_fraction": "0.10",
+        "take_profit_step_fraction": "0.02"
+      }
+    },
+    {
+      "cell": "b0.01-m0.5-g0",
+      "params": {
+        "backstop_min_separation_fraction": "0.05",
+        "breach_persist_count": "3",
+        "breach_persist_span_s": "1",
+        "chase_cap_fraction": null,
+        "chase_min_interval_s": null,
+        "gain_lock_giveback_fraction": "0",
+        "prearm_buffer_fraction": "0.01",
+        "prearm_range_multiple": "0.5",
+        "prearm_range_window_s": "10",
+        "quote_max_age_s": "1",
+        "take_profit_above_h_fraction": "0.10",
+        "take_profit_step_fraction": "0.02"
+      }
+    },
+    {
+      "cell": "b0.01-m0.5-g0.1",
+      "params": {
+        "backstop_min_separation_fraction": "0.05",
+        "breach_persist_count": "3",
+        "breach_persist_span_s": "1",
+        "chase_cap_fraction": null,
+        "chase_min_interval_s": null,
+        "gain_lock_giveback_fraction": "0.1",
+        "prearm_buffer_fraction": "0.01",
+        "prearm_range_multiple": "0.5",
+        "prearm_range_window_s": "10",
+        "quote_max_age_s": "1",
+        "take_profit_above_h_fraction": "0.10",
+        "take_profit_step_fraction": "0.02"
+      }
+    },
+    {
+      "cell": "b0.01-m0.5-g0.25",
+      "params": {
+        "backstop_min_separation_fraction": "0.05",
+        "breach_persist_count": "3",
+        "breach_persist_span_s": "1",
+        "chase_cap_fraction": null,
+        "chase_min_interval_s": null,
+        "gain_lock_giveback_fraction": "0.25",
+        "prearm_buffer_fraction": "0.01",
+        "prearm_range_multiple": "0.5",
+        "prearm_range_window_s": "10",
+        "quote_max_age_s": "1",
+        "take_profit_above_h_fraction": "0.10",
+        "take_profit_step_fraction": "0.02"
+      }
+    },
+    {
+      "cell": "b0.01-m1-g0",
+      "params": {
+        "backstop_min_separation_fraction": "0.05",
+        "breach_persist_count": "3",
+        "breach_persist_span_s": "1",
+        "chase_cap_fraction": null,
+        "chase_min_interval_s": null,
+        "gain_lock_giveback_fraction": "0",
+        "prearm_buffer_fraction": "0.01",
+        "prearm_range_multiple": "1",
+        "prearm_range_window_s": "10",
+        "quote_max_age_s": "1",
+        "take_profit_above_h_fraction": "0.10",
+        "take_profit_step_fraction": "0.02"
+      }
+    },
+    {
+      "cell": "b0.01-m1-g0.1",
+      "params": {
+        "backstop_min_separation_fraction": "0.05",
+        "breach_persist_count": "3",
+        "breach_persist_span_s": "1",
+        "chase_cap_fraction": null,
+        "chase_min_interval_s": null,
+        "gain_lock_giveback_fraction": "0.1",
+        "prearm_buffer_fraction": "0.01",
+        "prearm_range_multiple": "1",
+        "prearm_range_window_s": "10",
+        "quote_max_age_s": "1",
+        "take_profit_above_h_fraction": "0.10",
+        "take_profit_step_fraction": "0.02"
+      }
+    },
+    {
+      "cell": "b0.01-m1-g0.25",
+      "params": {
+        "backstop_min_separation_fraction": "0.05",
+        "breach_persist_count": "3",
+        "breach_persist_span_s": "1",
+        "chase_cap_fraction": null,
+        "chase_min_interval_s": null,
+        "gain_lock_giveback_fraction": "0.25",
+        "prearm_buffer_fraction": "0.01",
+        "prearm_range_multiple": "1",
+        "prearm_range_window_s": "10",
+        "quote_max_age_s": "1",
+        "take_profit_above_h_fraction": "0.10",
+        "take_profit_step_fraction": "0.02"
+      }
+    },
+    {
+      "cell": "b0.01-m2-g0",
+      "params": {
+        "backstop_min_separation_fraction": "0.05",
+        "breach_persist_count": "3",
+        "breach_persist_span_s": "1",
+        "chase_cap_fraction": null,
+        "chase_min_interval_s": null,
+        "gain_lock_giveback_fraction": "0",
+        "prearm_buffer_fraction": "0.01",
+        "prearm_range_multiple": "2",
+        "prearm_range_window_s": "10",
+        "quote_max_age_s": "1",
+        "take_profit_above_h_fraction": "0.10",
+        "take_profit_step_fraction": "0.02"
+      }
+    },
+    {
+      "cell": "b0.01-m2-g0.1",
+      "params": {
+        "backstop_min_separation_fraction": "0.05",
+        "breach_persist_count": "3",
+        "breach_persist_span_s": "1",
+        "chase_cap_fraction": null,
+        "chase_min_interval_s": null,
+        "gain_lock_giveback_fraction": "0.1",
+        "prearm_buffer_fraction": "0.01",
+        "prearm_range_multiple": "2",
+        "prearm_range_window_s": "10",
+        "quote_max_age_s": "1",
+        "take_profit_above_h_fraction": "0.10",
+        "take_profit_step_fraction": "0.02"
+      }
+    },
+    {
+      "cell": "b0.01-m2-g0.25",
+      "params": {
+        "backstop_min_separation_fraction": "0.05",
+        "breach_persist_count": "3",
+        "breach_persist_span_s": "1",
+        "chase_cap_fraction": null,
+        "chase_min_interval_s": null,
+        "gain_lock_giveback_fraction": "0.25",
+        "prearm_buffer_fraction": "0.01",
+        "prearm_range_multiple": "2",
+        "prearm_range_window_s": "10",
+        "quote_max_age_s": "1",
+        "take_profit_above_h_fraction": "0.10",
+        "take_profit_step_fraction": "0.02"
+      }
+    },
+    {
+      "cell": "b0.02-m0.5-g0",
+      "params": {
+        "backstop_min_separation_fraction": "0.05",
+        "breach_persist_count": "3",
+        "breach_persist_span_s": "1",
+        "chase_cap_fraction": null,
+        "chase_min_interval_s": null,
+        "gain_lock_giveback_fraction": "0",
+        "prearm_buffer_fraction": "0.02",
+        "prearm_range_multiple": "0.5",
+        "prearm_range_window_s": "10",
+        "quote_max_age_s": "1",
+        "take_profit_above_h_fraction": "0.10",
+        "take_profit_step_fraction": "0.02"
+      }
+    },
+    {
+      "cell": "b0.02-m0.5-g0.1",
+      "params": {
+        "backstop_min_separation_fraction": "0.05",
+        "breach_persist_count": "3",
+        "breach_persist_span_s": "1",
+        "chase_cap_fraction": null,
+        "chase_min_interval_s": null,
+        "gain_lock_giveback_fraction": "0.1",
+        "prearm_buffer_fraction": "0.02",
+        "prearm_range_multiple": "0.5",
+        "prearm_range_window_s": "10",
+        "quote_max_age_s": "1",
+        "take_profit_above_h_fraction": "0.10",
+        "take_profit_step_fraction": "0.02"
+      }
+    },
+    {
+      "cell": "b0.02-m0.5-g0.25",
+      "params": {
+        "backstop_min_separation_fraction": "0.05",
+        "breach_persist_count": "3",
+        "breach_persist_span_s": "1",
+        "chase_cap_fraction": null,
+        "chase_min_interval_s": null,
+        "gain_lock_giveback_fraction": "0.25",
+        "prearm_buffer_fraction": "0.02",
+        "prearm_range_multiple": "0.5",
+        "prearm_range_window_s": "10",
+        "quote_max_age_s": "1",
+        "take_profit_above_h_fraction": "0.10",
+        "take_profit_step_fraction": "0.02"
+      }
+    },
+    {
+      "cell": "b0.02-m1-g0",
+      "params": {
+        "backstop_min_separation_fraction": "0.05",
+        "breach_persist_count": "3",
+        "breach_persist_span_s": "1",
+        "chase_cap_fraction": null,
+        "chase_min_interval_s": null,
+        "gain_lock_giveback_fraction": "0",
+        "prearm_buffer_fraction": "0.02",
+        "prearm_range_multiple": "1",
+        "prearm_range_window_s": "10",
+        "quote_max_age_s": "1",
+        "take_profit_above_h_fraction": "0.10",
+        "take_profit_step_fraction": "0.02"
+      }
+    },
+    {
+      "cell": "b0.02-m1-g0.1",
+      "params": {
+        "backstop_min_separation_fraction": "0.05",
+        "breach_persist_count": "3",
+        "breach_persist_span_s": "1",
+        "chase_cap_fraction": null,
+        "chase_min_interval_s": null,
+        "gain_lock_giveback_fraction": "0.1",
+        "prearm_buffer_fraction": "0.02",
+        "prearm_range_multiple": "1",
+        "prearm_range_window_s": "10",
+        "quote_max_age_s": "1",
+        "take_profit_above_h_fraction": "0.10",
+        "take_profit_step_fraction": "0.02"
+      }
+    },
+    {
+      "cell": "b0.02-m1-g0.25",
+      "params": {
+        "backstop_min_separation_fraction": "0.05",
+        "breach_persist_count": "3",
+        "breach_persist_span_s": "1",
+        "chase_cap_fraction": null,
+        "chase_min_interval_s": null,
+        "gain_lock_giveback_fraction": "0.25",
+        "prearm_buffer_fraction": "0.02",
+        "prearm_range_multiple": "1",
+        "prearm_range_window_s": "10",
+        "quote_max_age_s": "1",
+        "take_profit_above_h_fraction": "0.10",
+        "take_profit_step_fraction": "0.02"
+      }
+    },
+    {
+      "cell": "b0.02-m2-g0",
+      "params": {
+        "backstop_min_separation_fraction": "0.05",
+        "breach_persist_count": "3",
+        "breach_persist_span_s": "1",
+        "chase_cap_fraction": null,
+        "chase_min_interval_s": null,
+        "gain_lock_giveback_fraction": "0",
+        "prearm_buffer_fraction": "0.02",
+        "prearm_range_multiple": "2",
+        "prearm_range_window_s": "10",
+        "quote_max_age_s": "1",
+        "take_profit_above_h_fraction": "0.10",
+        "take_profit_step_fraction": "0.02"
+      }
+    },
+    {
+      "cell": "b0.02-m2-g0.1",
+      "params": {
+        "backstop_min_separation_fraction": "0.05",
+        "breach_persist_count": "3",
+        "breach_persist_span_s": "1",
+        "chase_cap_fraction": null,
+        "chase_min_interval_s": null,
+        "gain_lock_giveback_fraction": "0.1",
+        "prearm_buffer_fraction": "0.02",
+        "prearm_range_multiple": "2",
+        "prearm_range_window_s": "10",
+        "quote_max_age_s": "1",
+        "take_profit_above_h_fraction": "0.10",
+        "take_profit_step_fraction": "0.02"
+      }
+    },
+    {
+      "cell": "b0.02-m2-g0.25",
+      "params": {
+        "backstop_min_separation_fraction": "0.05",
+        "breach_persist_count": "3",
+        "breach_persist_span_s": "1",
+        "chase_cap_fraction": null,
+        "chase_min_interval_s": null,
+        "gain_lock_giveback_fraction": "0.25",
+        "prearm_buffer_fraction": "0.02",
+        "prearm_range_multiple": "2",
+        "prearm_range_window_s": "10",
+        "quote_max_age_s": "1",
+        "take_profit_above_h_fraction": "0.10",
+        "take_profit_step_fraction": "0.02"
+      }
+    }
+  ],
+  "cohort": "primary complete-horizon entries, 2026-10-26..28 (n = 1,025)",
+  "controls": [
+    "hold_flat",
+    "C5-n22-k3-R-OFF-study",
+    "C5-n22-k3-R-OFF-tape"
+  ],
+  "expected": "prearm_range_multiple cells identical while R_w is not estimable",
+  "fixed": {
+    "backstop_min_separation_fraction": "0.05",
+    "breach_persist_count": "3",
+    "breach_persist_span_s": "1",
+    "chase_cap_fraction": null,
+    "chase_min_interval_s": null,
+    "prearm_range_window_s": "10",
+    "quote_max_age_s": "1",
+    "take_profit_above_h_fraction": "0.10",
+    "take_profit_step_fraction": "0.02"
+  },
+  "inputs": {
+    "b-owner-first-orders.json": "5e95de9eaefd9e24cfbd96850ab499fdfa6505e83dcf205ca485584ad5d9e6d3",
+    "fills-2026-10-26_29.jsonl": "55eee2b64506c19e23d4c421c803be687daf06ebb39a2b84f621ea2a90618c0f",
+    "minute-bars-2026-10-26_29.jsonl": "105caeee0645455aa0e1de23a1720639347062061944ea3d49eedb6d99a86a69"
+  },
+  "issue": 141,
+  "report": "every cell: mean/median/win/pnl at 3 and 6 bps, attribution by exit label",
+  "sandbox": {
+    "arming": "bar_1m (ADR-0019:98 default); its quote-run alternatives are sub-minute",
+    "chase": "chase not estimable on minute bars (off; sells at the bid proxy)",
+    "costs_bps_per_side": [
+      "3",
+      "6"
+    ],
+    "engine": "sextant.exits.engine:ExitEngine (#45), one NautilusTrader BacktestEngine per entry",
+    "execution_model": "minute-bar-approximate",
+    "flat": "15:55 ET open, the study's own exit and costs",
+    "nautilus": "v2.0.0rc7 55c0e82053142bce3a5cba4de4221d3929c2d3bc",
+    "range_term": "R_w not estimable on minute bars (dropped)",
+    "tape": "northstar-trading@8256c16c b_gain_protection.py:856-905 minute-bar proxy; bid/ask = low x (1 -/+ h) on the broker tick (:411-415); recorded-entry anchor :705-735"
+  },
+  "selection": "none; no cell becomes a start or registry value (ADR-0018, ADR-0019)",
+  "version": "exit-grid-141/1"
+}
