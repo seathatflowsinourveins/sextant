@@ -1,0 +1,68 @@
+# ADR-0013: US-equity data shares one source per need and one replayable catalog
+
+- **Status:** accepted. Harvested; the decision is unchanged unless "Changes for Sextant" says otherwise.
+- **Date:** 2026-11-06
+- **Harvested from:** northstar-trading@8256c16c31dc:docs/adr/0002-data-api-stack.md
+- **Harvested from:** northstar-trading@8256c16c31dc:docs/adr/0003-north-star-data-stack-final.md
+- **Harvested from:** northstar-trading@8256c16c31dc:docs/adr/0007-storage-and-data-catalog.md
+- **Harvested from:** northstar-trading@8256c16c31dc:docs/adr/0018-ac-data-supply-upstream.md
+- **Harvested from:** northstar@b384d298d217:docs/decisions/0021-us-equity-data-layer.md
+
+## Context
+US stocks need prices, dated identities and catalysts that can be replayed without future knowledge.
+The catalog preserves source, session, event time, receipt, revision and actual known-at time; data access does not establish coverage, rights or trading merit.
+
+## Decision
+- **Sources:** one primary per need; a fallback needs a written outage or coverage reason. Retain Alpaca Algo Trader Plus for SIP, OPRA, direct BOATS and news. Its recorded bill is $0, distinct from $99/month list; the latest audit could not independently verify the bill. No new spend. [F]
+- **Windows:** historical SIP bars/trades are recorded as 2016+; premarket coverage since 2016 remains **unverified**. Choose history by the requested window: SIP normally, BOATS only for an explicit 20:00–04:00 ET request. RAW bars and `asof=<session New York date>` preserve dated identity. [F,P]
+- **Options data:** OPRA supplies live trades/quotes and historical trades/bars since 2024-02, no historical quotes. Preserve ≤1,000 quote slots/no wildcard; entitlement is not whole-surface ingestion or options-order admission. [F]
+- **IB:** execution data and protective marks use IB's own executable book. Its overnight window is 20:00–03:50 ET, Limit/Adaptive Limit only, no GTC; a 03:50–04:00 gap remains. External marks require source-ID/skew/lag/fill qualification, never inferred route support. [F,H]
+- **Public inputs:** retain SEC EDGAR, FINRA short interest/daily short-sale volume, IB borrow, FDA RSS and Federal Register public inspection. FRED/ALFRED is macro context, not release-minute data; its backfill estimate is `realtime_start + 1 business day 23:59:59 ET`. FINRA SI visibility is publication, not settlement, with a 7-business-day lag. [F,P]
+- **News:** paging Alpaca REST stays primary; a 5 s poll drains pages. Backfill visibility is `max(next 5-minute mark ≥ updated_at + 60 s, updated_at + 180 s)`, with latest-revision/history limits explicit. A new channel is never presumed faster or point-in-time. [F,P]
+- **Calendar and halts:** Alpha Vantage is the provisional earnings primary: one daily bulk snapshot, shared 25 requests/day, horizons 3/6/12 months. Nasdaq earnings is validation-only and the documented request-failure exception; disagreement means UNVERIFIED and flatten. SIP status/LULD is the selected fast halt role; Nasdaq RSS is history/reconciliation, queried at most once/minute. Qualification remains **unverified**. [F]
+- **Paid and deferred:** retain owned Sharadar Prices 10 Years at $199/year; Full History is optional and unbought. Databento spread history was DROPPED. dxFeed multi-ATS, MEMOIR depth and historical option NBBO remain unselected, need-scoped candidates. Direct Benzinga push and free `pdufa.bio` are bounded trials, not adopted feeds. [F]
+- **Universe:** use a non-Alpaca dated master with stable share-class identity, renames and delistings; today's asset list is not historical membership. Keep `survivor_only: true` until acceptance; it cannot support a movers live-candidate dossier. Acceptance retains all 10 probed exits, ≥95% of a fixed independent random delisted sample, recycled-ticker/asof checks and the first replacement backtest. [P]
+- **Catalog:** one Nautilus `ParquetDataCatalog` per environment, one writer process; immutable raw receipts and append-only revisions, never overwrite a backfill. Sort by `ts_init`; use typed writers. Bars-only replay uses `BacktestNode`; catalysts use `BacktestEngine`, events added after bars for equal-time ties. [P,C]
+- **Clocks:** historical minute bars have `ts_event = ts_init = start + 1 min`; daily bars use next New York midnight. Live `ts_init` is receipt; archive and apply updated bars, including update-only bars. Never clamp signed skew; retain the >50 ms negative-skew-for-a-minute alert and NTP evidence. [P]
+- **Records:** use upstream `StreamingConfig` as the paper-capture candidate; packaged round-trip, fault and unique-execution acceptance precedes counting its paper merit. Missing marks/equity stay missing, never zero. DuckDB serves a named SQL consumer over immutable files; no second truth store or new serving tier. Engine qualification remains separately owned. [C]
+- **Supply:** the selected ranking mechanism is an in-node Nautilus `DataActor` on the existing shared SIP owner: wildcard bars/updates/statuses, bounded frontier trades/quotes, bounded queues/state and scoring off the event loop. Two historically measured SIP slots do not certify today's entitlement or a spare; transfer consumers only after continuity/protection/custody acceptance. [S]
+- **Opening inputs:** native daily bars supply ADV14/ATR14/previous close; RV uses 14 prior matching completed opening windows. Sparse completed nonempty windows need completion evidence; empty/uncertain windows stay UNREADY, with no fabricated candles or 10-of-14 substitution. Decisions freeze PROVISIONAL generations; repair starts 09:35:02 ET within 09:35:10 ET. Later SETTLED generations and counterfactual lessons are audit-only, never automatic exits. [S]
+- **Fundamentals:** SEC filing bytes are the record, not `companyfacts`/`frames`. Arelle `arelle-release==2.47.4` and `saveLoadableOIM` provide as-reported normalization at zero weight; no house tag map. Forward `ts_init` is normalization time after receipt; estimated backfill stays `pit_verified="false"`. C1 exhibit-EPS delivery, FSDS timing and taxonomy-cache behavior remain **unverified**. [X]
+- **New feeds:** adoption needs point-in-time Nautilus replay over the catalog, 24/7 sim and recorded paper fills, all in the one trial ledger; a negative result turns the feed OFF and is recorded. [F]
+
+## Evidence
+| Claim | Source (repo@sha:path, section or line) | Basis |
+|---|---|---|
+| F: sources, costs, scope, calendar, trials, adoption | northstar-trading@8256c16c31dc:docs/adr/0003-north-star-data-stack-final.md, Decision; amendments 2026-10-29, 2026-11-01/02/03/05 | GPT/Claude and GPT/Google/Claude convergence; recorded vendor probes and owner billing; LEAD's 2026-11-03 replay/sim/fills ruling; DeepSeek 2026-11-05 audit preserves uncertainties. |
+| P: PIT, universe, news, macro, replay | northstar-trading@8256c16c31dc:docs/adr/0002-data-api-stack.md, §§1–6; amendments 2026-10-22, 2026-11-01/02/05 | Owner 2026-10-21 delisted-name rule; measured 10-name probe; alpaca-py v0.44.0 and Nautilus v2.0.0rc7; FINRA/FRED primary docs read 2026-11-01. |
+| C: storage and capture | northstar-trading@8256c16c31dc:docs/adr/0007-storage-and-data-catalog.md, Decision Outcome; amendments 2026-11-01/05 | GPT and Google storage convergence; installed rc7 API check; bounded synthetic rc8 report, not operational completeness; DeepSeek WATCH. |
+| S: shared supply and opening semantics | northstar-trading@8256c16c31dc:docs/adr/0018-ac-data-supply-upstream.md, §§1–6, L2–L5; amendments 2026-11-01/03/05 | GPT/Google claim matrix; owner 2026-10-30 stream-driven ranking; LEAD L2–L4/R5 rulings; Zarattini/Barbon/Aziz 2024 §4; rc7/alpaca-py v0.44.0. |
+| X: fundamentals | northstar-trading@8256c16c31dc:docs/adr/0003-north-star-data-stack-final.md, amendment 2026-11-04 | Reconciled GPT/DeepSeek/Claude evidence; Arelle 2.47.4, SEC filing/FSDS documentation and XBRL/OIM standards; one vendor-eligibility dissent retained. |
+| H: source/session provenance | northstar@b384d298d217:docs/decisions/0021-us-equity-data-layer.md, amendments 2026-10-23/24, 2026-11-01/05 | GPT session design and Claude correction; source selection delegated to trading ADR-0003; owner 24/5 US-equity direction. |
+
+## Changes for Sextant
+- Approved plan, “Durable data” and Phase 4: market data stays outside git in the runner's read-only, manifest-refetchable catalog; non-refetchable fills/merit/trials go on `ledger`. Results remain `survivor-only` until a delisted-name source is bought. No code is copied now.
+- Owner, 2026-11-05/06, COMMON.md: "our compounding learning,reflecting, memory/rag etc need to be clean enhacned with sotarepos,adrs harvest with previous convergenced campaign but clean sota architecture never bloat, including the harness rules, our trading philosophy 24/5 24/7 and always previous stated limit ,1000trades/min live lane and 200 paper, 3000for ibkr paper and live"
+- Owner, 2026-11-05/06, COMMON.md: "FOCUING ON US EQUALITY, OPTION,STOCKS ETC, AND ALL THE LANES PREVIOSU STATED, PHILOSOPY PREVIOUS STATED, JEV TRADE RELATED RPEOS ETC ,RESEARCH LANE ,AUTO LEVERAGE, PROTFOLIO MANGEMENT AND BEYOND"
+- Owner, 2026-11-05/06, COMMON.md: "EVERY HARNESS,EVERY ACTIONS NEED TO BE BUILT FORM SOTA SOURCES ITSELF, INCLUDING THIS VERY HARNESS , FOCUING ON THE TRADING TOPIC , THE QUALITT AND SOTANESS ITSELF RATHER THAN SECURITY OVEREGINNERING ETC"
+
+## Code and config to carry
+- `src/northstar_trading/data/alpaca_history.py@8256c16c31dc` — 293 lines.
+- `src/northstar_trading/data/catalog.py@8256c16c31dc` — 448 lines.
+- `src/northstar_trading/data/completeness.py@8256c16c31dc` — 196 lines; `src/northstar_trading/data/fidelity.py@8256c16c31dc` — 373 lines.
+- `src/northstar_trading/data/sharadar.py@8256c16c31dc` — 1239 lines; `src/northstar_trading/data/universe.py@8256c16c31dc` — 450 lines.
+- `src/northstar_trading/scanner/live_ranking.py@8256c16c31dc` — 410 lines; `src/northstar_trading/scanner/security_master.py@8256c16c31dc` — 414 lines.
+- `src/northstar_trading/scanner/m61d_inputs.py@8256c16c31dc` — 798 lines; `configs/backtest/templates/universe.yaml@8256c16c31dc` — 46 lines. All are northstar-trading; counts are `git show <pin>:<path> | wc -l`, not admission or completeness claims.
+
+## Disagreements
+- The old stack retains owned Sharadar; the approved plan describes buying the delisted-name source. Preserve both records; Sextant follows the plan's `survivor-only` condition without selecting another vendor or asserting transferred rights.
+- Harness ADR-0021's historical SIP-for-IB and external-scanner topology differs from trading's later own-book IB and in-node ranking rulings; its 2026-10-24/11-01 amendments delegate source choice to trading. The R5 GPT leg preferred a separate service; the recorded LEAD ruling selects in-node and retains that dissent.
+- XBRL vendor eligibility remains disputed: GPT says recorded engineering gap G1 permits investigation; DeepSeek/Claude say the maintained open path fills it. No vendor is selected or bought.
+- ADR-0018's 2026-11-05 audit proposed two API corrections; both were refuted and not kept. Its accepted text stands. No rejected correction is adopted here. ADR-0003's latest audit leaves billing, entitlement/history probes and borrow cadence **unverified**; its stream trial has no recorded outcome.
+
+## Revisit when
+- Data/adapter lead: a vendor, pin, schema, entitlement, session or rights change, or PIT/determinism/completeness/latency/false-mover failure; investigate the existing integration and amend the owning record.
+- Data/research lead: a master/asof/delisted report replaces survivor-only evidence; a source-first-sight comparison posts; M1 misses 99% completeness for ≥3 sessions or EQUS.SIP becomes orderable; a named depth/option-NBBO need meets its scope; a new-feed replay/sim/paper result records adoption or OFF.
+- Storage/consumer owner: streaming qualification passes/fails, unique executions are lost/duplicated, a named SQL/serving consumer misses its budget, or scan-I/O/processing evidence establishes a catalog gap. An engine-pin move or rc9 catalog-ID migration reopens qualification; no automatic tier or pin change.
+- Ranking/data owner: shared-owner transfer, generation/fan-out/readiness, recovery/backpressure or protection-latency acceptance passes/fails; upstream evidence, three-family convergence, in-node failure or owner/security/deprecation evidence reopens separate-service placement.
+- Research/LEAD: FSDS accepted/header validation, SEC timestamped vintages, standardized-concept need, Arelle OIM/scale/license change or parse defect; “cross-family disagreement on vendor eligibility under the purchase rule (gap G1), next version”; “multi-model verdict, next version”. Preserve source safety/rights reviews by 2026-11-30 and the unchanged termination/deletion safeguards.
