@@ -10,6 +10,7 @@ dependencies = [
     "pyarrow>=26.0.0",
     "typesafe-sdk==0.7.5",
     "requests==2.34.2",
+    "edgartools==5.62.1",
 ]
 
 [tool.uv.sources]

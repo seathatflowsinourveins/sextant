@@ -9,6 +9,7 @@
 **What it runs.**
 - `research/sources.yaml`: citation, URL, SPDX licence, data needs, publication date, status, full pin, notes.
 - Research cards: source, cutoff, model, data identity and an explicit hypothesis; only frozen factors and theses cross into replay.
+- [EdgarTools](edgartools.md): pinned native filing/8-K parsers over archived SEC bytes for catalyst inputs, K4 ADOPT-PART; no poller, Form 4 numeric/owner resolution or XBRL float conveniences.
 - Thesis records: instruments, direction, horizon, invalidation, sources with `knowable_at`, generator and generation time; confidence is a Decimal in [0,1]; a live-mode thesis needs a passing review run id and still grants no authority.
 - Pre-screen before any compute: a factor must clear OSAP/JKP and HXZ with `t ≥ 3`, and a published edge is assumed to keep about half of itself after publication, tested on point-in-time inputs with NYSE breakpoints, value weighting and a price filter.
 
