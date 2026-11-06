@@ -15,6 +15,8 @@
 
 **Source cards (#54).** The upstream-schema [registry](../../research/sources.yaml) lists [EMA plumbing](ema-cross.md), [Stocks in Play / ORB](orb-stocks-in-play.md), [Page–Hinkley](page-hinkley.md) and [BOCPD](bayesian-changepoint.md). Each records the observed method version's `knowable_at`; historical input clocks remain unknown and none receives new compute admission. The [receipt](../../docs/research/2026-11-06-research-source-receipt.json) binds card bytes. No frozen market factor or full first-second extreme-mover method is claimed. Separate [#130 adapter seams and offline proofs](detector-adapters.md) change no card or admission gate.
 
+**Claim ledger (#109).** The [published evidence inventory](../../docs/research/2026-11-06-research-claims.md) records #91's precise sources, confirming families, verdicts, conflicts and NOT_RUN limits; #129's feature entries await both actual published syntheses. The owner's no-shared-agent-memory ruling stands. This ledger supplies neither a new harness nor a review/trading verdict.
+
 **Rules.**
 - Every claim names its pinned source and read date; unfalsifiable or unsourced claims stay out of the manifest.
 - A model is the highest-scoring SOTA model of the latest generation, from a base dated on or after 2026-01-01; the 2025 models are refused by owner ruling ([ADR-0014](../../docs/adr/0014-features-and-regime-models.md)).
