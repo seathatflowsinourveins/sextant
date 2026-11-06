@@ -34,7 +34,7 @@ def _fakes(tmp: Path, *names: str) -> Path:
     return bin_dir
 
 
-def test_the_sweep_runs_in_place_and_never_forces() -> None:
+def test_the_sweep_runs_in_place_and_forces_only_merged_heads() -> None:
     for script in (LIFECYCLE, PRECHECK):
         assert subprocess.run(["bash", "-n", str(script)], check=False).returncode == 0, script
     lifecycle = LIFECYCLE.read_text()
@@ -44,7 +44,13 @@ def test_the_sweep_runs_in_place_and_never_forces() -> None:
     assert "--repo" not in lifecycle and "--precheck" in lifecycle
     assert "orca worktree rm --worktree branch:<branch> --delete-branch" in PROMPT
     assert "git branch -d <branch>" in PROMPT and "issue #35" in PROMPT
-    assert re.findall(r"-D\b", PROMPT) == ["-D"] and "Never use `-D`." in PROMPT
+    # Squash merges never look merged to git, so the one forced delete is bound to GitHub's record:
+    # the PR merged, and the branch's head is the commit that PR merged.
+    assert re.findall(r"-D\b", PROMPT) == ["-D"]
+    assert (
+        "Use `git branch -D <branch>` only when that PR is `MERGED` and its `headRefOid` equals"
+        " `git rev-parse <branch>`" in PROMPT
+    )
     assert "bash deploy/wsl/lifecycle.sh" in (WSL / "setup.sh").read_text()
     assert "\nlifecycle:\n" in (ROOT / "justfile").read_text()
 
