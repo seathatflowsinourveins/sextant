@@ -41,6 +41,10 @@ lifecycle:
 shelf:
     bash deploy/wsl/shelf.sh
 
+# Inside the clean distro only: AO at its pin, its daemon tab, and the hand-off of a lane PR. See docs/start.md.
+ao *args:
+    bash deploy/wsl/ao.sh {{args}}
+
 # Run every manifest row's proof. pytest does the running and the counting.
 prove:
     uv run --frozen pytest tests/proofs
