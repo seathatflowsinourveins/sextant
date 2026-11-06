@@ -1,0 +1,22 @@
+{
+  "TICKERS": {
+    "columns": ["table", "permaticker", "ticker", "name", "isdelisted", "category", "relatedtickers", "firstpricedate", "lastpricedate", "lastupdated"],
+    "data": [
+      ["SEP", "101", "NEW", "Former OLD", "N", "Domestic Common Stock", "OLD NEW", "2021-01-04", "2025-01-03", "2026-11-06"],
+      ["SEP", "201", "REC", "Old recycled holder", "Y", "Domestic Common Stock", "REC", "2020-01-01", "2022-01-01", "2026-11-06"],
+      ["SEP", "202", "REC", "New recycled holder", "N", "Domestic Common Stock", "REC", "2024-01-01", "2025-01-03", "2026-11-06"],
+      ["SEP", "301", "LOST", "Selected loser", "Y", "Domestic Common Stock", "LOST", "2021-01-01", "2025-01-03", "2026-11-06"]
+    ]
+  },
+  "ACTIONS": {
+    "columns": ["date", "action", "ticker", "contraticker", "value"],
+    "data": [["2022-01-01", "tickerchangefrom", "NEW", "OLD", null]]
+  },
+  "SEP": {
+    "columns": ["ticker", "date", "closeunadj", "lastupdated"],
+    "data": [["REC", "2025-01-03", "0.100000000000000001", "2026-11-06"], ["LOST", "2025-01-03", null, "2026-11-06"]]
+  },
+  "SFP": {"columns": ["ticker", "date", "closeunadj", "lastupdated"], "data": []},
+  "SF1": {"columns": ["ticker", "datekey", "sharesbas"], "data": [["REC", "2025-01-03", "1000000"]]},
+  "DAILY": {"columns": ["ticker", "date", "marketcap"], "data": [["REC", "2025-01-03", "1.1"]]}
+}

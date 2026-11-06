@@ -47,7 +47,7 @@ def test_t9_box_two_names_are_registered_and_the_northstar_app_keys_are_not() ->
         "DATABENTO_API_KEY",
         "COHERE_API_KEY",
         "VOYAGE_API_KEY",
-        "NASDAQ_DATA_LINK_API_KEY",
+        "SHARADAR_API_KEY",
         "SEXTANT_GITHUB_APP_KEY_B64",
     }
     assert box_two <= names

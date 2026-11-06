@@ -41,8 +41,8 @@ KNOWN=(
   COHERE_API_KEY # research and eval reranker arms only; never trading or live
   VOYAGE_API_KEY # research and eval reranker arms only; never trading or live
   # The owner's Sharadar subscription (owner, 2026-11-06: "Add my Sharadar key"), for row 4's dated universe.
-  # The name the official client reads: Nasdaq/data-link-python@1.0.4 431094f8:nasdaqdatalink/api_config.py:3,98.
-  NASDAQ_DATA_LINK_API_KEY # research data only; never trading or live
+  # House name for the direct service: sharadar.com/docs/auth and llms.txt, read 2026-11-06.
+  SHARADAR_API_KEY # x-api-key on api.sharadar.com/v1.0; research only, never a Nasdaq alias
   # The Sextant GitHub App's private key, one line of base64 (owner, 2026-11-06: "Yes, create a Sextant App").
   # One line because --sealed-stdin carries one value line; the old store did the same for its App keys
   # (northstar@0243050704565abaf3a95f0f09613cb974a331e5:scripts/keys.sh:77-78, GITHUB_APP_*_KEY_B64).

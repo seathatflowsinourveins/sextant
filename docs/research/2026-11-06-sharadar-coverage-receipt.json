@@ -1,0 +1,243 @@
+{
+  "acceptance": {
+    "independent_delisted_sample": {
+      "covered": null,
+      "denominator": null,
+      "minimum_coverage": "0.95",
+      "sample_sha256": null,
+      "status": "NOT_RUN"
+    },
+    "recycled_ticker_asof": "NOT_RUN",
+    "replacement_backtest": "NOT_RUN",
+    "rights": "API access does not establish transferred licence/scope",
+    "ten_exit_identities": "NOT_RUN"
+  },
+  "access_probe": {
+    "entitlement_verified": false,
+    "http_status": 200,
+    "raw_sha256": "b0aea7d2b6c89a653a6c07f9749a01cb5c3eb3cd8b709f04cf5ad76aed7aa6b6",
+    "received_at": "2026-11-06T16:58:35.153182+00:00",
+    "requested_at": "2026-11-06T16:58:35.039365+00:00"
+  },
+  "asof": "2026-11-06T16:58:52+00:00",
+  "capture_mode": "authenticated",
+  "capture_sha256": "cd158d7932f58190b2ffddf2f380d0c2bbd235b5aad3789e079b08afc1ea7de3",
+  "client": {
+    "adapter_commit": "8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa",
+    "api_base": "https://api.sharadar.com/v1.0",
+    "api_version": "v1.0",
+    "commit": "6e83187b8feb273ed4c6cdab5efd8d54901dfab3",
+    "service": "sharadar",
+    "transport": "psf/requests",
+    "version": "2.34.2"
+  },
+  "float_history": {
+    "candidate_columns": {
+      "ACTIONS": [],
+      "DAILY": [],
+      "METRICS": [],
+      "SEP": [],
+      "SF1": [],
+      "SFP": [],
+      "TICKERS": []
+    },
+    "reason": "Schemas do not establish PIT float definitions, coverage or clocks",
+    "shares_outstanding_is_float": false,
+    "status": "UNVERIFIED"
+  },
+  "historical_known_at": null,
+  "implementation_sha": "4e06da7a32a616794d27d8a042fdcd98501ebe34",
+  "implementation_source_sha256": "bda1cc0d7685d14dfe6aad250233090339aa914e0567a6327a5a194101bf6fd3",
+  "independent_verification": {
+    "offline_rebuild_idempotent": true,
+    "raw_response_hashes": 1887,
+    "report_artifact_hashes": 1438,
+    "session_event_hashes": 1436
+  },
+  "literal_price_absent_events": 226,
+  "literal_price_absent_with_master_candidates": 224,
+  "literal_price_absent_without_master_candidates": [
+    {
+      "cohort": "selected_gainer",
+      "session_date": "2025-09-16",
+      "symbol": "SREMF"
+    },
+    {
+      "cohort": "selected_gainer",
+      "session_date": "2026-01-12",
+      "symbol": "EVTV"
+    }
+  ],
+  "master_rows_by_table": {
+    "SEP": 21033,
+    "SF1": 17884,
+    "SF2": 12278,
+    "SF3B": 13302,
+    "SFP": 10046
+  },
+  "pit_verified": false,
+  "price_master": {
+    "SEP": {
+      "delisted_rows": 14713,
+      "rows": 21033,
+      "unique_permatickers": 21033
+    },
+    "SFP": {
+      "delisted_rows": 3663,
+      "rows": 10046,
+      "unique_permatickers": 10046
+    }
+  },
+  "raw_data_root": "/home/sextant/sextant-data/sharadar-42",
+  "received_at_max": "2026-11-06T17:00:10.707242+00:00",
+  "report_sha256": "deee6053219eae9692db678418aa25b452ed72d1a13767000654b40acba31ba7",
+  "requested_at_min": "2026-11-06T16:59:17.368144+00:00",
+  "scope": "literal_symbol_daily_coverage_only",
+  "seed_coverage": {
+    "selected_gainer": {
+      "absent": 143,
+      "ambiguous": 0,
+      "events": 957,
+      "price_observed": 814,
+      "unknown": 0
+    },
+    "selected_loser": {
+      "absent": 83,
+      "ambiguous": 0,
+      "events": 215,
+      "price_observed": 132,
+      "unknown": 0
+    }
+  },
+  "seed_sha256": "f581ca7f771bf20ef05e212ce88aaaacda7325c640500d63926b23a0516d0577",
+  "survivor_only": true,
+  "tables": {
+    "ACTIONS": {
+      "captured_rows": 358920,
+      "column_count": 7,
+      "complete": true,
+      "query_statuses": {
+        "complete": 1
+      }
+    },
+    "DAILY": {
+      "captured_rows": 0,
+      "column_count": 10,
+      "complete": false,
+      "query_statuses": {
+        "schema_only": 1
+      }
+    },
+    "METRICS": {
+      "captured_rows": 0,
+      "column_count": 22,
+      "complete": false,
+      "query_statuses": {
+        "schema_only": 1
+      }
+    },
+    "SEP": {
+      "captured_rows": 945,
+      "column_count": 10,
+      "complete": true,
+      "query_statuses": {
+        "complete": 940,
+        "schema_only": 1
+      }
+    },
+    "SF1": {
+      "captured_rows": 0,
+      "column_count": 112,
+      "complete": false,
+      "query_statuses": {
+        "schema_only": 1
+      }
+    },
+    "SFP": {
+      "captured_rows": 1,
+      "column_count": 10,
+      "complete": true,
+      "query_statuses": {
+        "complete": 940,
+        "schema_only": 1
+      }
+    },
+    "TICKERS": {
+      "captured_rows": 74543,
+      "column_count": 28,
+      "complete": true,
+      "query_statuses": {
+        "complete": 1
+      }
+    }
+  },
+  "ten_probe_counts": {
+    "ATVI": {
+      "action_candidate_rows": 11,
+      "candidate_permatickers": 1,
+      "identity_verified": false,
+      "master_candidate_rows": 3
+    },
+    "BBBY": {
+      "action_candidate_rows": 3,
+      "candidate_permatickers": 2,
+      "identity_verified": false,
+      "master_candidate_rows": 6
+    },
+    "CELG": {
+      "action_candidate_rows": 8,
+      "candidate_permatickers": 1,
+      "identity_verified": false,
+      "master_candidate_rows": 3
+    },
+    "FRC": {
+      "action_candidate_rows": 1,
+      "candidate_permatickers": 16,
+      "identity_verified": false,
+      "master_candidate_rows": 17
+    },
+    "LK": {
+      "action_candidate_rows": 2,
+      "candidate_permatickers": 1,
+      "identity_verified": false,
+      "master_candidate_rows": 3
+    },
+    "LNKD": {
+      "action_candidate_rows": 4,
+      "candidate_permatickers": 1,
+      "identity_verified": false,
+      "master_candidate_rows": 3
+    },
+    "SIVB": {
+      "action_candidate_rows": 1,
+      "candidate_permatickers": 3,
+      "identity_verified": false,
+      "master_candidate_rows": 5
+    },
+    "TWTR": {
+      "action_candidate_rows": 4,
+      "candidate_permatickers": 2,
+      "identity_verified": false,
+      "master_candidate_rows": 5
+    },
+    "XLNX": {
+      "action_candidate_rows": 23,
+      "candidate_permatickers": 1,
+      "identity_verified": false,
+      "master_candidate_rows": 3
+    },
+    "YHOO": {
+      "action_candidate_rows": 3,
+      "candidate_permatickers": 1,
+      "identity_verified": false,
+      "master_candidate_rows": 3
+    }
+  },
+  "transport_source_sha256": "2f46033bb65665e53faf1759da7ffb82f1a3f732f4d33c200a3aac3398e119c9",
+  "trial_accounting": {
+    "cumulative_n": null,
+    "inference_eligible": false,
+    "ledger_binding": null,
+    "new_strategy_trials": 0
+  }
+}
