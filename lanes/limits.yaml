@@ -12,12 +12,14 @@ lanes:
   alpaca-paper-a:
     venue: ALPACA
     mode: paper
+    calibration_state: UNCALIBRATED
     broker_limit_per_min: 200
     order_actions_budget_per_min: 180
   # northstar-trading@8256c16c31dc:configs/lanes.yaml:50-55; northstar-lanes@00203275944a:configs/lanes.yaml:15-20.
   alpaca-paper-b:
     venue: ALPACA
     mode: paper
+    calibration_state: UNCALIBRATED
     broker_limit_per_min: 200
     order_actions_budget_per_min: 180
   # northstar-trading@8256c16c31dc:configs/lanes.yaml:84-95; northstar-lanes@00203275944a:configs/lanes.yaml:22-27 has 180, without this reserve.
@@ -25,6 +27,7 @@ lanes:
   alpaca-paper-c:
     venue: ALPACA
     mode: paper
+    calibration_state: UNCALIBRATED
     broker_limit_per_min: 200
     order_actions_budget_per_min: 150
     mcp_reserve_per_min: 50
@@ -35,6 +38,7 @@ lanes:
   ibkr-paper:
     venue: INTERACTIVE_BROKERS
     mode: paper
+    calibration_state: UNCALIBRATED
     market_data_lines: 100
     broker_limit_msgs_per_sec: 50
     order_actions_budget_per_sec: 40
