@@ -133,7 +133,7 @@ def test_sim_sells_on_the_first_persisted_bid_breach_and_logs_both_arms(tmp_path
     assert kinds[:2] == ["protected_from_fill", "initial_trigger"]
     assert events[0]["ts"] == events[1]["ts"]  # protected from the first fill
     assert "armed" not in kinds  # no eligible trades, so no gain lock (X3)
-    sell = next(e for e in events if e["event"] == "breach_sell")
+    sell = next(e for e in events if e["event"].startswith("breach_sell"))
     assert D(sell["limit"]) <= D(sell["trigger"])
     assert managed.exit_label == "managed_sell"
     rows = [json.loads(line) for line in (tmp_path / "ledger.jsonl").read_text().splitlines()]

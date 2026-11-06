@@ -49,10 +49,16 @@ class ExitEngineConfig(StrategyConfig):
         params: ExitParams,
         round_trip_cost: Decimal,
         session: str,
+        one_tick: Decimal | None = None,
+        arm_bar_type: str | None = None,
+        range_estimable: bool = True,
         **_kwargs: object,
     ) -> None:
         """`round_trip_cost` is ADR-0005's c_RT override; `session` is "rth" (breach on bids) or
-        "outside" (breach on eligible trades)."""
+        "outside" (breach on eligible trades). `one_tick` is the broker tick when the instrument's
+        increment is a lossless matching precision (trading@8256c16c b_gain_protection.py:411-415);
+        `arm_bar_type` names the completed 1-minute bars for arming (default: internal from trades);
+        `range_estimable=False` drops R_w where the data cannot estimate it (#98)."""
         super().__init__()
         if session not in {"rth", "outside"}:
             raise ValueError("session must be rth or outside")
@@ -60,6 +66,9 @@ class ExitEngineConfig(StrategyConfig):
         self.params = params
         self.round_trip_cost = round_trip_cost
         self.session = session
+        self.one_tick = one_tick
+        self.arm_bar_type = arm_bar_type
+        self.range_estimable = range_estimable
 
 
 @dataclass
@@ -79,6 +88,7 @@ class ExitEngine(Strategy):
         super().__init__(config)
         self.instrument_id = config.instrument_id
         self.p = config.params
+        self.cfg = config
         self.c_rt = config.round_trip_cost
         self.rth = config.session == "rth"
         self.bid: Decimal | None = None
@@ -99,10 +109,11 @@ class ExitEngine(Strategy):
         instrument_id = self.instrument_id
         instrument = self.cache.instrument(instrument_id)
         assert instrument is not None
-        self.one_tick = instrument.price_increment.as_decimal()
+        self.one_tick = self.cfg.one_tick or instrument.price_increment.as_decimal()
         self.subscribe_quotes(instrument_id)
         self.subscribe_trades(instrument_id)
-        self.subscribe_bars(BarType.from_str(f"{instrument_id}-1-MINUTE-LAST-INTERNAL"))
+        bar_type = self.cfg.arm_bar_type or f"{instrument_id}-1-MINUTE-LAST-INTERNAL"
+        self.subscribe_bars(BarType.from_str(bar_type))
 
     # Market data. Pre-entry ticks warm the range and the last quote/trade, never H or a breach.
     def on_quote(self, quote: QuoteTick) -> None:
@@ -132,7 +143,8 @@ class ExitEngine(Strategy):
             if self.protection is None:
                 self.protection = Protection(entry=px, qty=qty, high=px)
                 self._record(event.ts_event, "protected_from_fill", entry=px)
-                self._step(event.ts_event, self.bid if self.rth else self.last)
+                ok = self.bid is not None and self._quote_ok(event.ts_event)
+                self._step(event.ts_event, (self.bid if ok else None) if self.rth else self.last)
             else:  # ADR-0007: an add to a managed symbol pauses it; custody is row 8
                 self.paused = True
                 self._record(event.ts_event, "add_paused", qty=qty)
@@ -145,7 +157,14 @@ class ExitEngine(Strategy):
         if p is None or self.paused or observed is None or self.bid is None or self.ask is None:
             return
         spread = self.ask - self.bid
-        buf = policy.buffer(self.one_tick, spread, p.entry, self._range(ts), self.p)
+        buf = policy.buffer(
+            self.one_tick,
+            spread,
+            p.entry,
+            self._range(ts),
+            self.p,
+            range_estimable=self.cfg.range_estimable,
+        )
         if buf is not None:
             if p.trigger is None:
                 p.trigger, p.setup_gap = p.entry - buf, buf
@@ -176,21 +195,24 @@ class ExitEngine(Strategy):
 
     def _sell(self, ts: int, p: Protection) -> None:
         assert self.bid is not None and p.trigger is not None
+        # With no chase interval (unavailable, #98) the fast sell rests at the bid: chase off.
+        last = self.last if self.p.chase_min_interval_s is not None else None
         order = self.order_factory.limit(
             instrument_id=self.instrument_id,
             order_side=OrderSide.SELL,
             quantity=Quantity.from_str(str(p.qty)),
-            price=self._price(policy.chase_limit(self.bid, self.last, self.p)),
+            price=self._price(policy.chase_limit(self.bid, last, self.p)),
             time_in_force=TimeInForce.GTC,
             reduce_only=True,
         )
         self.sell_id = order.client_order_id
         self.amended_ns = ts
         self.submit_order(order)
-        self._record(ts, "breach_sell", trigger=p.trigger, limit=order.price.as_decimal())
+        kind = "breach_sell_gain_lock" if self.arming.armed else "breach_sell_prearm"
+        self._record(ts, kind, trigger=p.trigger, limit=order.price.as_decimal())
 
     def _chase(self, ts: int) -> None:
-        if self.sell_id is None:
+        if self.sell_id is None or self.p.chase_min_interval_s is None:
             return
         order = self.cache.order(self.sell_id)
         interval = int(self.p.chase_min_interval_s * NS)
