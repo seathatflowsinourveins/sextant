@@ -195,8 +195,8 @@ class ExitEngine(Strategy):
 
     def _sell(self, ts: int, p: Protection) -> None:
         assert self.bid is not None and p.trigger is not None
-        # With no chase interval (unavailable, #98) the fast sell rests at the bid: chase off.
-        last = self.last if self.p.chase_min_interval_s is not None else None
+        # With either chase row unavailable (#98) the fast sell rests at the bid: chase off.
+        last = self.last if self.p.chase_on else None
         order = self.order_factory.limit(
             instrument_id=self.instrument_id,
             order_side=OrderSide.SELL,
@@ -212,8 +212,9 @@ class ExitEngine(Strategy):
         self._record(ts, kind, trigger=p.trigger, limit=order.price.as_decimal())
 
     def _chase(self, ts: int) -> None:
-        if self.sell_id is None or self.p.chase_min_interval_s is None:
+        if self.sell_id is None or not self.p.chase_on:
             return
+        assert self.p.chase_min_interval_s is not None
         order = self.cache.order(self.sell_id)
         interval = int(self.p.chase_min_interval_s * NS)
         if order is None or not order.is_open or order.is_pending_update or self.bid is None:

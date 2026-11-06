@@ -387,11 +387,13 @@ def run(inputs: Path, out: Path, *, limit: int | None = None) -> dict[str, Any]:
 
 LABELS = {
     "exit-engine-starts-rw-dropped": (
-        "sextant.exits at ExitParams.starts(); chase: not estimable on minute bars (off); "
-        "R_w: not estimable on minute bars (dropped)"
+        "sextant.exits at ExitParams.starts(); chase not estimable on minute bars (off, sells "
+        "at the bid proxy); R_w: not estimable on minute bars (dropped)"
     ),
-    "exit-engine-starts-rw-strict": "sextant.exits at ExitParams.starts(); chase off; R_w strict, "
-    "so no trigger is ever set on this tape (never protected)",
+    "exit-engine-starts-rw-strict": (
+        "sextant.exits at ExitParams.starts(); chase not estimable on minute bars (off); "
+        "R_w strict, so no trigger is ever set on this tape (never protected)"
+    ),
     "hold_flat": "control: hold to the 15:55 ET open, the study's own exit and costs",
     f"{C5}-tape": "control: the study's selected variant, filled at the signal bar's proxy bid",
     f"{C5}-study": "control: the study's selected variant on its own fill model (next 1m open)",

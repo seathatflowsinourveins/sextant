@@ -33,12 +33,12 @@ def _report() -> dict:
     return json.loads((EVIDENCE / "report.json").read_text())
 
 
-def test_every_start_is_sourced_and_the_chase_interval_stays_unavailable() -> None:
+def test_every_start_is_sourced_and_both_chase_rows_stay_unavailable() -> None:
     p = ExitParams.starts()
-    assert p.chase_min_interval_s is None
+    assert p.chase_min_interval_s is None and p.chase_cap_fraction is None and not p.chase_on
     rows = {r.name: r for r in REGISTRY}
-    assert "implied by ADR-0019:296" in rows["chase_cap_fraction"].source
-    assert all(r.start is not None for r in REGISTRY if r.name != "chase_min_interval_s")
+    assert "no authority" in rows["chase_cap_fraction"].source
+    assert all(r.start is not None for r in REGISTRY if r.name not in policy.CHASE)
     assert all("@" in r.source or "adr" in r.source for r in REGISTRY)
 
 
@@ -47,6 +47,14 @@ def test_with_no_chase_interval_the_fast_sell_rests_at_the_bid(tmp_path: Path) -
     sell = next(e for e in events if e["event"].startswith("breach_sell"))
     assert "chase" not in [e["event"] for e in events]
     assert D(sell["limit"]) <= D(sell["trigger"])
+
+
+def test_a_missing_chase_cap_alone_also_turns_the_chase_off(tmp_path: Path) -> None:
+    p = dataclasses.replace(FIXTURE, chase_cap_fraction=None)
+    assert not p.chase_on
+    assert policy.chase_limit(D("9.98"), D(10), p) == D("9.98")
+    _m, _c, events = run(tmp_path, p)
+    assert "chase" not in [e["event"] for e in events]
 
 
 def test_the_range_term_drops_only_where_it_is_not_estimable() -> None:

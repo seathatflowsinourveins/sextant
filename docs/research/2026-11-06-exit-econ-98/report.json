@@ -2,7 +2,7 @@
   "issue": 98,
   "execution_model": "minute-bar-approximate",
   "tier": "MODELED",
-  "implementation": "d8f83a72b86103fc87cc78197e6e0fcf24bbd933",
+  "implementation": "92008be903825e7f6bf3ecf75be3d3235de65b29",
   "params": {
     "prearm_buffer_fraction": "0.01",
     "prearm_range_multiple": "1",
@@ -10,14 +10,14 @@
     "gain_lock_giveback_fraction": "0.1",
     "breach_persist_count": "3",
     "breach_persist_span_s": "1",
-    "chase_cap_fraction": "0.01",
+    "chase_cap_fraction": null,
     "chase_min_interval_s": null,
     "take_profit_above_h_fraction": "0.10",
     "take_profit_step_fraction": "0.02",
     "backstop_min_separation_fraction": "0.05",
     "quote_max_age_s": "1"
   },
-  "params_hash": "5a538bd56f1cc1c5e7e805817b8dc37ecf1e270bca0490cdeba6a494a7311e08",
+  "params_hash": "f4e334dde969c027fa7e9a9d5c4e77054a303a71c8f68aefd27d744d2f7df716",
   "inputs": {
     "minute-bars-2026-10-26_29.jsonl": "105caeee0645455aa0e1de23a1720639347062061944ea3d49eedb6d99a86a69",
     "fills-2026-10-26_29.jsonl": "55eee2b64506c19e23d4c421c803be687daf06ebb39a2b84f621ea2a90618c0f",
