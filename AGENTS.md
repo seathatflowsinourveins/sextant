@@ -20,7 +20,7 @@ Everything here comes from a SOTA source: a maintained repo or framework at a pi
 - Tracking is GitHub Issues only.
 
 ## Hard lines
-- **Secrets:** never in a file, commit, log, command line or URL. Never print an environment variable's value. Keys live in GitHub Environment secrets. Broker keys never enter this sandbox.
+- **Secrets:** never in a file, commit, log, command line or URL. Never print an environment variable's value. Jobs get keys from GitHub Environment secrets. On the clean distro, keys live in `scripts/keys.sh`'s encrypted store and reach one command at a time through `scripts/with-keys.sh`; holding a paper key is not permission to trade (`docs/adr/0028-local-keys.md`). Live keys never enter this store or the sandbox, and broker keys never enter the sandbox.
 - **Live:** only the `live` environment's job on the `live` branch places live orders. Agents never touch a live endpoint.
 - **Paper:** each account has one writer.
 - **Money:** the engine's `Price`, `Quantity` and `Money` types or `Decimal`, never floats.
@@ -37,3 +37,4 @@ Run only `devc` on the host. Never run git or a script on the host in a working 
 - `tests/proofs/`: `just prove` runs one test per manifest row. `tests/repo/`: size budgets, in `just ci`.
 - `.github/`: workflows, rulesets, review prompt.
 - `src/sextant/`: trading code. `lanes/`: per-lane config.
+- **Work:** GitHub Issues. The lead starts with issue #29, which holds the first steps on the clean distro.
