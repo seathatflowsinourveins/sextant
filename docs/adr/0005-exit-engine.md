@@ -1,0 +1,80 @@
+# ADR-0005: Protect from the first fill, lock gains and sell on a persisted breach
+
+- **Status:** accepted. Harvested; the decision is unchanged unless "Changes for Sextant" says otherwise.
+- **Date:** 2026-11-06
+- **Harvested from:** northstar-lanes@00203275944a:docs/adr/0006-exit-engine.md
+- **Harvested from:** northstar-trading@8256c16c31dc:docs/adr/0011-execution-exits-and-reentry.md
+- **Harvested from:** northstar-trading@8256c16c31dc:docs/adr/0019-managed-exits-and-ranked-reentry.md
+- **Harvested from:** northstar-trading@8256c16c31dc:docs/adr/0002-alpaca-native-brackets.md
+
+## Context
+
+Protect every fresh or adopted holding from its first fill, in every supported session. The managed fast sell is primary; the venue stop covers outages. One account-bound multi-instrument custodian owns each lane; one writer owns each quantity. Policy acceptance does not prove implementation or deployment.
+
+## Decision
+
+- **Trigger for a long (X2):** preserve these formulas; every parameter is an UNCALIBRATED registry row until its calibration record exists.
+```text
+buffer      = max(one_tick, eligible_spread, prearm_buffer_fraction · entry, prearm_range_multiple · R_w)
+noise_floor = max(one_tick, eligible_spread)
+gain_lock   = max(entry + c_RT, H − max(noise_floor, gain_lock_giveback_fraction · (H − entry)))
+setup_gap   = entry − initial_trigger
+trail       = max(buffer, setup_gap)
+trigger     = max(previous_trigger, H − trail, gain_lock if armed)
+```
+
+- `previous_trigger` starts at `initial_trigger`: `entry − buffer_at_entry`, except OVERSELL uses `L − buffer` at the flush low. Keep the setup gap until arming. Adoption uses cost-basis `entry − buffer`, never rebases to the mark; at/below it, the first persisted breach sells, labelled `adopted-below-trigger`. H starts at adoption mark; an earlier higher high needs the owner's explicit, labelled election.
+- H is the high of eligible trades since entry. `R_w` is their high−low in `[ts_event − prearm_range_window_s, ts_event]`; recompute buffer each event and never loosen the trigger. Pre-entry ticks may warm range/last quote/trade, never H, arming or breach. Quotes require bid > 0, ask > bid and age ≤ `quote_max_age_s`; bars are internal completed eligible-trade 1m/5m bars.
+- `c_RT = entry × sec31_rate + min(qty × taf_per_share, taf_cap) ÷ qty + one tick` per share, unless `round_trip_cost` overrides it; fees carry dated SEC/FINRA notices. ATR is Nautilus Wilder `AverageTrueRange(atr_period)` on completed `atr_bar_minutes` bars, through `Decimal(str(atr.value))`; before initialization it is None, extension UNKNOWN and Chandelier unavailable. Chandelier is counterfactual only.
+- **Arming (X3):** default `bar_1m`: a completed minute closes ≥ `entry + c_RT + noise_floor`; confirmation holds until a later minute closes below. Alternative `trades_3x1s`: `arm_trades_count` consecutive eligible trades ≥ that level spanning ≥ `arm_trades_span_s`; a lower print resets it. Arm on the first event where confirmation holds and eligible RTH bid or outside-RTH last eligible trade is strictly above the armed trigger; arming cannot itself breach. Unknown cost basis, unresolved custody or unavailable quote stays UNARMED. Compare alternating global-entry arms with shadow arming; calibration alone changes the default.
+- **Breach (X4):** `breach_persist_count` consecutive eligible bids in RTH, trades outside it, at/below trigger over ≥ `breach_persist_span_s`; a broken run resets. Never sell on a lone quote, print or bar. A five-minute rotation cadence is not an exit clock.
+- **Fast sell (X5):** amend the resting managed LIMIT to `limit = max(bid, last × (1 − chase_cap_fraction))`, at most once per `chase_min_interval_s`. Never below bid except halt/session-close flatten. Serialize one outstanding amendment per order, coalescing to the strongest desired level; an ACK is not a fill, and partial/unknown outcomes retain possible-fill exposure. Pace every action, protection first; never lower an acknowledged stop.
+- **Before breach:** `take_profit_policy = roll_with_h`; a required finite limit stays `take_profit_above_h_fraction` above H and rolls upward once H rises `take_profit_step_fraction`. Require above-H fraction > step fraction. Ideal scheduled clearance is `(1 + take_profit_above_h_fraction) ÷ (1 + take_profit_step_fraction) − 1` (0.10/0.02 starts: about 7.8%), not a venue/latency guarantee. `tighten.tp_roll` is below fast sell, chase and backstop raise. Desired/sent/ACK levels differ; a delayed roll can cap a runner. Label its fill `take_profit`, recording desired/ACK levels and pending time. Fixed-entry TP is counterfactual only.
+- **Backstop (X6):** Alpaca RTH native OCO/bracket leg is `max(previous_backstop, min(trigger, bid) × (1 − backstop_min_separation_fraction))`, raised in place from the first fill; a falling bid never lowers it. It may pre-empt the persisted sell on the same reserved shares; never add a second full-size exit. IBKR paper retains emulated trailing stop-limits; native `TRAIL`/OCA needs partial-, double-fill and multi-amend drills.
+- **Venue limits:** Alpaca outside RTH has no native stop; managed protection needs node/feed, eligible trades and LIMIT-only capped chase. The later native-contingency exception admits one reducing `BID_ASK STOP_LIMIT DAY` for A/C and one account-bound reducing `BID_ASK TRAILING_STOP_LIMIT DAY` for B, with fresh SIP pre/post or BOATS overnight quotes (20:00–04:00 ET). These are venue forms, not a replacement primary exit. No simultaneous native exit may reserve those shares; terminal cancel precedes handover.
+- **Every gain:** owner, 2026-11-05: "auto gain protect is not exceuted, thatis need to be enact with EVERY GAIN POTECTION". Every in-gain A/B/C holding, including owner entries, needs active broker-held protection that follows the gain: replace an OCO/bracket `stop_price`, or one native `trailing_stop` for stop-only custody. B owner protection includes entry plus expected exit cost. Activation/trail values need cited methods and replay/sim/paper evidence, not invented thresholds. Coverage reports count full exiting-side stop/stop-limit/trailing quantity; a gap is an incident and lesson.
+- **Native-order recovery:** native bracket children activate only on complete entry fill. Cancel a partial entry remainder/group and prove it terminal before a close; retain crossed-stop exit intent through rebounds. The first cancellation wait has a 60-second escalation deadline that retries never reset, not a fill guarantee. A partial TP canceled its stop in 15/15 paper observations: cancel TP remainder, prove terminal, fresh same-account read, then one reducing close, never a second reservation. DAY does not flatten; a stopped node, ACK, timer or requested close proves no fill/flatness.
+- **Evidence:** report binding buffer/gain-lock/backstop, arm/shadow basis, chandelier and fixed/bps/ticks counterfactuals, desired/ACK TP and hold-flat, costs, nonfills and gaps; keep lesson proposals and every trial. Noise-floor dominance, spread, gaps and chase defeat any guaranteed retained-gain fraction. On 1,025 entries, hold-to-15:55 beat all 96 active variants: 76.44/70.42 versus 54.78/48.76 bps at 3/6 bps per side. Economics remain unproven.
+- **Research only:** VWAP/structure/flow exits need formula, registry, binding term and replay evidence. The Zarattini 2024b candidate uses a 14-day time-of-day noise band, HH:00/HH:30 grid and `max(UpperBound, VWAP)` long exit; SPY/RTH native, transfers separately labelled, witness synthetic. Raw rolling HH22−3×ATR22 and monotone-since-entry Chandelier are distinct counterfactuals; σ-distance is lower-evidence. Retain y2p loss-cut frozen/default-OFF; the 2 ATR/300 s/two-retry FSM is not adopted.
+
+## Evidence
+
+| Claim | Source (repo@sha:path, section or line) | Basis |
+|---|---|---|
+| Trigger, arming, persistence, chase, TP and backstop | northstar-lanes@00203275944a:docs/adr/0006-exit-engine.md, X1–X7, lines 46–148, 259–268 | Owner 2026-10-30/31; GPT/Google 6sxk convergence; NautilusTrader v2.0.0rc7 `55c0e8205314`, `Strategy.modify_order`; alpaca-py v0.44.0 `cc4cb3b7ba50`, OCO/leg/replace APIs. Existing approved house policy; no upstream combines it (source's `none exists:` record). |
+| Candidate limits and uncapped runners | northstar-lanes@00203275944a:docs/adr/0006-exit-engine.md, X4/X7, amendment 2026-11-03, lines 87–91, 128–131, 298–332 | Zarattini 2024b SPY intraday momentum §3/Fig.5(b), PDF sha256 `865010df…`; [StockCharts Chandelier](https://chartschool.stockcharts.com/table-of-contents/technical-indicators-and-overlays/technical-overlays/chandelier-exit), read 2026-11-01; owner 2026-11-02 directives preserved as comparison context. |
+| Gain order, overnight form and correction | northstar-trading@8256c16c31dc:docs/adr/0002-alpaca-native-brackets.md, amendments 2026-11-03 and 2026-11-05, lines 3–18, 38–111, 113–151 | Owner 2026-11-05; Alpaca Orders/24/5; rc7 emulator/trailing source; alpaca-py v0.44.0 BOATS; blind DeepSeek correction. |
+| Native reservations and recovery | northstar-trading@8256c16c31dc:docs/adr/0002-alpaca-native-brackets.md, Decision 2–5, Partial-entry cancellation/Partial TP, lines 212–240, 354–382, 510–568 | Alpaca complete-fill/group-cancel rules; N32 paper, 2026-10-23; rc7 native risk/account-net APIs. |
+| Policy supersession and negative economics | northstar-trading@8256c16c31dc:docs/adr/0019-managed-exits-and-ranked-reentry.md, current pick/amendment (1), lines 15–19, 84, 207–248 | Owner 2026-10-30; GPT/Google; 1,025-entry replay. Paper count/loss budgets observe; broker limits, custody, protection priority and owner halt bind. |
+| Engine and frozen overlay; bounded research claims | northstar-trading@8256c16c31dc:docs/adr/0011-execution-exits-and-reentry.md, lines 15–27, 168–203, 248–265 | Nautilus remains engine/OMS; GPT/Google distinguish [Kaminski–Lo, June-2013 manuscript](https://doi.org/10.1016/j.finmar.2013.07.001), [Han–Zhou–Zhu, October-2014 draft](https://doi.org/10.2139/ssrn.2407199) and [Clare et al., accepted manuscript](https://doi.org/10.1057/jam.2013.11) from intraday executable edge. Published stops/labels/prediction do not establish an optimal house exit. |
+
+## Changes for Sextant
+
+- Newest harvest owner ruling (2026-11-05/06, COMMON.md), verbatim: "our compounding learning,reflecting, memory/rag etc need to be clean enhacned with sotarepos,adrs harvest with previous convergenced campaign but clean sota architecture never bloat, including the harness rules, our trading philosophy 24/5 24/7 and always previous stated limit ,1000trades/min live lane and 200 paper, 3000for ibkr paper and live".
+- Same source, verbatim: "EVERY HARNESS,EVERY ACTIONS NEED TO BE BUILT FORM SOTA SOURCES ITSELF, INCLUDING THIS VERY HARNESS , FOCUING ON THE TRADING TOPIC , THE QUALITT AND SOTANESS ITSELF RATHER THAN SECURITY OVEREGINNERING ETC".
+- Approved plan, Harvest/Your answers/Phases 2, 6–7: harvest decisions only; Sextant runs sim before the explicit one-account paper handover. This grants no order or live authority; live gates remain in their own record.
+
+## Code and config to carry
+
+Inventory only; no code copied or conformance/deployment certified. Counts are `git show <sha>:<path> | wc -l`. The pinned `src/northstar_lanes/` inventory lists no standalone protection module; its relevant contract is below.
+
+- northstar-lanes: `src/northstar_lanes/contracts.py@00203275944a` — 704 lines.
+- northstar-trading: `src/northstar_trading/execution/pacer.py@8256c16c31dc` — 205; `src/northstar_trading/strategies/base.py@8256c16c31dc` — 2247; `src/northstar_trading/strategies/alpaca.py@8256c16c31dc` — 2049.
+- northstar-trading: `src/northstar_trading/strategies/exit_manager/books.py@8256c16c31dc` — 191; `src/northstar_trading/strategies/exit_manager/config.py@8256c16c31dc` — 518; `src/northstar_trading/strategies/exit_manager/custodian.py@8256c16c31dc` — 499.
+- northstar-trading: `src/northstar_trading/strategies/exit_manager/protection.py@8256c16c31dc` — 804; `src/northstar_trading/strategies/exit_manager/rules.py@8256c16c31dc` — 92; `src/northstar_trading/strategies/exit_manager/signals.py@8256c16c31dc` — 114; `src/northstar_trading/strategies/exit_manager/strategy.py@8256c16c31dc` — 2285.
+- northstar-trading: `src/northstar_trading/strategies/premarket_gap/config.py@8256c16c31dc` — 583; `src/northstar_trading/strategies/premarket_gap/exits.py@8256c16c31dc` — 144; `src/northstar_trading/strategies/premarket_gap/lane_exit_inputs.py@8256c16c31dc` — 88; `src/northstar_trading/strategies/premarket_gap/strategy.py@8256c16c31dc` — 1058.
+- northstar-trading: `src/northstar_trading/strategies/exits/active.py@8256c16c31dc` — 674; `configs/paper/profiles.yaml@8256c16c31dc` — 202.
+
+## Disagreements
+
+- For paper, lanes X2–X7 supersede trading's fixed stops/targets, C5/FAST primary, chandelier-in-trigger and Stage A/B restrictions; owner-only B, one-retry/rotation-OFF/count gates are historical. Surviving live restrictions are unchanged (0011:15–27; 0019:15–19). The later gain-order requirement adds presence/ratcheting, not a new primary policy (0002:55–76).
+- `f = min(max(small_distance_atr_multiple · ATR22(5m) / price, small_distance_min_fraction), small_distance_max_fraction)` has UNCALIBRATED starts 3/0.02/0.05, `backstop_start_fraction = f`, separation 0.02; only the interim RTH watcher on unclaimed symbols keeps it. The Nov3 fold's factor/under-3%/3×ATR22 candidate and `c5_tp_ceiling_r = 100` sentinel are comparison context, not all-position X2 replacements or config writes. This fold does not decide Tier S entry bounds. Finite rolling protection remains (lanes:125, 298–332; 0019:225–236).
+- Broker-held protection for every gain conflicts with Alpaca's absence of outside-RTH stops; the source explicitly retains node/feed dependence, not a guarantee. Earlier overnight refusal is superseded by BOATS admission. A DAY overnight leg stays live through the next 20:00 ET; 04:00 termination is the node's block-end cancellation duty, not the venue's (0002:38–46, 65–90, 113–138).
+- The IONQ stop raises were owner-side by elimination, not node commands; UI origin and absent automatic raises are **unverified**. B gain protection remains unproven. The one-L1-quote hazard branch contradicts persistence (0002:3–18, 91–95). Older 180/min wording yields to the newest owner's quoted limits; broker limits still bind (0019:155).
+- The fold says X4 owns `vwap_fail_interval_s`, but X4 at this pin defines no such row/formula: **unverified**, not imported. Historical ATR implementation/deployment, calibration, outage/nonfill drills and actual account acceptance remain **unverified** (lanes:7, 248–252, 266, 319).
+
+## Revisit when
+
+- Per-bucket STOP-fill rates or calibration/after-cost hold-flat results land, either arm has enough paired positions, a paper-e2e/custody/restart/backstop drill passes or fails, or a lesson contradicts this record: exit/research owner records the evidence and proposes the amendment (lanes:223–235; 0019:E1–E4/E7).
+- A gain-coverage gap, stale BOATS release/overnight handover, duplicate/unowned exit, failed protection or changed broker/session/engine contract is measured: venue/exit owner records the incident and resolves against upstream; pin changes and typed account callbacks/flat receipts require a new read (0002:E1–E6; 2026-11-03/05 amendments).
+- Preregistered new overlay data arrives with restored hold-to-trail coverage AND the complete all-attempt ledger AND absolute 2× gate AND positive paired lower bound, retaining access audit/freeze-before-first-event; retain frozen OFF until then. An authorized live-policy amendment, mapped-source error or "multi-model verdict, next version" reopens its own scope (0011:25–48; lanes:345–348).

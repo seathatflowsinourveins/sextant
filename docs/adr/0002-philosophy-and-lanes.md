@@ -1,0 +1,78 @@
+# ADR-0002: Rank, enter early, protect and re-enter across the trading lanes
+
+- **Status:** accepted. Harvested; unchanged except under "Changes for Sextant".
+- **Date:** 2026-11-06
+- **Harvested from:** the pinned records listed individually in Evidence, read whole with every amendment.
+
+## Context
+
+US equities are the trading focus. Research feeds replay, sim and paper; measured merit informs live promotion. The philosophy seeks small bounded planned losses and larger gains, not zero realized loss.
+
+## Decision
+
+- **Rank and enter early:** scan the full supported universe of NMS common stocks and listed ADRs. Rank move times unusual volume, not dollar volume. Target one-second discovery and the first rising second of the first leg. An extended spike needs a pullback and reclaim.
+- **Protect and re-enter:** a noise-aware trigger starts below entry and only rises. Lock cost-covered gains; confirm a persistent breach, then sell fast within the chase cap. A wide broker stop is an outage backstop. Reclaim after cooldown or rotate while ranking still qualifies. No profit cap on A/C's extreme-mover arm.
+- **Paper never gated:** loss budgets, participation, floors and performance are observations. Custody, one writer per quantity/account, protection-first pacing, broker limits/orders/buying power, owner halt, secrets, no live leakage and Decimal/engine money types still bind. Owner orders are never cancelled or resized; only positively reconciled fills enter managed custody.
+- **Compound from evidence:** capture tape → failing replay witness → passing rule → ADR/registry/handbook → paper comparison with hold-flat. Every arm/run and failed/negative trial stays in one cumulative ledger; every exit leaves a counterfactual and lesson. Nightly tuning proposes only; reviewed parameters change between sessions and freeze throughout each session.
+- **Keep the clocks distinct:** paper targets 24/5 across supported pre-market, RTH, post-market and overnight sessions; evaluation continues 24/7 on recorded replay whenever live sessions are unavailable. Outside RTH, executable orders are LIMIT only and exposure is ≤1x. Supported feeds, venue eligibility and protection remain required.
+
+| Lane / account or venue | Carried charter |
+|---|---|
+| Research / no order-writing account | Autonomous, read-only world research: filings, news, company reports, market flow and available non-market incentives. CatalystEvent uses knowable-at ts_init; theses use generation time and are never backfilled. Overlap is an unvalidated feature, not leverage permission; unknown feed coverage stays explicit. |
+| R: replay / Nautilus BacktestNode and BacktestEngine | MODELED, unlimited arms at any hour from captured ParquetDataCatalog tapes. One fresh arm-run per process; concurrency starts at 1 and rises only on measured peak RSS. Paired controls share sessions and fee/spread/square-root-impact costs at 1x and 2x. |
+| S: sandbox / socket-owning node, venue ALPACA | SIMULATED on live data in every open session, bounded by measured resources. Each arm has its own client, account_id and order namespace; its account issuer is the client name, never ALPACA. Every command carries client_id; two or more arms use random IDs. House A/A isolation precedes S; no sandbox command reaches a broker. |
+| Paper A / alpaca-paper-a | Balanced: Tier L risk 1.0%; rank ceilings 2x/1.5x/1x for ranks 1–5/6–10/rest. Extreme-movers arm only, profile comparison of 5 names against C's 20. Admits liquidity tiers L and S in all four sessions. A stays the first-leg experiment's control. |
+| Paper B / alpaca-paper-b, focus-lev | Aggressive autonomous strategies plus reconciled owner-entry custody. Tier L risk 2.0%; configured rank ceilings 4x/3x/2x, effective at most 2x/2x/2x until the recorded cap change lands and is accepted with current native account evidence. Tier S risk 1%, 1x/RTH-only; accepted early outside-RTH entries remain Tier L at ≤1x. Owner-selected outcomes are never pooled as autonomous alpha. |
+| Paper C / alpaca-paper-c | Conservative: Tier L risk 0.25%, 1x; 20-name profile. Extreme-movers arm only; L and S in all four sessions. Flat by each actual session end minus five minutes, no carry and no scheduled-release exception. The later record witnesses C's ORB row retired, not profitable trading. |
+| IBKR paper / ibkr-paper, Gateway 4002 or TWS 7497 | Distinct advanced mover strategies, not duplicates of Alpaca. Start the strongest CANDIDATE, C06 buffered cost-aware multi-session reversal, after platform checks; long liquid-tier half first, shorts wait for a borrow series and admission. Risk 0.5%, 1x; re-entry OFF. Envelope: 16 actions/s peak, 12 long-only; 2.5% protective stop. Protection-only emulated TRAILING_STOP_LIMIT remains under 3%. |
+| Live / Alpaca live and IBKR live | northstar@b384d298d217:docs/decisions/0053-live-lane-automated-evidence-gated.md alone owns promotion, runner, stages, limits and owner halt. Live remains 1x. Research/paper dossiers and owner plans do not authorize a live action or owner-position management outside that contract. Paper fills establish simulator behaviour, not live edge. |
+| Side/meta / TradingView and source landscape | Official MCP synchronizes display-only watchlists and price alerts. TradingView is the owner's monitor/manual-order layer; no alert, webhook, MCP or agent panel action orders on any account. Source imports become locally cited methods; source/star changes propose ADR improvements. |
+| Options / research, no admitted order account | Zero-weight options data has no rank, entry, exit, sizing or leverage influence. The old KEEP ruling admits no option-contract orders on any lane. Account option levels, OPRA authentication, margin and engine/broker lifecycle agreement are **unverified**. Sextant's sim-only extension is below. |
+| Jev / historical A/C paper arms and sandbox twins | A/C keep their recorded broker-paper Jev arms in the archive; Jev-off blocks have sandbox twins. Sextant starts TypeSafe with/without pairs in sim, with no live authority until merit. |
+
+- **A/C liquidity and protection:** L means price ≥$10 AND ADV$ ≥$50M; S is every otherwise eligible name, not short selling. S risk is 0.5% on A and 0.125% on C at 1x; outside RTH every A/C tier uses that half risk. S notional ≤5% of prior-five-minute dollar volume. In every A/C session spread ≤c5 initial stop distance/3, every stop <3%; B/IB retain 10 bps. Short selling still needs a separate amendment.
+- **Rates:** owner targets are Alpaca live 1,000/min, paper 200/min/account, IBKR paper/live 3,000/min. Verified paper accounting is 200 REST requests/min/account, not fills; current action budgets A/B 180/min, C 150/min plus 50 MCP reserve. Live config is 180/min, 870 only after a written raise. IB budget is 40/s, legacy 30/s while IB data is used until rotation is paced; traffic shares the gateway allowance. The live/IBKR targets are **unverified** entitlements.
+- **Utilization and checks:** target about 100% time-weighted RTH capital use and about 80% of action budgets: A/B 144/min, C 120/min, IBKR 1,440/min. A 15-minute zero-action session incident and hourly reports trigger investigation, never forced trades. Replay misses after every session. C's first-leg restart needs row-local S2 refusal, six reviewed UNCALIBRATED starts and an observed K3 generation/heartbeat; leverage tiers remain OFF pending their evidence.
+- **Merit is separate from operation:** the recorded adoption protocol requires paired lower bounds >0 at stressed costs, StepM, DSR >0.95 and PBO ≤0.05 by CSCV with S=16, one confirmatory look. Paper fidelity requires replay correlation ≥0.9 and slippage ≤1.5× modelled over the required round-trip record; paper P&L alone never decides superiority. The continuous R4 lane remains OFF until its V0–V3 and publisher V4 evidence and enable decision; the proposed cutoff is not an approved number. Economic superiority to hold-flat and current deployment remain **unverified**.
+
+## Evidence
+
+| Claim | Source (repo@sha:path, section) | Basis carried from the record; upstreams not newly re-read |
+|---|---|---|
+| Pillars, paper hard lines, rule admission, 24/7 | northstar-lanes@00203275944a:docs/adr/0003-philosophy-and-operating-principles.md, P1–P10; 2026-11-03/05 amendments | Owner 2026-10-30, 2026-11-02/03/05; captured incidents, regression testing and walk-forward on NautilusTrader; recorded none-exists boundary for firm philosophy. |
+| Handbook's current principle map | northstar-lanes@00203275944a:docs/handbook/philosophy.md, Pillars | P1–P9 and sizing/custody/evidence pointers; no independent profit claim. |
+| Sessions, budgets, custody and learning map | northstar-lanes@00203275944a:docs/handbook/practices.md, items 20–32, 42–48 | Owning lane ADR clauses, paper hard lines and live authority pointers. |
+| R/S/broker-paper tiers and Jev accounts | northstar-lanes@00203275944a:docs/adr/0010-broker-roles.md, B1–B4 | GPT/Claude sim-tier convergence; nautechsystems/nautilus_trader v2.0.0rc7, 55c0e82053142bce3a5cba4de4221d3929c2d3bc, examples/live/sandbox/exec_tester.py and backtest/config APIs; broker simulator docs read 2026-10-31. |
+| Profiles, IBKR C06, current sim/options policy | northstar-trading@8256c16c31dc:docs/adr/0016-momentum-rotation-philosophy-and-lane-profiles.md, profiles and 2026-11-02–05 amendments | Owner 2026-10-29 and 2026-11-02/03; GPT/Gemini synthesis; de Groot/Huij/Zhou C06; Zarattini et al. (2024), SSRN 4729284; Pan/Poteshman (2006), DOI 10.1093/rfs/hhj024; DSR, DOI 10.3905/jpm.2014.40.5.094; PBO, DOI 10.21314/jcf.2016.322. |
+| Research/live/meta, utilization and reflection | northstar@b384d298d217:docs/decisions/0055-north-star-lanes.md, lane map and 2026-10-26/30, 2026-11-01/02/05 amendments | Owner 2026-10-21/22/26/27 and 2026-11-01/02; NT FixedRiskSizer, project-owned skfolio HRP/Ledoit–Wolf; arXiv 2602.00758; TradingView MCP/Terms §3, read 2026-10-21; FINRA Notice 09-31. |
+| Autonomous paper; human-only live superseded | northstar@b384d298d217:docs/decisions/0018-paper-lane-ungated.md, Decision and 2026-10-24/11-05 amendments | Alpaca paper docs/support, IBKR paper defaults; alpacahq/alpaca-py v0.44.0, cc4cb3b7ba50ae250e621983c2779047fb16bb28; DeepSeek source re-check 2026-11-05. |
+| 24/5, order/session limits and conservative pacing | northstar@b384d298d217:docs/decisions/0022-execution-profile-24x5-leverage-throughput.md, Decision 1/3 and 2026-10-23/11-01/11-05 amendments | NT rc7 and rc8 release/risk paths; Alpaca support reply 2026-10-19; broker docs; owner 2026-11-05 distinguishes paper 24/5 and sim 24/7. |
+| Trading, options and TypeSafe skill sources | sextant@db326993b58b:docs/research/2026-11-05-foundations-convergence.md, J5–J6 | Blind GPT/DeepSeek legs: tradermonty/claude-trading-skills d8e71ce2f0b069eb5b6fca352857c168c35e6c46; typesafe-ai/skills v0.6.2, 302eea662c54bca6730873fe245bec1d69ebc23d; not measured trading results. |
+
+## Changes for Sextant
+
+- Approved plan: sim only now. Paper begins after the owner confirms an account handover, suggested C, and the old writer stops first. Options get a design ADR, zero-weight data factor and sim only; option orders need a later ADR and account level. Jev is a paired sim-first arm. Live carries northstar@b384d298d217:docs/decisions/0053-live-lane-automated-evidence-gated.md in full, with exact-SHA two-family review as the sole gate substitution; no live path is activated here.
+- Owner, 2026-11-05/06, verbatim from the harvest COMMON.md; these are the newest requirements:
+
+  - "our compounding learning,reflecting, memory/rag etc need to be clean enhacned with sotarepos,adrs harvest with previous convergenced campaign but clean sota architecture never bloat, including the harness rules, our trading philosophy 24/5 24/7 and always previous stated limit ,1000trades/min live lane and 200 paper, 3000for ibkr paper and live"
+  - "FOCUING ON US EQUALITY, OPTION,STOCKS ETC, AND ALL THE LANES PREVIOSU STATED, PHILOSOPY PREVIOUS STATED, JEV TRADE RELATED RPEOS ETC ,RESEARCH LANE ,AUTO LEVERAGE, PROTFOLIO MANGEMENT AND BEYOND"
+  - "EVERY HARNESS,EVERY ACTIONS NEED TO BE BUILT FORM SOTA SOURCES ITSELF, INCLUDING THIS VERY HARNESS , FOCUING ON THE TRADING TOPIC , THE QUALITT AND SOTANESS ITSELF RATHER THAN SECURITY OVEREGINNERING ETC"
+  - "we need to using full sota harness framework.dsh that is fully enhanced with openviking etc"
+
+## Code and config to carry
+
+- northstar-lanes@00203275944a:src/northstar_lanes/contracts.py — 704 lines; northstar-lanes@00203275944a:src/northstar_lanes/parameters.py — 95; northstar-lanes@00203275944a:src/northstar_lanes/registry.py — 115.
+- northstar-trading@8256c16c31dc:configs/lanes.yaml — 166; northstar-trading@8256c16c31dc:configs/paper/profiles.yaml — 202.
+- northstar-trading@8256c16c31dc:src/northstar_trading/strategies/premarket_gap/config.py — 583; northstar-trading@8256c16c31dc:src/northstar_trading/strategies/premarket_gap/policy.py — 319; northstar-trading@8256c16c31dc:src/northstar_trading/strategies/premarket_gap/strategy.py — 1,058.
+- northstar-trading@8256c16c31dc:src/northstar_trading/execution/pacer.py — 205.
+Counts: `git show <pin>:<path> | wc -l`; presence is not adoption or deployment. Code inventory stays within the batch's named lanes, strategies and execution directories; config supplies the recorded profiles and budgets.
+
+## Disagreements
+
+- Later trading owner rulings replace the old champion/challenger/experimental labels, owner-only B, C=L-only/pre-market-only/15:55-only and event-only IBKR starts. A/C L and S mean liquidity tiers; no source admits short selling. The old universal emulator prescription and Alpaca RTH-only exception yield to the later per-broker managed protection/session rules.
+- IBKR's old 3,000/min burst/line arithmetic, daily OER wording and working-order numbers remain disputed or **unverified** in the 2026-11-05 reviews; one proposed correction was explicitly not kept. The owner target does not settle broker capacity. Likewise the old leverage formula/configured 4x and an old 20-session registry floor do not prove current entitlement, adoption or an explicit successor disposition.
+- P6 records participation as observation, while the retained Tier-S contract names a participation cap; their enforcement equivalence is **unverified**. The old options KEEP and already-ruled Jev paper arms differ from the approved Sextant sim-first scope; Changes for Sextant records that bounded override. No new options, short, live or account authority is inferred.
+
+## Revisit when
+
+A calibration/paired broker report, hard-line breach, missing replay witness, contradicting lesson, profile/owner ruling, broker/pin/permission change, required tier/protection receipt or sourced options candidate changes a premise. The owning trading/research lead records evidence and proposes an amendment; the lead owns "multi-model verdict, next version". These are evidence events, not calendar waits.
