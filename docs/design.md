@@ -111,7 +111,7 @@ ADR-0001 selects one other-family reviewer through gh-aw: dsh by default, Claude
 
 Rulesets protect `main`, `live` and `ledger`; gitleaks runs within `ci` and is the local pre-commit hook; Actions are pinned and linted. Dependabot and the scoreboard are present. Renovate 44.221.1 and scheduled gh-aw upkeep are decided but not yet installed; the shelf PRs add their manifest rows and proofs before the design calls them operational ([manifest](manifest.md)).
 
-Orca 1.4.246 is the cockpit: one project and one tab per lane owner, opened inside the repo folder with its own rules, skills and records. The clean WSL uses Orca's headless server on port 6771 and pairs to the Orca app ([deployment](../deploy/wsl/sextant.user-data), [setup](../deploy/wsl/setup.sh)).
+Orca 1.4.251 is the cockpit: one project and one tab per lane owner, opened inside the repo folder with its own rules, skills and records. The clean WSL uses Orca's headless server on port 6771 and pairs to the Orca app ([deployment](../deploy/wsl/sextant.user-data), [setup](../deploy/wsl/setup.sh)).
 
 ## Starting clean
 

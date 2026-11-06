@@ -29,6 +29,10 @@ secrets:
 accept:
     uv run --frozen pytest tests/host
 
+# Inside the clean distro only: Orca at this repo's pin, served by Orca's own service. See docs/start.md.
+orca-update:
+    bash deploy/wsl/update-orca.sh
+
 # Run every manifest row's proof. pytest does the running and the counting.
 prove:
     uv run --frozen pytest tests/proofs

@@ -1,5 +1,6 @@
 """The clean start: loaded from GitHub, at the pins this repo already holds."""
 
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -7,6 +8,26 @@ from pathlib import Path
 ROOT = Path(__file__).parents[2]
 USER_DATA = (ROOT / "deploy" / "wsl" / "sextant.user-data").read_text()
 SETUP = ROOT / "deploy" / "wsl" / "setup.sh"
+UPDATE = ROOT / "deploy" / "wsl" / "update-orca.sh"
+VERSION = re.compile(r"(?<![\d.])\d+\.\d+\.\d+(?![\d.])")
+# A stand-in for Orca's CLI: its version, its service's dry run and status, and a recorded install.
+FAKE_ORCA = """#!/usr/bin/env bash
+unit="$HOME/.config/systemd/user/orca-serve.service"
+start='ExecStart=/usr/bin/orca-ide serve --supervise --no-pairing --port 6771'
+body() { printf '[Service]\\nEnvironment=PATH=%s\\n%s\\n' "$1" "$start"; }
+install='serve service install --port 6771'
+case "$*" in
+  --version) echo "$FAKE_ORCA_VERSION" ;;
+  "$install --dry-run --json") jq -n --arg c "$(body "$PATH")" '{result: {content: $c}}' ;;
+  "serve service status --json")
+    if [ -f "$unit" ]; then echo '{"result": {"verdict": "live"}}'; else echo '{}'; fi ;;
+  "$install")
+    echo install >> "$FAKE_ORCA_LOG"
+    mkdir -p "${unit%/*}"
+    body /elsewhere > "$unit" ;;
+  *) echo "unexpected: $*" >&2; exit 9 ;;
+esac
+"""
 
 
 def test_the_distro_loads_this_repo_from_github() -> None:
@@ -53,6 +74,68 @@ def test_setup_reads_every_pin_from_the_repo() -> None:
     ):
         assert re.search(pattern, dockerfile, re.MULTILINE), pattern
     # Three-part versions only, so an address such as the loopback one is not a pin.
-    assert not re.search(r"(?<![\d.])\d+\.\d+\.\d+(?![\d.])", SETUP.read_text()), (
-        "pins live in the repo's own files"
+    for script in (SETUP, UPDATE):
+        assert not VERSION.search(script.read_text()), (
+            f"{script.name}: pins live in the repo's own files"
+        )
+
+
+def test_orca_runs_as_its_own_service_at_the_pin() -> None:
+    # Orca's `serve service install` writes the unit, so the repo keeps only its drop-in.
+    assert not (ROOT / "deploy" / "wsl" / "orca-serve.service").exists()
+    assert subprocess.run(["bash", "-n", str(UPDATE)], check=False).returncode == 0
+    update = UPDATE.read_text()
+    assert "orca-ide serve service install --port" in update and "sha256sum -c -" in update
+    # One pin, in the user-data: the release tag and the file name are the same version.
+    assert re.search(r"releases/download/v(\d+\.\d+\.\d+)/orca-ide_\1_amd64\.deb$", USER_DATA, re.M)
+    assert re.search(r'^- echo "[0-9a-f]{64}  /tmp/orca-ide\.deb"', USER_DATA, re.M)
+    limits = (ROOT / "deploy" / "wsl" / "orca-serve-limits.conf").read_text()
+    for line in (
+        "Environment=ORCA_TERMINAL_MEMORY_MAX=16G",
+        "Environment=ORCA_TERMINAL_MEMORY_SWAP_MAX=0",
+    ):
+        assert line in limits, line
+    setup = SETUP.read_text()
+    assert "deploy/wsl/update-orca.sh" in setup and "orca-serve-limits.conf" in setup
+    assert '"I reach this address through' in setup
+    assert (
+        "**I reach this address through an SSH tunnel**" in (ROOT / "docs" / "start.md").read_text()
     )
+
+
+def test_orca_update_leaves_a_current_server_alone(tmp_path: Path) -> None:
+    pin = re.search(r"releases/download/v(\d+\.\d+\.\d+)/", USER_DATA)
+    assert pin
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "orca-ide").write_text(FAKE_ORCA)
+    (bin_dir / "orca-ide").chmod(0o755)
+    log = tmp_path / "installs"
+    env = {
+        **os.environ,
+        "HOME": str(tmp_path),
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "FAKE_ORCA_VERSION": pin[1],
+        "FAKE_ORCA_LOG": str(log),
+    }
+
+    def update(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["bash", str(UPDATE), *args], env=env, capture_output=True, text=True, check=False
+        )
+
+    # Before pairing there is no server, so nothing is installed.
+    first = update()
+    assert first.returncode == 0, first.stderr
+    assert not log.exists()
+    # Setup's call, after pairing: Orca's unit goes in, with the limits beside it.
+    second = update("6771")
+    assert second.returncode == 0, second.stderr
+    assert log.read_text().splitlines() == ["install"]
+    dropin = tmp_path / ".config" / "systemd" / "user" / "orca-serve.service.d" / "limits.conf"
+    assert dropin.read_text() == (ROOT / "deploy" / "wsl" / "orca-serve-limits.conf").read_text()
+    # `just orca-update` with everything current: the port comes from the unit, a different PATH
+    # in it is not a change, and the server is not restarted.
+    third = update()
+    assert third.returncode == 0, third.stderr
+    assert log.read_text().splitlines() == ["install"]

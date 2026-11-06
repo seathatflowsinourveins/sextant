@@ -76,3 +76,23 @@ def test_orca_serves_this_project_on_its_own_port() -> None:
     assert ":6771 " in _run("ss", "-Hltn", "sport = :6771").stdout
     repos = json.loads(_run("orca-ide", "repo", "list", "--json").stdout)["result"]["repos"]
     assert [repo["path"] for repo in repos] == [str(ROOT)]
+
+
+def _without_path(unit: str) -> list[str]:
+    return [line for line in unit.splitlines() if not line.startswith("Environment=PATH=")]
+
+
+def test_orca_is_at_the_pin_and_runs_as_its_own_service() -> None:
+    user_data = (ROOT / "deploy" / "wsl" / "sextant.user-data").read_text()
+    pin = re.search(r"releases/download/v(\d+\.\d+\.\d+)/", user_data)
+    assert pin and _run("orca-ide", "--version").stdout.strip() == pin[1], "run `just orca-update`"
+    service = ("orca-ide", "serve", "service")
+    status = json.loads(_run(*service, "status", "--json").stdout)["result"]
+    assert status["verdict"] == "live"
+    want = json.loads(_run(*service, "install", "--port", "6771", "--dry-run", "--json").stdout)[
+        "result"
+    ]["content"]
+    assert _without_path(Path(status["unitPath"]).read_text()) == _without_path(want)
+    environment = _run("systemctl", "--user", "show", "orca-serve", "-p", "Environment").stdout
+    assert "ORCA_TERMINAL_MEMORY_MAX=16G" in environment
+    assert "ORCA_TERMINAL_MEMORY_SWAP_MAX=0" in environment

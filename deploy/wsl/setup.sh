@@ -5,7 +5,6 @@ set -Eeuo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 
 dockerfile=.devcontainer/Dockerfile
-unit=deploy/wsl/orca-serve.service
 agents="$HOME/.local/share/sextant-agents"
 fnm_dir="$HOME/.fnm"
 export PATH="$agents/node_modules/.bin:$fnm_dir/aliases/default/bin:$fnm_dir:$HOME/.local/bin:$PATH"
@@ -44,7 +43,7 @@ uv sync --frozen
 install_tools 2>&1 | tee -a "$log"
 
 # No prompt anywhere in this distro. Orca already launches every agent with its bypass flag
-# (stablyai/orca@55ccff19ad4cd8ba28b6f3d2be798c1e626a2c2c:docs/site/content/docs/agents/supported.mdx). These answer Claude's own
+# (stablyai/orca@a162e08b29b2883b02d8a0dfcc99e26c80b2cfe7:docs/site/content/docs/agents/supported.mdx). These answer Claude's own
 # dialog up front, for plain tabs and for Orca's managed accounts, whose settings live apart.
 no_prompts() {
   mkdir -p "$1"
@@ -55,16 +54,16 @@ no_prompts() {
 }
 no_prompts "$HOME/.claude"
 
-# Orca's server, by its own pairing flow: serve once in the foreground, add it in the Orca app, stop it,
-# then let the unit run it. Upstream's limits are read once, at the first start, so they are set here too.
+# Orca's server, by its own pairing flow: serve once in the foreground while the service is stopped, add
+# it in the Orca app, then run it as Orca's own service, which never prints a pairing link
+# (stablyai/orca@a162e08b29b2883b02d8a0dfcc99e26c80b2cfe7:src/cli/specs/serve.ts).
 note "Orca server"
-mkdir -p "$HOME/.config/systemd/user"
-cp "$unit" "$HOME/.config/systemd/user/orca-serve.service"
-systemctl --user daemon-reload
+# This distro's own port: distros share one network, 6768 and 6769 belong to the old hosts, and mirrored
+# networking also shares Windows' ports, which is why 6770 refused with no Linux listener on it.
+port=6771
 paired="$HOME/.config/orca/.sextant-paired"
 if [ ! -e "$paired" ]; then
   systemctl --user disable --now orca-serve 2> /dev/null || true
-  port=$(sed -n 's/.*--port \([0-9]*\).*/\1/p' "$unit")
   # Mirrored networking shows Windows' tailnet address here. Tailscale's range: tailscale.com/kb/1015.
   address=$(ip -4 -o addr | awk '{split($4, a, "/"); split(a[1], o, "."); if (o[1] == 100 && o[2] >= 64 && o[2] <= 127) {print a[1]; exit}}')
   echo "If your Orca app runs on this Windows PC, type 127.0.0.1. From another computer, Windows must admit"
@@ -72,12 +71,15 @@ if [ ! -e "$paired" ]; then
   read -r -p "Address your Orca app reaches this PC on [${address:-none found}]: " typed
   address=${typed:-$address}
   echo "In the Orca app: Settings > Remote Orca Servers > Add Server, name it sextant, and paste the link printed below."
+  echo "With 127.0.0.1, the app says the link points back to this device: tick \"I reach this address through"
+  echo "an SSH tunnel\". WSL's localhost is the tunnel here, and Orca still checks the server before saving it."
   echo "When the app says connected, press Ctrl-C once here."
   # Ctrl-C stops the server, and without this trap it would stop this script too.
   trap ':' INT
   began=$SECONDS
-  ORCA_TERMINAL_MEMORY_MAX=16G ORCA_TERMINAL_MEMORY_SWAP_MAX=0 \
-    orca-ide serve --port "$port" --pairing-address "$address" || true
+  # The terminal host starts with this first server and outlives it, so it takes the limits now.
+  mapfile -t limits < <(sed -n 's/^Environment=//p' deploy/wsl/orca-serve-limits.conf)
+  env "${limits[@]}" orca-ide serve --port "$port" --pairing-address "$address" || true
   trap - INT
   # Ctrl-C ends this step whatever the exit code. A server that stops at once never printed a link.
   if ((SECONDS - began < 10)); then
@@ -86,8 +88,8 @@ if [ ! -e "$paired" ]; then
     exit 1
   fi
   touch "$paired"
-  systemctl --user enable --now orca-serve
 fi
+bash deploy/wsl/update-orca.sh "$port" 2>&1 | tee -a "$log"
 
 timeout 120 bash -c 'until orca-ide repo list --json > /dev/null 2>&1; do sleep 2; done'
 repo_id=$(orca-ide repo add --path "$PWD" --json | jq -r '.result.repo.id // .result.id')

@@ -71,7 +71,7 @@ runcmd:
 - echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list
 - apt-get update
 - apt-get install -y gh
-# Orca, the release package at its reviewed checksum.
-- wget -nv -O /tmp/orca-ide.deb https://github.com/stablyai/orca/releases/download/v1.4.246/orca-ide_1.4.246_amd64.deb
-- echo "e8706feb390a34bbcf9a408cb465de7a47d721480f921ec2b56cf18eaf88b7cf  /tmp/orca-ide.deb" | sha256sum -c - && apt-get install -y /tmp/orca-ide.deb
+# Orca, the release package at its published digest. deploy/wsl/update-orca.sh reads this pin too.
+- wget -nv -O /tmp/orca-ide.deb https://github.com/stablyai/orca/releases/download/v1.4.251/orca-ide_1.4.251_amd64.deb
+- echo "4b6558bf3c08937601dfa2f03d2dc02880b9d57f97562d050b8a3997ee51cbbc  /tmp/orca-ide.deb" | sha256sum -c - && apt-get install -y /tmp/orca-ide.deb
 - rm /tmp/orca-ide.deb
