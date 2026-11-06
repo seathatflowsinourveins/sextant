@@ -1,0 +1,125 @@
+{
+  "label": "PARTIAL OBSERVATIONAL WITNESS; not capture-to-receipt latency",
+  "rows": [
+    {
+      "as_of": "2026-11-02T14:33:47.142373+00:00",
+      "as_of_to_generated_at_us": 3602505,
+      "bytes": 7233522,
+      "generated_at": "2026-11-02T14:33:50.744878+00:00",
+      "missing_top_level_clocks": [
+        "published_at",
+        "received_at",
+        "capture_completed_at",
+        "known_at"
+      ],
+      "path": "/mnt/wsl/ns-scanner/scanner/snapshots/2026-11-02/20261102T143347142373Z.json.gz",
+      "sha256": "c0d6115f7b71d993623fd11dbf74b5f951fac150042c2fd92027f8abee2e21a6",
+      "symbols": 13213
+    },
+    {
+      "as_of": "2026-11-02T14:45:44.663413+00:00",
+      "as_of_to_generated_at_us": 2542159,
+      "bytes": 7778016,
+      "generated_at": "2026-11-02T14:45:47.205572+00:00",
+      "missing_top_level_clocks": [
+        "published_at",
+        "received_at",
+        "capture_completed_at",
+        "known_at"
+      ],
+      "path": "/mnt/wsl/ns-scanner/scanner/snapshots/2026-11-02/20261102T144544663413Z.json.gz",
+      "sha256": "5e82881e47d2b272d58514f5b228a3b51ba9930d0bdaa7795a4774f5473fb4ce",
+      "symbols": 13213
+    },
+    {
+      "as_of": "2026-11-03T14:34:54.147848+00:00",
+      "as_of_to_generated_at_us": 2877073,
+      "bytes": 5517120,
+      "generated_at": "2026-11-03T14:34:57.024921+00:00",
+      "missing_top_level_clocks": [
+        "published_at",
+        "received_at",
+        "capture_completed_at",
+        "known_at"
+      ],
+      "path": "/mnt/wsl/ns-scanner/scanner/snapshots/2026-11-03/20261103T143454147848Z.json.gz",
+      "sha256": "f227e56f09286b4733ecab76438d7aab8ff5cc878f43c4c569d3afcb9c793a46",
+      "symbols": 13213
+    },
+    {
+      "as_of": "2026-11-03T14:37:58.463585+00:00",
+      "as_of_to_generated_at_us": 3196258,
+      "bytes": 6056430,
+      "generated_at": "2026-11-03T14:38:01.659843+00:00",
+      "missing_top_level_clocks": [
+        "published_at",
+        "received_at",
+        "capture_completed_at",
+        "known_at"
+      ],
+      "path": "/mnt/wsl/ns-scanner/scanner/snapshots/2026-11-03/20261103T143758463585Z.json.gz",
+      "sha256": "d938cfe126ba684b8f769bca6aec4f58fb5662f5de3fe7d79a2acd2623e7b54d",
+      "symbols": 13213
+    },
+    {
+      "as_of": "2026-11-04T14:33:26.607922+00:00",
+      "as_of_to_generated_at_us": 2861962,
+      "bytes": 82777478,
+      "generated_at": "2026-11-04T14:33:29.469884+00:00",
+      "missing_top_level_clocks": [
+        "published_at",
+        "received_at",
+        "capture_completed_at",
+        "known_at"
+      ],
+      "path": "/mnt/wsl/ns-scanner/scanner/snapshots/2026-11-04/20261104T143326607922Z.json",
+      "sha256": "acda0f5ec83491a4276a8f8ca9b7a3f492a9e11546a8b34dd160452bb4fda1b1",
+      "symbols": 13213
+    },
+    {
+      "as_of": "2026-11-04T14:36:23.279211+00:00",
+      "as_of_to_generated_at_us": 2896715,
+      "bytes": 82397128,
+      "generated_at": "2026-11-04T14:36:26.175926+00:00",
+      "missing_top_level_clocks": [
+        "published_at",
+        "received_at",
+        "capture_completed_at",
+        "known_at"
+      ],
+      "path": "/mnt/wsl/ns-scanner/scanner/snapshots/2026-11-04/20261104T143623279211Z.json",
+      "sha256": "3223e12b83acd7a86e6ee9f951b5bf3659c97c5b6154c7a29bc67d8971e75682",
+      "symbols": 13213
+    },
+    {
+      "as_of": "2026-11-05T14:34:05.499831+00:00",
+      "as_of_to_generated_at_us": 3845123,
+      "bytes": 82237347,
+      "generated_at": "2026-11-05T14:34:09.344954+00:00",
+      "missing_top_level_clocks": [
+        "published_at",
+        "received_at",
+        "capture_completed_at",
+        "known_at"
+      ],
+      "path": "/mnt/wsl/ns-scanner/scanner/snapshots/2026-11-05/20261105T143405499831Z.json",
+      "sha256": "d0b516e731e5b37e0910384f923f40b7d543c5ebe474c7050155339a08efdeb5",
+      "symbols": 13213
+    },
+    {
+      "as_of": "2026-11-05T14:37:23.179104+00:00",
+      "as_of_to_generated_at_us": 3955625,
+      "bytes": 83006667,
+      "generated_at": "2026-11-05T14:37:27.134729+00:00",
+      "missing_top_level_clocks": [
+        "published_at",
+        "received_at",
+        "capture_completed_at",
+        "known_at"
+      ],
+      "path": "/mnt/wsl/ns-scanner/scanner/snapshots/2026-11-05/20261105T143723179104Z.json",
+      "sha256": "4e54e4530e34bf20e3f208aeefeef9b4406032903c63bff3abf98eab08736f8b",
+      "symbols": 13213
+    }
+  ]
+}

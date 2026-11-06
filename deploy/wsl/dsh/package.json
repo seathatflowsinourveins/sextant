@@ -1,0 +1,9 @@
+{
+  "name": "sextant-host-tools",
+  "private": true,
+  "description": "dsh profile installs' package manager and the Dev Containers CLI; dsh itself is the sandbox lock's.",
+  "dependencies": {
+    "@devcontainers/cli": "0.90.0",
+    "pnpm": "11.21.0"
+  }
+}

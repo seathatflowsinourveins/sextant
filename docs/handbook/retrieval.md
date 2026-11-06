@@ -1,0 +1,15 @@
+# Research retrieval keeps its sources
+
+Keep the repository's records canonical. A retrieval result cites the committed revision and the `viking://` URI actually read; a derived index or a runtime's session memory does not replace the source. Blind research uses an empty separate runtime home and no synthesis bundle. This carries ADR-0022's boundary; its harvested source and the pinned upstreams are in [the evidence note](../research/2026-11-06-enhanced-dsh-tools.md).
+
+Install an enhancement through its native bundle/profile mechanism, retaining the entire upstream patch. In particular, billion-context's compaction gate belongs with its native plugin: never copy just one row or disable its gate. This is upstream's warning in `billion-context@0.1.212:dsh.bundle.patch.yml`, re-read for this change.
+
+OpenViking v0.5.3's MCP is write-capable. Comments and workflow intent do not make it read-only. Give it a disposable repo copy; if the derived data changes, start a fresh workspace and import again. Do not use session commits, conversation capture or remote ingestion for this research corpus. Installation/configuration checks establish no retrieval-quality result; measure a permitted `find` and a subsequent source read in the clean distro.
+
+## Lessons from the first clean-distro run (issue #56)
+
+- **A tab Orca launches has Orca's environment, not a login shell's.** Settings in `/etc/profile.d` never reached the first Orca dsh tab, so billion-context fell back to upstream's 18787 and probed the old lanes' proxy before moving. Every non-secret setting a tab needs goes in Orca's unit drop-in as well (`deploy/wsl/orca-serve-limits.conf`), and a port that defaults onto the shared network is pinned there. A component that would hop ports when its setting is missing must instead not load: `config/dsh/bili-ports.cordis.yml`.
+- **A pin with open-ended dependencies is not a pin.** paper-search-mcp's tagged wheel left `mcp` unbounded; the next major broke its import at startup. Prefer the upstream commit that bounds it, and run one pin for every client (the shelf's).
+- **Size the embedding server to its chunks.** An embedding model processes an input in one physical batch, so llama.cpp's `--ubatch-size` must cover OpenViking's `max_input_tokens`, within the model's own context.
+- **Prove it with the run, not the config.** Each of these passed every static proof and failed only when installed and started.
+- **Keep the current inventory when lanes merge.** Retain every row from main, including renamed practices, and append this lane's new source rows at the end of their existing section. Preserve the recorded pins and installation updates. This carries the lead's 2026-11-06 direction for [PR #70](https://github.com/seathatflowsinourveins/sextant/pull/70) into the [manifest practice](practices.md#harness).

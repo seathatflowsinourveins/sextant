@@ -3,7 +3,17 @@ name = "sextant"
 version = "0.1.0"
 description = "Clean, trading-focused agent harness built only from SOTA upstreams"
 requires-python = ">=3.13,<3.14"
-dependencies = ["nautilus-trader[visualization]==2.0.0rc7"]
+dependencies = [
+    "alpaca-py==0.44.0",
+    "nautilus-trader[visualization]==2.0.0rc7",
+    "pandas==3.0.6",
+    "pyarrow>=26.0.0",
+    "typesafe-sdk==0.7.5",
+    "requests==2.34.2",
+]
+
+[tool.uv.sources]
+requests = { git = "https://github.com/psf/requests", rev = "6e83187b8feb273ed4c6cdab5efd8d54901dfab3" }
 
 [dependency-groups]
 dev = ["pytest==9.2.0", "ruff==0.17.4", "zizmor==1.32.0"]
@@ -15,19 +25,26 @@ build-backend = "uv_build"
 [tool.ruff]
 line-length = 100
 target-version = "py313"
-extend-exclude = [".devcontainer/post_install.py", "src/sextant/strategies/ema_cross.py", ".claude/skills"]
+extend-exclude = [".devcontainer/post_install.py", "src/sextant/strategies/ema_cross.py", "src/sextant/research/b_exit_replay.py", ".claude/skills"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "S", "RUF"]
 ignore = ["S101", "S603", "S607"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests/repo", "tests/proofs/test_thin_slice.py", "tests/proofs/test_exit_engine.py", "tests/proofs/test_claude_shelf.py", "tests/proofs/test_workflows.py", "tests/proofs/test_candidate_history.py", "tests/proofs/entry"]
+testpaths = ["tests/repo", "tests/proofs"]
+# Proofs that need the devcontainer itself (its firewall, sudo rule and pinned runtimes) and the ones that need the maintainer's own tools
+# are deselected by default, so `ci` runs everything else. `just prove` adds them back with an empty
+# `-m ""`, which overrides this one. pytest docs, "Registering marks" and "Specifying which tests to run".
+markers = [
+  "container: needs the sandbox container; deselected by default outside it",
+  "local: needs the maintainer's own tools or login (the gitleaks binary, gh admin reads); deselected by default, so CI's read-only token skips it",
+]
 pythonpath = ["src"]
-addopts = "-q"
+addopts = "-q -m 'not container and not local'"
 
 [tool.pyright]
 include = ["src", "tests"]
-ignore = ["src/sextant/strategies/ema_cross.py"]
+ignore = ["src/sextant/strategies/ema_cross.py", "src/sextant/research/b_exit_replay.py"]
 pythonVersion = "3.13"
 typeCheckingMode = "standard"

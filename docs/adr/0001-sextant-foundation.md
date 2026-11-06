@@ -28,6 +28,7 @@ Quoted here, not re-researched:
 | OpenViking (AGPL-3.0) | Hold for memory (northstar ADR-0069) | Local research retrieval; the index is disposable |
 | Options | Unadmitted (trading ADR-0016) | Design ADR, zero-weight factor, sim only |
 | Jev | Research (`northstar-yae.51`) | Paired arm, sim first, no live authority until it earns merit |
+| Isolation from the old lanes | `AGENTS.md`'s "never connect to their services" (sextant #17) | The owner, 2026-11-06: "the fact for its too isolated is not my intent , its need sota automation and with clean land with upstream repos yes for all actions, but the sandbox is rather aggressive"; asked to confirm this rule as written, the owner answered: "set up full landscape sota automation,its prs monitor , why are thye not resolute with local sota ahrness freameowrkes automation" (both relayed verbatim on sextant#58, 2026-11-06). Read, don't write: reads of the old campaign's mounts, exports and relay are allowed. `wsl.exe`, writes to another distro, a second stream or writer on a held account, rootful Docker and TradingView's debug port stay forbidden |
 
 ## Deviations from the approved plan, on the owner's later rule
 - **Workspace:** bind mount with Trail of Bits' read-only protections, not a named volume, because that is upstream's own mitigation.

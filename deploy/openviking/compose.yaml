@@ -1,0 +1,12 @@
+# ggml-org/llama.cpp@b11960:docs/docker.md; inherited model and image, not a new model pick.
+name: sextant-retrieval
+services:
+  embeddings:
+    image: ghcr.io/ggml-org/llama.cpp:server-b11960@sha256:8052c13edd987de8858f8150031e025ac3d66823f09cf3ec8220899c4abce220
+    ports: ["127.0.0.1:21934:8080"]
+    volumes:
+      - ${HOME}/.local/share/sextant-openviking/models:/models:ro
+    # tools/server/README.md: an input larger than the physical batch fails. google/embeddinggemma-2's card:
+    # an 8,192-token context window, given to each of the server's default 4 slots.
+    command: ["-m", "/models/embeddinggemma-2-Q8_0.gguf", "--embedding", "-c", "32768", "-b", "8192", "-ub", "8192", "--host", "0.0.0.0", "--port", "8080"]
+    restart: unless-stopped

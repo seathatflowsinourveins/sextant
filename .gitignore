@@ -7,3 +7,4 @@ node_modules/
 reports/
 *.pyc
 .claude/settings.local.json
+.qmd/index.sqlite*

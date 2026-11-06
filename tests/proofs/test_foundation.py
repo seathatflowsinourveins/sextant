@@ -7,6 +7,8 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 ROOT = Path(__file__).parents[2]
 WORKFLOWS = ROOT / ".github" / "workflows"
 REPO = "repos/seathatflowsinourveins/sextant"
@@ -49,6 +51,7 @@ def test_template_read_only_binds_are_kept() -> None:
     assert config["remoteUser"] != "root"
 
 
+@pytest.mark.container
 def test_firewall_blocks_private_ranges_not_the_web() -> None:
     gateway = _run("ip", "route", "show", "default").stdout.split()[2]
     blocked = _run("curl", "-v", "--max-time", "5", f"http://{gateway}:1/")
@@ -61,11 +64,13 @@ def test_firewall_blocks_private_ranges_not_the_web() -> None:
     )
 
 
+@pytest.mark.container
 def test_sudo_runs_only_the_firewall() -> None:
     assert _run("sudo", "-n", "true").returncode != 0
     assert _run("sudo", "-n", "/usr/local/bin/init-firewall.sh").returncode == 0
 
 
+@pytest.mark.container
 def test_runtimes_match_their_pins() -> None:
     assert "2.1.318" in _run("claude", "--version").stdout
     agents = json.loads(_read(".devcontainer/agents/package.json"))["dependencies"]
@@ -111,14 +116,22 @@ def test_every_action_is_pinned() -> None:
     for workflow in WORKFLOWS.glob("*.yml"):
         for action in re.findall(r"uses:\s*(\S+)", workflow.read_text()):
             assert re.search(r"@([0-9a-f]{40}|sha256:[0-9a-f]{64})$", action), action
+    setup = _read("deploy/wsl/setup.sh")
+    assert "pin=ACTIONLINT_VERSION" in setup and "key=al" in setup
+    assert '"$checksum" "$tool_archive" | sha256sum -c -' in setup
 
 
+@pytest.mark.local
 def test_gitleaks_is_wired() -> None:
     assert _run("gitleaks", "version").returncode == 0
     assert "gitleaks" in _read("justfile")
     assert "gitleaks" in _read(".githooks/pre-commit")
+    setup = _read("deploy/wsl/setup.sh")
+    assert "pin=GITLEAKS_VERSION" in setup and "key=gl" in setup
+    assert "git config core.hooksPath .githooks" in setup
 
 
+@pytest.mark.local
 def test_rulesets_are_active() -> None:
     rulesets = {item["name"]: item for item in _gh(f"{REPO}/rulesets")}
     assert all(rulesets[name]["enforcement"] == "active" for name in ("main", "live", "ledger"))
@@ -140,6 +153,7 @@ def test_rulesets_are_active() -> None:
         assert {"pull_request", "deletion", "non_fast_forward"} <= rules(name).keys()
 
 
+@pytest.mark.local
 def test_environments_restrict_branches() -> None:
     for name, branch in (("review", "main"), ("paper", "main"), ("live", "live")):
         policies = _gh(f"{REPO}/environments/{name}/deployment-branch-policies")
@@ -150,7 +164,9 @@ def test_dependabot_covers_every_ecosystem() -> None:
     dependabot = _read(".github/dependabot.yml")
     for ecosystem in ("npm", "uv", "docker", "github-actions", "devcontainers"):
         assert f"package-ecosystem: {ecosystem}" in dependabot
-    assert dependabot.count("cooldown") == 5
+    assert dependabot.count("cooldown") == 6
+    for path in ("/.devcontainer/agents", "/.devcontainer/qmd", "/deploy/wsl/dsh", "/config/dsh"):
+        assert path in dependabot
 
 
 def test_scoreboard_uses_upstream_actions() -> None:

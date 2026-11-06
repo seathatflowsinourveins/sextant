@@ -51,6 +51,7 @@ US equities are the trading focus. Research feeds replay, sim and paper; measure
 
 ## Changes for Sextant
 
+- Replay delivery correction (#82): adopt northstar-trading@`a8c3f86a3890085e4c69ce2522e603df886d7442` (#536), `docs/research/2026-11-05-sim-lane-entry.md` §§5–6 and its ADR-0016 amendment. The prestarted parent uses a bounded superset, receipt authority, registered custom data, a separate entry-age budget checked at the last hop and three acknowledgements. The 09:35:05 proposal is superseded; C must be no earlier than 09:36:00 plus the measured whole-set capture-to-receipt budget. 09:36:05 is only a candidate; no number is approved. V0–V3, publisher V4 and the enable decision remain required; the lane stays OFF.
 - Approved plan: sim only now. Paper begins after the owner confirms an account handover, suggested C, and the old writer stops first. Options get a design ADR, zero-weight data factor and sim only; option orders need a later ADR and account level. Jev is a paired sim-first arm. Live carries northstar@b384d298d217:docs/decisions/0053-live-lane-automated-evidence-gated.md in full, with exact-SHA two-family review as the sole gate substitution; no live path is activated here.
 - Owner, 2026-11-05/06, verbatim from the harvest COMMON.md; these are the newest requirements:
 

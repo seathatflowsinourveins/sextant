@@ -12,6 +12,8 @@
 
 **Halt.** `scripts/live.sh halt [--flatten]` persists the cause, stops entries and increasing orders, and cancels through the pacer; a supervisor takes over after 10 seconds without a node acknowledgement. A healthy plain halt keeps protection resident; a flatten uses priced, sliced, paced marketable limits with terminal proof. An unknown state stays halted until positive terminal proof for every possible fill, and no restart, reconnect or marker deletion clears a cause. ([ADR-0020](../../docs/adr/0020-live-lane.md))
 
+**Tracker.** [Live gates](../../docs/research/2026-11-06-live-gates.md) lists every gate, its evidence and lane; none is met. The record and deployment shapes are drafted in [`schema/`](schema/) and [the template](promotion-record.template.json), with no promotion.
+
 **Rules.**
 - Never widen a limit, never improvise an order, never skip a drill. Promotion is the only door.
 - The owner's orders are untouched; an owner-plan lane needs a bounded mandate and a dedicated account ([ADR-0007](../../docs/adr/0007-custody-and-order-writing.md)).

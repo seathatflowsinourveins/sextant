@@ -10,7 +10,8 @@ const section = (name) => {
 };
 
 const sources = section("Upstream references");
-const repoAtCommit = /[\w.-]+\/[\w.-]+@\S*[\s\S]*?\b[0-9a-f]{40}\b/;
+// `owner/repo@tag`, or the manifest's own `[owner/repo](url)@tag`, then the full commit SHA.
+const repoAtCommit = /[\w.-]+\/[\w.-]+(?:\]\([^)\s]*\))?@\S*[\s\S]*?\b[0-9a-f]{40}\b/;
 const docsWithDate = /https?:\/\/\S+[\s\S]*?read 20\d\d-\d\d-\d\d/;
 const paper = /(doi\.org\/10\.|\bdoi:10\.|arxiv\.org\/abs\/|\barXiv:\d)/i;
 

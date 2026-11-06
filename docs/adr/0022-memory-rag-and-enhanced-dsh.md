@@ -44,8 +44,9 @@ Trading research needs retrievable, citable records. Runtime memory, curated nar
 
 > "we need to using full sota harness framework.dsh that is fully enhanced with openviking etc"
 
-- The chosen research retrieval set is Context7 4.5.0, DeepWiki, Exa and paper-search PLUS OpenViking 0.5.3. The approved plan makes OpenViking local research retrieval with an index rebuilt from the repo; local Ollama is preferred. The write-capable, disposable-copy residual above remains explicit.
-- GitHub Issues replaces beads; repository records retain narrative authority, and the ledger branch holds irreplaceable paper fills, the trial ledger and merit manifest. Claude auto memory remains a separate native facility. The plan replaces the old qmd retrieval selection with OpenViking; old installers and host orchestration are left behind.
+- **Amended 2026-11-06 (#54 blind-leg convergence):** repo-document retrieval is [tobi/qmd](https://github.com/tobi/qmd)@v2.8.3 `facd35e01359e59d938bc9418e93fb9318addee3` (MIT), lexical `qmd search` (BM25, no model) over the committed project-local `.qmd/index.yml` (`./docs`, `./lanes`); the derived `.qmd/index.sqlite` stays untracked. Rerank, expansion and `qmd embed` stay OFF (an MCP `query` also needs lexical subqueries and `rerank=false`), as the finalized baseline M had them. All three runtimes call it from the shell. Measured on the clean distro: installed, indexed and found this record with no model download; retrieval quality on this corpus is not measured. [Convergence](../research/2026-11-06-legs-convergence.md), superseding the earlier pass in [2026-11-06-research-convergence](../research/2026-11-06-research-convergence.md).
+- The rest of the research set is Context7 4.5.0, DeepWiki, Exa and paper-search. OpenViking 0.5.3 leaves the default repo-retrieval role, because self-hosting needs an embedding model and a VLM; it keeps the owner's enhanced-dsh synthesis role under the write-capable, disposable-copy residual above.
+- GitHub Issues replaces beads; repository records retain narrative authority, and the ledger branch holds irreplaceable paper fills, the trial ledger and merit manifest. Claude auto memory remains a separate native facility. The #54 convergence restores qmd for repo retrieval; old installers and host orchestration are left behind. Automatic three-runtime capture with GitHub transport stays a gap: memsearch v0.4.23 captures locally but never pushes, and no sync glue is built.
 - **Unverified:** provider fit, installation, runtime behavior and retrieval quality. This harvest verifies source records and paths; it establishes no implementation or quality result.
 
 ## Code and config to carry
@@ -59,7 +60,7 @@ Use these source configs as references for the selected entries; no code is copi
 ## Disagreements
 
 - ADR-0069 keeps OpenViking out of the canonical memory role and its Claude plugin at WATCH; later dsh interactive admission leaves the headless hold intact. The newer owner ruling and approved plan choose local research retrieval for Sextant. This changes that scope without claiming the old headless deployment was admitted.
-- The old finalized beads/qmd architecture differs from the approved GitHub/OpenViking architecture. Preserve the old finalization as provenance and apply the approved substitutions above.
+- The approved plan swapped qmd for OpenViking; the #54 memory legs (GPT ultra, Claude) both pick qmd back, while the landscape legs (GPT ultra, DeepSeek) kept OpenViking only by deferring to this record. The reconciliation follows the legs that judged the job on its criteria.
 - The old syntheses disagreed whether priming and handoff filled automatic capture; the accepted ruling keeps capture a gap. Priming, handoff and native memory do not establish automatic consolidation.
 
 ## Revisit when

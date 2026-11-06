@@ -5,6 +5,8 @@ import os
 import subprocess
 from pathlib import Path
 
+from pytest import MonkeyPatch
+
 ROOT = Path(__file__).parents[2]
 AO = ROOT / "deploy" / "wsl" / "ao.sh"
 PIN = "033d597032e448a0ea16c298350e36b099f74106"
@@ -37,7 +39,7 @@ def _run(tmp: Path, *args: str, pr: dict | None = None, version: str | None = No
         (bin_dir / name).chmod(0o755)
     (tmp / "pr.json").write_text(json.dumps(pr or HANDED_OFF))
     env = {
-        **os.environ,
+        "HOME": os.environ["HOME"],
         "PATH": f"{bin_dir}:{os.environ['PATH']}",
         "FAKE_PR": str(tmp / "pr.json"),
         "FAKE_LOG": str(tmp / "calls"),
@@ -47,6 +49,17 @@ def _run(tmp: Path, *args: str, pr: dict | None = None, version: str | None = No
     run = subprocess.run(["bash", str(AO), *args], env=env, capture_output=True, text=True)
     calls = (tmp / "calls").read_text().splitlines() if (tmp / "calls").exists() else []
     return run, calls
+
+
+def test_bash_startup_cannot_bypass_the_fake_commands(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    startup = tmp_path / "startup.sh"
+    startup.write_text("gh() { return 97; }\nao() { return 97; }\n")
+    monkeypatch.setenv("BASH_ENV", str(startup))
+    run, calls = _run(tmp_path, "claim", "57")
+    assert run.returncode == 0, run.stderr
+    assert any(call.startswith("spawn ") for call in calls)
 
 
 def test_ao_is_pinned_and_claims_only_a_handed_off_pr(tmp_path: Path) -> None:

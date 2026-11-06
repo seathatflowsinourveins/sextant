@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# A lane tab's gh: the real gh, under a fresh Sextant App installation token for this one call.
+# The tab's launch token expires in an hour; this keeps every later gh call on a live one.
+set -Eeuo pipefail
+bin=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+path=":$PATH:"
+path=${path//":$bin:"/:}
+path=${path#:}
+real=$(PATH=${path%:} command -v gh) || { echo "github-app: no gh on PATH" >&2; exit 127; }
+exec bash "$bin/../../github-app.sh" run -- "$real" "$@"

@@ -2,6 +2,12 @@
 
 **Status:** thin-slice seed. It proves the trading path, not an edge.
 
+**Registry:** `nautilus-ema-cross` in `research/sources.yaml`. Source `knowable_at`:
+`2026-11-06T15:28:06+00:00` (this audit's observed version, not a historical trading clock).
+Historical input `knowable_at`: **unknown**. The 2020 fixture is neither a US-equity
+universe nor evidence of pre-ignition availability. New compute admission: **false**;
+OSAP/JKP and the HXZ screen have not been completed for a US-movers hypothesis.
+
 **Source:** nautechsystems/nautilus_trader@v2.0.0rc7 (`55c0e82053142bce3a5cba4de4221d3929c2d3bc`, LGPL-3.0)
 - Strategy: `docs/tutorials/ema_cross.py`, verbatim in `src/sextant/strategies/ema_cross.py`.
 - Run: `examples/backtest/crypto_ema_cross_ethusdt_trade_ticks.py`, adapted in `src/sextant/backtest/thin_slice.py`.

@@ -1,0 +1,42 @@
+{
+  "recorded_at": "2026-11-06T15:28:06+00:00",
+  "registry_format": "JSON subset of YAML 1.2; unchanged upstream schema_version 1",
+  "validator_source": "seathatflowsinourveins/northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:src/northstar_trading/research/registry.py",
+  "validator_sha256": "d9df78e9d88006d2d088dc8cf24fec6bb7334b989e501cd713937df32b440672",
+  "new_strategy_trials": 0,
+  "historical_trial_count": null,
+  "cards": [
+    {
+      "id": "nautilus-ema-cross",
+      "path": "lanes/research/ema-cross.md",
+      "source_knowable_at": "2026-11-06T15:28:06+00:00",
+      "data_knowable_at": null,
+      "compute_admitted": false,
+      "sha256": "06fc1d956f544c3f08d90af84810cb76842c281368a8b50f93476735c1331e78"
+    },
+    {
+      "id": "orb-stocks-in-play",
+      "path": "lanes/research/orb-stocks-in-play.md",
+      "source_knowable_at": "2026-11-06T15:28:06+00:00",
+      "data_knowable_at": null,
+      "compute_admitted": false,
+      "sha256": "15fec435ea29fa19f7495e0b33a8c710ef5b971a33eee7fc393fa0a3f77a9314"
+    },
+    {
+      "id": "river-page-hinkley",
+      "path": "lanes/research/page-hinkley.md",
+      "source_knowable_at": "2026-11-06T15:28:06+00:00",
+      "data_knowable_at": null,
+      "compute_admitted": false,
+      "sha256": "241bb6f3e9efb33023c83b1d7541387034571338454cf68798985d98d1294ca1"
+    },
+    {
+      "id": "bayesian-online-changepoint",
+      "path": "lanes/research/bayesian-changepoint.md",
+      "source_knowable_at": "2026-11-06T15:28:06+00:00",
+      "data_knowable_at": null,
+      "compute_admitted": false,
+      "sha256": "a24e47f56a91426c97440c5456ade66053ab4498cd3a4b6845afbb9bd04c38d3"
+    }
+  ]
+}

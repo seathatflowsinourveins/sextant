@@ -15,7 +15,7 @@
 - Enter the first leg: a non-decreasing run of eligible trades inside `first_leg_window_s`, no more than `first_leg_max_move` above the quiet price; a lower trade restarts the run. [ADR-0004](../adr/0004-entry.md)
 - A missing ATR or VWAP makes extension UNKNOWN, never "not extended"; a fresh spike high is never the entry. [ADR-0004](../adr/0004-entry.md)
 - Freeze the buying-power basis at segment start with the segment identity; no read of buying power means no entry. [ADR-0004](../adr/0004-entry.md)
-- Send LIMIT at the ask, `extended_hours` outside RTH, reprice at most `entry_chase_bps`, cancel at `entry_ttl_s`, never market. [ADR-0004](../adr/0004-entry.md)
+- Send LIMIT at the ask, `extended_hours` outside RTH with `time_in_force` `day` or `gtc`, reprice at most `entry_chase_bps`, cancel at `entry_ttl_s`, never market. [ADR-0004](../adr/0004-entry.md)
 - Size from planned risk, not from conviction: `stop_distance = entry − initial_trigger + chase_cap_fraction × entry`, bounded by fresh buying power and a flow-share cap. [ADR-0004](../adr/0004-entry.md), [ADR-0011](../adr/0011-sizing-and-auto-leverage.md)
 - Keep mover slots `ceil(0.4 × cap)` and hold the top `3 ×` quota in the candidate pool; custody fills first, potential fills second, unused mover slots pass over. [ADR-0024](../adr/0024-extreme-mover-ranking-and-early-entry.md)
 
@@ -63,8 +63,9 @@
 
 ## Harness
 
-- One manifest row per pick or practice, with pin, application and `just prove` command; nothing enters without one and a stopped practice is deleted. [ADR-0001](../adr/0001-sextant-foundation.md)
+- One manifest row per pick or practice, with pin, application and `just prove` command; nothing enters without one and a stopped practice is deleted. When merging parallel lane work, retain main's rows and append the lane's new rows at the end of their existing section. [ADR-0001](../adr/0001-sextant-foundation.md); lead direction for [PR #70](https://github.com/seathatflowsinourveins/sextant/pull/70), 2026-11-06; [merge lesson](retrieval.md)
 - A PR lands through squash auto-merge only when ci, source and review pass. Danger enforces the manifest/source rule in source; gh-aw supplies review. These run from the base branch, so the PR cannot change its own checks. [ADR-0001](../adr/0001-sextant-foundation.md)
 - Keep always-loaded rules short and enforce boundaries instead of hooks; the only hooks are the secret scan and the skills runtime. [ADR-0001](../adr/0001-sextant-foundation.md)
 - Agent sessions remain local. ci, source and gh-aw review run on GitHub-hosted runners; ci executes PR code with a read-only token, no secrets and no caches. A local runner is deferred until a job needs a private network or broker connection. [ADR-0001](../adr/0001-sextant-foundation.md)
+- After a lane worker hands off, AO is the branch's only writer for CI/review fixes. Claiming records ownership only: check out the PR head and confirm its SHA before editing. [AO hand-off evidence](../research/2026-11-06-agent-orchestrator.md)
 - Only the owner signs in, stores external keys and approves/applies live limits. The owner may halt at any time; the sanctioned guard and runner also halt automatically under their recorded causes, and the lead promotes, stages and demotes with a record. [ADR-0020](../adr/0020-live-lane.md)

@@ -1,0 +1,13 @@
+# OpenViking v0.5.3 docs/en/guides/03-deployment.md, adapted to a user service.
+[Unit]
+Description=Sextant disposable research retrieval
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/openviking-server --config %h/sextant/deploy/openviking/ov.conf
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

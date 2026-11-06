@@ -24,8 +24,10 @@ write_files:
     default=sextant
 - path: /etc/profile.d/sextant-path.sh
   content: |
-    export PATH="$HOME/.local/share/sextant-agents/node_modules/.bin:$HOME/.fnm/aliases/default/bin:$HOME/.local/bin:$PATH"
+    export PATH="$HOME/.local/share/sextant-agents/node_modules/.bin:$HOME/.local/share/sextant-qmd/node_modules/.bin:$HOME/.fnm/aliases/default/bin:$HOME/.local/bin:$PATH"
     export DSH_PERMISSION_MODE=danger-full-access DSH_TELEMETRY_DISABLED=1
+    export ACP_HOST=127.0.0.1 ACP_PORT=21935 BILI_ZONE_PORT=21936 ACP_AUTO_UPDATE=0 ACP_AUTO_RESTART_ON_UPDATE=0
+    export BILI_ADVISORY_CHECK=0 BILI_RELEASE_NOTES_CHECK=0
 - path: /etc/profile.d/sextant-first-login.sh
   content: |
     # At each login until it has worked: sign in to GitHub, clone, load from the repo. A fix for a step
@@ -50,7 +52,7 @@ write_files:
 
 timezone: America/New_York
 
-packages: [build-essential, curl, file, git, iproute2, jq, unzip, wget]
+packages: [build-essential, ca-certificates, curl, file, git, iproute2, jq, uidmap, unzip, wget]
 
 runcmd:
 # Services outlive a logout, and Ubuntu's telemetry stays off, as on the old host's reviewed base file:
@@ -69,8 +71,24 @@ runcmd:
 - wget -nv -O /etc/apt/keyrings/githubcli-archive-keyring.gpg https://cli.github.com/packages/githubcli-archive-keyring.gpg
 - chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg
 - echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list
+# Docker Engine from its official Ubuntu repository (docs.docker.com/engine/install/ubuntu/, read 2026-11-06),
+# run rootless only (docs.docker.com/engine/security/rootless/): all distros share one network namespace,
+# and the old lanes hold its one rootful daemon. Masked first, so the packages never start a system daemon.
+- curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+- chmod a+r /etc/apt/keyrings/docker.asc
+- |
+  . /etc/os-release
+  cat > /etc/apt/sources.list.d/docker.sources <<EOF
+  Types: deb
+  URIs: https://download.docker.com/linux/ubuntu
+  Suites: ${UBUNTU_CODENAME:-$VERSION_CODENAME}
+  Components: stable
+  Architectures: $(dpkg --print-architecture)
+  Signed-By: /etc/apt/keyrings/docker.asc
+  EOF
+- [systemctl, mask, docker.service, docker.socket, containerd.service]
 - apt-get update
-- apt-get install -y gh
+- apt-get install -y gh docker-ce=5:29.9.3-1~ubuntu.26.04~resolute docker-ce-cli=5:29.9.3-1~ubuntu.26.04~resolute docker-ce-rootless-extras=5:29.9.3-1~ubuntu.26.04~resolute containerd.io=2.4.2-3~ubuntu.26.04~resolute docker-buildx-plugin=0.38.1-1~ubuntu.26.04~resolute docker-compose-plugin=5.7.0-1~ubuntu.26.04~resolute
 # Orca, the release package at its published digest. deploy/wsl/update-orca.sh reads this pin too.
 - wget -nv -O /tmp/orca-ide.deb https://github.com/stablyai/orca/releases/download/v1.4.251/orca-ide_1.4.251_amd64.deb
 - echo "4b6558bf3c08937601dfa2f03d2dc02880b9d57f97562d050b8a3997ee51cbbc  /tmp/orca-ide.deb" | sha256sum -c - && apt-get install -y /tmp/orca-ide.deb

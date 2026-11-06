@@ -37,6 +37,10 @@ orca-update:
 lifecycle:
     bash deploy/wsl/lifecycle.sh
 
+# Inside the clean distro only: the verified reflection, Orca's automation behind its session/merge precheck (#114).
+reflection:
+    bash deploy/wsl/reflection.sh
+
 # Inside the clean distro only: install the Claude shelf .claude/settings.json declares. See docs/start.md.
 shelf:
     bash deploy/wsl/shelf.sh
@@ -45,9 +49,17 @@ shelf:
 ao *args:
     bash deploy/wsl/ao.sh {{args}}
 
+# Inside the clean distro only: the Sextant GitHub App's own rate budget for AO and the lane tabs. See docs/start.md.
+gh-app *args:
+    bash deploy/wsl/github-app.sh {{args}}
+
 # Run every manifest row's proof. pytest does the running and the counting.
 prove:
-    uv run --frozen pytest tests/proofs
+    uv run --frozen pytest tests/proofs -m ""
+
+# Import a disposable copy of the committed research docs into local OpenViking.
+index:
+    bash deploy/openviking/index.sh
 
 # Opt into the pinned OMC plugin for this Claude session (native settings precedence).
 omc:

@@ -4,10 +4,21 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).parents[2]
+# #33's harvest pins, then #61's re-read of the same repos.
 PINS = {
-    "northstar": "b384d298d217d3f8d9aa83356994629536a34795",
-    "northstar-lanes": "00203275944a22655b3e14b221cfde9a265d549a",
-    "northstar-trading": "8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa",
+    "northstar": (
+        "b384d298d217d3f8d9aa83356994629536a34795",
+        "6957af5d6f06b0a1be82b97a8246dea51c9dce3f",
+        "0243050704565abaf3a95f0f09613cb974a331e5",
+    ),
+    "northstar-lanes": (
+        "00203275944a22655b3e14b221cfde9a265d549a",
+        "a5c8a27128339bb18ac43e5d1bc31c294291cad5",
+    ),
+    "northstar-trading": (
+        "8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa",
+        "18a803ddf312ca23acaf6419cbb5dd3adbe4314c",
+    ),
 }
 
 
@@ -25,13 +36,14 @@ def test_every_harvested_record_names_a_pinned_source() -> None:
         )
         assert cited, record.name
         for repo, pin in cited:
-            assert PINS[repo].startswith(pin), f"{record.name}: {repo}@{pin}"
+            assert any(full.startswith(pin) for full in PINS[repo]), f"{record.name}: {repo}@{pin}"
 
 
 def test_the_pins_are_the_ones_the_manifest_names() -> None:
     manifest = (ROOT / "docs" / "manifest.md").read_text()
-    for pin in PINS.values():
-        assert pin in manifest
+    for pins in PINS.values():
+        for pin in pins:
+            assert pin in manifest
 
 
 def _owner_limit(name: str) -> int:

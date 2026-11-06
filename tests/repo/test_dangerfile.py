@@ -85,6 +85,17 @@ def test_a_commit_shorter_than_full_is_refused() -> None:
     assert any("self-invent" in f for f in _failures(_body(sources="a/b@v1 abc1234")))
 
 
+def test_a_markdown_linked_repo_at_a_tag_with_its_full_sha_is_a_source() -> None:
+    # The form docs/manifest.md itself uses: the link's ")" sits between the repo and its "@".
+    sources = "[a/b](https://github.com/a/b)@v1 `" + "c" * 40 + "`:`docs/x.md`"
+    assert _failures(_body(sources=sources)) == []
+
+
+def test_a_markdown_linked_repo_still_needs_its_full_sha() -> None:
+    sources = "[a/b](https://github.com/a/b)@v1 `abc1234`"
+    assert any("self-invent" in f for f in _failures(_body(sources=sources)))
+
+
 def test_an_empty_section_is_refused() -> None:
     assert any("How verified" in f for f in _failures(_body().replace("\ny\n", "\n\n")))
 

@@ -90,7 +90,7 @@ XR29 is an offline minute-bar exit-rule study, **not a Nautilus backtest**. Data
 | C5-n22-k3-V-ON | 1025 | 11.97 | -11.26 | 35.22 | -2261.00 | 1.2268 | 75.32 | 5.96 |
 | **Hold 15:55** | 1025 | **76.44** | 10.49 | 57.07 | -2321.70 | 7.8353 | 0.00 | **70.42** |
 | Actual FIFO realized | 1025 | -21.00 | -19.63 | 22.54 | -857.58 | -2.1523 | 96.10 | -26.99 |
-**Hold-flat beats every active variant.** Only 2/96 active candidates passed the exploratory screen; 87 had nonpositive stressed expectancy and seven failed day stability. The overlay loses 38.09/38.08 bps at base/stress. No WF/CPCV/DSR/PBO or significance result; RCT/XXII dominate the selected gain. The owner's tested-tight-exit requirement remains, alongside this negative result.
+**Hold-to-15:55 beats every active variant.** This holds the entered position; it is not the zero-position hold-flat/no-trade control (terminology corrected against the original source for #54). Only 2/96 active candidates passed the exploratory screen; 87 had nonpositive stressed expectancy and seven failed day stability. The overlay loses 38.09/38.08 bps at base/stress. No WF/CPCV/DSR/PBO or significance result; RCT/XXII dominate the selected gain. The owner's tested-tight-exit requirement remains, alongside this negative result.
 | Primary day | n | Selected mean bps (3 / 6) | Selected median bps (3) | Win % (3) | Hold mean bps (3 / 6) | Overlay ON mean bps (3 / 6) |
 |---|---:|---:|---:|---:|---:|---:|
 | 10/26 | 9 | -24.11 / -30.10 | -48.73 | 44.44 | -11.85 / -17.85 | -18.03 / -24.02 |

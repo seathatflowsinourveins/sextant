@@ -1,0 +1,6 @@
+{
+  "devcontainer_template": {
+    "repository": "https://github.com/trailofbits/claude-code-devcontainer.git",
+    "commit": "062e9e778d6255a87d55452f8a546240a28f67f3"
+  }
+}

@@ -1,0 +1,9 @@
+# tobi/qmd@v2.8.3 (facd35e01359e59d938bc9418e93fb9318addee3) project-local index, README "Configuring index.yml".
+# In-project paths index with no trust prompt; the derived index.sqlite stays untracked. Use `qmd search` (BM25, no model).
+collections:
+  docs:
+    path: ./docs
+    pattern: "**/*.md"
+  lanes:
+    path: ./lanes
+    pattern: "**/*.md"

@@ -1,0 +1,8 @@
+# dsh-v0.2.1-rc.5 profile.ts defaults; TUI v0.18.0 getting-started build decisions.
+packages:
+  - .
+nodeLinker: hoisted
+autoInstallPeers: false
+allowBuilds:
+  '@google/genai': false
+  protobufjs: false

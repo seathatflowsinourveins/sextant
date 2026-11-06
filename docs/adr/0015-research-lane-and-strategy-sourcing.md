@@ -42,6 +42,7 @@ Source availability and an owner star establish discovery, never after-cost edge
 
 ## Changes for Sextant
 
+- **2026-11-06 (#54):** `research/sources.yaml` uses the pinned upstream schema, checked by its byte-identical validator fixture; [four source cards](../../lanes/research/README.md) distinguish this audit's source `knowable_at` from unknown historical input availability. EMA is plumbing; ORB is an RTH comparison; Page–Hinkley/BOCPD are incomplete method references. All remain candidate, no new compute admitted, no source default or missing clock made authoritative.
 - The approved plan starts with the thin slice and sim, then owner-confirmed paper handover with one writer. Qlib **0.9.8** and TradingAgents **0.7.1** are references. Phase 3 harvests the research skills/workflows and local OpenViking retrieval; Phase 5 carries theses/catalysts with knowable-at times. This record installs nothing.
 - Newest owner rulings, verbatim (COMMON.md, 2026-11-05/06): "our compounding learning,reflecting, memory/rag etc need to be clean enhacned with sotarepos,adrs harvest with previous convergenced campaign but clean sota architecture never bloat, including the harness rules, our trading philosophy 24/5 24/7 and always previous stated limit ,1000trades/min live lane and 200 paper, 3000for ibkr paper and live"
 - "FOCUING ON US EQUALITY, OPTION,STOCKS ETC, AND ALL THE LANES PREVIOSU STATED, PHILOSOPY PREVIOUS STATED, JEV TRADE RELATED RPEOS ETC ,RESEARCH LANE ,AUTO LEVERAGE, PROTFOLIO MANGEMENT AND BEYOND"

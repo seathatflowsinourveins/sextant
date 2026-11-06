@@ -140,5 +140,7 @@ RUN chmod 0755 /usr/local/bin/init-firewall.sh \
 USER vscode
 COPY --chown=vscode:vscode agents/ /opt/agents/
 RUN cd /opt/agents && npm ci --no-audit --no-fund && mkdir -p "$HOME/.codex" "$HOME/.dsh" "$HOME/.config/gh"
-ENV PATH="/opt/agents/node_modules/.bin:$PATH"
+COPY --chown=vscode:vscode qmd/ /opt/qmd/
+RUN cd /opt/qmd && npm ci --no-audit --no-fund
+ENV PATH="/opt/agents/node_modules/.bin:/opt/qmd/node_modules/.bin:$PATH"
 RUN claude install 2.1.318

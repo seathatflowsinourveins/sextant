@@ -33,7 +33,7 @@ jobs:
         with:
           push: never
           env: GH_TOKEN
-          runCmd: just sync && bash -c 'set -o pipefail; uv run --frozen pytest tests/proofs 2>&1 | tail -40'
+          runCmd: just sync && bash -c 'set -o pipefail; just prove 2>&1 | tail -40'
       # A failed proof fails its own step and turns the job red. The issue still updates.
       - name: Median merge time
         if: ${{ !cancelled() }}

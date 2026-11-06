@@ -35,3 +35,20 @@ def test_live_keys_cannot_enter_the_store(tmp_path: Path) -> None:
         == 3
     )
     assert not list(tmp_path.rglob("*")), "a refusal must store nothing"
+
+
+def test_t9_box_two_names_are_registered_and_the_northstar_app_keys_are_not() -> None:
+    """T9 (sextant#58): the owner's Mac-only names move in; northstar's two App keys stay out."""
+    known = (SCRIPTS / "keys.sh").read_text().split("KNOWN=(", 1)[1].split("\n)", 1)[0]
+    names = {line.split("#", 1)[0].strip() for line in known.splitlines()} - {""}
+    box_two = {f"ANTHROPIC_API_KEY_{n}" for n in range(1, 5)} | {
+        "OPENAI_API_KEY",
+        "META_API_KEY",
+        "DATABENTO_API_KEY",
+        "COHERE_API_KEY",
+        "VOYAGE_API_KEY",
+        "SHARADAR_API_KEY",
+        "SEXTANT_GITHUB_APP_KEY_B64",
+    }
+    assert box_two <= names
+    assert not {name for name in names if name.startswith("GITHUB_APP_NORTHSTAR")}
