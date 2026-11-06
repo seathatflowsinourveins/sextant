@@ -1,0 +1,77 @@
+#cloud-config
+# The clean Sextant environment: one WSL distro with nothing of the old campaign, loaded from GitHub.
+# How: documentation.ubuntu.com/wsl/stable/howto/cloud-init/, read 2026-11-06. Steps: docs/start.md.
+users:
+- name: sextant
+  gecos: Sextant
+  uid: 1500
+  groups: [adm]
+  shell: /bin/bash
+  # The owner, 2026-11-06: "can you launch the login bypasspremiss so your future workflow will not be gated".
+  sudo: ALL=(ALL) NOPASSWD:ALL
+
+write_files:
+- path: /etc/wsl.conf
+  append: true
+  content: |
+    [boot]
+    systemd=true
+    [interop]
+    appendWindowsPath=false
+    [time]
+    useWindowsTimezone=false
+    [user]
+    default=sextant
+- path: /etc/profile.d/sextant-path.sh
+  content: |
+    export PATH="$HOME/.local/share/sextant-agents/node_modules/.bin:$HOME/.fnm/aliases/default/bin:$HOME/.local/bin:$PATH"
+    export DSH_PERMISSION_MODE=danger-full-access DSH_TELEMETRY_DISABLED=1
+- path: /etc/profile.d/sextant-first-login.sh
+  content: |
+    # At each login until it has worked: sign in to GitHub, clone, load from the repo. A fix for a step
+    # that stops lands on GitHub, so trying again only takes Enter.
+    sextant_first_login() {
+      gh auth status > /dev/null 2>&1 \
+        || gh auth login --hostname github.com --git-protocol https --web --scopes workflow,user \
+        || return 1
+      gh auth setup-git || return 1
+      [ -d "$HOME/sextant/.git" ] || gh repo clone seathatflowsinourveins/sextant "$HOME/sextant" || return 1
+      git -C "$HOME/sextant" pull --ff-only || return 1
+      bash "$HOME/sextant/deploy/wsl/setup.sh" || return 1
+      touch "$HOME/.sextant-ready"
+    }
+    if [ -n "${BASH_VERSION:-}" ] && [ -t 0 ] && [ "$(id -un)" = sextant ] && [ ! -e "$HOME/.sextant-ready" ]; then
+      cloud-init status --wait > /dev/null
+      until sextant_first_login; do
+        read -r -p "A step stopped. The lead is fixing it on GitHub. Press Enter to try again, or Ctrl-C to leave it: " _
+      done
+    fi
+    unset -f sextant_first_login
+
+timezone: America/New_York
+
+packages: [build-essential, curl, file, git, iproute2, jq, unzip, wget]
+
+runcmd:
+# Services outlive a logout, and Ubuntu's telemetry stays off, as on the old host's reviewed base file:
+# northstar@b384d298d217d3f8d9aa83356994629536a34795:scripts/windows/northstar-proof.ps1.
+- [loginctl, enable-linger, sextant]
+# Not uid 1000: /mnt/wsl is shared by every distro, and its folders belong to uid 1000, the old lanes' user.
+# Ubuntu's first shell runs as oobe.defaultUid, so that has to name the same uid:
+# microsoft/WSL@3.0.3 15ea3b3846c5f18318722d1381186b2ff6ed72eb:src/linux/init/init.cpp, the OOBE block.
+- sed -i 's/^defaultUid = 1000$/defaultUid = 1500/' /etc/wsl-distribution.conf
+# Ubuntu's first shell asks about metrics unless this is already answered, with yes filled in:
+# ubuntu/wsl-setup@430ad90077c7f101ed0abdadccc7a350488a0d17:ubuntu-insights.sh.
+- su sextant -c 'ubuntu-insights consent linux wsl_setup ubuntu_release_upgrader -s=false'
+- [systemctl, --global, disable, ubuntu-insights-collect.timer, ubuntu-insights-upload.timer]
+# GitHub CLI, from cli/cli@v2.103.3:docs/install_linux.md, as root.
+- mkdir -p -m 755 /etc/apt/keyrings /etc/apt/sources.list.d
+- wget -nv -O /etc/apt/keyrings/githubcli-archive-keyring.gpg https://cli.github.com/packages/githubcli-archive-keyring.gpg
+- chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg
+- echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list
+- apt-get update
+- apt-get install -y gh
+# Orca, the release package at its reviewed checksum.
+- wget -nv -O /tmp/orca-ide.deb https://github.com/stablyai/orca/releases/download/v1.4.246/orca-ide_1.4.246_amd64.deb
+- echo "e8706feb390a34bbcf9a408cb465de7a47d721480f921ec2b56cf18eaf88b7cf  /tmp/orca-ide.deb" | sha256sum -c - && apt-get install -y /tmp/orca-ide.deb
+- rm /tmp/orca-ide.deb

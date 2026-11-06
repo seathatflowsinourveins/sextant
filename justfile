@@ -25,6 +25,10 @@ test:
 secrets:
     if [[ -n "${BASE_SHA:-}" && -n "${HEAD_SHA:-}" ]]; then gitleaks git --no-banner --redact --log-opts="$BASE_SHA..$HEAD_SHA" .; else gitleaks dir --no-banner --redact .; fi
 
+# Inside the clean distro only: its settings, tools and Orca. See docs/start.md.
+accept:
+    uv run --frozen pytest tests/host
+
 # Run every manifest row's proof. pytest does the running and the counting.
 prove:
     uv run --frozen pytest tests/proofs
