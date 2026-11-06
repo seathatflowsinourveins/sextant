@@ -42,6 +42,8 @@ def _run(tmp: Path, *args: str, pr: dict | None = None, version: str | None = No
         "FAKE_PR": str(tmp / "pr.json"),
         "FAKE_LOG": str(tmp / "calls"),
     }
+    # Shell startup hooks can pin an installed AO over the PATH stand-in.
+    env.pop("BASH_ENV", None)
     if version:
         env["FAKE_VERSION"] = version
     run = subprocess.run(["bash", str(AO), *args], env=env, capture_output=True, text=True)
@@ -85,3 +87,12 @@ def test_the_daemon_refuses_any_version_but_the_pin(tmp_path: Path) -> None:
     run, calls = _run(tmp_path, "daemon", version="0.14.11 commit 0123456789ab built x")
     assert run.returncode == 1 and "not the pin" in run.stderr
     assert "daemon" not in calls
+
+
+def test_fixture_ignores_shell_startup(tmp_path: Path, monkeypatch) -> None:
+    startup = tmp_path / "startup.sh"
+    startup.write_text("exit 97\n")
+    monkeypatch.setenv("BASH_ENV", str(startup))
+    run, calls = _run(tmp_path, "claim", "57")
+    assert run.returncode == 0, run.stderr
+    assert any(call.startswith("spawn ") for call in calls)
