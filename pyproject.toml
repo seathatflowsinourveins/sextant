@@ -15,19 +15,19 @@ build-backend = "uv_build"
 [tool.ruff]
 line-length = 100
 target-version = "py313"
-extend-exclude = [".devcontainer/post_install.py", "src/sextant/strategies/ema_cross.py", ".claude/skills"]
+extend-exclude = [".devcontainer/post_install.py", "src/sextant/strategies/ema_cross.py", "src/sextant/research/b_exit_replay.py", ".claude/skills"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "S", "RUF"]
 ignore = ["S101", "S603", "S607"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests/repo", "tests/proofs/test_thin_slice.py", "tests/proofs/test_exit_engine.py", "tests/proofs/test_claude_shelf.py", "tests/proofs/test_workflows.py", "tests/proofs/test_candidate_history.py"]
+testpaths = ["tests/repo", "tests/proofs/test_thin_slice.py", "tests/proofs/test_exit_engine.py", "tests/proofs/test_claude_shelf.py", "tests/proofs/test_workflows.py", "tests/proofs/test_candidate_history.py", "tests/proofs/test_exit_study_41.py"]
 pythonpath = ["src"]
 addopts = "-q"
 
 [tool.pyright]
 include = ["src", "tests"]
-ignore = ["src/sextant/strategies/ema_cross.py"]
+ignore = ["src/sextant/strategies/ema_cross.py", "src/sextant/research/b_exit_replay.py"]
 pythonVersion = "3.13"
 typeCheckingMode = "standard"
