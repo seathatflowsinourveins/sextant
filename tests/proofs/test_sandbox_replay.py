@@ -271,3 +271,51 @@ def test_source_freeze_refuses_uncommitted_code_and_profile(tmp_path):
     profile.write_text('{"changed":true}\n')
     with pytest.raises(ValueError, match="committed"):
         verify_implementation(tmp_path, pin, profile)
+
+
+def test_strategy_configs_have_unique_native_order_tags_within_the_arm():
+    from pathlib import Path
+
+    from nautilus_trader.model import InstrumentId, Price
+
+    from sextant.sandbox.replay import BINDINGS
+    from sextant.sandbox.strategy import StackConfig
+
+    profile = load_profile(Path(__file__).parents[2] / "lanes/sim/sandbox-replay-fixture.json")
+    shared = SimpleNamespace(binding=BINDINGS[0], profile=profile)
+    configs = [
+        StackConfig(
+            instrument=SimpleNamespace(
+                id=InstrumentId.from_str(f"{symbol}.ALPACA"),
+                price_increment=Price.from_str("0.01"),
+            ),
+            shared=shared,
+            start_ns=1,
+        )
+        for symbol in ("AAA", "BBB")
+    ]
+    tags = [config.order_id_tag for config in configs]
+    assert len(set(tags)) == 2
+    assert all(tag is not None and tag.startswith("S0R.") and "-" not in tag for tag in tags)
+
+
+def test_reentry_flat_clock_stays_at_first_positive_receipt_and_unknown_refuses():
+    from nautilus_trader.model import InstrumentId
+
+    from sextant.sandbox.strategy import FullStackStrategy
+
+    iid = InstrumentId.from_str("AAA.ALPACA")
+    strategy: Any = SimpleNamespace(instrument=SimpleNamespace(id=iid), reentry_flat=None)
+
+    def receipt(at, lineage=("entry", "exit")):
+        return SimpleNamespace(terminal_client_ids=lineage, known_at=at)
+
+    first = FullStackStrategy._flat_for_reentry(strategy, receipt(100))
+    assert first is not None and first.ts == 100
+    assert FullStackStrategy._flat_for_reentry(strategy, receipt(200)) is first
+    assert FullStackStrategy._flat_for_reentry(strategy, None) is None
+    assert strategy.reentry_flat is None  # Unknown current custody invalidates the old clock.
+    fresh = FullStackStrategy._flat_for_reentry(strategy, receipt(300))
+    assert fresh is not None and fresh.ts == 300
+    changed = FullStackStrategy._flat_for_reentry(strategy, receipt(400, ("entry", "exit", "new")))
+    assert changed is not None and changed.ts == 400

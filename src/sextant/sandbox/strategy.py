@@ -58,7 +58,8 @@ class StackConfig(ExitEngineConfig):
         return cast(Any, StrategyConfig.__new__)(
             cls,
             strategy_id=StrategyId(name),
-            order_id_tag=shared.binding.order_namespace,
+            # rc7 StrategyConfig requires a distinct tag per trader strategy.
+            order_id_tag=f"{shared.binding.order_namespace}.{instrument.id.symbol}",
             use_uuid_client_order_ids=True,
             manage_stop=False,
             manage_gtd_expiry=False,
@@ -129,6 +130,7 @@ class FullStackStrategy(ExitEngine):
         self.last_sizing: Any = None
         self.campaign: CampaignState | None = None
         self.last_sell: Any = None
+        self.reentry_flat: FlatReceipt | None = None
         self.shared.strategies[str(self.instrument.id)] = self
 
     @capture
@@ -424,18 +426,27 @@ class FullStackStrategy(ExitEngine):
             )
         elif event.order_side == OrderSide.SELL:
             self.last_sell = event
+            self.reentry_flat = None
+
+    def _flat_for_reentry(self, receipt) -> FlatReceipt | None:
+        # Reentry.after_sell anchors cooldown to the first confirmed terminal
+        # receipt. New account observations of the same lineage do not renew it.
+        if receipt is None:
+            self.reentry_flat = None
+        elif (
+            self.reentry_flat is None
+            or self.reentry_flat.terminal_order_ids != receipt.terminal_client_ids
+        ):
+            self.reentry_flat = FlatReceipt(
+                self.instrument.id, Decimal(0), receipt.terminal_client_ids, receipt.known_at
+            )
+        return self.reentry_flat
 
     def _after_sell(self, now: int):
         if self.last_sell is None or self.campaign is None:
             return
         receipt = self.shared.custody.flat_receipt()
-        flat = (
-            None
-            if receipt is None
-            else FlatReceipt(
-                self.instrument.id, Decimal(0), receipt.terminal_client_ids, receipt.known_at
-            )
-        )
+        flat = self._flat_for_reentry(receipt)
         price = self.last_sell.last_px.as_decimal()
         trigger = self.protection.trigger if self.protection and self.protection.trigger else price
         decision = self.reentry.after_sell(

@@ -414,6 +414,8 @@ def _assert_result(result: dict):
             raise ValueError("persistent-breach exit was not exercised")
         elif not result["flat_receipt"]:
             raise ValueError("native terminal lineage did not supply the flat receipt")
+        elif not counts.get("reentry:WAIT:entry_provider_unavailable"):
+            raise ValueError("re-entry cooldown did not reach missing-provider refusal")
 
 
 def execute_one(
