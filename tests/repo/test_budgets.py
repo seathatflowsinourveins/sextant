@@ -29,3 +29,15 @@ def test_at_most_thirty_research_notes() -> None:
 
 def test_src_stays_under_budget() -> None:
     assert sum(_lines(path) for path in (ROOT / "src").rglob("*.py")) < 15000
+
+
+def test_design_stays_short() -> None:
+    assert _lines(ROOT / "docs" / "design.md") <= 220
+
+
+def test_lane_readmes_stay_short() -> None:
+    assert all(_lines(path) <= 60 for path in (ROOT / "lanes").glob("*/README.md"))
+
+
+def test_practices_stay_short() -> None:
+    assert _lines(ROOT / "docs" / "handbook" / "practices.md") <= 80
