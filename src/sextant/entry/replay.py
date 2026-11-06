@@ -117,6 +117,8 @@ class _ReplayEntry(Strategy):
             free = None if available is None else available.as_decimal()
         if free is not None and self.entry is not None and self.entry.is_open:
             free += self.entry.leaves_qty.as_decimal() * self.entry.price.as_decimal()
+            # Full-order caps include fills, but funding is needed only for the leaves.
+            free += self.entry.filled_qty.as_decimal() * price
         volume = sum(
             (
                 t.price.as_decimal() * t.size.as_decimal()
@@ -173,7 +175,7 @@ class _ReplayEntry(Strategy):
             ):
                 return
             sizing = self._sizing(price, self.setup, now)
-            if sizing.quantity.as_decimal() < self.entry.leaves_qty.as_decimal():
+            if sizing.quantity.as_decimal() < self.entry.quantity.as_decimal():
                 return
             self.events.append(dict(action="MODIFY", ts=now, limit=str(price)))
             self.modify_order(self.entry.client_order_id, price=self.instrument.make_price(price))
@@ -264,6 +266,7 @@ def run_replay(
     fee_model: FeeModel,
     coverage: TradeCoverage | None = None,
     latency_model: StaticLatencyModel | None = None,
+    fill_model: Any = None,
 ) -> ReplayResult:
     """A bounded caller runs one fresh arm/process under timeout; this creates no client."""
     starting_cash = number(starting_cash, "starting_cash")
@@ -281,6 +284,7 @@ def run_replay(
             fee_model=fee_model,
             trade_execution=False,
             bar_execution=False,
+            fill_model=fill_model,
         )
         engine.add_instrument(instrument)
         for kind in (Bar, QuoteTick, TradeTick):

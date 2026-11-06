@@ -128,6 +128,31 @@ def test_reclaim_requires_pullback_higher_low_and_hold() -> None:
     assert not s.reclaim_ready(D("10.30"), D("0.10"), START + 8 * SEC, covered_flow=True)
 
 
+def test_missed_reclaim_requires_a_new_pullback_and_hold() -> None:
+    s = extended_state()
+    for at, price in (
+        (3, "10.03"),
+        (4, "10.04"),
+        (5, "10.05"),
+        (6, "10.02"),
+        (7, "10.02"),
+        (8, "10.03"),
+    ):
+        feed(s, at, price)
+    assert s.reclaim_ready(D("10.03"), D("0.10"), START + 8 * SEC, covered_flow=True)
+    assert not s.reclaim_ready(D("10.20"), D("0.10"), START + 8 * SEC, covered_flow=True)
+    for at, price in ((9, "10.06"), (10, "10.08"), (11, "10.09"), (12, "10.10")):
+        feed(s, at, price)
+        assert not s.reclaim_ready(D(price), D("0.10"), START + at * SEC, covered_flow=True)
+    for at, price in ((13, "10.07"), (14, "10.07")):
+        feed(s, at, price)
+        assert not s.reclaim_ready(D(price), D("0.10"), START + at * SEC, covered_flow=True)
+    feed(s, 15, "10.08")
+    assert s.reclaim_ready(D("10.08"), D("0.10"), START + 15 * SEC, covered_flow=True)
+    feed(s, 16, "10.11")
+    assert not s.reclaim_ready(D("10.11"), D("0.10"), START + 16 * SEC, covered_flow=True)
+
+
 @pytest.mark.parametrize("invalid_price", ["9.98", "11.10"])
 def test_below_level_or_new_episode_cannot_reuse_held_reclaim(invalid_price) -> None:
     s = extended_state()

@@ -231,6 +231,9 @@ class EntryState:
                 and self.trough >= level
             ):
                 self.reclaim_event_ns = at
+                self.trough, self.hold_started = None, None
+                self.high = max(self.high, price)
+                return  # Consume this retest even when the caller cannot enter.
             elif price > self.high:
                 self.trough, self.hold_started = None, None
         if price > self.high:

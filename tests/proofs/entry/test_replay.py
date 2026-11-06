@@ -4,7 +4,11 @@ from decimal import Decimal as D
 from typing import Any
 
 import pytest
-from nautilus_trader.execution import MakerTakerFeeModel, StaticLatencyModel
+from nautilus_trader.execution import (
+    LimitOrderPartialFillModel,
+    MakerTakerFeeModel,
+    StaticLatencyModel,
+)
 
 from sextant.entry.orders import limit_price
 from sextant.entry.replay import run_replay
@@ -85,6 +89,50 @@ def test_entry_ttl_cancels_only_entry_and_chase_never_exceeds_first_limit(instru
     cancellations = [e for e in result.events if e["action"] == "CANCEL"]
     assert len(cancellations) == 1
     assert cancellations[0]["ts"] == START + 7 * SEC
+
+
+@pytest.mark.parametrize(
+    ("initial_ask", "next_ask", "cash", "flow_size", "can_reprice", "quantity"),
+    [
+        ("10.02", "10.03", "1000", 1850, False, "95"),
+        ("10.02", "10.03", "1000", 2000, True, "95"),
+        ("10.00", "10.01", "1001", 2000, False, "100"),
+    ],
+    ids=["whole-position-flow-cap", "affordable-leaves", "whole-position-risk-cap"],
+)
+def test_partial_fill_reprice_respects_full_position_caps(
+    instrument, tmp_path, initial_ask, next_ask, cash, flow_size, can_reprice, quantity
+):
+    trade_price = initial_ask
+    result = replay(
+        instrument,
+        tmp_path,
+        [
+            quote(0, "9.99", initial_ask),
+            trade(0, trade_price, size=10000),
+            trade(1, trade_price, size=10000),
+            trade(2, trade_price, size=10000),
+            trade(3, trade_price, size=flow_size),
+            quote("3.1", "10.00", next_ask),
+            quote(10, "10.00", next_ask),
+        ],
+        starting_cash=D(cash),
+        surge=Surge(IID, "fixture-segment", START, START, START + 120 * SEC, D("9.90"), "TEST"),
+        params=params(stop_ref_fraction="0.1", flow_share_window_s="1"),
+        latency_model=StaticLatencyModel(insert_latency_nanos=500_000_000),
+        fill_model=LimitOrderPartialFillModel(),
+    )
+    assert len(result.orders) == 1
+    assert result.orders[0]["quantity"] == quantity
+    modifications = [e for e in result.events if e["action"] == "MODIFY"]
+    if can_reprice:
+        assert len(modifications) == 1
+        assert result.orders[0]["price"] == next_ask
+    else:
+        assert modifications == []
+        assert result.orders[0]["price"] == initial_ask
+    assert D(0) < D(result.orders[0]["filled_qty"]) < D(quantity)
+    assert result.orders[0]["status"] == "CANCELED"
 
 
 def test_outside_rth_is_plain_limit_with_extended_hours_intent(instrument, tmp_path) -> None:
@@ -178,6 +226,45 @@ def test_held_reclaim_reaches_native_limit_only_with_covered_flow(instrument, tm
     else:
         assert submits == []
         assert result.orders == []
+
+
+def test_missed_reclaim_never_submits_at_a_later_fresh_high(instrument, tmp_path):
+    result = replay(
+        instrument,
+        tmp_path,
+        [
+            bar(-180),
+            bar(-120),
+            bar(-60),
+            quote(0, "9.99", "10.00"),
+            trade(0, "10.00", size=10000),
+            trade(1, "11.00"),
+            trade(2, "9.99"),
+            trade(3, "10.03"),
+            trade(4, "10.04"),
+            trade(5, "10.05"),
+            trade(6, "10.02"),
+            trade(7, "10.02"),
+            quote("7.9", "10.19", "10.20"),
+            trade(8, "10.03"),
+            trade(9, "10.06"),
+            trade(10, "10.08"),
+            quote("11.9", "10.09", "10.10"),
+            trade(12, "10.10"),
+        ],
+        surge=None,
+        confidence=D("0.5"),
+        coverage=TradeCoverage(
+            IID,
+            "fixture-segment",
+            START - 60 * SEC,
+            START + 12 * SEC,
+            START + 12 * SEC,
+            "TEST complete eligible tape",
+        ),
+    )
+    assert not any(e["action"] == "SUBMIT" for e in result.events), result.events
+    assert result.orders == []
 
 
 def test_ttl_during_unacknowledged_submit_cancels_after_acceptance(instrument, tmp_path):

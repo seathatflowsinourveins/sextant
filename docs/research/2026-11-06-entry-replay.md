@@ -33,7 +33,9 @@ timeout 180 uv run --frozen pytest tests/proofs/entry
 - A lower third trade prevents entry until three trades after the restart; the real native replay submits once at the fifth trade.
 - Missing ATR stays UNKNOWN, cannot create an extension episode and fails the not-extended admission predicate. Only the symbol's completed bars warm it; wrong symbol/timeframe and future/duplicate/stale trades cannot supply authority. Equality at the ATR extension threshold remains NOT_EXTENDED.
 - A reclaim needs this episode's later VWAP touch, three reclaim trades, a pullback, a higher low, a hold and the first subsequent rising trade within the ask cap. A lower trough restarts the hold; a new high before it completes needs a new pullback. No causal complete flow receipt means no native reclaim order.
+- That first eligible trade consumes the held retest even when entry is refused. The missed-first-chance witness rejects later fresh highs and requires a new pullback and hold before another event; native replay covers the late-fill scenario from review #5803215352.
 - Native sizing counts chase once and respects fresh funding/flow bounds, rejects missing terms and sub-share quantities, applies scored confidence, and never assigns confidence 1 to an unscored setup.
+- After a partial fill, reprice risk and flow caps apply to the full order; fresh buying power funds only its leaves. The native `LimitOrderPartialFillModel` supplies an explicit synthetic partial-fill book for these witnesses, including a funded remainder that may still reprice. This is not a liquidity estimate.
 - Native order events prove one fill or a terminal cancel. Reprices retain the initial chase bound and the setup cap. TTL during an unacknowledged submit stays pending until acceptance, then cancels that entry. Extended-hours intent remains a plain LIMIT with no contingency.
 
 ## Boundaries still open
