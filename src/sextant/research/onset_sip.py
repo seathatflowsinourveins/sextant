@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from pathlib import Path
+from statistics import median
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -123,24 +124,18 @@ def _native_window(
     )
 
 
-def _true_ranges(rows: Sequence[dict[str, Any]]) -> Decimal | None:
-    rth = _rth(rows)
-    if not rth:
-        return None
-    high = max(_decimal(row, "h") for row in rth)
-    low = min(_decimal(row, "l") for row in rth)
-    return high - low
-
-
 def _daily(rows: Sequence[dict[str, Any]]) -> tuple[Decimal, Decimal, Decimal, Decimal] | None:
-    """Return (ATR14, ADV14, volume) for one completed session, or None."""
-    rth = _rth(rows)
-    if not rth:
+    """Return (high, low, close, volume) for one completed session, or None.
+
+    Session means every SIP minute bar returned for the calendar day
+    (04:00--20:00 ET), the consolidated-day proxy; not RTH only.
+    """
+    if not rows:
         return None
-    high = max(_decimal(row, "h") for row in rth)
-    low = min(_decimal(row, "l") for row in rth)
-    close = _decimal(rth[-1], "c")
-    volume = sum((_decimal(row, "v") for row in rth), Decimal(0))
+    high = max(_decimal(row, "h") for row in rows)
+    low = min(_decimal(row, "l") for row in rows)
+    close = _decimal(rows[-1], "c")
+    volume = sum((_decimal(row, "v") for row in rows), Decimal(0))
     return high, low, close, volume
 
 
@@ -223,10 +218,13 @@ def evaluate(
 
     results: list[dict[str, Any]] = []
     censored: Counter[str] = Counter()
+    censored_role: Counter[str] = Counter()
+    evaluated_role: Counter[str] = Counter()
     for (symbol, day), target in targets.items():
         i = index.get(day)
         if i is None or i < LOOKBACK:
             censored["calendar"] += 1
+            censored_role[target.role] += 1
             continue
         prior_days = sessions[i - LOOKBACK : i]
         days = [*prior_days, day]
@@ -234,6 +232,7 @@ def evaluate(
         current = _native_window(symbol, day, bars[day], spec)
         if current is None:
             censored["opening_window"] += 1
+            censored_role[target.role] += 1
             continue
         prior = []
         for prior_day in prior_days:
@@ -244,10 +243,12 @@ def evaluate(
             prior.append(window)
         if len(prior) != LOOKBACK:
             censored["prior_opening_window"] += 1
+            censored_role[target.role] += 1
             continue
         facts = _facts(symbol, prior_days, bars, spec)
         if facts is None:
             censored["daily_facts"] += 1
+            censored_role[target.role] += 1
             continue
         as_of = int(datetime.combine(day, WINDOW_END, NY).timestamp()) * NS
         verdict = screen(
@@ -258,6 +259,7 @@ def evaluate(
             as_of_ns=as_of,
             spec=spec,
         )
+        evaluated_role[target.role] += 1
         results.append(
             dict(
                 symbol=symbol,
@@ -285,6 +287,13 @@ def evaluate(
         "top100": {f"{row['symbol']}|{row['day']}" for row in passers[:100]},
     }
 
+    def delta(row: dict[str, Any], field: str) -> float | None:
+        anchor = row.get(field)
+        if not anchor or row.get("passes") is not True:
+            return None
+        flagged = datetime.combine(date.fromisoformat(row["day"]), WINDOW_END, NY)
+        return (flagged - datetime.fromisoformat(anchor)).total_seconds() / 60.0
+
     event_rows = {}
     for row in results:
         if row["role"] != "event":
@@ -298,13 +307,30 @@ def evaluate(
             first_10pct=anchor.get("first_10pct"),
             first_10pct_session=anchor.get("first_10pct_session"),
         )
+        event_rows[row["event_id"]]["flag_minutes_5"] = delta(
+            event_rows[row["event_id"]], "first_5pct"
+        )
+        event_rows[row["event_id"]]["flag_minutes_10"] = delta(
+            event_rows[row["event_id"]], "first_10pct"
+        )
 
-    def delta(row: dict[str, Any], field: str) -> float | None:
-        anchor = row.get(field)
-        if not anchor or row.get("rank") is None:
-            return None
-        flagged = datetime.combine(date.fromisoformat(row["day"]), WINDOW_END, NY)
-        return (flagged - datetime.fromisoformat(anchor)).total_seconds() / 60.0
+    time_to_flag: dict[str, Any] = {}
+    for field, label in (("flag_minutes_5", "five"), ("flag_minutes_10", "ten")):
+        by_session: dict[str, list[float]] = defaultdict(list)
+        session_field = "first_5pct_session" if label == "five" else "first_10pct_session"
+        for row in event_rows.values():
+            value = row.get(field)
+            if value is not None:
+                by_session[row.get(session_field)].append(value)
+        time_to_flag[label] = {
+            session: {
+                "n": len(values),
+                "median": median(values),
+                "min": min(values),
+                "max": max(values),
+            }
+            for session, values in by_session.items()
+        }
 
     recall: dict[str, Any] = {}
     for field, label in (("first_5pct", "five"), ("first_10pct", "ten")):
@@ -341,13 +367,26 @@ def evaluate(
         targets=len(targets),
         evaluated=len(results),
         censored=dict(censored),
+        censored_role=dict(censored_role),
         censored_total=sum(censored.values()),
+        evaluated_role=dict(evaluated_role),
         passers=len(passers),
         top30=len(top_keys["top30"]),
         top100=len(top_keys["top100"]),
         recall=recall,
         control_days=len(control_days),
         control_flags=len(control_flags),
+        control_top30=sum(
+            1
+            for row in results
+            if row["role"] == "control" and f"{row['symbol']}|{row['day']}" in top_keys["top30"]
+        ),
+        control_top100=sum(
+            1
+            for row in results
+            if row["role"] == "control" and f"{row['symbol']}|{row['day']}" in top_keys["top100"]
+        ),
+        time_to_flag=time_to_flag,
         false_flags_per_day=str(false_per_day) if false_per_day is not None else None,
         rows=sorted(results, key=lambda row: (row["day"], row["symbol"])),
         event_rows=sorted(event_rows.values(), key=lambda row: (row["day"], row["symbol"])),
