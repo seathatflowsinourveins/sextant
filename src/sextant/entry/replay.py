@@ -20,6 +20,7 @@ from nautilus_trader.model import (
     Money,
     OmsType,
     OrderSide,
+    Price,
     QuoteTick,
     TimeInForce,
     TradeTick,
@@ -158,6 +159,7 @@ class _ReplayEntry(Strategy):
         price = limit_price(
             self.quote.ask_price.as_decimal(), self.instrument.price_increment.as_decimal()
         )
+        native_price = Price.from_decimal_dp(price, self.instrument.price_precision)
         if self.entry is not None:
             current = self.cache.order(self.entry.client_order_id)
             if current is None:
@@ -185,7 +187,7 @@ class _ReplayEntry(Strategy):
             if sizing.quantity.as_decimal() < self.entry.quantity.as_decimal():
                 return
             self.events.append(dict(action="MODIFY", ts=now, limit=str(price)))
-            self.modify_order(self.entry.client_order_id, price=self.instrument.make_price(price))
+            self.modify_order(self.entry.client_order_id, price=native_price)
             return
         setup = None
         if self.signals.first_leg_ready(price, now):
@@ -208,7 +210,7 @@ class _ReplayEntry(Strategy):
             self.instrument.id,
             OrderSide.BUY,
             sizing.quantity,
-            self.instrument.make_price(price),
+            native_price,
             time_in_force=TimeInForce.DAY,
             tags=[f"params_hash={self.parameters.params_hash}", f"setup={setup}"],
         )
@@ -239,12 +241,7 @@ class _ReplayEntry(Strategy):
         self.expired = True
         if self.entry is not None:
             self.entry = self.cache.order(self.entry.client_order_id) or self.entry
-        if (
-            self.entry is not None
-            and self.entry.is_open
-            and not self.entry.is_pending_cancel
-            and not self.entry.is_pending_update
-        ):
+        if self.entry is not None and self.entry.is_open and not self.entry.is_pending_cancel:
             self.events.append(dict(action="CANCEL", ts=self.clock.timestamp_ns()))
             self.cancel_order(self.entry.client_order_id)
 

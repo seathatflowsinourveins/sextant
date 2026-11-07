@@ -59,7 +59,7 @@ def test_missing_atr_is_unknown_until_own_completed_bars_initialize() -> None:
     s = state()
     feed(s, 0, "10.00")
     assert s.extension is Extension.UNKNOWN
-    assert not s.not_extended_at_ask(D("10"))
+    assert s._extension(D("10")) is Extension.UNKNOWN
     for offset in (-180, -120):
         assert s.on_bar(bar(offset), now=START)
     assert not s.on_bar(bar(-60, iid=InstrumentId.from_str("OTHER.SIM")), now=START)
@@ -70,8 +70,8 @@ def test_missing_atr_is_unknown_until_own_completed_bars_initialize() -> None:
     assert s.on_bar(bar(-60), now=START + SEC)
     feed(s, 2, "10.10")
     assert s.extension is Extension.NOT_EXTENDED
-    assert s.not_extended_at_ask(D("10.40"))
-    assert not s.not_extended_at_ask(D("11.00"))
+    assert s._extension(D("10.40")) is Extension.NOT_EXTENDED
+    assert s._extension(D("11.00")) is Extension.EXTENDED
 
 
 def test_exact_atr_extension_boundary_is_inclusive_without_float_roundoff() -> None:
@@ -81,8 +81,8 @@ def test_exact_atr_extension_boundary_is_inclusive_without_float_roundoff() -> N
     feed(s, 0, "10.00", size=200)
     feed(s, 1, "10.60", size=100)  # VWAP 10.20; last - VWAP == 2 * ATR(0.20).
     assert s.extension is Extension.NOT_EXTENDED
-    assert s.not_extended_at_ask(D("10.60"))
-    assert not s.not_extended_at_ask(D("10.61"))
+    assert s._extension(D("10.60")) is Extension.NOT_EXTENDED
+    assert s._extension(D("10.61")) is Extension.EXTENDED
 
 
 def test_segment_reset_clears_vwap_and_first_leg() -> None:
@@ -268,6 +268,7 @@ def test_covered_flow_needs_same_segment_causal_complete_receipt() -> None:
         START + 2 * SEC,
         START + 2 * SEC,
         "TEST complete eligible tape",
+        {60 * SEC: 3, 2 * SEC: 2},
     )
     assert s.covered_flow(START + 2 * SEC, receipt)
     assert not s.covered_flow(START + SEC, receipt)  # Not yet known.
@@ -281,9 +282,9 @@ def test_covered_flow_needs_same_segment_causal_complete_receipt() -> None:
 @pytest.mark.parametrize(
     ("first_leg_window", "coverage_start", "last_trade", "covered"),
     [("120", -60, -30, False), ("30", -120, -29, True)],
-    ids=["short-receipt-refuses", "wide-window-retained"],
+    ids=["short-receipt-refuses", "wide-snapshot-counts"],
 )
-def test_covered_flow_wider_window_is_attested_and_retained(
+def test_covered_flow_wider_window_is_bound_to_attested_counts(
     first_leg_window, coverage_start, last_trade, covered
 ) -> None:
     s = state(
@@ -295,7 +296,13 @@ def test_covered_flow_wider_window_is_attested_and_retained(
     for at in (-90, last_trade):
         feed(s, at, "10.01", size=10000)
     receipt = TradeCoverage(
-        IID, "fixture-segment", START + coverage_start * SEC, START, START, "TEST complete tape"
+        IID,
+        "fixture-segment",
+        START + coverage_start * SEC,
+        START,
+        START,
+        "TEST complete tape",
+        {60 * SEC: 1, 120 * SEC: 2},
     )
     # One baseline trade and two recent trades: 2 * 60 == 1 * 120.
     assert s.covered_flow(START, receipt) is covered

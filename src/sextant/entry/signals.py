@@ -6,6 +6,7 @@ A quote never changes an episode or its touch.
 """
 
 from collections import deque
+from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal
 from enum import StrEnum
@@ -35,7 +36,7 @@ class Surge:
 
 @dataclass(frozen=True)
 class TradeCoverage:
-    """Producer's complete eligible-trade interval, read only as of known_at."""
+    """Producer's complete counts by horizon ns over (end_ns - horizon, end_ns]."""
 
     instrument_id: InstrumentId
     segment: str
@@ -43,6 +44,7 @@ class TradeCoverage:
     end_ns: int
     known_at: int
     source: str
+    counts: Mapping[int, int] | None = None
 
 
 class EntryState:
@@ -112,20 +114,19 @@ class EntryState:
             or identity in self.identities
             or not 0 <= tick.ts_event <= tick.ts_init <= now
             or now - tick.ts_event > self.params.ns("max_data_age_s")
-            or (self.last is not None and tick.ts_event < self.last.ts_event)
             or tick.price.as_decimal() <= 0
             or tick.size.as_decimal() <= 0
         ):
             return False
+        if self.last is not None and tick.ts_event < self.last.ts_event:
+            self.run = []
+            self.touch = self.episode_started = None
+            self._clear_retest()
+            return False
         self.last = tick
         self.trades.append(tick)
         self.identities.add(identity)
-        retain = max(
-            self.params.ns("flow_share_window_s"),
-            self.params.ns("first_leg_window_s"),
-            self.params.ns("covered_flow_window_s"),
-            self.params.ns("covered_flow_baseline_min") * 60,
-        )
+        retain = max(self.params.ns("flow_share_window_s"), self.params.ns("first_leg_window_s"))
         while self.trades and self.trades[0].ts_event < tick.ts_event - retain:
             old = self.trades.popleft()
             self.identities.discard((str(old.trade_id), old.ts_event, old.price, old.size))
@@ -149,13 +150,6 @@ class EntryState:
             Extension.EXTENDED
             if price - self.vwap > self.params["entry_max_vwap_extension_atr"] * atr
             else Extension.NOT_EXTENDED
-        )
-
-    def not_extended_at_ask(self, ask: Decimal) -> bool:
-        return bool(
-            self.last is not None
-            and self.extension is Extension.NOT_EXTENDED
-            and self._extension(max(self.last.price.as_decimal(), ask)) is Extension.NOT_EXTENDED
         )
 
     def _first_leg(self, tick: TradeTick) -> None:
@@ -271,13 +265,19 @@ class EntryState:
             or coverage.instrument_id != self.instrument_id
             or coverage.segment != self.segment
             or not coverage.source
+            or not isinstance(coverage.counts, Mapping)
             or not 0 <= coverage.start_ns <= now - max(baseline_ns, window_ns)
             or not now <= coverage.end_ns <= coverage.known_at <= now
         ):
             return False
-        baseline = sum(now - baseline_ns < t.ts_event <= now for t in self.trades)
-        recent = sum(now - window_ns < t.ts_event <= now for t in self.trades)
+        baseline = coverage.counts.get(baseline_ns)
+        recent = coverage.counts.get(window_ns)
         return bool(
-            baseline > 0
+            type(baseline) is int
+            and type(recent) is int
+            and baseline > 0
+            and recent >= 0
+            and (window_ns >= baseline_ns or recent <= baseline)
+            and (window_ns <= baseline_ns or recent >= baseline)
             and recent * baseline_ns >= baseline * window_ns * self.params["covered_flow_ratio"]
         )

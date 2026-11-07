@@ -60,7 +60,8 @@ def test_the_sweep_runs_in_place_and_forces_only_merged_heads() -> None:
 def test_the_sweep_keeps_a_worktree_that_live_work_still_uses() -> None:
     # 2026-11-06: the first run removed two merged-PR worktrees that lane agents were still working
     # in, and both died with their directory. A merged PR is not proof that nothing uses the tree.
-    assert "orca terminal list --json" in PROMPT and "worktreePath" in PROMPT
+    assert "orca terminal list --limit 1000 --json" in PROMPT and "worktreePath" in PROMPT
+    assert "raise the limit if the result reaches it" in PROMPT
     assert "/proc/<pid>/cwd" in PROMPT and "proc(5)" in PROMPT
     keep = PROMPT.index("Also keep a worktree that live work still uses")
     assert keep < PROMPT.index("3. For each local branch")
