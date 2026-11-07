@@ -12,7 +12,7 @@ from decimal import Decimal as D
 
 from nautilus_trader.backtest import BacktestEngine
 from nautilus_trader.config import BacktestEngineConfig, LoggerConfig, RiskEngineConfig
-from nautilus_trader.execution import MakerTakerFeeModel
+from nautilus_trader.execution import MakerTakerFeeModel, StaticLatencyModel
 from nautilus_trader.model import (
     AccountType,
     AggressorSide,
@@ -26,6 +26,7 @@ from nautilus_trader.model import (
     TimeInForce,
     TradeId,
     TradeTick,
+    TriggerType,
     Venue,
 )
 from nautilus_trader.trading import Strategy
@@ -85,12 +86,12 @@ def test_an_entry_filled_6_then_4_is_protected_as_10_and_the_breach_sell_covers_
 
 
 def test_a_buy_from_a_different_order_pauses_the_symbol_and_pages() -> None:
-    """ADR-0007:17: an owner add to a strategy-held symbol pauses it and pages."""
-    r = run([FLAT] * 5 + [LOW] * 6, [Buy(0, "10"), Buy(2, "5")])
-    assert len({c for c, _q, _p in r.buy_fills}) == 2
-    assert r.paused and r.pages == ["owner_add"]
-    assert _kinds(r).count("add_paused") == 1
-    assert r.sells == [] and r.position == 15  # paused: the later breach sells nothing
+    """ADR-0007:17: an owner add to a strategy-held symbol pauses it and pages. The add is an order
+    the house never sent (ADR-0007:16); a second house order's fill is not one (below)."""
+    t = tape_run([FLAT] * 5 + [LOW] * 6, [Order(0, "10"), Order(2, "5", owner=True)])
+    assert t.paused and t.pages == ["owner_add"]
+    assert [e["event"] for e in t.events].count("add_paused") == 1
+    assert _sold(t) == 0 and t.net == 15  # paused: the later breach sells nothing
 
 
 def test_a_close_then_a_re_entry_is_protected_again() -> None:
@@ -170,6 +171,7 @@ class Order:
     side: OrderSide = OrderSide.BUY
     price: str | None = None
     owner: bool = False
+    emulated: bool = False  # held locally by rc8's OrderEmulator until its BID_ASK trigger
 
 
 @dataclass(frozen=True)
@@ -183,8 +185,26 @@ class Tape:
     timeline: list[tuple[int, str, str]]  # (second, order, native event), each order's in order
 
 
+class Paged:
+    """Stands in for the strategy's logger, to count the page lines."""
+
+    def __init__(self) -> None:
+        self.errors: list[str] = []
+
+    def error(self, message: str) -> None:
+        self.errors.append(message)
+
+    def __getattr__(self, _name: str) -> object:
+        return lambda *_a, **_k: None
+
+
 class Scripted(ExitEngine):
     script: tuple[Order, ...] = ()
+    paged = Paged()
+
+    @property
+    def log(self) -> Paged:  # type: ignore[override]
+        return self.paged
 
     def on_start(self) -> None:
         super().on_start()
@@ -197,8 +217,14 @@ class Scripted(ExitEngine):
             ref = quote.ask_price if o.side == OrderSide.BUY else quote.bid_price
             price = ref if o.price is None else Price.from_str(o.price)
             qty = Quantity.from_str(o.qty)
+            trigger = TriggerType.BID_ASK if o.emulated else None
             order = self.order_factory.limit(
-                EQUITY.id, o.side, qty, price, time_in_force=TimeInForce.GTC
+                EQUITY.id,
+                o.side,
+                qty,
+                price,
+                time_in_force=TimeInForce.GTC,
+                emulation_trigger=trigger,
             )
             cid, who = str(order.client_order_id), "owner" if o.owner else "house"
             self.names[cid] = f"{who}-{sum(n.startswith(who) for n in self.names.values()) + 1}"
@@ -232,6 +258,7 @@ def tape_run(
     *,
     session: str = "rth",
     risk: RiskEngineConfig | None = None,
+    latency: StaticLatencyModel | None = None,
 ) -> Tape:
     engine = BacktestEngine(
         BacktestEngineConfig(
@@ -249,6 +276,7 @@ def tape_run(
             fee_model=MakerTakerFeeModel(maker_rate=D(0), taker_rate=D(0)),
             use_reduce_only=True,
             liquidity_consumption=True,
+            latency_model=latency,
         )
         engine.add_instrument(EQUITY)
         engine.add_data([_tick(i, item) for i, item in enumerate(items)])
@@ -324,27 +352,29 @@ def test_a_partial_entrys_remainder_is_canceled_and_terminal_before_the_breach_s
     assert t.status == {"house-1": "CANCELED", "engine-SELL": "FILLED"}
     kinds = [e["event"] for e in t.events]
     assert kinds.count("protected_from_fill") == 1 and t.net == 0
-    # The breach persisted at second 3; the remainder's cancel was terminal there, and the sell went
-    # out on the next bid (ADR-0005:36: the crossing is retained exit intent, not permission).
+    # The breach persisted at second 3: the crossing is retained exit intent, not permission
+    # (ADR-0005:36). The remainder's cancel was terminal at once, and its event sent the sell.
     assert (3, "house-1", "OrderCanceled") in t.timeline
-    assert next(x for x in t.timeline if x[1] == "engine-SELL")[0] == 4
-    assert [e["ts"] for e in t.events if e["event"] == "breach_sell_prearm"] == [
-        str(START + 4 * NS)
-    ]
+    crossed = next(e for e in t.events if e["event"] == "crossed")
+    sell = next(e for e in t.events if e["event"] == "breach_sell_prearm")
+    assert crossed["ts"] == sell["ts"] == str(START + 3 * NS)
 
 
 def test_a_crossing_is_retained_through_a_rebound_while_the_remainder_cancels() -> None:
-    """ADR-0005:36: a price rebound cannot clear the crossing's exit intent. The breach persists at
-    second 3 and the remainder's cancel goes out; the bid rebounds above the trigger at second 4,
-    and the house still sells its 6 there, once the remainder is terminal."""
+    """ADR-0005:36: a price rebound cannot clear the crossing's exit intent, and the crossing
+    freezes the levels. The breach persists at second 3; the remainder's cancel takes 2.5 s (rc8
+    StaticLatencyModel). A print at 100.40 and a rebound above the trigger come while it waits;
+    the house still sells its 6 once the cancel is terminal (delivered with the data at second 6),
+    recorded at the crossing's trigger."""
     thin = Quote("100.00", "100.02", ask_size="6")
     wide, rebound = Quote("99.50", "100.55"), Quote("100.00", "100.55")
-    t = tape_run([thin] + [wide] * 3 + [rebound] * 3, [Order(0, "10", price="100.50")])
-    assert [(s, q, p) for _t, s, q, p, _o in t.fills] == [
-        ("BUY", "6", "100.02"),
-        ("SELL", "6", "100.00"),
-    ]
-    assert t.status == {"house-1": "CANCELED", "engine-SELL": "FILLED"} and t.net == 0
+    late = StaticLatencyModel(cancel_latency_nanos=2_500_000_000)
+    items: list[Quote | Trade] = [thin] + [wide] * 3 + [Trade("100.40")] + [rebound] * 3
+    t = tape_run(items, [Order(0, "10", price="100.50")], latency=late)
+    crossed = next(e for e in t.events if e["event"] == "crossed")
+    (sell,) = [e for e in t.events if e["event"].startswith("breach_sell")]
+    assert sell["ts"] == str(START + 6 * NS) and sell["trigger"] == crossed["trigger"]
+    assert sell["qty"] == "6" and t.status["house-1"] == "CANCELED"
 
 
 def test_the_cancel_first_exit_cancels_only_the_houses_own_orders() -> None:
@@ -403,3 +433,138 @@ def test_a_remainders_own_fill_never_raises_h_so_an_unchanged_bid_never_sells() 
         ]
         assert "armed" in [e["event"] for e in t.events]
         assert _sold(t) == 0 and t.net == 10
+
+
+def test_a_cancel_that_never_ends_pages_at_the_60_second_deadline() -> None:
+    """ADR-0005:36: the first cancellation wait has a 60-second escalation deadline. The remainder's
+    cancel takes 100 s (a venue that never answers in time), so the engine pages at 63 s and sells
+    only on the cancel's terminal event at 103 s, never beside a live remainder."""
+    thin, wide = Quote("100.00", "100.02", ask_size="6"), Quote("99.50", "100.55")
+    late = StaticLatencyModel(cancel_latency_nanos=100_000_000_000)
+    t = tape_run([thin] + [wide] * 110, [Order(0, "10", price="100.50")], latency=late)
+    page = next(e for e in t.events if e["event"] == "page")
+    assert page["reason"] == "partial_entry_cancel_timeout" and page["ts"] == str(START + 63 * NS)
+    (sell,) = [e for e in t.events if e["event"].startswith("breach_sell")]
+    assert sell["ts"] == str(START + 103 * NS) and t.net == 0
+
+
+def test_outside_rth_the_terminal_cancel_sends_the_exit_without_waiting_for_a_print() -> None:
+    """Outside RTH only a print steps the engine, and prints can be minutes apart. The remainder's
+    terminal cancel itself sends the retained exit (a #169 review finding)."""
+    thin, wide = Quote("100.00", "100.02", ask_size="6"), Quote("99.40", "100.55")
+    items: list[Quote | Trade] = [thin, Trade("100.02"), wide] + [Trade("99.50")] * 3
+    items += [wide] * 30  # quotes only: no print after the crossing
+    t = tape_run(items, [Order(0, "10", price="100.50")], session="outside")
+    crossed = next(e for e in t.events if e["event"] == "crossed")
+    (sell,) = [e for e in t.events if e["event"].startswith("breach_sell")]
+    assert sell["ts"] == crossed["ts"]
+
+
+def test_a_second_house_orders_fill_grows_the_protection_and_never_pages() -> None:
+    """ADR-0007:16: provenance is the house set, not the opener alone. The owner sells house-1's 6
+    flat while house-1's remainder works; house-2 re-enters, then house-1's last 4 fill. Those
+    4 are the house's, so they join the protection instead of paging owner_add."""
+    thin, above, back = (
+        Quote("100.00", "100.02", ask_size="6"),
+        Quote("100.40", "100.55"),
+        Quote("100.48", "100.50"),
+    )
+    owner_sells_6 = Order(1, "6", side=OrderSide.SELL, owner=True)
+    t = tape_run(
+        [thin, above, above, back], [Order(0, "10", price="100.50"), owner_sells_6, Order(2, "10")]
+    )
+    assert t.pages == [] and not t.paused
+    grown = [
+        D(e["qty"]) for e in t.events if e["event"] in ("protected_from_fill", "protected_qty")
+    ]
+    assert grown[-1] == 14 and t.net == 14
+
+
+def test_a_pause_clears_on_a_verified_flat_so_a_house_re_entry_is_protected() -> None:
+    """#171: an owner add pauses the symbol; the owner then sells all 15, so the account is flat
+    with every order terminal. A later house re-entry is protected afresh and sold on a breach."""
+    script = [
+        Order(0, "10"),
+        Order(1, "5", owner=True),
+        Order(3, "15", side=OrderSide.SELL, owner=True),
+        Order(4, "10"),
+    ]
+    t = tape_run([FLAT] * 6 + [LOW] * 6, script)
+    assert t.pages == ["owner_add"]
+    entries = [D(e["entry"]) for e in t.events if e["event"] == "protected_from_fill"]
+    assert entries == [D("100.02"), D("100.02")]
+    assert _sold(t, owner=False) == 10 and t.net == 0 and not t.paused
+
+
+def test_a_pause_on_an_owner_position_clears_once_the_owner_sells_it_flat() -> None:
+    """#171 through #209: an owner BUY after the house's exit pauses the symbol; the owner then
+    sells those 5, a verified flat, so the house's later re-entry is protected and sold."""
+    dip, lower = Quote("99.60", "99.62"), Quote("99.30", "99.32")
+    script = [
+        Order(0, "10"),
+        Order(6, "5", owner=True),
+        Order(8, "5", side=OrderSide.SELL, owner=True),
+        Order(10, "10"),
+    ]
+    t = tape_run([FLAT] * 3 + [LOW] * 3 + [dip] * 5 + [lower] * 6, script)
+    assert t.pages == ["quantity_mismatch"] and not t.paused
+    entries = [D(e["entry"]) for e in t.events if e["event"] == "protected_from_fill"]
+    assert entries == [D("100.02"), D("99.62")] and _sold(t, owner=False) == 20 and t.net == 0
+
+
+def test_a_close_with_an_owner_order_still_working_keeps_the_pause() -> None:
+    """#171's other side: only a verified flat clears a pause. The owner adds 5, which pauses, and
+    rests another BUY below the market; the owner's sell of all 15 leaves that BUY working, so
+    the symbol stays paused and the later house entry is never protected."""
+    script = [
+        Order(0, "10"),
+        Order(1, "5", owner=True),
+        Order(2, "5", price="99.00", owner=True),
+        Order(3, "15", side=OrderSide.SELL, owner=True),
+        Order(4, "10"),
+    ]
+    t = tape_run([FLAT] * 6 + [LOW] * 6, script)
+    assert t.paused and t.pages == ["owner_add", "quantity_mismatch"]
+    assert _sold(t, owner=False) == 0 and t.status["owner-2"] == "ACCEPTED"
+
+
+def test_each_page_reaches_a_person_once_as_an_error_line() -> None:
+    """ADR-0007:17 "pages a person": a page is one ERROR log line naming its kind, reason and
+    instrument (northstar-trading@8256c16c exit_manager/strategy.py:1307), never memory alone."""
+    Scripted.paged = Paged()
+    script = [Order(0, "10"), Order(2, "5", owner=True), Order(3, "5", owner=True)]
+    t = tape_run([FLAT] * 5 + [LOW] * 6, script)
+    assert t.pages == ["owner_add"]  # two adds, one page
+    assert Scripted.paged.errors == ["add_paused: owner_add on PTEST.SIM"]
+
+
+def test_an_emulated_house_order_is_canceled_and_terminal_before_the_exit() -> None:
+    """The cancel-first wait counts every house order that is not closed, including one rc8's
+    OrderEmulator holds locally: an emulated BUY left working would reopen the position."""
+    script = [Order(0, "10"), Order(1, "5", price="99.00", emulated=True)]
+    t = tape_run([FLAT] * 3 + [LOW] * 3 + [Quote("98.90", "98.92")] * 4, script)
+    assert t.status["house-2"] == "CANCELED" and _sold(t) == 10 and t.net == 0
+
+
+def test_a_remainder_that_fills_while_its_cancel_is_in_flight_is_sold_with_the_position() -> None:
+    """ADR-0005:36: "a price rebound, cancel rejection or late fill cannot clear that intent". The
+    remainder fills 4 @ 100.50 at second 4, before its 1.5 s cancel lands, so there is no cancel
+    event; the retained crossing sells all 10 on the next bid although the bid has rebounded."""
+    thin, wide = Quote("100.00", "100.02", ask_size="6"), Quote("99.50", "100.55")
+    back = Quote("100.00", "100.50")  # the ask touches the remainder's limit
+    late = StaticLatencyModel(cancel_latency_nanos=1_500_000_000)
+    t = tape_run([thin] + [wide] * 3 + [back] * 4, [Order(0, "10", price="100.50")], latency=late)
+    assert t.status["house-1"] == "FILLED" and _sold(t) == 10 and t.net == 0
+
+
+def test_a_late_cancel_from_a_closed_cycle_never_sells_the_next_position() -> None:
+    """The crossing belongs to its position. Its remainder's cancel takes 3 s; meanwhile the owner
+    sells the 6 flat (a reset) and the house re-enters 10. The old cancel then lands, and the new
+    position, which never breached, is not sold."""
+    thin, wide = Quote("100.00", "100.02", ask_size="6"), Quote("99.50", "100.55")
+    again = Quote("100.40", "100.55")  # the ask stays above the remainder's 100.50 limit
+    late = StaticLatencyModel(cancel_latency_nanos=3_000_000_000)
+    owner_sells_6 = Order(4, "6", side=OrderSide.SELL, owner=True)
+    script = [Order(0, "10", price="100.50"), owner_sells_6, Order(5, "10")]
+    t = tape_run([thin] + [wide] * 4 + [again] * 6, script, latency=late)
+    assert t.status["house-1"] == "CANCELED" and _sold(t, owner=False) == 0 and t.net == 10
