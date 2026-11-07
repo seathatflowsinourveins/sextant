@@ -63,7 +63,7 @@ def order(
     side="SELL",
     status="NEW",
     owner: Any = False,
-    venue="venue-1",
+    venue: str | None = "venue-1",
     iid=IID,
 ):
     return OrderFact(cid, iid, side, D(qty), D(filled), status, venue, owner)

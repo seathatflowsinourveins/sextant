@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
-from nautilus_trader.model import InstrumentId
+from nautilus_trader.model import ClientId, InstrumentId
 
 from sextant.paper.sessions import Session
 
@@ -38,6 +38,7 @@ class PaperAccount:
             or not re.fullmatch(r"[A-Za-z0-9]+", self.namespace)
         ):
             raise ValueError("account, client ID and alphanumeric house namespace required")
+        ClientId.from_str(self.client_id)  # rc7 refuses it at load, not before every send's hook
         if (
             not isinstance(self.sessions, tuple)
             or not self.sessions

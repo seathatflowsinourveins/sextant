@@ -53,6 +53,20 @@ KNOWN = (
 )
 
 
+VERSIONS = frozenset({1, 2})
+RELEASED_VERSION = 2
+
+
+def _held(row: dict) -> bool:
+    """A row only this code version can read: released as never sent."""
+    return bool(row.get("unsent"))
+
+
+def local_close(order: "OrderFact") -> bool:
+    """A terminal, unfilled, venue-less report: how a refusal on this node looks when reported."""
+    return order.terminal and order.venue_order_id is None and order.filled == 0
+
+
 class CustodyError(RuntimeError):
     pass
 
@@ -189,10 +203,38 @@ class Custody:
         self.registrations: dict[str, dict] = {}
         self.snapshot: AccountSnapshot | None = None
         self.frozen: dict[str, str] = {}
+        self._disk: bytes | None = None  # the file as this object last read or wrote it
+        self._load(create=create)
+
+    def _read_disk(self) -> bytes | None:
         try:
-            if path.exists():
-                state = json.loads(path.read_text())
-                if state["scope"] != scope.key or state["version"] != 1:
+            return self.path.read_bytes()
+        except FileNotFoundError:
+            return None
+
+    def refresh(self) -> bool:
+        """Reload if the file changed since this object read or wrote it; True if it did.
+
+        The writer calls this once it (re)acquires the lease, as upstream takes its account
+        lock and then restores custody from its file before any venue connects
+        (northstar-trading@8256c16 run.py:193-223 admit_accounts, nodes/live.py:489-501
+        registry.restore). So a stale map never registers over another writer's rows. The old
+        snapshot goes too.
+        """
+        if self.loaded and self._read_disk() == self._disk:
+            return False
+        self.snapshot, self.frozen, self.registrations = None, {}, {}
+        self.loaded, self.error = False, None
+        self._load()
+        return True
+
+    def _load(self, *, create=False) -> None:
+        scope = self.scope
+        try:
+            raw = self._read_disk()
+            if raw is not None:
+                state = json.loads(raw)
+                if state["scope"] != scope.key or state["version"] not in VERSIONS:
                     raise ValueError("custody account/version mismatch")
                 for cid, row in state["house"].items():
                     if type(row["quantity"]) is not str:
@@ -202,7 +244,15 @@ class Custody:
                         raise ValueError("invalid house registration")
                     if not isinstance(row["lineage"], list) or not row["source"]:
                         raise ValueError("invalid house lineage")
-                self.registrations = state["house"]
+                    unsent = row.get("unsent")
+                    if unsent is not None and (
+                        type(unsent) is not str or not unsent or row["lineage"]
+                    ):
+                        raise ValueError("invalid unsent house record")
+                released = any(_held(row) for row in state["house"].values())
+                if released != (state["version"] == RELEASED_VERSION):
+                    raise ValueError("custody version disagrees with its released rows")
+                self.registrations, self._disk = state["house"], raw
                 self.loaded = True
             elif create:
                 self.loaded = True
@@ -214,8 +264,15 @@ class Custody:
     def _save(self) -> None:
         if not self.loaded:
             raise CustodyError("custody state not loaded")
+        # Version 2 marks released rows, so code without release_unsent refuses the file
+        # visibly instead of reading those rows as live unreported orders.
+        released = any(_held(row) for row in self.registrations.values())
+        version = RELEASED_VERSION if released else 1
         try:
-            write_atomic(self.path, dict(version=1, scope=self.scope.key, house=self.registrations))
+            write_atomic(
+                self.path, dict(version=version, scope=self.scope.key, house=self.registrations)
+            )
+            self._disk = self._read_disk()
         except OSError as error:
             self.loaded, self.error = False, str(error)
             raise
@@ -235,6 +292,8 @@ class Custody:
         )
         if cid in self.registrations:
             old = self.registrations[cid]
+            if old.get("unsent"):
+                raise CustodyError("a released unsent registration is closed; use a new client ID")
             if any(old[key] != row[key] for key in ("instrument", "side", "quantity", "source")):
                 raise CustodyError("house registration is immutable")
             return
@@ -243,6 +302,8 @@ class Custody:
 
     def link(self, cid: str, venue_id: str, *, predecessor: str | None = None):
         row = self.registrations[cid]
+        if row.get("unsent"):
+            raise CustodyError("a released unsent registration cannot gain venue lineage")
         if not venue_id or (predecessor is not None and predecessor not in row["lineage"]):
             raise CustodyError("replacement predecessor missing")
         if any(
@@ -278,6 +339,10 @@ class Custody:
                 if not order.owner_order and not order.terminal:
                     self.frozen[order.instrument] = "foreign open order"
                 continue
+            if row.get("unsent"):
+                if not local_close(order):
+                    self.frozen[order.instrument] = "an order released as never sent was reported"
+                continue
             if (
                 order.owner_order
                 or row["instrument"] != order.instrument
@@ -290,9 +355,27 @@ class Custody:
                 self.frozen[order.instrument] = "unresolved order outcome"
         present = {order.client_order_id for order in snapshot.orders}
         for cid, row in self.registrations.items():
-            if cid not in present:
+            if cid not in present and not row.get("unsent"):
                 self.frozen[row["instrument"]] = "registered order has no authoritative report"
         return True
+
+    def release_unsent(self, cid: str, *, reason: str) -> None:
+        """Close a house registration known never to have reached the wire (#151).
+
+        Upstream closes such a submit locally (order_reducer.py::_t_cancel_unsent,
+        execution.py::AlpacaSubmitAborted). Without this durable record it never gets an
+        authoritative report: submission_ready refuses every later order on the instrument,
+        observe freezes it and the guard flattens nothing. A linked or reported row was sent.
+        """
+        row = self.registrations.get(cid)
+        if not self.loaded or row is None or type(reason) is not str or not reason:
+            raise CustodyError("a loaded house registration and a reason string are required")
+        reported = () if self.snapshot is None else self.snapshot.orders
+        if row["lineage"] or any(o.client_order_id == cid and not local_close(o) for o in reported):
+            raise CustodyError("a linked or reported order was sent; it stays unresolved")
+        if not row.get("unsent"):
+            row["unsent"] = reason
+            self._save()
 
     def _order(self, cid: str) -> OrderFact | None:
         if self.snapshot is None:
@@ -330,7 +413,10 @@ class Custody:
             return False
         present = {order.client_order_id for order in snap.orders}
         return not any(
-            cid != exclude_client_id and row["instrument"] == iid and cid not in present
+            cid != exclude_client_id
+            and row["instrument"] == iid
+            and cid not in present
+            and not row.get("unsent")
             for cid, row in self.registrations.items()
         )
 
@@ -356,7 +442,7 @@ class Custody:
             return None
         terminal = {o.client_order_id for o in snap.orders if o.terminal}
         venue_ids = {o.venue_order_id for o in snap.orders if o.terminal and o.venue_order_id}
-        if set(self.registrations) - terminal:
+        if {cid for cid, row in self.registrations.items() if not row.get("unsent")} - terminal:
             return None
         if any(set(row["lineage"]) - venue_ids for row in self.registrations.values()):
             return None
