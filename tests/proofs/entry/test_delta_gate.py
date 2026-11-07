@@ -51,9 +51,12 @@ def test_out_of_order_print_clears_first_leg_without_extending_it(price):
     assert s.last == previous
     assert s.dollars == D("3006")
     assert s.volume == 300
-    for at in (3, 4, 5):
+    for at in (3, 4):
         feed(s, at, "10.03")
-    assert not s.first_leg_ready(D("10.03"), START + 5 * SEC)
+    assert not s.first_leg_ready(D("10.03"), START + 4 * SEC)
+    feed(s, 5, "10.03")  # N1's restart: only fresh prints re-form the run
+    assert s.first_leg_ready(D("10.03"), START + 5 * SEC)
+    assert s.run[0].ts_event == START + 3 * SEC
 
 
 @pytest.mark.parametrize("price", ["9.97", "10.02", "11.00"])

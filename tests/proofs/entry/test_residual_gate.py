@@ -11,7 +11,7 @@ from nautilus_trader.execution import (
 
 from sextant.entry.signals import Surge, TradeCoverage
 
-from .conftest import IID, SEC, START, params, quote, trade
+from .conftest import IID, SEC, START, bar, params, quote, trade
 from .test_delta_gate import reclaim_tape
 from .test_replay import replay
 from .test_signals import arm, feed, state
@@ -81,13 +81,86 @@ def test_a_stale_print_before_the_run_does_not_veto_it():
     assert s.first_leg_ready(D("10.03"), START + 6_700_000_000)
 
 
-def test_old_duplicate_is_dropped_without_changing_segment_vwap():
+def test_old_duplicate_cannot_double_count_and_untrusts_vwap_until_the_next_segment():
     s = state(first_leg_window_s="10", flow_share_window_s="10", covered_flow_baseline_min="0.1")
     first = trade(0, "10.00")
     assert s.on_trade(first, now=first.ts_init)
     feed(s, 20, "20.00")
     assert not s.on_trade(first, now=START + 21 * SEC)
-    assert s.volume == 200 and s.vwap == 15
+    assert s.volume == 200 and s.vwap is None and s.void_reason == "late print: VWAP untrusted"
+    assert feed(s, 22, "20.00") and s.vwap is None
+    s.reset_segment("next-segment", start_ns=START + 30 * SEC)
+    assert feed(s, 31, "20.00") and s.vwap == 20
+
+
+@pytest.mark.parametrize("lag", [700_000_000, 5_100_000_000], ids=["late", "stale-late"])
+def test_a_dropped_print_leaves_no_usable_biased_vwap(lag):
+    # Round 8 deleted this property's proof with its mechanism; it is kept, restated for the latch.
+    ordered, arrived = state(), state()
+    first, last = trade(0, "10.00", size=10000), trade(1, "10.01", size=100)
+    for tick in (first, trade("0.5", "9.60", size=10000), last):
+        ordered.on_trade(tick, now=tick.ts_init)
+    for tick in (first, last):
+        arrived.on_trade(tick, now=tick.ts_init)
+    late = trade("0.5", "9.60", size=10000, lag=lag)
+    for _ in range(2):
+        assert not arrived.on_trade(late, now=late.ts_init)
+        assert arrived.volume == 10100 and arrived.last == last and arrived.vwap is None
+    assert ordered.vwap == D("197001") / D("20100")
+    assert not arrived.reclaim_ready(D("10.03"), D("0.10"), late.ts_init, covered_flow=True)
+
+
+@pytest.mark.parametrize("lag", [0, 700_000_000], ids=["ordered", "late-block"])
+def test_native_late_block_cannot_bias_the_reclaim_level(instrument, tmp_path, lag):
+    data = [bar(-180), bar(-120), bar(-60)] + [
+        trade(at, price, size=size)
+        for at, price, size in (
+            (0, "10.00", 10000),
+            (1, "10.01", 100),
+            (2, "11.00", 100),
+            (3, "9.99", 100),
+            (4, "10.03", 100),
+            (5, "10.04", 100),
+            (6, "10.05", 100),
+            (7, "10.02", 100),
+            (8, "10.02", 100),
+            (9, "10.03", 100),
+        )
+    ]
+    data += [trade("0.5", "9.60", size=10000, lag=lag), quote("8.9", "10.02", "10.03")]
+    result = replay(
+        instrument,
+        tmp_path,
+        sorted(data, key=lambda item: item.ts_init),
+        surge=None,
+        confidence=D("0.5"),
+        coverage=coverage(9, 11, 2),
+    )
+    assert result.orders == [], result.events
+
+
+@pytest.mark.parametrize(
+    "size", [None, 10000, 100], ids=["clean-control", "biasing-block", "benign-print"]
+)
+def test_a_void_also_refuses_later_reclaims_in_the_segment(instrument, tmp_path, size):
+    first = [(0, "10.00"), (1, "11.00"), (2, "9.99"), (3, "10.03"), (4, "10.04")]
+    later = [(20, "11.00"), (21, "9.99"), (22, "10.03"), (23, "10.04"), (24, "10.05")]
+    later += [(25, "10.02"), (26, "10.02"), (27, "10.03")]
+    data = [bar(-180), bar(-120), bar(-60), quote("26.9", "10.02", "10.03")]
+    data += [trade(at, p, size=10000 if at == 0 else 100) for at, p in first + later]
+    if size:  # stamped inside candidate 1's reclaim span, arriving after its t4 print
+        data.append(trade("3.5", "9.60", size=size, lag=500_000_000))
+    result = replay(
+        instrument,
+        tmp_path,
+        sorted(data, key=lambda item: item.ts_init),
+        surge=None,
+        confidence=D("0.5"),
+        coverage=coverage(27, 14, 2),
+    )
+    assert len(result.orders) == (0 if size else 1), result.events
+    voids = [e["reason"] for e in result.events if e["action"] == "VOID"]
+    assert voids == ["late print: VWAP untrusted"] * bool(size), result.events
 
 
 @pytest.mark.parametrize("lag", [600_000_000, 5_100_000_000], ids=["late", "stale-late"])

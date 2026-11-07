@@ -11,7 +11,7 @@ from nautilus_trader.risk import FixedRiskSizer
 
 from sextant.entry.orders import funding_unit_cost
 from sextant.entry.parameters import EntryParameters, number
-from sextant.persist import write_json_atomic
+from sextant.execution.state import write_atomic
 
 
 class SegmentBasis:
@@ -45,7 +45,7 @@ class SegmentBasis:
             first_read=first_read,
             params_hash=self.params.params_hash,
         )
-        write_json_atomic(self.path, receipt)
+        write_atomic(self.path, receipt)
         self.receipt = receipt
         return basis
 

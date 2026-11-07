@@ -25,13 +25,18 @@ ReplayResult = namedtuple(
 
 def _guarded(method):
     def handle(self, *args):
-        if self.signals.failure and method.__name__ not in {"_expire", "on_order_event"}:
-            return
         try:
-            method(self, *args)
+            if not self.signals.failure or method.__name__ in {"_expire", "on_order_event"}:
+                method(self, *args)
         except Exception as exc:
-            self.signals.failure = f"{type(exc).__name__}: {exc}"
-            self._record("FAIL", reason=self.signals.failure)
+            reason = f"{type(exc).__name__}: {exc}"
+            self.signals.failure = self.signals.failure or reason
+            try:  # N4 first: re-request the TTL cancel, as Northstar cancel_working does
+                if self.expired or method.__name__ == "_expire":
+                    self._cancel()
+            finally:  # the event's own ts: rc8's nested order-event dispatch holds the clock
+                ts = getattr(next(iter(args), None), "ts_init", None) or self.clock.timestamp_ns()
+                self.events.append(dict(action="FAIL", ts=ts, reason=reason))
 
     return handle
 
@@ -202,7 +207,9 @@ class _ReplayEntry(Strategy):
             time_in_force=model.TimeInForce.DAY,
             tags=[f"params_hash={self.parameters.params_hash}", f"setup={setup}"],
         )
-        self.expiry_ns = expiry_ns = now + self.parameters.ns("entry_ttl_s")
+        ttl, window = self.parameters.ns("entry_ttl_s"), self.parameters.ns("first_leg_window_s")
+        end = self.signals.surge.first_print_ts + window if setup == "FIRST_LEG" else now + ttl
+        self.expiry_ns = expiry_ns = min(now + ttl, end)  # Northstar _expire_first_leg's min
         self._record(
             "SUBMIT",
             setup=setup,
@@ -220,11 +227,15 @@ class _ReplayEntry(Strategy):
     @_guarded
     def _expire(self, _event) -> None:
         self.expired = True
+        self._cancel()
+
+    def _cancel(self) -> None:
+        # Cancel first, as rc8 expire_gtd_order: the cancel is its only fallible act.
         if self.entry is not None:
             self.entry = self.cache.order(self.entry.client_order_id) or self.entry
         if self.entry is not None and self.entry.is_open and not self.entry.is_pending_cancel:
-            self._record("CANCEL")
             self.cancel_order(self.entry.client_order_id)
+            self._record("CANCEL")
 
     @_guarded
     def on_order_event(self, event) -> None:

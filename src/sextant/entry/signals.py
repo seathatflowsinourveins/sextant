@@ -1,4 +1,4 @@
-"""ADR-0004 N1/N2: uncertain setups refuse entry; late data never rebuilds state."""
+"""ADR-0004 N1/N2 entry state; late prints only refuse, under the manifest's owner exception."""
 
 from collections import deque, namedtuple
 from collections.abc import Mapping
@@ -110,12 +110,12 @@ class _Setup(_Reclaim):
     def __init__(self, params):
         super().__init__(params)
         self.surge: Surge | None = None
-        self.run = ()
+        self.run, self.extension = (), Extension.UNKNOWN
         self.last: TradeTick | None = None
-        self.identities = set()
+        self.identities, self.seen = set(), deque()  # upstream trade()'s retained identities
+        self.retain = max(params.ns("first_leg_window_s"), params.ns("first_leg_span_s"))
         self.previous = self.vwap = self.last_atr = None
-        self.dollars = self.volume = Decimal(0)
-        self.extension = Extension.UNKNOWN
+        self.dollars, self.volume, self.trusted = Decimal(0), Decimal(0), True
         self.windows = {
             duration: (deque(), Decimal(0))
             for duration in (
@@ -132,16 +132,11 @@ class _Setup(_Reclaim):
         self.windows[duration] = window, dollars
         return len(window), dollars
 
-    def void(self):
-        self.surge, self.run = None, ()
-        self.episode_started = self.touch = None
-        self._clear_retest()
-
     def advance(self, tick, atr) -> None:
         price, size = tick.price.as_decimal(), tick.size.as_decimal()
         self.dollars += price * size
         self.volume += size
-        self.vwap = self.dollars / self.volume
+        self.vwap = self.dollars / self.volume if self.trusted else None
         item = tick.ts_event, price * size
         for duration, (window, dollars) in self.windows.items():
             window.append(item)
@@ -178,8 +173,7 @@ class EntryState:
         self.bar_type = BarType.from_str(
             f"{instrument_id}-{params['atr_bar_minutes']}-MINUTE-LAST-EXTERNAL"
         )
-        self.last_bar_ns = self.atr_at = -1
-        self.atr_before = None
+        self.last_bar_ns, self.atr_at, self.atr_before = -1, -1, None
         self.setup = _Setup(params)
         self.reset_segment(segment, start_ns=start_ns)
 
@@ -231,39 +225,34 @@ class EntryState:
         if (
             self.failure
             or tick.instrument_id != self.instrument_id
-            or not self.segment_start_ns <= tick.ts_event <= tick.ts_init <= now
+            or not self.segment_start_ns <= tick.ts_event
+            or tick.ts_init > now
             or tick.price.as_decimal() <= 0
             or tick.size.as_decimal() <= 0
         ):
             return False
         try:
-            last_ns = -1 if self.last is None else self.last.ts_event
-            stale = now - tick.ts_event > self.params.ns("max_data_age_s")
-            if tick.ts_event < tick.ts_init or stale or tick.ts_event < last_ns:
-                starts = (
-                    self.run[0].ts_event if self.run else None,
-                    self.touch[0] if self.touch else None,
-                    self.hold_started,
-                    self.episode_started,
-                )
-                if (tick.ts_event <= last_ns or tick.ts_event < self.atr_at or stale) and any(
-                    start is not None and start <= tick.ts_event for start in starts
-                ):
-                    self.setup.void()
-                    self.void_reason = "late print within setup span"
-                if tick.ts_event < last_ns or stale or self.void_reason:
-                    return False
-            if self.last is None or tick.ts_event > self.last.ts_event:
-                self.setup.identities.clear()
+            setup, last_ns = self.setup, -1 if self.last is None else self.last.ts_event
             identity = str(tick.trade_id), tick.ts_event, tick.price.raw, tick.size.raw
-            if identity in self.setup.identities:
+            if identity in setup.identities:  # a retained duplicate is already in VWAP
                 return False
+            # Behind the prints or a known bar, clock-skewed or stale: dropped. Owner exception,
+            # refusal only: VWAP stays untrusted (N2 UNKNOWN) to the segment's end (manifest).
+            late = tick.ts_event < max(last_ns, self.atr_at) or tick.ts_init < tick.ts_event
+            if late or now - tick.ts_event > self.params.ns("max_data_age_s"):
+                restart = bool(self.run) and self.run[0].ts_event <= tick.ts_event
+                if restart or setup.trusted:
+                    self.void_reason = "late print: VWAP untrusted" + "; run restarted" * restart
+                setup.trusted, setup.vwap, setup.extension = False, None, Extension.UNKNOWN
+                setup.run = () if restart else setup.run
+                return False
+            while setup.seen and setup.seen[0][0] < tick.ts_event - setup.retain:
+                setup.identities.discard(setup.seen.popleft()[1])
             atr = self.atr.value if tick.ts_event > self.atr_at else self.atr_before
-            if tick.ts_event < self.atr_at:
-                atr = None
-            self.setup.advance(tick, atr)
-            self.setup.last = tick
-            self.setup.identities.add(identity)
+            setup.advance(tick, atr)
+            setup.last = tick
+            setup.identities.add(identity)
+            setup.seen.append((tick.ts_event, identity))
             return True
         except Exception as exc:
             self.failure = f"{type(exc).__name__}: {exc}"

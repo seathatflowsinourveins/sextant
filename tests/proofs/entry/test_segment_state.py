@@ -29,7 +29,7 @@ def test_segment_start_is_inclusive_and_resets_identity_scope():
     assert s.volume == 100
 
 
-def test_flow_windows_expire_without_latching_old_duplicates():
+def test_flow_windows_expire_and_an_old_print_untrusts_only_vwap():
     s = state()
     for i in range(400):
         assert feed(s, i, "10.00", identity=f"memory-{i}")
@@ -38,9 +38,10 @@ def test_flow_windows_expire_without_latching_old_duplicates():
     assert s.flow_dollars(START + 410 * SEC) == 49000
     old = trade(0, "9.00", identity="old-veto", lag=400 * SEC)
     assert not s.on_trade(old, now=old.ts_init)
-    assert not s.failure and s.void_reason is None
-    assert s.volume == 40000
-    assert feed(s, 401, "10.01")
+    assert not s.failure and s.void_reason == "late print: VWAP untrusted"
+    assert s.volume == 40000 and s.vwap is None
+    assert feed(s, 401, "10.01") and s.vwap is None
+    assert s.flow_dollars(START + 411 * SEC) == D("49001")  # t352..t399 and t401
 
 
 def test_compact_first_leg_keeps_its_true_origin_and_count_span():

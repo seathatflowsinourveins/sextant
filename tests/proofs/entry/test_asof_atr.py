@@ -5,9 +5,11 @@ from decimal import Decimal as D
 import pytest
 from nautilus_trader.model import Bar, Price, QuoteTick, TradeTick
 
+from sextant.entry.signals import Extension
+
 from .conftest import SEC, START, bar, quote, trade
 from .test_late_controls import BASE, native, tape
-from .test_signals import extended_state, feed
+from .test_signals import extended_state, feed, state
 
 
 def minute_bar_at(seconds):
@@ -72,13 +74,12 @@ def test_probe_state_level_classification_of_s():
         feed(s, at, price)
     b = minute_bar_at("6.6")
     assert s.on_bar(b, now=b.ts_init)
-    spike = trade("6.5", "10.50", lag=200_000_000)
+    volume, spike = s.volume, trade("6.5", "10.50", lag=200_000_000)
+    # Behind a known bar: its event-time classification is unknown, so it drops and latches.
     assert not s.on_trade(spike, now=spike.ts_init)
-    print(
-        "PROBE S extension with arrival ATR", s.atr.value, s.extension, "episode", s.episode_started
-    )
-    assert s.void_reason == "late print within setup span"
-    assert s.touch is None and s.hold_started is None
+    assert s.void_reason == "late print: VWAP untrusted" and s.volume == volume
+    assert s.vwap is None and s.extension is Extension.UNKNOWN
+    assert not s.reclaim_ready(D("10.50"), D("0.10"), spike.ts_init, covered_flow=True)
 
 
 def grid_bar(seconds, high, low, close, arrival_ms=0):
@@ -142,3 +143,44 @@ def test_probe_minute_grid_bar_hides_its_own_spike(instrument, tmp_path, s_lag_m
         [(o["status"], str(o.get("filled_qty"))) for o in result.orders],
     )
     assert result.orders == [], result.events
+
+
+@pytest.mark.parametrize(
+    "case", ["episode-shift", "straddling-touch"], ids=["same-ts-episode-shift", "straddling-touch"]
+)
+def test_a_print_behind_a_known_bar_never_lets_a_shifted_touch_buy(case):
+    # In time order the t1.5 print is classified with the pre-bar ATR and no reclaim follows:
+    # its touch (or the same-ts t2 sibling's) is voided by the t3 or t2 print below the level.
+    s = state()
+    for offset in (-180, -120, -60):
+        s.on_bar(bar(offset), now=START)
+    for tick in (trade(0, "10.00", size=100000), trade(1, "11.00")):
+        assert s.on_trade(tick, now=tick.ts_init)
+    template = bar(0)
+    known = START + 1_600_000_000
+    narrow = Bar(
+        template.bar_type,
+        template.open,
+        template.high,
+        template.low,
+        template.close,
+        template.volume,
+        known,
+        known,
+    )
+    assert s.on_bar(narrow, now=known)
+    if case == "episode-shift":
+        straddler = trade("1.5", "10.60", lag=200_000_000)
+        rest = [trade(2, "10.80", identity="t2-a"), trade(2, "9.99", identity="t2-b", lag=1)]
+        rest += [trade(3, "9.95")]
+    else:
+        straddler = trade("1.5", "9.99", lag=200_000_000)
+        rest = [trade(2, "9.95")]
+    assert not s.on_trade(straddler, now=straddler.ts_init)
+    assert s.void_reason == "late print: VWAP untrusted"
+    for at, price in ((4, "10.03"), (5, "10.04"), (6, "10.05"), (7, "10.02"), (8, "10.02")):
+        rest.append(trade(at, price))
+    for tick in [*rest, trade(9, "10.03")]:
+        s.on_trade(tick, now=tick.ts_init)
+    assert s.vwap is None
+    assert not s.reclaim_ready(D("10.03"), D("0.10"), START + 9 * SEC, covered_flow=True)
