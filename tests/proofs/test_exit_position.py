@@ -6,6 +6,7 @@ breach it, and three of them over 2 s persist (ADR-0005 X4).
 """
 
 import dataclasses
+from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import Decimal as D
 
@@ -98,12 +99,15 @@ def test_a_close_then_a_re_entry_is_protected_again() -> None:
     entries = [D(e["entry"]) for e in r.events if e["event"] == "protected_from_fill"]
     assert entries == [D("100.02"), D("99.62")]
     assert len(_breach_sells(r)) == 2 and _kinds(r).count("flat") == 2
+    # Each exit waits for its own persisted breach: the close clears the first one's crossing.
+    assert [e["ts"] for e in _breach_sells(r)] == [str(START + 7 * NS), str(START + 13 * NS)]
     assert [(D(q), D(f)) for _c, q, f in r.sells] == [(D(10), D(10))] * 2
     assert r.position == 0 and not r.paused and r.pages == []
 
 
-def test_the_decimal_basis_is_the_entry_orders_avg_px() -> None:
-    """rc7's Position.avg_px_open is an f64, so the basis is Order.avg_px (MIGRATION_V2.md:480)."""
+def test_the_decimal_basis_is_the_positions_avg_px_open() -> None:
+    """rc8's `Position.avg_px_open` is a Decimal (positions.md:419): within one cycle it equals the
+    opening order's `Order.avg_px`; across a close it does not (#169, below)."""
     r = run([THIN] + [FLAT] * 4 + [LOW] * 6, [Buy(0, "10", market=True)])
     assert [(q, p) for _c, q, p in r.buy_fills] == [("6", "100.02"), ("4", "100.03")]
     (avg,) = r.buy_avg_px.values()
@@ -222,8 +226,8 @@ def _tick(i: int, item: Quote | Trade) -> QuoteTick | TradeTick:
 
 
 def tape_run(
-    items: list[Quote | Trade],
-    script: list[Order],
+    items: Sequence[Quote | Trade],
+    script: Sequence[Order],
     params: ExitParams = FIXTURE,
     *,
     session: str = "rth",
@@ -327,6 +331,30 @@ def test_a_partial_entrys_remainder_is_canceled_and_terminal_before_the_breach_s
     assert [e["ts"] for e in t.events if e["event"] == "breach_sell_prearm"] == [
         str(START + 4 * NS)
     ]
+
+
+def test_a_crossing_is_retained_through_a_rebound_while_the_remainder_cancels() -> None:
+    """ADR-0005:36: a price rebound cannot clear the crossing's exit intent. The breach persists at
+    second 3 and the remainder's cancel goes out; the bid rebounds above the trigger at second 4,
+    and the house still sells its 6 there, once the remainder is terminal."""
+    thin = Quote("100.00", "100.02", ask_size="6")
+    wide, rebound = Quote("99.50", "100.55"), Quote("100.00", "100.55")
+    t = tape_run([thin] + [wide] * 3 + [rebound] * 3, [Order(0, "10", price="100.50")])
+    assert [(s, q, p) for _t, s, q, p, _o in t.fills] == [
+        ("BUY", "6", "100.02"),
+        ("SELL", "6", "100.00"),
+    ]
+    assert t.status == {"house-1": "CANCELED", "engine-SELL": "FILLED"} and t.net == 0
+
+
+def test_the_cancel_first_exit_cancels_only_the_houses_own_orders() -> None:
+    """ADR-0007:16-17: cancel acts only on house orders. An owner BUY LIMIT rests below the market
+    while the breach persists; the house exit never cancels it."""
+    owner_bid = Order(1, "5", price="99.00", owner=True)
+    t = tape_run([FLAT] * 3 + [LOW] * 4, [Order(0, "10"), owner_bid])
+    assert _sold(t, owner=False) == 10
+    assert t.status["owner-1"] == "ACCEPTED"
+    assert not [x for x in t.timeline if x[1] == "owner-1" and "Cancel" in x[2]]
 
 
 def test_a_reopened_position_takes_its_basis_from_its_own_fills() -> None:

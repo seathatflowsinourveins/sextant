@@ -12,16 +12,18 @@ broker order and holds no key.
 The protected quantity is the native position (R86, #129), read with `Cache.position` in
 `on_position_opened/changed/closed` (docs/concepts/cache.md:659-672, strategies.md:229-234). Each
 position event follows its `OrderFilled` (docs/concepts/events/index.md:123-160).
-- A fill of the position's opening order (`OrderFilled.client_order_id` equal to its
-  `opening_order_id`) grows the protection, so a partly filled entry is protected in full.
+- Only a position a house order opened is protected; the house is what this engine's own
+  `submit_order` sent (ADR-0007:16), and any other opener pauses the symbol and pages (#209).
+- The opening order's further fills grow the protection, so a partly filled entry is protected in
+  full. H moves only on eligible trades, never on the house's own fill (X2, #210).
 - A BUY from any other order is an add, which pauses the symbol and pages (ADR-0007:17). Nothing
   here clears a pause. Owner custody and reservations stay house logic (design row 8).
 - A close resets the protection, so a re-entry is protected afresh.
-- The basis is the opening order's `Order.avg_px`, a Decimal (MIGRATION_V2.md:480). rc7's
-  `Position.avg_px_open` is an f64, and Decimal only from rc8 (#87).
-- The managed sell is a reduce-only LIMIT for the whole position. If a later fill of the same entry
-  lands while it rests, the venue resizes it to the position: rc7's "Backtest reduce-only
-  resizing", docs/concepts/orders/advanced.md:228-231.
+- The basis is rc8's Decimal `Position.avg_px_open`, this cycle's own fills (v2.0.0rc8
+  docs/concepts/positions.md:144-145, :419), never `Order.avg_px`, which blends cycles (#169).
+- A persisted breach is retained intent: the house cancels its own working orders (an entry's
+  remainder) and proves them terminal, then one reduce-only LIMIT sells the position (ADR-0005:36;
+  northstar-trading@8256c16c docs/adr/0002-alpaca-native-brackets.md:354-366).
 
 Scope of this slice: the take-profit and backstop are computed as desired levels and reported. They
 are venue orders (Alpaca OCO/bracket, ADR-0005 X6), placed later by the custody row, not here.
@@ -125,6 +127,12 @@ class ExitEngine(Strategy):
         self.paused = False
         self.pages: list[str] = []
         self.events: list[dict[str, str]] = []
+        self.house: set[ClientOrderId] = set()
+        self.crossed = False
+
+    def submit_order(self, order, *args, **kwargs) -> None:
+        self.house.add(order.client_order_id)
+        super().submit_order(order, *args, **kwargs)
 
     def on_start(self) -> None:
         instrument_id = self.instrument_id
@@ -167,8 +175,6 @@ class ExitEngine(Strategy):
             # ADR-0007:17: an add to a held symbol from another order pauses it and pages.
             self._pause_and_page(event.ts_event, "owner_add", qty=qty)
         elif self.entry_order_id is not None:  # the same entry order, filling further
-            if self.protection is not None:
-                self.protection.high = max(self.protection.high, px)
             self._record(event.ts_event, "entry_fill", price=px, qty=qty)
         # A first fill opens the native position, and on_position_opened protects it.
 
@@ -179,11 +185,12 @@ class ExitEngine(Strategy):
         if self.paused:  # a page stands until a person clears it (ADR-0007:17)
             self._record(ts, "paused_unprotected", qty=event.quantity.as_decimal())
             return
-        if self.position_id is not None or event.side != PositionSide.LONG:
+        house = event.opening_order_id in self.house and event.side == PositionSide.LONG
+        if self.position_id is not None or not house:
             self._pause_and_page(ts, "quantity_mismatch", qty=event.quantity.as_decimal())
             return
         self.position_id, self.entry_order_id = event.position_id, event.opening_order_id
-        entry, qty = self._basis(), self._held()
+        qty, entry = self._held()
         self.protection = Protection(entry=entry, qty=qty, high=event.last_px.as_decimal())
         self._record(ts, "protected_from_fill", entry=entry, qty=qty)
         ok = self.bid is not None and self._quote_ok(ts)
@@ -193,15 +200,15 @@ class ExitEngine(Strategy):
         p = self.protection
         if p is None or self.paused or event.position_id != self.position_id:
             return
-        p.qty, p.entry = self._held(), self._basis()
+        p.qty, p.entry = self._held()
         self._record(event.ts_event, "protected_qty", qty=p.qty, entry=p.entry)
 
     def on_position_closed(self, event: PositionClosed) -> None:
         if event.position_id != self.position_id:
             return
         self._record(event.ts_event, "flat")
-        self.protection, self.position_id, self.entry_order_id = None, None, None
-        self.sell_id, self.arming, self.breach = None, Bar1mArming(), BreachRun()
+        self.protection = self.position_id = self.entry_order_id = self.sell_id = None
+        self.arming, self.breach, self.crossed = Bar1mArming(), BreachRun(), False
 
     # One step of X2-X5 on an eligible observation (bid in RTH, trade outside).
     def _step(self, ts: int, observed: Decimal | None) -> None:
@@ -240,7 +247,7 @@ class ExitEngine(Strategy):
         if p.trigger is None:
             return
         if self.sell_id is None:
-            if self.breach.observe(observed, p.trigger, ts, self.p):
+            if self.crossed or self.breach.observe(observed, p.trigger, ts, self.p):
                 self._sell(ts, p)
         else:
             self._chase(ts)
@@ -248,6 +255,12 @@ class ExitEngine(Strategy):
     def _sell(self, ts: int, p: Protection) -> None:
         """One managed LIMIT for the whole native position: one exit per quantity (ADR-0007:19)."""
         assert self.bid is not None and p.trigger is not None and self.position_id is not None
+        self.crossed = True  # retained intent: cancel the house's orders first (ADR-0005:36)
+        working = [o for o in self._working() if o.client_order_id in self.house]
+        for order in (o for o in working if not o.is_pending_cancel):
+            self.cancel_order(order.client_order_id)
+        if working:
+            return
         position = self.cache.position(self.position_id)
         assert position is not None and position.is_open
         # With either chase row unavailable (#98) the fast sell rests at the bid: chase off.
@@ -297,19 +310,17 @@ class ExitEngine(Strategy):
         prices = [price for _, price in self.trades]
         return max(prices) - min(prices)
 
-    def _held(self) -> Decimal:
-        """The protected native position's quantity, from the cache."""
+    def _held(self) -> tuple[Decimal, Decimal]:
+        """The protected native position's quantity and Decimal basis, from the cache."""
         assert self.position_id is not None
         position = self.cache.position(self.position_id)
-        assert position is not None
-        return position.quantity.as_decimal()
+        assert position is not None and isinstance(position.avg_px_open, Decimal)
+        return position.quantity.as_decimal(), position.avg_px_open
 
-    def _basis(self) -> Decimal:
-        """The opening order's `Order.avg_px`. While unpaused, every fill in the position is its."""
-        assert self.entry_order_id is not None
-        order = self.cache.order(self.entry_order_id)
-        assert order is not None and isinstance(order.avg_px, Decimal)
-        return order.avg_px
+    def _working(self) -> list:
+        """Open and in-flight orders on the symbol (docs/concepts/cache.md:458-476 at rc8)."""
+        iid, cache = self.instrument_id, self.cache
+        return [*cache.orders_open(instrument_id=iid), *cache.orders_inflight(instrument_id=iid)]
 
     def _pause_and_page(self, ts: int, reason: str, **values: Decimal) -> None:
         """ADR-0007:17-19: stop managing the symbol and page a person, once per reason."""
