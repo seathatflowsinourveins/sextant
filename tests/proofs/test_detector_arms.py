@@ -14,6 +14,7 @@ from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from importlib.metadata import version
 from pathlib import Path
+from typing import Any, cast
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -205,6 +206,32 @@ def test_bocpd_matches_hand_computed_nonconstant_hazard_recursion() -> None:
     assert bocpd.run_length_step((D(1),), (D("0.2"),), (D("0.1"),)) == (D("0.1"), D("0.9"))
 
 
+def test_bocpd_evaluates_nonconstant_elapsed_duration_hazard_at_r_plus_one():
+    from sextant.research.detectors.common import digest
+
+    durations = []
+
+    def hazard(tau):
+        durations.append(tau)
+        return {0: D("0.9"), 1: D("0.1"), 2: D("0.5")}[tau]
+
+    prior = (D("0.25"), D("0.75"))
+    arm = bocpd.BocpdArm(bocpd_rows(), initial=prior)
+    obs = observation(1)
+    actual = arm.update(obs, as_of_ns=obs.ts_init, predictive=(D("0.2"), D("0.8")), hazard=hazard)
+    assert durations == [1, 2]  # Eq.(4), not Algorithm 1's printed H(r).
+    assert bocpd.HAZARD_CONVENTION.value == "equation (4): H(r+1)"
+    assert actual.params_hash == arm.params_hash
+    assert actual.probabilities == tuple(v / D("0.65") for v in (D("0.305"), D("0.045"), D("0.30")))
+    assert arm.params_hash == digest(
+        {
+            "rows": [r.identity for r in sorted(bocpd_rows(), key=lambda r: r.name)],
+            "initial": prior,
+            "hazard_convention": bocpd.HAZARD_CONVENTION.identity,
+        }
+    )
+
+
 def test_bocpd_constant_hazard_is_not_a_changepoint_alarm_probability() -> None:
     prior = (D(1),)
     for i in range(1, 20):
@@ -237,23 +264,23 @@ def test_bocpd_missing_authority_or_model_output_does_not_advance_inference() ->
     obs = observation(1)
     assert (
         "unavailable"
-        in missing.update(obs, as_of_ns=obs.ts_init, predictive=(D(1),), hazards=(D("0.1"),)).reason
+        in missing.update(
+            obs, as_of_ns=obs.ts_init, predictive=(D(1),), hazard=lambda _: D("0.1")
+        ).reason
     )
     arm = bocpd.BocpdArm(bocpd_rows(), initial=(D(1),))
     assert (
         arm.update(
-            obs, as_of_ns=obs.ts_event, predictive=(D(1),), hazards=(D("0.1"),)
+            obs, as_of_ns=obs.ts_event, predictive=(D(1),), hazard=lambda _: D("0.1")
         ).probabilities
         is None
     )
-    assert (
-        arm.update(obs, as_of_ns=obs.ts_init, predictive=None, hazards=None).probabilities is None
-    )
-    result = arm.update(obs, as_of_ns=obs.ts_init, predictive=(D(1),), hazards=(D("0.1"),))
+    assert arm.update(obs, as_of_ns=obs.ts_init, predictive=None, hazard=None).probabilities is None
+    result = arm.update(obs, as_of_ns=obs.ts_init, predictive=(D(1),), hazard=lambda _: D("0.1"))
     assert result.probabilities == (D("0.1"), D("0.9"))
     assert result.reason == "inference_only_no_alarm_rule"
     with pytest.raises(ValueError, match="duplicate"):
-        arm.update(obs, as_of_ns=obs.ts_init, predictive=(D(1),), hazards=(D("0.1"),))
+        arm.update(obs, as_of_ns=obs.ts_init, predictive=(D(1),), hazard=lambda _: D("0.1"))
 
 
 def test_bocpd_boundary_identity_extreme_hazards_and_retry_after_zero_evidence() -> None:
@@ -261,7 +288,9 @@ def test_bocpd_boundary_identity_extreme_hazards_and_retry_after_zero_evidence()
     unavailable = bocpd.BocpdArm(rows, initial=None)
     obs = observation(1)
     assert (
-        unavailable.update(obs, as_of_ns=2 * NS, predictive=(ONE,), hazards=(ONE,)).probabilities
+        unavailable.update(
+            obs, as_of_ns=2 * NS, predictive=(ONE,), hazard=lambda _: ONE
+        ).probabilities
         is None
     )
     first = bocpd.BocpdArm(rows, initial=(ONE,))
@@ -269,9 +298,9 @@ def test_bocpd_boundary_identity_extreme_hazards_and_retry_after_zero_evidence()
     assert first.params_hash != other.params_hash
     assert first.params_hash == bocpd.BocpdArm(tuple(reversed(rows)), initial=(ONE,)).params_hash
     with pytest.raises(ValueError, match="zero predictive evidence"):
-        first.update(obs, as_of_ns=2 * NS, predictive=(D(0),), hazards=(D(0),))
+        first.update(obs, as_of_ns=2 * NS, predictive=(D(0),), hazard=lambda _: D(0))
     assert first.update(
-        obs, as_of_ns=2 * NS, predictive=(D(2),), hazards=(D(0),)
+        obs, as_of_ns=2 * NS, predictive=(D(2),), hazard=lambda _: D(0)
     ).probabilities == (D(0), ONE)
     assert bocpd.run_length_step((D("0.4"), D("0.6")), (ONE, ONE), (ONE, ONE)) == (ONE, D(0), D(0))
     assert bocpd.run_length_step((D("0.4"), D("0.6")), (D(2), D(2)), (D(0), D(0))) == (
@@ -290,9 +319,11 @@ def opened(day: date = DAY) -> int:
     return int(datetime.combine(day, time(9, 30), NY).timestamp()) * NS
 
 
-def bar(day: date = DAY, *, step: int = 1, i: int = 1, delay: int = 0) -> Bar:
+def bar(
+    day: date = DAY, *, step: int = 1, i: int = 1, delay: int = 0, internal: bool = False
+) -> Bar:
     at = opened(day) + step * i * 60 * NS
-    kind = BarType.from_str(f"{ID}-{step}-MINUTE-LAST-EXTERNAL")
+    kind = BarType.from_str(f"{ID}-{step}-MINUTE-LAST-{'INTERNAL' if internal else 'EXTERNAL'}")
     return Bar(
         kind,
         Price.from_str("6.00"),
@@ -305,72 +336,298 @@ def bar(day: date = DAY, *, step: int = 1, i: int = 1, delay: int = 0) -> Bar:
     )
 
 
-def windows() -> tuple[sip.OpeningWindow, tuple[sip.OpeningWindow, ...], sip.DailyFacts]:
+def windows(spec=None) -> tuple[sip.OpeningWindow, tuple[sip.OpeningWindow, ...], sip.DailyFacts]:
+    active = spec if spec is not None else sip.StocksInPlaySpec(sip.PARAMETERS)
+    lookback = active.integer("lookback")
     days = tuple(
-        DAY - timedelta(days=i) for i in range(20, 0, -1) if (DAY - timedelta(days=i)).weekday() < 5
-    )[-14:]
-    current = sip.OpeningWindow(ID, DAY, D(6), D("6.5"), D(100), opened() + 300 * NS)
-    prior = tuple(
-        sip.OpeningWindow(ID, d, D(6), D("6.5"), D(100), opened(d) + 300 * NS) for d in days
-    )
+        DAY - timedelta(days=i)
+        for i in range(lookback * 2, 0, -1)
+        if (DAY - timedelta(days=i)).weekday() < 5
+    )[-lookback:]
+
+    def fixture(day):
+        return sip.OpeningWindow(
+            ID,
+            day,
+            D(6),
+            D("6.5"),
+            D(100),
+            opened(day) + active.integer("opening_window") * 60 * NS,
+            coverage_complete=True,
+            params_hash=active.params_hash,
+            composite_type=active.composite_type(ID),
+        )
+
+    current = fixture(DAY)
+    prior = tuple(fixture(d) for d in days)
     facts = sip.DailyFacts(ID, days, D(1_000_000), D("0.51"), opened() - 1)
     return current, prior, facts
 
 
-@pytest.mark.parametrize("day", [DAY, date(2026, 7, 6)])
+@pytest.mark.parametrize(
+    "name,value",
+    [
+        ("open_above", D(7)),
+        ("adv_at_least", D(2_000_000)),
+        ("atr_above", D("0.60")),
+        ("rvol_at_least", D("1.1")),
+    ],
+)
+def test_registry_mutation_changes_applied_filter_and_result_hash(monkeypatch, name, value):
+    def result():
+        current, prior, facts = windows()
+        return sip.screen(
+            current,
+            prior,
+            facts=facts,
+            expected_sessions=facts.sessions,
+            as_of_ns=current.known_at_ns,
+        )
+
+    original = result()
+    assert original.passes_local_filters is True
+    rows = tuple(
+        replace(row, value=value, source="fixture mutation only", calibration_state="UNCALIBRATED")
+        if row.name == name
+        else row
+        for row in sip.PARAMETERS
+    )
+    monkeypatch.setattr(sip, "PARAMETERS", rows)
+    changed = result()
+    assert changed.passes_local_filters is False
+    assert changed.params_hash != original.params_hash
+
+
+@pytest.mark.parametrize("coverage", [None, False])
+def test_screen_refuses_current_and_prior_windows_without_coverage_evidence(coverage):
+    current, prior, facts = windows()
+    for c, p in [
+        (replace(current, coverage_complete=coverage), prior),
+        (current, (*prior[:-1], replace(prior[-1], coverage_complete=coverage))),
+    ]:
+        result = sip.screen(
+            c, p, facts=facts, expected_sessions=facts.sessions, as_of_ns=current.known_at_ns
+        )
+        assert result.rvol is None and result.passes_local_filters is None
+        assert result.reason == "opening_coverage_unavailable"
+
+
+def test_screen_rejects_mismatched_parameter_identity():
+    current, prior, facts = windows()
+    with pytest.raises(ValueError, match="parameter identity"):
+        sip.screen(
+            replace(current, params_hash="f" * 64),
+            prior,
+            facts=facts,
+            expected_sessions=facts.sessions,
+            as_of_ns=current.known_at_ns,
+        )
+
+
+def test_window_duration_and_lookback_rows_govern_construction_and_readiness():
+    rows = tuple(
+        replace(
+            row,
+            value={"opening_window": 10, "lookback": 3}[row.name],
+            source="fixture override",
+            calibration_state="UNCALIBRATED",
+        )
+        if row.name in {"opening_window", "lookback"}
+        else row
+        for row in sip.PARAMETERS
+    )
+    active = sip.StocksInPlaySpec(rows)
+    current, prior, facts = windows(active)
+    assert len(prior) == 3 and current.known_at_ns == opened() + 600 * NS
+    composite = active.composite_type(ID)
+    completed = (bar(step=10, internal=True),)
+    window = sip.opening_window(
+        completed,
+        session_open_ns=opened(),
+        as_of_ns=current.known_at_ns,
+        coverage_complete=True,
+        composite_type=composite,
+        spec=active,
+    )
+    assert window is not None and window.params_hash == active.params_hash
+    assert (
+        sip.screen(
+            current,
+            prior,
+            facts=facts,
+            expected_sessions=facts.sessions,
+            as_of_ns=current.known_at_ns,
+            spec=active,
+        ).passes_local_filters
+        is True
+    )
+    assert (
+        sip.screen(
+            current,
+            prior[:-1],
+            facts=facts,
+            expected_sessions=facts.sessions,
+            as_of_ns=current.known_at_ns,
+            spec=active,
+        ).rvol
+        is None
+    )
+    with pytest.raises(ValueError, match="native composite"):
+        sip.opening_window(
+            (bar(step=5, internal=True),),
+            session_open_ns=opened(),
+            as_of_ns=current.known_at_ns,
+            coverage_complete=True,
+            composite_type=composite,
+            spec=active,
+        )
+
+
+def test_varying_opening_volumes_use_the_bound_previous_windows_mean_interpretation():
+    current, prior, facts = windows()
+    current = replace(current, volume=D(1000))
+    prior = tuple(replace(w, volume=D(i * 100)) for i, w in enumerate(prior, 1))
+    result = sip.screen(
+        current, prior, facts=facts, expected_sessions=facts.sessions, as_of_ns=current.known_at_ns
+    )
+    assert result.rvol == D(1000) / D(750) and result.passes_local_filters is True
+    assert current.volume / prior[-1].volume < 1  # Literal p.14 would fail this case.
+    active = sip.StocksInPlaySpec(sip.PARAMETERS)
+    row = active.mapping["denominator"]
+    assert row.value == "mean_prior_opening_windows" and row.calibration_state == "UNCALIBRATED"
+    assert "section 5 p.19" in row.source and "9423012e9f0199e3" in row.source
+    assert result.params_hash == active.params_hash
+    # A different interpretation cannot silently run as the supported mean.
+    with pytest.raises(ValueError, match="denominator"):
+        sip.StocksInPlaySpec(
+            tuple(
+                replace(r, value="previous_day") if r.name == "denominator" else r
+                for r in sip.PARAMETERS
+            )
+        )
+
+
+def test_spec_identity_is_the_validated_active_mapping_including_source_and_interpretation():
+    from sextant.research.detectors.common import digest
+
+    active = sip.StocksInPlaySpec(sip.PARAMETERS)
+    assert active.params_hash == digest(
+        {name: row.identity for name, row in active.mapping.items()}
+    )
+    assert sip.StocksInPlaySpec(tuple(reversed(sip.PARAMETERS))).params_hash == active.params_hash
+    with pytest.raises(TypeError):
+        # Deliberately test runtime refusal as well as Mapping's static prohibition.
+        cast(Any, active.mapping)["lookback"] = active.mapping["lookback"]
+    changed = sip.StocksInPlaySpec(
+        tuple(
+            replace(r, source=r.source + "; fixture annotation") if r.name == "denominator" else r
+            for r in sip.PARAMETERS
+        )
+    )
+    assert changed.params_hash != active.params_hash
+    unavailable = sip.screen(None, (), expected_sessions=(), facts=None, as_of_ns=0, spec=changed)
+    assert unavailable.params_hash == changed.params_hash
+    for rows in (
+        sip.PARAMETERS[:-1],
+        (*sip.PARAMETERS[:-1], sip.PARAMETERS[0]),
+        tuple(replace(r, value=0) if r.name == "lookback" else r for r in sip.PARAMETERS),
+        tuple(replace(r, unit="USD") if r.name == "lookback" else r for r in sip.PARAMETERS),
+    ):
+        with pytest.raises(ValueError):
+            sip.StocksInPlaySpec(rows)
+
+
+@pytest.mark.parametrize("day", [DAY, date(2026, 7, 6), date(2026, 3, 9), date(2026, 11, 27)])
 def test_native_opening_bars_are_unavailable_until_completed_and_received(day) -> None:
-    minutes = tuple(bar(day, i=i) for i in range(1, 6))
+    composite = sip.StocksInPlaySpec(sip.PARAMETERS).composite_type(ID)
+    completed = (bar(day, step=5, internal=True),)
     end = opened(day) + 300 * NS
     assert (
         sip.opening_window(
-            minutes, session_open_ns=opened(day), as_of_ns=end - 1, coverage_complete=True
+            completed,
+            session_open_ns=opened(day),
+            as_of_ns=end - 1,
+            coverage_complete=True,
+            composite_type=composite,
         )
         is None
     )
     window = sip.opening_window(
-        minutes, session_open_ns=opened(day), as_of_ns=end, coverage_complete=True
+        completed,
+        session_open_ns=opened(day),
+        as_of_ns=end,
+        coverage_complete=True,
+        composite_type=composite,
     )
-    assert window is not None and window.volume == 500 and window.known_at_ns == end
-    delayed = (*minutes[:-1], bar(day, i=5, delay=10))
+    assert window is not None and window.volume == 100 and window.known_at_ns == end
+    assert window.coverage_complete is True and window.composite_type == composite
+    delayed = (bar(day, step=5, delay=10, internal=True),)
     assert (
         sip.opening_window(
-            delayed, session_open_ns=opened(day), as_of_ns=end, coverage_complete=True
+            delayed,
+            session_open_ns=opened(day),
+            as_of_ns=end,
+            coverage_complete=True,
+            composite_type=composite,
         )
         is None
     )
     assert (
         sip.opening_window(
-            delayed, session_open_ns=opened(day), as_of_ns=end + 10, coverage_complete=True
+            delayed,
+            session_open_ns=opened(day),
+            as_of_ns=end + 10,
+            coverage_complete=True,
+            composite_type=composite,
         )
         is not None
     )
-    assert (
+    with pytest.raises(ValueError, match="native composite"):
         sip.opening_window(
-            (bar(day, step=5),), session_open_ns=opened(day), as_of_ns=end, coverage_complete=True
+            (bar(day, step=5),),
+            session_open_ns=opened(day),
+            as_of_ns=end,
+            coverage_complete=True,
+            composite_type=composite,
         )
-        is not None
-    )
 
 
 def test_partial_missing_uncovered_mixed_or_shifted_windows_do_not_become_opening_bars() -> None:
     minutes = tuple(bar(i=i) for i in range(1, 6))
     end = opened() + 300 * NS
-    for bad in (minutes[:-1], minutes[1:], (minutes[0],) * 5):
+    composite = sip.StocksInPlaySpec(sip.PARAMETERS).composite_type(ID)
+    for bad in (minutes, minutes[:-1], minutes[1:], (minutes[0],) * 5, ()):
         assert (
-            sip.opening_window(bad, session_open_ns=opened(), as_of_ns=end, coverage_complete=True)
+            sip.opening_window(
+                bad,
+                session_open_ns=opened(),
+                as_of_ns=end,
+                coverage_complete=True,
+                composite_type=composite,
+            )
             is None
         )
     assert (
-        sip.opening_window(minutes, session_open_ns=opened(), as_of_ns=end, coverage_complete=None)
+        sip.opening_window(
+            (bar(step=5, internal=True),),
+            session_open_ns=opened(),
+            as_of_ns=end,
+            coverage_complete=None,
+            composite_type=composite,
+        )
         is None
     )
     with pytest.raises(ValueError, match="09:30"):
         sip.opening_window(
-            minutes, session_open_ns=opened() - 60 * NS, as_of_ns=end, coverage_complete=True
+            minutes,
+            session_open_ns=opened() - 60 * NS,
+            as_of_ns=end,
+            coverage_complete=True,
+            composite_type=composite,
         )
-    with pytest.raises(ValueError, match="one instrument"):
+    with pytest.raises(ValueError, match="native composite"):
         other = Bar(
-            BarType.from_str("OTHER.XNAS-1-MINUTE-LAST-EXTERNAL"),
+            BarType.from_str("OTHER.XNAS-5-MINUTE-LAST-INTERNAL"),
             Price.from_str("6"),
             Price.from_str("7"),
             Price.from_str("5"),
@@ -380,7 +637,11 @@ def test_partial_missing_uncovered_mixed_or_shifted_windows_do_not_become_openin
             end,
         )
         sip.opening_window(
-            (*minutes[:-1], other), session_open_ns=opened(), as_of_ns=end, coverage_complete=True
+            (other,),
+            session_open_ns=opened(),
+            as_of_ns=end,
+            coverage_complete=True,
+            composite_type=composite,
         )
 
 
@@ -421,7 +682,7 @@ def test_unknown_baseline_native_atr_prior_dates_and_future_receipts_stay_unavai
         check(p=(*prior[:-1], replace(prior[-1], known_at_ns=current.known_at_ns + 1))).rvol is None
     )
     assert check(f=replace(facts, sessions=facts.sessions[:-1])).passes_local_filters is None
-    with pytest.raises(ValueError, match="09:35"):
+    with pytest.raises(ValueError, match="configured completion"):
         replace(current, known_at_ns=opened() + 299 * NS)
     assert {r.name: r.value for r in sip.PARAMETERS} == {
         "opening_window": 5,
@@ -431,8 +692,15 @@ def test_unknown_baseline_native_atr_prior_dates_and_future_receipts_stay_unavai
         "atr_above": D("0.50"),
         "rvol_at_least": D(1),
         "top_n": 20,
+        "denominator": sip.DENOMINATOR,
     }
-    assert all(r.calibration_state == "PUBLISHED" for r in sip.PARAMETERS)
+    assert all(
+        r.calibration_state == "PUBLISHED" for r in sip.PARAMETERS if r.name != "denominator"
+    )
+    assert (
+        next(r for r in sip.PARAMETERS if r.name == "denominator").calibration_state
+        == "UNCALIBRATED"
+    )
 
 
 def test_screen_refuses_future_current_missing_facts_and_mixed_prior_instruments() -> None:
@@ -472,7 +740,8 @@ def test_screen_refuses_future_current_missing_facts_and_mixed_prior_instruments
 
 def test_bars_must_be_close_stamped_last_prices_not_quote_volume() -> None:
     end = opened() + 300 * NS
-    source = bar(step=5)
+    source = bar(step=5, internal=True)
+    composite = sip.StocksInPlaySpec(sip.PARAMETERS).composite_type(ID)
     for kind in (f"{ID}-5-MINUTE-BID-EXTERNAL", f"{ID}-5-SECOND-LAST-EXTERNAL"):
         invalid = Bar(
             BarType.from_str(kind),
@@ -486,7 +755,11 @@ def test_bars_must_be_close_stamped_last_prices_not_quote_volume() -> None:
         )
         with pytest.raises(ValueError):
             sip.opening_window(
-                (invalid,), session_open_ns=opened(), as_of_ns=end, coverage_complete=True
+                (invalid,),
+                session_open_ns=opened(),
+                as_of_ns=end,
+                coverage_complete=True,
+                composite_type=composite,
             )
     start_stamped = Bar(
         source.bar_type,
@@ -500,7 +773,11 @@ def test_bars_must_be_close_stamped_last_prices_not_quote_volume() -> None:
     )
     assert (
         sip.opening_window(
-            (start_stamped,), session_open_ns=opened(), as_of_ns=end, coverage_complete=True
+            (start_stamped,),
+            session_open_ns=opened(),
+            as_of_ns=end,
+            coverage_complete=True,
+            composite_type=composite,
         )
         is None
     )

@@ -30,6 +30,22 @@ and native-ATR readiness; do not fill absent minutes or smoothing authority from
 the paper's mention of Wilder. Preserve the paper's long/short and platform/data
 scope, including notation ambiguities, when proposing a later adaptation.
 
+The post-merge dsh review (`c7f809d9c0c1bbc18f27e267110d0c3afa0badb7274521f6c1cf0d02803fe035`)
+found that decorative rows can hash a method the runtime never used. Consume one
+validated immutable mapping; mutate its rows in proofs and require both changed
+behavior and changed hashes. Carry that hash, independent coverage and the native
+composite configuration into every opening window, and recheck them in the screen.
+Native composite delivery strips the source suffix and can emit a partial window:
+its presence alone supplies no coverage. Never rebuild its OHLCV arithmetic locally.
+
+Paper conventions need executable distinctions. This component uses equation (4)'s
+`H(r+1)` by evaluating a caller's duration hazard at `r+1`, and binds that convention
+to identity. Its RVOL denominator row explicitly chooses the prior-window mean
+from the hash-pinned paper's §5/p.19, labels §3/p.14's notation as interpreted, and
+remains `UNCALIBRATED`. Unequal volumes and a nonconstant duration hazard distinguish
+the alternatives. These defect fixes leave the owner's **NOT ADMITTED** ruling and
+acquisition HOLD unchanged; no component proof supplies a market result or alarm.
+
 **Witness/installation state:** `tests/proofs/test_detector_arms.py` uses fabricated
 samples, denied sockets, installed-source hashes and native bars. The components
 have no acquisition, runner, ledger or order writer. No market study or empirical

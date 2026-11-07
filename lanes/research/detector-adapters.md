@@ -24,23 +24,28 @@ handoff. K2/K3 remain **house-incumbent E0 comparisons**, not source truth.
   [author PDF](https://concretumgroup.com/wp-content/uploads/2026/02/A-Profitable-Day-Trading-Strategy-For-The-U.S.-Equity-Market.pdf),
   SHA-256 `9423012e9f0199e3f6925c500725815c236d7ddbdd7500d50d10bac2be745e91`,
   sections 2.1, 3 and 4, pp. 9, 14–15. SPDX `NOASSERTION`, informational.
-  The denominator is implemented as the mean of the 14 supplied prior opening
-  windows, following the previous-14-days description (also section 5, p. 19).
-  Page 14 prints `t-1` under the sum indexed by `i`; that notation ambiguity must
-  be considered in the dsh method review, not silently treated as verified parity.
+  The supported denominator interpretation is the mean of the configured prior
+  opening windows, following section 5, p. 19's previous-days average. Section 3,
+  p. 14 prints `t-1` under the sum indexed by `i`, which would give the previous
+  day's volume if read literally. The `denominator` row is explicitly
+  `UNCALIBRATED`, cites both passages and is included in the active hash; this is
+  a disclosed interpretation, not verified full-paper replication or admission.
 - **NautilusTrader v2.0.0rc7**, LGPL-3.0,
   `nautechsystems/nautilus_trader@55c0e82053142bce3a5cba4de4221d3929c2d3bc`:
-  native `Bar`, `InstrumentId`, `Price` and `Quantity`; no substitute indicator or
-  backtest engine. Row 11's `sextant.data.catalog` supplies the close-stamp convention.
+  native `Bar`, `InstrumentId`, `Price` and `Quantity`; composite syntax in
+  `docs/concepts/data/index.md:218-296` and standard internal output in
+  `python/tests/unit/backtest/test_bar_aggregation.py`. Native aggregation owns
+  OHLCV arithmetic. Row 11's `sextant.data.catalog` supplies the close-stamp convention.
   `common.Parameter` follows ADR-0018 L3 and the existing ranking registry's
   explicit rows and canonical SHA-256 identity, with missing/specification values.
 
 ## Integration seams
 
 Import modules from `sextant.research.detectors`; none performs I/O or writes a
-ledger. Each result carries a `params_hash`. This identifies parameter/source
-specifications only, **not** complete input provenance, code SHA or admission.
-The coordinator must bind all of those separately.
+ledger. Detector outputs, factory opening windows and screens carry `params_hash`.
+This identifies parameter/source specifications only, **not** complete input
+provenance, code SHA or admission. `DailyFacts` is a caller-owned input. The
+coordinator must bind all remaining identities separately.
 
 - **Page–Hinkley:** `PageHinkleyArm(rows, observation_source=...)` requires exactly
   the five named `PARAMETERS` rows. Every shipped value is `None/UNAVAILABLE`;
@@ -55,8 +60,10 @@ The coordinator must bind all of those separately.
   `PARAMETERS` (`hazard`, `observation_model`, `boundary_condition`); the separate
   `alarm_rule` row stays unavailable and is not accepted by this inference API.
   The explicit boundary vector indexes run lengths from zero. `update` requires
-  one predictive density and `H(r+1)` per old run length, per section 2.1's
-  transition definition; Algorithm 1 abbreviates its hazard index. The caller
+  one predictive density per old run length and a callable `hazard=H(tau)`.
+  The adapter evaluates it at `tau=r+1`: **equation (4), H(r+1)**, included with
+  its source in `params_hash`. Algorithm 1 prints H(r), a different index; this
+  component explicitly chooses equation (4), not an asserted abbreviation. The caller
   owns sufficient statistics and their causal update (step 8), model input
   identity and alignment. State advances only after successful inference. The
   recurrence normalizes each step using `Decimal` arithmetic (subject to its
@@ -64,15 +71,27 @@ The coordinator must bind all of those separately.
   Zero predictive evidence raises rather than inventing a posterior. Constant
   hazard makes `p(r_t=0)` constant: no alarm/direction field or threshold exists.
   Per-step space/work grows linearly; total work is quadratic without pruning.
-- **Stocks in Play:** `opening_window` accepts one native 5-minute bar or five
-  native 1-minute LAST bars covering 09:30–09:35 New York, close-stamped and received
-  by `as_of_ns`, with independent `coverage_complete=True` evidence. This flag is
-  not inferred from bar count. `screen` requires exactly the caller's 14 prior
-  exchange-session windows and matching `DailyFacts`. RVOL is **share volume** over
-  mean time-matched opening share volume, never dollars or trade count. Published
-  local filters are open `> $5`, prior ADV `>= 1,000,000` shares/day, prior ATR
-  `> $0.50` and RVOL `>= 1`. `PUBLISHED` rows are replication specifications, not
-  calibrated success. Top-20 selection requires the external eligible cross-section;
+- **Stocks in Play:** `StocksInPlaySpec(rows)` validates and freezes the complete
+  named mapping, including units, values, states and sources; both functions accept
+  `spec=`. Every threshold, opening duration and lookback comes from this mapping;
+  each output hashes the actual active mapping, including unavailable screens.
+  The default `PARAMETERS` retain the paper's opening duration, lookback and filter
+  values. Reviewed overrides are adaptations and grant no calibration authority.
+  `spec.composite_type(instrument_id)` gives the native subscription, by default
+  `...-5-MINUTE-LAST-INTERNAL@1-MINUTE-EXTERNAL`. The coordinator requests/subscribes
+  to it; `opening_window` consumes one resulting bar with explicit `composite_type=`.
+  It accepts the native delivered standard internal type, keeps the composite
+  configuration, and performs **no** five-1m aggregation. Exactly matching configured
+  completion after 09:30 New York and row-11 availability by `as_of_ns` are required.
+  Independent `coverage_complete=True` remains required: native output can be partial.
+  The flag, active hash and composite source travel in `OpeningWindow`; `screen`
+  rechecks them on current and every prior window. Missing coverage/source stays
+  unavailable and mismatched hashes/types are refused. Bare construction is only an
+  explicit fixture/receipt seam, never a way to infer missing source evidence.
+  `screen` requires exactly the configured prior sessions and matching `DailyFacts`.
+  RVOL uses **share volume** and the bound mean interpretation, never dollars or
+  trade count. `PUBLISHED` numeric rows are replication specifications, not success.
+  `top_n` remains informational: selection needs the external eligible cross-section;
   a local pass is not top-20 membership. Missing coverage, dates, zero denominator
   or unavailable daily facts stay unknown. Native ATR's period, smoothing,
   initialization/extra warm-up, daily-session definition, raw/action basis and
@@ -99,14 +118,20 @@ missing-data policy. Synthetic replay `ts_init` cannot establish real receipt la
 
 ## Proof and admission boundary
 
-`uv run --frozen pytest tests/proofs/test_detector_arms.py` is sockets-denied,
+`uv run --frozen pytest tests/proofs/test_detector_arms.py tests/proofs/test_detector_composite.py` is sockets-denied,
 synthetic software evidence: River source/update parity, hand-computed BOCPD
 vectors and constant-hazard behavior, explicit missing authority, numeric/clock
 failures, warm-up/reset, DST-aware completed windows and exact published local
-filter boundaries. It is **not** a market experiment or a cumulative trial count.
+filter boundaries, mutated parameter behavior/hashes, varying-volume denominator,
+nonconstant elapsed-duration hazards, and native composite engine delivery/partial
+coverage. It is **not** a market experiment or a cumulative trial count.
 The separate source-card proofs verify their unchanged hash-bound bytes.
 
-No `compute admitted` card, acquisition, replay, study result or threshold search
+**NOT ADMITTED**, following the owner's #130 ruling and dsh review SHA-256
+`c7f809d9c0c1bbc18f27e267110d0c3afa0badb7274521f6c1cf0d02803fe035`.
+This follow-up fixes its five Important findings; a passing proof is not a new
+method-admission ruling. Both #129 syntheses motivate native composite use (R18).
+No `compute admitted` card, acquisition, market replay, study result or threshold search
 is produced by this lane. #130's frozen source/method and acquisition stop times
 are not extended. #129's completed native-feature syntheses and dsh method review,
 source-qualified inputs/controls/cross-section, explicit market parameter/model
