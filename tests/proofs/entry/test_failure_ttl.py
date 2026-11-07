@@ -10,7 +10,9 @@ from .test_replay import replay
 
 
 @pytest.mark.parametrize("phase", ["accepted", "pending-submit", "pending-update"])
-@pytest.mark.parametrize("fault_kind", ["clean", "memory", "old-print", "pruned-duplicate"])
+@pytest.mark.parametrize(
+    "fault_kind", ["clean", "memory", "late-void", "old-print", "pruned-duplicate"]
+)
 def test_data_failure_preserves_ttl_and_late_acceptance_cancel(
     instrument, tmp_path, monkeypatch, phase, fault_kind
 ):
@@ -29,7 +31,9 @@ def test_data_failure_preserves_ttl_and_late_acceptance_cancel(
     if phase == "pending-update":
         data += [quote(3, "10.02", "10.03"), quote("3.1", "10.03", "10.04")]
     # Keep the book above the limit until after expiry, including on the faulting print.
-    if fault_kind == "old-print":
+    if fault_kind == "late-void":
+        data += [trade(1, "10.01", lag=2_200_000_000)]
+    elif fault_kind == "old-print":
         data += [trade(-150, "10.00", lag=153 * SEC)]
     elif fault_kind == "pruned-duplicate":
         data += [trade(-200, "10.00", size=10000, lag=203 * SEC)]
@@ -48,9 +52,8 @@ def test_data_failure_preserves_ttl_and_late_acceptance_cancel(
             update_latency_nanos=5 * SEC if phase == "pending-update" else 0,
         ),
     )
-    assert result.failed is (fault_kind != "clean")
-    if fault_kind in {"old-print", "pruned-duplicate"}:
-        assert result.failure_reason == "ValueError: print precedes retained history"
+    assert result.failed is (fault_kind == "memory")
+    assert any(e["action"] == "VOID" for e in result.events) is (fault_kind == "late-void")
     assert len(result.orders) == 1, result.events
     assert result.orders[0]["status"] == "CANCELED", result.events
     assert result.orders[0]["filled_qty"] == "0"

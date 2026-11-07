@@ -49,11 +49,11 @@ def test_out_of_order_print_clears_first_leg_without_extending_it(price):
     assert not s.on_trade(late, now=late.ts_init)
     assert not s.first_leg_ready(D("10.03"), late.ts_init)
     assert s.last == previous
-    assert s.dollars == D("3006") + D(price) * 100
-    assert s.volume == 400
+    assert s.dollars == D("3006")
+    assert s.volume == 300
     for at in (3, 4, 5):
         feed(s, at, "10.03")
-    assert s.first_leg_ready(D("10.03"), START + 5 * SEC)
+    assert not s.first_leg_ready(D("10.03"), START + 5 * SEC)
 
 
 @pytest.mark.parametrize("price", ["9.97", "10.02", "11.00"])

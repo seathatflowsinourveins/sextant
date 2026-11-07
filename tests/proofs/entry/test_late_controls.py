@@ -1,4 +1,4 @@
-"""Review 5811398007: reclaim history and consumed holds in native replay."""
+"""Native span-void controls and clean entry witnesses, without historical repair."""
 
 from decimal import Decimal as D
 
@@ -9,7 +9,6 @@ from sextant.entry.signals import TradeCoverage
 
 from .conftest import IID, SEC, START, bar, quote, trade
 from .test_replay import replay
-from .test_signals import extended_state, feed
 
 
 def tape(prices):
@@ -52,14 +51,12 @@ def native(instrument, tmp_path, data, end):
     [
         ("2.5", "10.10", 6700, "7.5"),
         ("2.5", "10.10", 6700, "7.7"),
-        ("-70", "10.10", 6700, "7.5"),
-        ("-125", "10.10", 6700, "7.5"),
         ("2.5", "10.06", 8000, "7.5"),
         ("2.5", "10.06", 8000, "6.5"),
     ],
-    ids=["raise-level", "stale-level", "before-tape", "pruned-tape", "benign-5s", "benign-4s"],
+    ids=["raise-level", "stale-level", "benign-5s", "benign-4s"],
 )
-def test_corrected_vwap_revalidates_the_reclaim_run(
+def test_in_span_late_print_voids_the_reclaim_run(
     instrument, tmp_path, ordered, at, price, size, arrival
 ):
     data = tape([*BASE, (4, "10.06"), (5, "10.07"), (6, "10.05"), (7, "10.05"), (8, "10.06")])
@@ -69,32 +66,8 @@ def test_corrected_vwap_revalidates_the_reclaim_run(
     assert result.orders == [], result.events
 
 
-@pytest.mark.parametrize("lag", [0, 2_100_000_000, 4_900_000_000, 7_000_000_000])
-def test_corrected_vwap_revalidates_the_episode_touch(instrument, tmp_path, lag):
-    data = tape([*BASE, (4, "10.04"), (5, "10.05"), (6, "10.02"), (7, "10.02"), (8, "10.03")])
-    data += [trade("0.5", "9.80", size=3000, lag=lag), quote("7.9", "10.02", "10.03")]
-    result = native(instrument, tmp_path, data, 8)
-    assert result.orders == [], result.events
-
-
-@pytest.mark.parametrize("lag", [0, 2_500_000_000, 5_000_000_000])
-def test_late_earlier_touch_cannot_preserve_a_later_invalid_touch(instrument, tmp_path, lag):
-    data = tape([*BASE, (4, "10.04"), (5, "10.05"), (6, "10.02"), (7, "10.02"), (8, "10.03")])
-    data += [trade("1.5", "9.98", lag=lag), quote("7.9", "10.02", "10.03")]
-    result = native(instrument, tmp_path, data, 8)
-    assert result.orders == [], result.events
-
-
-@pytest.mark.parametrize("lag", [0, 7_000_000_000])
-def test_corrected_vwap_revalidates_an_extended_reclaim_high(instrument, tmp_path, lag):
-    data = tape([*BASE, (4, "10.10"), (5, "10.40"), (6, "10.06"), (7, "10.06"), (8, "10.07")])
-    data += [trade("0.5", "9.98", size=10000, lag=lag), quote("7.9", "10.06", "10.07")]
-    result = native(instrument, tmp_path, data, 8)
-    assert result.orders == [], result.events
-
-
 @pytest.mark.parametrize("lag", [None, 0, 3_000_000_000], ids=["no-late-print", "ordered", "late"])
-def test_corrected_hold_consumes_the_already_processed_first_chance(instrument, tmp_path, lag):
+def test_late_print_cannot_restore_a_consumed_first_chance(instrument, tmp_path, lag):
     data = tape(BASE + [(4, "10.04"), (5, "10.05")] + [(at, "10.03") for at in range(6, 11)])
     if lag is not None:
         data.append(trade("6.5", "10.02", lag=lag))
@@ -130,29 +103,6 @@ def test_clean_held_reclaim_still_fills(instrument, tmp_path):
     result = native(instrument, tmp_path, [*data, quote("7.9", "10.02", "10.03")], 8)
     assert len(result.orders) == 1, result.events
     assert result.orders[0]["status"] == "FILLED"
-
-
-def test_rebuild_uses_the_atr_known_when_each_historical_print_was_processed():
-    s = extended_state()
-    for at, price in [(3, "10.03"), (4, "10.04"), (5, "10.05"), (6, "10.02"), (7, "10.02")]:
-        feed(s, at, price)
-    template = bar(7)
-    wider = Bar(
-        template.bar_type,
-        Price.from_str("10.00"),
-        Price.from_str("11.00"),
-        Price.from_str("9.00"),
-        Price.from_str("10.00"),
-        template.volume,
-        template.ts_event,
-        template.ts_init,
-    )
-    assert s.on_bar(wider, now=wider.ts_init)
-    assert s.atr.value == D("0.8")
-    late = trade("6.5", "10.04", lag=800_000_000)
-    assert not s.on_trade(late, now=late.ts_init)
-    feed(s, 8, "10.03")
-    assert s.reclaim_ready(D("10.03"), D("0.10"), START + 8 * SEC, covered_flow=True)
 
 
 @pytest.mark.parametrize("lag", [0, 800_000_000], ids=["ordered", "late"])

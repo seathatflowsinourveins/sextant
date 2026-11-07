@@ -12,7 +12,7 @@ import pytest
 from nautilus_trader.indicators import VolumeWeightedAveragePrice
 
 import sextant.entry.signals as signal_module
-from sextant.entry.signals import _Fold, classify
+from sextant.entry.signals import _Setup, classify
 
 from .conftest import SEC, START, bar, trade
 from .test_replay import replay
@@ -34,13 +34,13 @@ def test_native_vwap_paired_replay_requires_a_decimal_exception(
     decimal_arm = replay(instrument, tmp_path / "decimal", data, surge=None)
     observed = []
 
-    class NativeVWAPFold(_Fold):
+    class NativeVWAPSetup(_Setup):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs)
             self.native_vwap = VolumeWeightedAveragePrice()
 
-        def _advance(self, tick, eligible, atr):
-            super()._advance(tick, eligible, atr)
+        def advance(self, tick, atr):
+            super().advance(tick, atr)
             self.native_vwap.update_raw(
                 float(tick.price.as_decimal()), float(tick.size.as_decimal())
             )
@@ -48,7 +48,7 @@ def test_native_vwap_paired_replay_requires_a_decimal_exception(
             observed.append(self.vwap)
             self.extension = classify(tick.price.as_decimal(), self.vwap, atr, D("2"))
 
-    monkeypatch.setattr(signal_module, "_Fold", NativeVWAPFold)
+    monkeypatch.setattr(signal_module, "_Setup", NativeVWAPSetup)
     native_arm = replay(instrument, tmp_path / "native", data, surge=None)
     decimal_rows = [(e["ts"], e["extension"]) for e in decimal_arm.events if e["action"] == "TRADE"]
     native_rows = [(e["ts"], e["extension"]) for e in native_arm.events if e["action"] == "TRADE"]

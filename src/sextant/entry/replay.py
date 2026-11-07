@@ -87,6 +87,8 @@ class _ReplayEntry(Strategy):
         accepted = self.signals.on_trade(trade, now=now)
         if self.signals.failure:
             self._record("FAIL", reason=self.signals.failure)
+        if self.signals.void_reason:
+            self._record("VOID", reason=self.signals.void_reason, event_ts=trade.ts_event)
         if accepted:
             self._record("TRADE", extension=str(self.signals.extension))
             event_ns = self.signals.reclaim_event_ns
@@ -120,9 +122,7 @@ class _ReplayEntry(Strategy):
             free += self.entry.filled_qty.as_decimal() * funding_unit_cost(
                 price, self.commission_rate, self.instrument.quote_currency.precision
             )
-        volume = self.signals.tape.dollar_volume(
-            now - self.parameters.ns("flow_share_window_s"), now
-        )
+        volume = self.signals.flow_dollars(now)
         return size_entry(
             instrument=self.instrument,
             params=self.parameters,

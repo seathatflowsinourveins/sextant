@@ -1,12 +1,4 @@
-"""n1n2ctl probe: a completed bar that arrives inside an in-order print's lag hides that
-print's EXTENDED reading, so a held RECLAIM fills that the time-ordered tape never makes.
-
-Tape = the fixture's clean held reclaim with a spike S (10.50 @ t6.5) during the hold.
-The minute bar closing at t6.6 contains the t1 11.00 print (H 11.00 L 9.99 C 10.50), so
-ATR moves 0.20 -> 0.47 when it arrives at t6.6.  In event order S precedes the bar:
-10.50 - VWAP(10.0155) = 0.485 > 2 x 0.20, so S is EXTENDED, opens a new episode and voids
-the setup; nothing buys.  The PR uses S's arrival-time ATR when S is in order and fresh.
-"""
+"""Delayed-print/bar straddles refuse untrusted setups without historical repair."""
 
 from decimal import Decimal as D
 
@@ -14,7 +6,7 @@ import pytest
 from nautilus_trader.model import Bar, Price, QuoteTick, TradeTick
 
 from .conftest import SEC, START, bar, quote, trade
-from .test_history_gate import BASE, native, tape
+from .test_late_controls import BASE, native, tape
 from .test_signals import extended_state, feed
 
 
@@ -81,11 +73,12 @@ def test_probe_state_level_classification_of_s():
     b = minute_bar_at("6.6")
     assert s.on_bar(b, now=b.ts_init)
     spike = trade("6.5", "10.50", lag=200_000_000)
-    assert s.on_trade(spike, now=spike.ts_init)  # in order, fresh: eligible
+    assert not s.on_trade(spike, now=spike.ts_init)
     print(
         "PROBE S extension with arrival ATR", s.atr.value, s.extension, "episode", s.episode_started
     )
-    assert s.episode_started is not None, "S must open an extension episode in event order"
+    assert s.void_reason == "late print within setup span"
+    assert s.touch is None and s.hold_started is None
 
 
 def grid_bar(seconds, high, low, close, arrival_ms=0):

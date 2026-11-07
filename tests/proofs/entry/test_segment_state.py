@@ -1,4 +1,4 @@
-"""N2 segment boundaries and exact deduplication without a segment-sized heap."""
+"""N2 fresh segment boundaries, deduplication and ordinary rolling flow windows."""
 
 from decimal import Decimal as D
 
@@ -25,24 +25,22 @@ def test_segment_start_is_inclusive_and_resets_identity_scope():
     tick = trade(100, "10.00")
     assert s.on_trade(tick, now=tick.ts_init)
     s.reset_segment("next-segment", start_ns=tick.ts_event)
-    assert not s.on_trade(tick, now=tick.ts_init)
+    assert s.on_trade(tick, now=tick.ts_init)
     assert s.volume == 100
 
 
-def test_history_expires_but_scalar_vwap_survives_and_old_facts_latch_refusal():
+def test_flow_windows_expire_without_latching_old_duplicates():
     s = state()
     for i in range(400):
         assert feed(s, i, "10.00", identity=f"memory-{i}")
-    assert len(s.tape.data) <= 126  # 120 s horizon plus the existing 5 s prune cadence.
     assert s.volume == 40000 and s.vwap == D("10.00")
-    assert not feed(s, 399, "10.00", identity="memory-399")
+    assert s.flow_dollars(START + 399 * SEC) == 60000
+    assert s.flow_dollars(START + 410 * SEC) == 49000
     old = trade(0, "9.00", identity="old-veto", lag=400 * SEC)
     assert not s.on_trade(old, now=old.ts_init)
-    assert s.failure and not s.fresh(old.ts_init)
+    assert not s.failure and s.void_reason is None
     assert s.volume == 40000
-    assert not feed(s, 401, "10.01")
-    s.reset_segment("next", start_ns=START + 402 * SEC)
-    assert feed(s, 402, "10.01") and not s.failure
+    assert feed(s, 401, "10.01")
 
 
 def test_compact_first_leg_keeps_its_true_origin_and_count_span():

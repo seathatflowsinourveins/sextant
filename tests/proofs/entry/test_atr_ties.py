@@ -7,7 +7,7 @@ from nautilus_trader.model import Bar, Price
 
 from .conftest import SEC, START, bar, quote, trade
 from .test_asof_atr import grid_bar
-from .test_history_gate import native
+from .test_late_controls import native
 from .test_signals import feed, state
 
 
@@ -59,24 +59,19 @@ def test_equal_bar_knowledge_time_keeps_the_same_native_reclaim(
     result = native(instrument, tmp_path, data, "62.2")
     assert not result.failed, result.failure_reason
     submitted = [event for event in result.events if event["action"] == "SUBMIT"]
-    assert len(submitted) == (0 if wide else 1), result.events
-    if not wide:
+    assert len(submitted) == (0 if wide or lag == 150_000_000 else 1), result.events
+    assert any(e["action"] == "VOID" for e in result.events) is (lag == 150_000_000)
+    if not wide and lag != 150_000_000:
         assert submitted[0]["setup"] == "RECLAIM"
         assert submitted[0]["ts"] == START + 62_200_000_000
         assert result.orders[0]["status"] == "FILLED"
 
 
-def test_print_at_retained_floor_keeps_the_strictly_preceding_atr():
+def test_batched_bars_known_at_the_print_timestamp_do_not_supply_atr():
     s = state()
     for at in (-180, -120, -60):
-        assert s.on_bar(bar(at), now=START + at * SEC)
-    assert feed(s, -1, "10.00", size=10000)
-    wider = grid_bar(0, "11.00", "9.99", "10.50")
-    assert s.on_bar(wider, now=wider.ts_init)
-    assert feed(s, 120, "10.02")
-    assert s.tape.floor == START
-    late = trade(0, "10.50", lag=121 * SEC)
-    assert not s.on_trade(late, now=late.ts_init)
-    assert s.failure is None
-    # The complete ordered control sees the old 0.20 ATR at t0 and opens EXTENDED.
-    assert s.ordered.episode_started == START
+        assert s.on_bar(bar(at), now=START)
+    assert feed(s, 0, "10.00")
+    assert s.last_atr is None
+    assert feed(s, "0.000000001", "10.01")
+    assert s.last_atr == D("0.20")
