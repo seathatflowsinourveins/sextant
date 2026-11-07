@@ -16,25 +16,16 @@ import argparse
 import hashlib
 import json
 from collections.abc import Sequence
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
-from sextant.data.alpaca_history import (
-    day_start,
-    land_raw,
-    raw_path,
-    read_raw,
-    symbol_name,
-)
-from sextant.data.catalog import CatalogStore, decode_bars
-from sextant.research.onset_capture import BoundedHistory
+from sextant.data.alpaca_history import raw_path, read_raw, symbol_name
 from sextant.research.onset_study import (
-    _split_pages,
     load_freeze,
     market_sessions,
-    needed_days,
+    pull,
     study_budget,
 )
 
@@ -71,68 +62,6 @@ def zero_bar_primaries(freeze: Path, raw_root: Path) -> list[dict[str, Any]]:
     return rows
 
 
-def _pull_rows(
-    rows: Sequence[dict[str, Any]],
-    *,
-    raw_root: Path,
-    catalog_root: Path,
-    output: Path,
-    budget,
-    sessions: Sequence[date],
-    receipts: list[dict[str, Any]],
-    lookback: int = 14,
-    force: bool = False,
-) -> None:
-    targets = [
-        dict(symbol=symbol_name(row["ticker"]), day=row["day"], control_id=row["control_id"])
-        for row in rows
-    ]
-    needs = needed_days(targets, sessions, lookback)
-    history = BoundedHistory(budget)
-    catalog = CatalogStore(catalog_root, cache_intervals=True)
-    try:
-        for day in sorted(needs):
-            pending = []
-            for symbol in needs[day]:
-                if force or not raw_path(raw_root, "1min", symbol, day).exists():
-                    pending.append(symbol)
-            for start in range(0, len(pending), 50):
-                batch = pending[start : start + 50]
-                if not batch:
-                    continue
-                pages = history.fetch_batch(
-                    batch,
-                    day_start(day),
-                    day_start(day + timedelta(days=1)) - timedelta(microseconds=1),
-                    "1min",
-                )
-                split = _split_pages(pages, batch)
-                source_sha = hashlib.sha256("".join(pages).encode()).hexdigest()
-                for symbol in batch:
-                    raw = raw_path(raw_root, "1min", symbol, day)
-                    symbol_pages = split.get(symbol)
-                    if not symbol_pages:
-                        receipts.append(
-                            dict(symbol=symbol, day=day.isoformat(), bars=0, empty=True)
-                        )
-                        continue
-                    land_raw(raw, symbol_pages, symbol=symbol, day=day, bar="1min")
-                    bars = decode_bars(read_raw(raw), symbol, "1min")
-                    if bars:
-                        catalog.write(symbol, bars, raw_partition=raw)
-                    receipts.append(
-                        dict(
-                            symbol=symbol,
-                            day=day.isoformat(),
-                            bars=len(bars),
-                            raw_sha256=_sha(raw),
-                            source_pages_sha256=source_sha,
-                        )
-                    )
-    finally:
-        history.close()
-
-
 def pull_fallbacks(
     freeze: Path,
     raw_root: Path,
@@ -165,16 +94,27 @@ def pull_fallbacks(
         ]
         if not stage_rows:
             continue
-        _pull_rows(
-            stage_rows,
-            raw_root=raw_root,
-            catalog_root=catalog_root,
-            output=output,
+        targets = [
+            dict(
+                symbol=symbol_name(row["ticker"]),
+                day=row["day"],
+                control_id=row["control_id"],
+            )
+            for row in stage_rows
+        ]
+        pull(
+            freeze,
+            raw_root,
+            catalog_root,
+            output,
+            deadline=deadline,
             budget=budget,
             sessions=sessions,
             receipts=receipts,
-            lookback=lookback,
+            targets=targets,
             force=force,
+            lookback=lookback,
+            study_outputs=False,
         )
         for row in pending:
             for backup in row["backups"]:

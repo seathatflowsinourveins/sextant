@@ -167,22 +167,37 @@ def pull(
     max_bytes: int = 6 * 1024**3,
     per_minute: Decimal = Decimal(200),
     lookback: int = 14,
+    targets: Sequence[dict[str, str]] | None = None,
+    force: bool = False,
+    budget: CaptureBudget | None = None,
+    sessions: Sequence[date] | None = None,
+    receipts: list[dict[str, Any]] | None = None,
+    study_outputs: bool = True,
 ) -> dict[str, Any]:
+    """Land one 1min symbol-day pull in raw envelopes and the native catalog.
+
+    The study call derives its targets from the freeze. The fallback call passes
+    its backup symbol-days, the shared budget, sessions and receipt list, and
+    ``study_outputs=False`` so it writes only its own summary files.
+    """
     output.mkdir(parents=True, exist_ok=True)
-    budget = study_budget(
-        max_requests=max_requests,
-        max_bytes=max_bytes,
-        deadline=deadline,
-        per_minute=per_minute,
-    )
-    events, controls = load_freeze(freeze)
-    targets = pull_targets(events, controls)
-    sessions = market_sessions(output / "calendar", budget)
+    if budget is None:
+        budget = study_budget(
+            max_requests=max_requests,
+            max_bytes=max_bytes,
+            deadline=deadline,
+            per_minute=per_minute,
+        )
+    if targets is None:
+        events, controls = load_freeze(freeze)
+        targets = pull_targets(events, controls)
+    if sessions is None:
+        sessions = market_sessions(output / "calendar", budget)
     needs = needed_days(targets, sessions, lookback)
-    receipts_path = output / "pull-receipts.jsonl"
-    receipts: list[dict[str, Any]] = []
+    receipts = [] if receipts is None else receipts
+    receipts_path = output / "pull-receipts.jsonl" if study_outputs else None
     known: dict[tuple[str, str], dict[str, Any]] = {}
-    if receipts_path.exists():
+    if receipts_path is not None and receipts_path.exists():
         for line in receipts_path.read_text().splitlines():
             if line.strip():
                 row = json.loads(line)
@@ -194,22 +209,22 @@ def pull(
             pending = []
             for symbol in needs[day]:
                 raw = raw_path(raw_root, "1min", symbol, day)
-                if raw.exists():
-                    key = (symbol, day.isoformat())
-                    receipt = known.get(key)
-                    if receipt is None:
-                        bars = decode_bars(read_raw(raw), symbol, "1min")
-                        receipt = dict(
-                            symbol=symbol,
-                            day=day.isoformat(),
-                            bars=len(bars),
-                            raw_sha256=_sha(raw),
-                            source_pages_sha256=None,
-                            resumed=True,
-                        )
-                    receipts.append(receipt)
-                else:
+                if force or not raw.exists():
                     pending.append(symbol)
+                    continue
+                key = (symbol, day.isoformat())
+                receipt = known.get(key)
+                if receipt is None:
+                    bars = decode_bars(read_raw(raw), symbol, "1min")
+                    receipt = dict(
+                        symbol=symbol,
+                        day=day.isoformat(),
+                        bars=len(bars),
+                        raw_sha256=_sha(raw),
+                        source_pages_sha256=None,
+                        resumed=True,
+                    )
+                receipts.append(receipt)
             for start in range(0, len(pending), 50):
                 batch = pending[start : start + 50]
                 if not batch:
@@ -243,23 +258,26 @@ def pull(
                             source_pages_sha256=source_sha,
                         )
                     )
+            if receipts_path is not None:
+                receipts_path.write_text(
+                    "".join(json.dumps(row, sort_keys=True) + "\n" for row in receipts)
+                )
+    finally:
+        history.close()
+        if receipts_path is not None:
             receipts_path.write_text(
                 "".join(json.dumps(row, sort_keys=True) + "\n" for row in receipts)
             )
-    finally:
-        history.close()
-        receipts_path.write_text(
-            "".join(json.dumps(row, sort_keys=True) + "\n" for row in receipts)
-        )
     summary = dict(
         targets=len(targets),
         days=len(needs),
         requests=budget.requests,
         bytes=budget.bytes,
         receipts=len(receipts),
-        receipts_sha256=_sha(receipts_path),
+        receipts_sha256=_sha(receipts_path) if receipts_path is not None else None,
     )
-    (output / "pull-summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True))
+    if study_outputs:
+        (output / "pull-summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True))
     return summary
 
 
