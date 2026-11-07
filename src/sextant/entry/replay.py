@@ -25,7 +25,7 @@ ReplayResult = namedtuple(
 
 def _guarded(method):
     def handle(self, *args):
-        if self.signals.failure:
+        if self.signals.failure and method.__name__ not in {"_expire", "on_order_event"}:
             return
         try:
             method(self, *args)
