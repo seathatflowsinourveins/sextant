@@ -39,6 +39,18 @@ handoff. K2/K3 remain **house-incumbent E0 comparisons**, not source truth.
   `common.Parameter` follows ADR-0018 L3 and the existing ranking registry's
   explicit rows and canonical SHA-256 identity, with missing/specification values.
 
+## Admission ruling 2026-11-07
+
+The lead's ADMIT on #130 (issuecomment-6708982189, 10:26:51 EST) closes the #167
+delta check (review SHA-256 `168e2b51822524f63a7fc35e651ffa72f305d82ff82518282facd58b971db216`).
+Findings 1, 2, 3 and 5 were fixed. Finding 4 is fixed by the method owner's
+ruling: the RVOL denominator is the mean of the same opening-window volume over
+the previous 14 trading days (section 5, p. 19); the p. 14 printed `t-1` is a
+typo. All five findings are fixed, and #146/#167's components are admitted under
+ruling 1 (issuecomment-6699526176). This admits the components, not a numeric
+parameter authority: Page-Hinkley and BOCPD rows stay `UNAVAILABLE`, so an arm
+that needs one is NOT_RUN rather than given an invented value.
+
 ## Integration seams
 
 Import modules from `sextant.research.detectors`; none performs I/O or writes a
