@@ -10,7 +10,6 @@ bounds are the owner's #130 acquisition contract, published before any request o
 
 from __future__ import annotations
 
-import argparse
 import hashlib
 import json
 import os
@@ -32,13 +31,10 @@ from requests import Response
 from sextant.data.alpaca_history import (
     AlpacaHistory,
     Pacer,
-    calendar_cache,
     environment_credentials,
     land_raw,
-    publish_once,
     raw_path,
     read_raw,
-    symbol_name,
 )
 from sextant.data.catalog import CatalogStore, decode_bars
 
@@ -197,29 +193,6 @@ class BoundedCalendar(TradingClient):
         self._session.close()
 
 
-def pilot_events(rows: Sequence[dict[str, Any]]) -> list[dict[str, str]]:
-    """Coverage-selected identities/dates only; exclude seed prices, weights and features."""
-    result = []
-    for cohort in ("selected_gainer", "selected_loser"):
-        eligible = [
-            r
-            for r in rows
-            if r["cohort"] == cohort
-            and any(p.get("status") == "observed" for p in r["prices"].values())
-        ]
-        if not eligible:
-            raise CaptureStopped("covered_cohort_unavailable")
-        event = min(eligible, key=lambda r: (r["session_date"], r["symbol"]))
-        result.append(
-            dict(
-                symbol=symbol_name(event["symbol"]),
-                day=date.fromisoformat(event["session_date"]).isoformat(),
-                cohort=cohort,
-            )
-        )
-    return result
-
-
 def ingest_partition(
     raw_root: Path,
     catalog_root: Path,
@@ -305,133 +278,3 @@ def canonical_snapshot(repository: Path, receipt_commit: str) -> tuple[str, byte
     tip = _git(repository, "rev-parse", "refs/remotes/origin/ledger").decode().strip()
     _git(repository, "merge-base", "--is-ancestor", receipt_commit, tip)
     return tip, _git(repository, "show", f"{tip}:reports/research/sim-runner/trials.parquet")
-
-
-def capture_pilot(
-    params: dict[str, Any],
-    ledger: Path,
-    attempt: str,
-    code_sha: str,
-    output: Path,
-) -> dict[str, Any]:
-    reservation = require_reservation(ledger, attempt, params, code_sha)
-    if output.exists():
-        raise CaptureStopped("attempt_output_exists")
-    if len(params["events"]) != 2 or params["prior_sessions"] != 20:
-        raise CaptureStopped("pilot_scope_changed")
-    budget = CaptureBudget(
-        max_requests=params["max_requests"],
-        max_bytes=params["max_bytes"],
-        deadline=datetime.fromisoformat(params["deadline"]),
-        requests_per_minute=Decimal(params["requests_per_minute"]),
-    )
-    # Constructor performs no HTTP. The native catalog path is explicit/frozen in the reservation.
-    events = params["events"]
-    dates = [date.fromisoformat(e["day"]) for e in events]
-    report: dict[str, Any] = dict(
-        arm_run_id=attempt,
-        implementation_sha=code_sha,
-        reservation=reservation,
-        scope="coverage_only",
-        state="RUNNING",
-        survivor_only=True,
-        pit_verified=False,
-        partitions=[],
-        actions_status="UNVERIFIED",
-        float_status="UNAVAILABLE",
-        detector_compute_admitted=False,
-        hindsight_selected=True,
-        capture_complete=False,
-        expected_partitions=84,
-    )
-    history = BoundedHistory(budget)
-    calendar = BoundedCalendar(budget)
-    try:
-        sessions = calendar_cache(
-            output.parent / "calendar", min(dates) - timedelta(days=60), max(dates), source=calendar
-        )
-        for event in events:
-            day = date.fromisoformat(event["day"])
-            eligible = [s.date for s in sessions if s.date <= day]
-            chosen = eligible[-21:]
-            if len(chosen) != 21 or chosen[-1] != day:
-                raise CaptureStopped("exchange_session_coverage")
-            for session_day in chosen:
-                for interval in ("1min", "1day"):
-                    budget._check()
-                    raw = raw_path(Path(params["raw_root"]), interval, event["symbol"], session_day)
-                    pages = (
-                        tuple(pq.read_table(raw)["response_json"].to_pylist())
-                        if raw.exists()
-                        else history.fetch(event["symbol"], session_day, interval)
-                    )
-                    partition = ingest_partition(
-                        Path(params["raw_root"]),
-                        Path(params["catalog_root"]),
-                        event["symbol"],
-                        session_day,
-                        interval,
-                        pages,
-                    )
-                    report["partitions"].append(partition)
-        if len(report["partitions"]) != report["expected_partitions"]:
-            raise CaptureStopped("partition_reconciliation")
-        minute_rows = sum(p["bars"] for p in report["partitions"] if p["bar"] == "1min")
-        daily_rows = sum(p["bars"] for p in report["partitions"] if p["bar"] == "1day")
-        if minute_rows > 60_480 or daily_rows > 42:
-            raise CaptureStopped("row_budget")
-        report.update(
-            state="COMPLETE", capture_complete=True, minute_rows=minute_rows, daily_rows=daily_rows
-        )
-    except CaptureStopped as exc:
-        report.update(state="FAIL", error=str(exc))
-    except Exception:
-        report.update(state="FAIL", error="intake_failed")
-    finally:
-        history.close()
-        calendar.close()
-    report.update(
-        completed_partitions=len(report["partitions"]),
-        partial_coverage=not report["capture_complete"],
-        http_requests=budget.requests,
-        captured_bytes=budget.bytes,
-        http_receipts=budget.receipts,
-        finished_at=datetime.now(UTC).isoformat(),
-    )
-    body = json.dumps(report, sort_keys=True, indent=2, allow_nan=False).encode()
-    if not publish_once(output, lambda p: p.write_bytes(body)):
-        raise CaptureStopped("attempt_output_exists")
-    return report
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("config", type=Path)
-    parser.add_argument("--ledger-commit", required=True)
-    parser.add_argument("--attempt", required=True)
-    parser.add_argument("--output", type=Path, required=True)
-    args = parser.parse_args()
-    repository = Path(__file__).resolve().parents[3]
-    try:
-        tip, raw = canonical_snapshot(repository, args.ledger_commit)
-        code = _git(repository, "rev-parse", "HEAD").decode().strip()
-        if _git(repository, "status", "--porcelain", "--", "src", "pyproject.toml", "uv.lock"):
-            raise CaptureStopped("commit_implementation_first")
-        ledger_copy = args.output.parent / f"ledger-{tip}.parquet"
-        publish_once(ledger_copy, lambda p: p.write_bytes(raw))
-        if ledger_copy.read_bytes() != raw:
-            raise CaptureStopped("reservation_copy_conflict")
-        report = capture_pilot(
-            json.loads(args.config.read_text()), ledger_copy, args.attempt, code, args.output
-        )
-    except Exception:
-        parser.exit(
-            2, "Capture refused before admission or failed; no credential/exception text emitted.\n"
-        )
-    print(json.dumps({k: report[k] for k in ("state", "http_requests", "captured_bytes")}))
-    if report["state"] != "COMPLETE":
-        raise SystemExit(2)
-
-
-if __name__ == "__main__":
-    main()

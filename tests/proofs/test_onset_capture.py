@@ -20,7 +20,6 @@ from sextant.research.onset_capture import (
     CaptureStopped,
     canonical_snapshot,
     ingest_partition,
-    pilot_events,
     require_reservation,
 )
 
@@ -178,36 +177,6 @@ def test_real_catalog_ingest_preserves_raw_receipts_and_closed_bar_clocks(tmp_pa
         tmp_path / "raw", tmp_path / "catalog", "ACRS", date(2021, 1, 19), "1min", (page,)
     )
     assert again == result
-
-
-def test_pilot_takes_only_vendor_covered_identities_and_dates() -> None:
-    rows = [
-        dict(
-            symbol="ZZZ",
-            session_date="2021-01-01",
-            cohort="selected_gainer",
-            prices={"SEP": {"status": "absent"}},
-            raw_fields={"Prior_Close": "999"},
-        ),
-        dict(
-            symbol="ACRS",
-            session_date="2021-01-19",
-            cohort="selected_gainer",
-            prices={"SEP": {"status": "observed"}},
-            raw_fields={"Prior_Close": "999"},
-        ),
-        dict(
-            symbol="SRPT",
-            session_date="2021-01-08",
-            cohort="selected_loser",
-            prices={"SEP": {"status": "observed"}},
-            raw_fields={"Prior_Close": "999"},
-        ),
-    ]
-    assert pilot_events(rows) == [
-        dict(symbol="ACRS", day="2021-01-19", cohort="selected_gainer"),
-        dict(symbol="SRPT", day="2021-01-08", cohort="selected_loser"),
-    ]
 
 
 def test_reservation_binds_running_code_and_exact_frozen_inputs(tmp_path: Path) -> None:
