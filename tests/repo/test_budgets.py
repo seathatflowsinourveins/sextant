@@ -28,7 +28,11 @@ def test_at_most_thirty_research_notes() -> None:
 
 
 def test_src_stays_under_budget() -> None:
-    assert sum(_lines(path) for path in (ROOT / "src").rglob("*.py")) < 15000
+    # Raised from 15,000 by the owner on 2026-11-06 (#58, 6701393837), for the focus path to
+    # B's ready: #163, #93, #68, the ledger (#96, #110) and B's Alpaca client (#139). Every PR
+    # still shows its native replacements; the other queued PRs wait for native trims or a later
+    # reasoned raise.
+    assert sum(_lines(path) for path in (ROOT / "src").rglob("*.py")) < 17500
 
 
 def test_design_stays_short() -> None:
