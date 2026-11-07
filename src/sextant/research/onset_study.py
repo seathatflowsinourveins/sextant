@@ -315,6 +315,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     fallback_parser.add_argument("--deadline", required=True)
     fallback_parser.add_argument("--force", action="store_true")
 
+    outcome_parser = sub.add_parser("outcome", help="build the outcome handoff from the study")
+    outcome_parser.add_argument("--freeze", type=Path, required=True)
+    outcome_parser.add_argument("--study", type=Path, required=True)
+    outcome_parser.add_argument("--reserve", type=Path, required=True)
+    outcome_parser.add_argument("--output", type=Path, required=True)
+    outcome_parser.add_argument("--runner-sha")
+
     args = parser.parse_args(argv)
     if args.command == "freeze":
         from sextant.research.onset_freeze import freeze
@@ -353,6 +360,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             args.catalog,
             args.output,
             deadline=_deadline(args.deadline),
+        )
+        print(json.dumps(summary, indent=2, sort_keys=True))
+    elif args.command == "outcome":
+        from sextant.research.onset_outcome import build_outcome
+
+        summary = build_outcome(
+            args.freeze,
+            args.study,
+            args.reserve,
+            args.output,
+            runner_sha=args.runner_sha,
         )
         print(json.dumps(summary, indent=2, sort_keys=True))
     else:
