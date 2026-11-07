@@ -12,6 +12,13 @@ from sextant.paper.sessions import Session
 LANES = frozenset({"alpaca-paper-a", "alpaca-paper-b", "alpaca-paper-c", "ibkr-paper"})
 
 
+def require_ibkr_paper_account(account_id: str) -> str:
+    """Validate the unmodified paper code shared by native configs and the writer lease."""
+    if not re.fullmatch(r"D[A-Z]{1,2}[0-9]+", account_id):
+        raise ValueError("IBKR paper requires a bare D-prefixed account code")
+    return account_id
+
+
 @dataclass(frozen=True)
 class PaperAccount:
     lane: str
@@ -43,10 +50,10 @@ class PaperAccount:
             raise ValueError("external claims must be an immutable tuple of InstrumentIds")
         if self.external_claims and self.lane != "alpaca-paper-b":
             raise ValueError("only B's dedicated manager can claim external instruments")
-        if self.lane == "ibkr-paper" and (
-            not self.account_id.startswith("D") or self.ib_port not in {4002, 7497}
-        ):
-            raise ValueError("IB paper requires D-prefixed account and paper port")
+        if self.lane == "ibkr-paper":
+            require_ibkr_paper_account(self.account_id)
+            if self.ib_port not in {4002, 7497}:
+                raise ValueError("IB paper requires paper port 4002 or 7497")
 
     @property
     def broker(self) -> str:

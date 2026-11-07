@@ -73,7 +73,23 @@ def test_external_claims_cannot_be_mutated_after_account_validation():
         replace(account(), external_claims=[])
 
 
-@pytest.mark.parametrize("account_id,port", [("U123", 4002), ("DU123", 4001), ("", 7497)])
+@pytest.mark.parametrize(
+    "account_id,port",
+    [
+        ("U123", 4002),
+        ("DU123", 4001),
+        ("", 7497),
+        ("DU0000000-U1234567", 4002),
+        ("D-U1234567", 4002),
+        ("DUMMY-F7654321", 7497),
+        ("DU0000000 ", 4002),
+        ("DU0000000\n", 4002),
+        (" DU0000000", 4002),
+        ("DUMMY", 4002),
+        ("D", 4002),
+        ("DU", 4002),
+    ],
+)
 def test_ib_paper_requires_d_account_and_paper_port(account_id, port):
     with pytest.raises(ValueError):
         PaperAccount("ibkr-paper", account_id, "IB-A", "IB001", (Session.RTH,), ib_port=port)
