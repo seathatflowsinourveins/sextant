@@ -57,6 +57,15 @@ def test_the_sweep_runs_in_place_and_forces_only_merged_heads() -> None:
     assert "\nlifecycle:\n" in (ROOT / "justfile").read_text()
 
 
+def test_the_sweep_keeps_a_worktree_that_live_work_still_uses() -> None:
+    # 2026-11-06: the first run removed two merged-PR worktrees that lane agents were still working
+    # in, and both died with their directory. A merged PR is not proof that nothing uses the tree.
+    assert "orca terminal list --json" in PROMPT and "worktreePath" in PROMPT
+    assert "/proc/<pid>/cwd" in PROMPT and "proc(5)" in PROMPT
+    keep = PROMPT.index("Also keep a worktree that live work still uses")
+    assert keep < PROMPT.index("3. For each local branch")
+
+
 def test_setting_up_the_sweep_twice_makes_one(tmp_path: Path) -> None:
     bin_dir = _fakes(tmp_path, "git", "orca-ide")
     log = tmp_path / "calls"
