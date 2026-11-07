@@ -1,12 +1,5 @@
-"""ADR-0004 N1/N2; first-leg run adapted from pinned first_leg.py::_run.
+"""ADR-0004 N1/N2, with the source pins and late-data deviations in docs/manifest.md."""
 
-The pinned entry ADR supplies the house extension/retest policy, not an edge.
-The rc8 ATR/RMA formulas (unchanged from rc7) consume completed native bars in Decimal.
-A quote never changes an episode or its touch.
-"""
-
-from bisect import bisect_right
-from collections import deque
 from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal
@@ -16,6 +9,7 @@ from nautilus_trader.model import Bar, BarType, InstrumentId, TradeTick
 
 from sextant.entry.indicators import DecimalATR
 from sextant.entry.parameters import EntryParameters, number
+from sextant.entry.tape import Tape
 
 
 class Extension(StrEnum):
@@ -37,7 +31,7 @@ class Surge:
 
 @dataclass(frozen=True)
 class TradeCoverage:
-    """Producer's complete counts by horizon ns over (end_ns - horizon, end_ns]."""
+    """Complete producer counts by horizon ns over (end_ns - horizon, end_ns]."""
 
     instrument_id: InstrumentId
     segment: str
@@ -48,35 +42,21 @@ class TradeCoverage:
     counts: Mapping[int, int] | None = None
 
 
-class EntryState:
-    def __init__(self, instrument_id: InstrumentId, params: EntryParameters, segment: str):
-        self.instrument_id, self.params = instrument_id, params
-        self.atr = DecimalATR(params["atr_period"])
-        self.bar_type = BarType.from_str(
-            f"{instrument_id}-{params['atr_bar_minutes']}-MINUTE-LAST-EXTERNAL"
-        )
-        self.last_bar_ns = -1
-        self.trades: deque[TradeTick] = deque()
-        self.identities: set[tuple] = set()
-        self.reset_segment(segment)
+def classify(price, level, atr, multiple) -> Extension:
+    if level is None or atr is None or not atr.is_finite() or atr <= 0:
+        return Extension.UNKNOWN
+    return Extension.EXTENDED if price - level > multiple * atr else Extension.NOT_EXTENDED
 
-    def reset_segment(self, segment: str) -> None:
-        self.segment = segment
-        self.surge: Surge | None = None
-        self.run: list[TradeTick] = []
-        self.last: TradeTick | None = None
-        self.trades.clear()
-        self.identities.clear()
-        self.ineligible: set[TradeTick] = set()
-        self.dollars = self.volume = Decimal(0)
-        self.vwap: Decimal | None = None
-        self.extension = Extension.UNKNOWN
+
+class _Reclaim:
+    def __init__(self, params: EntryParameters):
+        self.params = params
         self.episode_started: int | None = None
         self.touch: tuple[int, Decimal] | None = None
         self._clear_retest()
 
     def _clear_retest(self) -> None:
-        self.reclaim_run: list[TradeTick] = []
+        self.reclaim_count = self.reclaim_started = 0
         self.confirmed = False
         self.high: Decimal | None = None
         self.trough: Decimal | None = None
@@ -84,25 +64,111 @@ class EntryState:
         self.reclaim_event_ns: int | None = None
         self.reclaim_consumed_price: Decimal | None = None
 
+    def _reclaim(self, tick, level, extension, *, eligible=True) -> None:
+        price, at, p = tick.price.as_decimal(), tick.ts_event, self.params
+        self.reclaim_event_ns = None
+        if extension is Extension.UNKNOWN or level is None:
+            self.touch = None
+            self._clear_retest()
+            return
+        if extension is Extension.EXTENDED:
+            if self.episode_started is None:
+                self.episode_started, self.touch = at if eligible else None, None
+                self._clear_retest()
+            return
+        if self.episode_started is not None:
+            if price <= level and at > self.episode_started:
+                self.touch, self.episode_started = (at, price) if eligible else None, None
+                self._clear_retest()
+            return
+        if self.touch is None:
+            return
+        if at - self.touch[0] > p.ns("reclaim_lookback_s") or price < level:
+            self.touch = None
+            self._clear_retest()
+            return
+        if price == level and not self.confirmed:
+            self._clear_retest()
+            return
+        if not self.confirmed:
+            if eligible:
+                if not self.reclaim_count:
+                    self.reclaim_started = at
+                self.reclaim_count += 1
+                self.high = max(self.high or price, price)
+                self.confirmed = self.reclaim_count >= p[
+                    "reclaim_trades_count"
+                ] and at - self.reclaim_started >= p.ns("reclaim_trades_span_s")
+            return
+        assert self.high is not None
+        if self.reclaim_consumed_price is not None and self.trough is None:
+            if price >= self.reclaim_consumed_price:
+                self.high = max(self.high, price)
+                return
+            if eligible:
+                self.trough, self.hold_started = price, at
+            return
+        if self.trough is not None and self.hold_started is not None:
+            if (
+                price > self.trough
+                and at - self.hold_started >= p.ns("reclaim_hold_s")
+                and self.trough > self.touch[1]
+                and self.trough >= level
+            ):
+                self.reclaim_event_ns = at if eligible else None
+                self.reclaim_consumed_price = price
+                self.trough, self.hold_started = None, None
+                self.high = max(self.high, price)
+                return
+            if price > self.high:
+                self.trough, self.hold_started = None, None
+        if price > self.high:
+            self.high = price
+        elif (
+            price < self.high
+            and (self.trough is None or price < self.trough)
+            and (eligible or self.trough is not None)
+        ):
+            self.trough, self.hold_started = price, at
+
+
+class EntryState(_Reclaim):
+    def __init__(
+        self, instrument_id: InstrumentId, params: EntryParameters, segment: str, *, start_ns: int
+    ):
+        self.instrument_id, self.params = instrument_id, params
+        self.atr = DecimalATR(params["atr_period"])
+        self.bar_type = BarType.from_str(
+            f"{instrument_id}-{params['atr_bar_minutes']}-MINUTE-LAST-EXTERNAL"
+        )
+        self.last_bar_ns = -1
+        self.tape = Tape()
+        self.reset_segment(segment, start_ns=start_ns)
+
+    def reset_segment(self, segment: str, *, start_ns: int) -> None:
+        if not segment or type(start_ns) is not int or start_ns < 0:
+            raise ValueError("segment identity and event-time start required")
+        self.segment, self.segment_start_ns = segment, start_ns
+        self.tape.db.execute("DELETE FROM prints")
+        self.surge: Surge | None = None
+        self.last: TradeTick | None = None
+        self._rebuild()
+
     def arm(self, surge: Surge) -> None:
         if (
             surge.instrument_id != self.instrument_id
             or surge.segment != self.segment
-            or not 0 <= surge.first_print_ts <= surge.known_at < surge.expires_ts
+            or not self.segment_start_ns
+            <= surge.first_print_ts
+            <= surge.known_at
+            < surge.expires_ts
             or not surge.source
         ):
             raise ValueError("invalid surge identity, segment, clocks or source")
         number(surge.quiet_price, "quiet_price")
-        if self.surge is not None:
-            return  # An episode cannot renew its first anchor.
-        self.surge = surge
-        self._rebuild_first_leg()
-
-    def _rebuild_first_leg(self) -> None:
-        self.run = []
-        for tick in self.trades:
-            self._first_leg(tick)
-        self.run = [tick for tick in self.run if tick not in self.ineligible]
+        if self.surge is None:
+            self.surge = surge
+            self._rebuild()
 
     def on_bar(self, bar: Bar, *, now: int) -> bool:
         if (
@@ -111,117 +177,85 @@ class EntryState:
         ):
             return False
         self.atr.handle_bar(bar)
+        if self.atr.value is not None:
+            self.tape.db.execute(
+                "INSERT OR REPLACE INTO atrs VALUES (?, ?)", (now, str(self.atr.value))
+            )
         self.last_bar_ns = bar.ts_event
         return True
 
     def on_trade(self, tick: TradeTick, *, now: int) -> bool:
-        identity = (str(tick.trade_id), tick.ts_event, tick.price, tick.size)
         if (
             tick.instrument_id != self.instrument_id
-            or identity in self.identities
-            or not 0 <= tick.ts_event <= tick.ts_init <= now
+            or not self.segment_start_ns <= tick.ts_event <= tick.ts_init <= now
             or tick.price.as_decimal() <= 0
             or tick.size.as_decimal() <= 0
         ):
             return False
-        previous = self.last
-        late = previous is not None and tick.ts_event < previous.ts_event
-        # Deduplication spans the segment even after the rolling tape is pruned.
-        self.identities.add(identity)
-        if late:
-            self.trades.insert(
-                bisect_right(self.trades, tick.ts_event, key=lambda t: t.ts_event), tick
-            )
-        else:
+        eligible = (
+            self.last is None or tick.ts_event >= self.last.ts_event
+        ) and now - tick.ts_event <= self.params.ns("max_data_age_s")
+        if not self.tape.add(tick, eligible, self.atr.value):
+            return False
+        if self.last is None or tick.ts_event >= self.last.ts_event:
             self.last = tick
-            self.trades.append(tick)
-        retain = max(
-            self.params.ns("flow_share_window_s"),
-            self.params.ns("first_leg_window_s"),
-            self.params.ns("covered_flow_window_s"),
-            self.params.ns("covered_flow_baseline_min") * 60,
-        )
-        while self.trades and self.trades[0].ts_event < now - retain:
-            self.trades.popleft()
+        if eligible:
+            self._advance(tick, True, self.atr.value, rebuilding=False)
+        else:
+            self._rebuild()
+            self.reclaim_event_ns = None
+        return eligible
+
+    def _advance(self, tick, eligible, atr, *, rebuilding=True) -> None:
         price, size = tick.price.as_decimal(), tick.size.as_decimal()
         self.dollars += price * size
         self.volume += size
         self.vwap = self.dollars / self.volume
-        assert self.last is not None
-        self.extension = self._extension(self.last.price.as_decimal())
-        if late or now - tick.ts_event > self.params.ns("max_data_age_s"):
-            self.ineligible.add(tick)
-            self._veto(tick)
-            return False
-        if previous is not None and price < previous.price.as_decimal():
-            self.run = []
-        self._first_leg(tick)
-        self._reclaim(tick)
-        return True
-
-    def _veto(self, tick: TradeTick) -> None:
-        self.reclaim_event_ns = None
-        if self.run and tick.ts_event >= self.run[0].ts_event:
-            qualified = set(self.run)
-            self._rebuild_first_leg()
-            # A late print can remove qualification, never add to it.
-            self.run = [trade for trade in self.run if trade in qualified]
-        if self.touch is None:
-            return
-        assert self.vwap is not None and self.last is not None
-        price, at = tick.price.as_decimal(), tick.ts_event
-        if (
-            self.last.price.as_decimal() < self.vwap
-            or self.extension is Extension.EXTENDED
-            or (self.trough is not None and self.trough < self.vwap)
-            or (
-                at >= self.touch[0]
-                and (price < self.vwap or self._extension(price) is Extension.EXTENDED)
+        self.extension = (
+            classify(price, self.vwap, atr, self.params["entry_max_vwap_extension_atr"])
+            if rebuilding
+            else self._extension(price)
+        )
+        flag = self.surge
+        if flag is not None:
+            in_window = (
+                flag.first_print_ts
+                <= tick.ts_event
+                <= min(flag.expires_ts, flag.first_print_ts + self.params.ns("first_leg_window_s"))
+                and price > flag.quiet_price
             )
-        ):
-            self.touch = self.episode_started = None
-            self._clear_retest()
-        elif at >= self.touch[0]:
-            if not self.confirmed and price == self.vwap:
-                self._clear_retest()
-            elif self.high is not None and price > self.high:
-                self.high = price
-                if self.hold_started is not None and at >= self.hold_started:
-                    self.trough = self.hold_started = None
-            elif (
-                self.trough is not None
-                and self.hold_started is not None
-                and at >= self.hold_started
-                and price < self.trough
-            ):
-                self.trough, self.hold_started = price, at
+            if not in_window or (self.previous is not None and price < self.previous):
+                self.run = []
+            if eligible and in_window:
+                self.run.append(tick)
+                if len(self.run) > self.params["first_leg_trades_count"] + 1:
+                    del self.run[1]
+        self.previous = price
+        self._reclaim(tick, self.vwap, self.extension, eligible=eligible)
+        self.ordered._reclaim(tick, self.vwap, self.extension)
+        if self.reclaim_event_ns != self.ordered.reclaim_event_ns:
+            self.reclaim_event_ns = None
+
+    def _rebuild(self) -> None:
+        self.run: list[TradeTick] = []
+        self.previous: Decimal | None = None
+        self.dollars = self.volume = Decimal(0)
+        self.vwap: Decimal | None = None
+        self.extension = Extension.UNKNOWN
+        _Reclaim.__init__(self, self.params)
+        self.ordered = _Reclaim(self.params)
+        for tick, eligible, atr in self.tape.rows():
+            self._advance(tick, eligible, atr)
+        if self.last is not None:
+            self.extension = self._extension(self.last.price.as_decimal())
 
     def _extension(self, price: Decimal) -> Extension:
-        if self.vwap is None or not self.atr.initialized:
-            return Extension.UNKNOWN
-        atr = self.atr.value
-        assert atr is not None
-        if not atr.is_finite() or atr <= 0:
-            return Extension.UNKNOWN
-        return (
-            Extension.EXTENDED
-            if price - self.vwap > self.params["entry_max_vwap_extension_atr"] * atr
-            else Extension.NOT_EXTENDED
+        return classify(
+            price, self.vwap, self.atr.value, self.params["entry_max_vwap_extension_atr"]
         )
 
-    def _first_leg(self, tick: TradeTick) -> None:
-        if self.surge is None:
-            return
-        price = tick.price.as_decimal()
-        if tick.ts_event < self.surge.first_print_ts or price <= self.surge.quiet_price:
-            self.run = []
-        elif self.run and price < self.run[-1].price.as_decimal():
-            self.run = [tick]
-        else:
-            self.run.append(tick)
-
     def fresh(self, now: int) -> bool:
-        return bool(
+        return (
             self.last is not None
             and self.last.ts_init <= now
             and now - self.last.ts_event <= self.params.ns("max_data_age_s")
@@ -241,65 +275,6 @@ class EntryState:
             and max(ask, run[-1].price.as_decimal())
             <= flag.quiet_price * (1 + p["first_leg_max_move"])
         )
-
-    def _reclaim(self, tick: TradeTick) -> None:
-        price, at, level, p = tick.price.as_decimal(), tick.ts_event, self.vwap, self.params
-        self.reclaim_event_ns = None
-        if self.extension is Extension.UNKNOWN or level is None:
-            self.touch = None
-            self._clear_retest()
-            return
-        if self.extension is Extension.EXTENDED:
-            if self.episode_started is None:
-                self.episode_started, self.touch = at, None
-                self._clear_retest()
-            return
-        if self.episode_started is not None:
-            if price <= level and at > self.episode_started:
-                self.touch, self.episode_started = (at, price), None
-                self._clear_retest()
-            return
-        if self.touch is None:
-            return
-        if at - self.touch[0] > p.ns("reclaim_lookback_s") or price < level:
-            self.touch = None
-            self._clear_retest()
-            return
-        if price == level and not self.confirmed:
-            self._clear_retest()
-            return
-        if not self.confirmed:
-            self.reclaim_run.append(tick)
-            self.high = max(self.high or price, price)
-            self.confirmed = len(self.reclaim_run) >= p[
-                "reclaim_trades_count"
-            ] and at - self.reclaim_run[0].ts_event >= p.ns("reclaim_trades_span_s")
-            return
-        assert self.high is not None
-        if self.reclaim_consumed_price is not None and self.trough is None:
-            if price >= self.reclaim_consumed_price:
-                self.high = max(self.high, price)
-                return
-            self.trough, self.hold_started = price, at
-            return
-        if self.trough is not None and self.hold_started is not None:
-            if (
-                price > self.trough
-                and at - self.hold_started >= p.ns("reclaim_hold_s")
-                and self.trough > self.touch[1]
-                and self.trough >= level
-            ):
-                self.reclaim_event_ns = at
-                self.reclaim_consumed_price = price
-                self.trough, self.hold_started = None, None
-                self.high = max(self.high, price)
-                return  # Consume this retest even when the caller cannot enter.
-            elif price > self.high:
-                self.trough, self.hold_started = None, None
-        if price > self.high:
-            self.high = price
-        elif price < self.high and (self.trough is None or price < self.trough):
-            self.trough, self.hold_started = price, at
 
     def reclaim_ready(self, ask: Decimal, buffer: Decimal, now: int, *, covered_flow=False) -> bool:
         return bool(
@@ -329,8 +304,8 @@ class EntryState:
             return False
         baseline = coverage.counts.get(baseline_ns)
         recent = coverage.counts.get(window_ns)
-        observed_baseline = sum(now - baseline_ns < t.ts_event <= now for t in self.trades)
-        observed_recent = sum(now - window_ns < t.ts_event <= now for t in self.trades)
+        observed_baseline = self.tape.count(now - baseline_ns, now)
+        observed_recent = self.tape.count(now - window_ns, now)
         return bool(
             type(baseline) is int
             and type(recent) is int

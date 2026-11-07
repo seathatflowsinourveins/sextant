@@ -10,8 +10,8 @@ from sextant.entry.signals import EntryState, Extension, Surge, TradeCoverage
 from .conftest import IID, SEC, START, bar, params, trade
 
 
-def state(**overrides) -> EntryState:
-    return EntryState(IID, params(**overrides), "fixture-segment")
+def state(*, start_ns=START - 3600 * SEC, **overrides) -> EntryState:
+    return EntryState(IID, params(**overrides), "fixture-segment", start_ns=start_ns)
 
 
 def arm(s: EntryState) -> None:
@@ -89,7 +89,7 @@ def test_segment_reset_clears_vwap_and_first_leg() -> None:
     s = state()
     arm(s)
     feed(s, 0, "10.01")
-    s.reset_segment("next-segment")
+    s.reset_segment("next-segment", start_ns=START + SEC)
     assert s.vwap is None
     assert s.extension is Extension.UNKNOWN
     assert s.surge is None
@@ -274,7 +274,7 @@ def test_covered_flow_needs_same_segment_causal_complete_receipt() -> None:
     assert not s.covered_flow(START + SEC, receipt)  # Not yet known.
     assert not s.covered_flow(START + 3 * SEC, receipt)  # Coverage ended.
     assert not s.covered_flow(START + 2 * SEC, None)
-    s.reset_segment("next-segment")
+    s.reset_segment("next-segment", start_ns=START + 2 * SEC)
     feed(s, 2, "10.01")
     assert not s.covered_flow(START + 2 * SEC, receipt)
 

@@ -39,8 +39,8 @@ def test_native_vwap_paired_replay_requires_a_decimal_exception(
             self.native_vwap = VolumeWeightedAveragePrice()
             super().__init__(*args, **kwargs)
 
-        def reset_segment(self, segment):
-            super().reset_segment(segment)
+        def reset_segment(self, segment, *, start_ns):
+            super().reset_segment(segment, start_ns=start_ns)
             self.native_vwap.reset()
             self.native_last = None
 

@@ -1,10 +1,4 @@
-"""Decimal carry of rc8 ATR's true range and Wilder average (unchanged from rc7).
-
-nautechsystems/nautilus_trader@d53849b216e20f2c122ca01b4dd0da377638b186:
-crates/indicators/src/volatility/atr.rs::update_raw and
-crates/indicators/src/average/rma.rs::update_raw. Same SMA seed and Wilder
-recurrence, with Decimal prices so an exact N2 boundary is not rounded up.
-"""
+"""Decimal rc8 ATR/RMA carry; source pins and the exact-boundary exception are in ADR-0004."""
 
 from decimal import Decimal
 
@@ -17,10 +11,6 @@ class DecimalATR:
         self.previous_close: Decimal | None = None
         self.seed_sum = Decimal(0)
         self.value: Decimal | None = None
-
-    @property
-    def initialized(self) -> bool:
-        return self.value is not None
 
     def handle_bar(self, bar: Bar) -> None:
         high, low, close = bar.high.as_decimal(), bar.low.as_decimal(), bar.close.as_decimal()

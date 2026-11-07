@@ -1,11 +1,6 @@
-"""N5 incumbent sizing, adapted from pinned entry_sizing.py::size_entry/refresh.
-
-Segment persistence carries pinned persist.py's fsync/rename/directory-fsync shape.
-"""
+"""N5 sizing and durable basis; entry_sizing.py/persist.py pins are in docs/manifest.md."""
 
 import json
-import os
-import tempfile
 from dataclasses import dataclass
 from decimal import ROUND_FLOOR, Decimal
 from pathlib import Path
@@ -16,6 +11,7 @@ from nautilus_trader.risk import FixedRiskSizer
 
 from sextant.entry.orders import funding_unit_cost
 from sextant.entry.parameters import EntryParameters, number
+from sextant.persist import write_json_atomic
 
 
 class SegmentBasis:
@@ -49,22 +45,7 @@ class SegmentBasis:
             first_read=first_read,
             params_hash=self.params.params_hash,
         )
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        fd, temporary = tempfile.mkstemp(dir=self.path.parent, prefix=f".{self.path.name}.")
-        try:
-            with os.fdopen(fd, "w") as stream:
-                json.dump(receipt, stream, sort_keys=True)
-                stream.flush()
-                os.fsync(stream.fileno())
-            os.replace(temporary, self.path)
-            directory = os.open(self.path.parent, os.O_RDONLY)
-            try:
-                os.fsync(directory)
-            finally:
-                os.close(directory)
-        except BaseException:
-            Path(temporary).unlink(missing_ok=True)
-            raise
+        write_json_atomic(self.path, receipt)
         self.receipt = receipt
         return basis
 
@@ -78,6 +59,12 @@ class Sizing:
     binding_term: str | None
     refusal: str | None
     params_hash: str
+
+    def journal(self) -> dict[str, Any]:
+        return {
+            name: str(value) if isinstance(value, (Decimal, Quantity)) else value
+            for name, value in vars(self).items()
+        }
 
 
 def size_entry(
@@ -95,7 +82,7 @@ def size_entry(
     prearm_stopouts: int,
     commission_rate: Decimal | None = None,
 ) -> Sizing:
-    planned = distance = multiplier = None
+    planned = distance = multiplier = binding = refusal = None
     try:
         entry = number(entry, "entry")
         commission_rate = number(commission_rate, "commission_rate", zero=True)
@@ -134,7 +121,7 @@ def size_entry(
             raise ValueError("price_increment")
         distance = entry - stop
         candidates = {
-            "risk": planned / distance,
+            "risk": planned * (1 - 2 * commission_rate) / distance,
             "buying_power": buying_power
             / funding_unit_cost(entry, commission_rate, instrument.quote_currency.precision),
             "flow": params["flow_share_cap"] * dollar_volume / entry,
@@ -153,22 +140,8 @@ def size_entry(
         whole = quantity.as_decimal().to_integral_value(rounding=ROUND_FLOOR)
         if whole < 1:
             raise ValueError("quantity below one share")
-        return Sizing(
-            Quantity.from_int(int(whole)),
-            planned,
-            distance,
-            multiplier,
-            min(candidates, key=lambda key: candidates[key]),
-            None,
-            params.params_hash,
-        )
+        quantity = Quantity.from_int(int(whole))
+        binding = min(candidates, key=lambda key: candidates[key])
     except (ValueError, ArithmeticError) as error:
-        return Sizing(
-            Quantity.from_int(0),
-            planned,
-            distance,
-            multiplier,
-            None,
-            str(error),
-            params.params_hash,
-        )
+        quantity, refusal = Quantity.from_int(0), str(error)
+    return Sizing(quantity, planned, distance, multiplier, binding, refusal, params.params_hash)

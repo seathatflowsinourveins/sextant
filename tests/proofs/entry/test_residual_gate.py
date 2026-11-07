@@ -238,16 +238,20 @@ def test_lower_print_before_hold_does_not_backdate_or_restart_it():
     assert s.reclaim_ready(D("10.04"), D("0.10"), START + 8 * SEC, covered_flow=True)
 
 
-def test_a_stale_print_before_the_touch_preserves_later_qualification():
+@pytest.mark.parametrize(("at", "valid"), [("0.5", True), ("1.5", False)])
+def test_a_stale_print_before_the_touch_revalidates_the_episode(at, valid):
     s = extended_state()
-    for at, price in ((3, "10.03"), (4, "10.04"), (5, "10.05"), (6, "10.02"), (7, "10.02")):
-        feed(s, at, price)
+    for when, price in ((3, "10.03"), (4, "10.04"), (5, "10.05"), (6, "10.02"), (7, "10.02")):
+        feed(s, when, price)
     touch = s.touch
-    late = trade("1.5", "9.97", lag=5_800_000_000)
+    late = trade(at, "9.97", lag=int((D("7.3") - D(at)) * SEC))
     assert not s.on_trade(late, now=late.ts_init)
-    assert s.touch == touch and s.hold_started == START + 6 * SEC
+    if valid:
+        assert s.touch == touch and s.hold_started == START + 6 * SEC
+    else:
+        assert s.touch is None
     feed(s, 8, "10.03")
-    assert s.reclaim_ready(D("10.03"), D("0.10"), START + 8 * SEC, covered_flow=True)
+    assert s.reclaim_ready(D("10.03"), D("0.10"), START + 8 * SEC, covered_flow=True) is valid
 
 
 def test_late_new_high_during_hold_requires_a_new_pullback():
@@ -256,12 +260,13 @@ def test_late_new_high_during_hold_requires_a_new_pullback():
         feed(s, at, price)
     late = trade("6.5", "10.06", lag=800_000_000)
     assert not s.on_trade(late, now=late.ts_init)
-    assert s.touch is not None and s.trough is None and s.hold_started is None
+    assert s.touch is not None and s.trough == D("10.02") and s.hold_started == START + 7 * SEC
     feed(s, 8, "10.03")
     assert not s.reclaim_ready(D("10.03"), D("0.10"), START + 8 * SEC, covered_flow=True)
     feed(s, 9, "10.03")
+    assert s.reclaim_ready(D("10.03"), D("0.10"), START + 9 * SEC, covered_flow=True)
     feed(s, 10, "10.04")
-    assert s.reclaim_ready(D("10.04"), D("0.10"), START + 10 * SEC, covered_flow=True)
+    assert not s.reclaim_ready(D("10.04"), D("0.10"), START + 10 * SEC, covered_flow=True)
 
 
 def test_a_stale_higher_print_cannot_hide_the_next_lower_trade():

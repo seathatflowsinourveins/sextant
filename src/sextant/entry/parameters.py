@@ -1,7 +1,4 @@
-"""Explicit registry consumption, adapted from northstar-lanes contracts.Params.
-
-Source pins and the unavailable deployment starts are in docs/manifest.md.
-"""
+"""Explicit authority checks adapted from the pinned contracts.Params in docs/manifest.md."""
 
 import hashlib
 import json
@@ -21,13 +18,7 @@ NAMES = frozenset(
     "covered_flow_baseline_min covered_flow_ratio".split()
 )
 COUNTS = frozenset(
-    {
-        "first_leg_trades_count",
-        "reclaim_trades_count",
-        "atr_period",
-        "atr_bar_minutes",
-        "portfolio_slots",
-    }
+    "first_leg_trades_count reclaim_trades_count atr_period atr_bar_minutes portfolio_slots".split()
 )
 FRACTIONS = frozenset(
     "first_leg_max_move reclaim_max_above_buffers bp_target_fraction stop_ref_fraction "
@@ -68,10 +59,9 @@ class EntryParameters:
                     raise ValueError(f"{name}: missing {metadata}")
             if row.get("value") is None or row.get("scope") == "UNAVAILABLE":
                 raise ValueError(f"{name}: unavailable")
-            if row.get("scope") == "FIXTURE_ONLY":
-                if not fixture:
-                    raise ValueError(f"{name}: fixture is not deployment authority")
-            elif row.get("scope") != "REVIEWED":
+            if row.get("scope") == "FIXTURE_ONLY" and not fixture:
+                raise ValueError(f"{name}: fixture is not deployment authority")
+            if row.get("scope") not in {"FIXTURE_ONLY", "REVIEWED"}:
                 raise ValueError(f"{name}: unreviewed authority")
             if row.get("calibration") not in {"UNCALIBRATED", "CALIBRATED"}:
                 raise ValueError(f"{name}: missing calibration state")

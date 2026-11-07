@@ -24,6 +24,7 @@ def replay(instrument, tmp_path, data, **overrides):
         data=data,
         basis_path=tmp_path / "basis.json",
         segment="fixture-segment",
+        segment_start_ns=START - 3600 * SEC,
         surge=Surge(IID, "fixture-segment", START, START, START + 120 * SEC, D("10"), "TEST"),
         buffer=D("0.10"),
         starting_cash=D("10000"),
