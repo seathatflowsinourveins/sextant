@@ -31,6 +31,7 @@ from typing import Any
 from sextant.exits.policy import ExitParams
 from sextant.research import exit_econ_98 as x98
 from sextant.research import exit_study_41 as x41
+from sextant.validation import handoff
 
 ISSUE = 141
 LANE = "exit"
@@ -148,24 +149,8 @@ def reserve_rows(attempt_dir: Path, implementation_sha: str) -> list[dict[str, A
 
 
 def write_batch(directory: Path, kind: str, rows: list[dict[str, Any]]) -> dict[str, str]:
-    directory.mkdir(parents=True, exist_ok=False)
-    raw = "".join(json.dumps(r, sort_keys=True, allow_nan=False) + "\n" for r in rows).encode()
-    (directory / "rows.jsonl").write_bytes(raw)
-    manifest = {
-        "format": "sextant.ledger.handoff/1",
-        "lane": LANE,
-        "issue": ISSUE,
-        "kind": kind,
-        "count": len(rows),
-        "rows_sha256": hashlib.sha256(raw).hexdigest(),
-        "tier": "MODELED",
-    }
-    data = json.dumps(manifest, sort_keys=True).encode() + b"\n"
-    (directory / "manifest.json").write_bytes(data)
-    return {
-        "rows_sha256": manifest["rows_sha256"],
-        "manifest_sha256": hashlib.sha256(data).hexdigest(),
-    }
+    """#141's recorded reservation and outcome batches keep their compact manifest."""
+    return handoff.write_batch(directory, kind, rows, lane=LANE, issue=ISSUE)
 
 
 def _day_means(per_entry: list[dict[str, Any]], cost: str) -> tuple[list[str], list[float]]:
