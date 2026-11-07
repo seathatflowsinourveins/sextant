@@ -1,6 +1,6 @@
-"""Decimal carry of rc7 ATR's default true range and Wilder moving average.
+"""Decimal carry of rc8 ATR's true range and Wilder average (unchanged from rc7).
 
-nautechsystems/nautilus_trader@55c0e82053142bce3a5cba4de4221d3929c2d3bc:
+nautechsystems/nautilus_trader@d53849b216e20f2c122ca01b4dd0da377638b186:
 crates/indicators/src/volatility/atr.rs::update_raw and
 crates/indicators/src/average/rma.rs::update_raw. Same SMA seed and Wilder
 recurrence, with Decimal prices so an exact N2 boundary is not rounded up.

@@ -61,6 +61,13 @@ def test_live_or_unknown_lane_never_builds_a_paper_config():
             account(lane)
 
 
+@pytest.mark.parametrize("client_id", [" ", "alpaca-\u00e9"])
+def test_a_client_id_rc7_refuses_fails_at_load_not_before_every_send(client_id):
+    """#163 author review: an all-space or non-ASCII ID would halt every order before its hook."""
+    with pytest.raises(ValueError):
+        PaperAccount("alpaca-paper-b", "paper-fixture", client_id, "B001", (Session.RTH,))
+
+
 def test_only_b_can_claim_external_instruments():
     iid = InstrumentId.from_str("AAPL.XNAS")
     with pytest.raises(ValueError):

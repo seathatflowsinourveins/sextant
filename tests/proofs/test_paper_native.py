@@ -2,6 +2,7 @@
 
 from dataclasses import replace
 from decimal import Decimal as D
+from types import SimpleNamespace as NS
 
 import pytest
 from nautilus_trader.backtest import BacktestEngine
@@ -26,6 +27,7 @@ from nautilus_trader.model import (
 from test_paper_config import account, ns
 from test_paper_node import boundary as boundary
 from test_paper_node import intent
+from test_paper_row8 import row8 as row8
 
 from sextant.paper.native import PaperStrategy, PaperStrategyConfig, build_shell, node_config
 
@@ -242,5 +244,188 @@ def test_gtc_nonlimit_amend_after_close_refuses_without_halting(boundary, order_
         remaining = strategy.cache.order(cid)
         assert remaining is not None
         assert remaining.status.name == "ACCEPTED"
+    finally:
+        engine.dispose()
+
+
+def run_witness(boundary, on_quote, *, balance="10000 USD", client_id="XNAS"):
+    """One quote-driven PaperStrategy in rc7's BacktestEngine, RiskEngine on."""
+
+    class Witness(PaperStrategy):
+        def on_start(self):
+            self.runtime.open()
+            self.subscribe_quotes(InstrumentId.from_str("AAPL.XNAS"))
+
+        def on_quote(self, quote):
+            on_quote(self)
+
+    boundary.runtime.close()
+    strategy = Witness(
+        PaperStrategyConfig(
+            account=replace(boundary.config, client_id=client_id),
+            budget=boundary.runtime.budget,
+            services=boundary.services,
+        )
+    )
+    engine = BacktestEngine(
+        BacktestEngineConfig(
+            trader_id=TraderId.from_str("PAPERTEST-001"), risk_engine=RiskEngineConfig(bypass=False)
+        )
+    )
+    engine.add_venue(
+        venue=Venue.from_str("XNAS"),
+        oms_type=OmsType.NETTING,
+        account_type=AccountType.CASH,
+        base_currency=Currency.from_str("USD"),
+        starting_balances=[Money.from_str(balance)],
+        fee_model=MakerTakerFeeModel(maker_rate=D("0"), taker_rate=D("0")),
+    )
+    instrument = equity()
+    engine.add_instrument(instrument)
+    start = ns("2026-11-06T10:00:00")
+    quote = (Price.from_str("9.99"), Price.from_str("10.00"), Quantity.from_str("100"))
+    engine.add_data([QuoteTick(instrument.id, *quote, quote[2], start, start)])
+    engine.add_strategy(strategy)
+    engine.run(start=start)
+    return engine, strategy
+
+
+def drain_with(boundary, hook):
+    while boundary.queued:
+        _kind, send, options = boundary.queued.pop(0)
+        if options["admission"]():
+            send(hook)
+
+
+def test_an_rc7_denial_after_the_hook_releases_the_registration(boundary):
+    """#151 review: rc7's RiskEngine denies after submit_order; OrderDenied proves no venue."""
+
+    def on_quote(strategy):
+        assert strategy.runtime.request(intent(quantity=D("2000")))  # notional > free cash
+        drain_with(boundary, lambda: None)
+
+    engine, strategy = run_witness(boundary, on_quote)
+    try:
+        order = strategy.cache.order(ClientOrderId.from_str("A001-1"))
+        assert order is not None and order.status.name == "DENIED"
+        assert boundary.book.registrations["A001-1"]["unsent"].startswith("denied before")
+        assert boundary.guard.active
+    finally:
+        engine.dispose()
+
+
+def test_a_raising_wire_hook_leaves_no_native_order_and_releases_the_row(boundary):
+    def refuse_at_hook():
+        raise ValueError("one admitted paced action permits one wire request")
+
+    def on_quote(strategy):
+        assert strategy.runtime.request(intent())
+        drain_with(boundary, refuse_at_hook)
+
+    engine, strategy = run_witness(boundary, on_quote)
+    try:
+        assert strategy.cache.order(ClientOrderId.from_str("A001-1")) is None
+        assert boundary.book.registrations["A001-1"]["unsent"]  # the conforming send released it
+        assert boundary.guard.active and boundary.sent == []
+    finally:
+        engine.dispose()
+
+
+def test_a_price_finer_than_the_instrument_is_refused_before_the_hook(boundary):
+    def on_quote(strategy):
+        assert strategy.runtime.request(intent("EXIT", price=D("10.001")))
+        drain_with(boundary, lambda: pytest.fail("a refused order must not reach the hook"))
+
+    engine, strategy = run_witness(boundary, on_quote)
+    try:
+        assert (strategy.runtime.last_refusal or "").startswith("native validation refused")
+        assert boundary.book.registrations == {}
+        assert strategy.cache.order(ClientOrderId.from_str("A001-1")) is None
+    finally:
+        engine.dispose()
+
+
+def test_a_representable_price_or_size_with_trailing_zeros_is_built_exactly(boundary):
+    """#163 #88 review P3: 9.990 is 9.99 and 1.0 shares is 1; only finer values are refused."""
+
+    def on_quote(strategy):
+        assert strategy.runtime.request(intent(price=D("9.990"), quantity=D("1.0")))
+        drain_with(boundary, lambda: None)
+
+    engine, strategy = run_witness(boundary, on_quote)
+    try:
+        order = strategy.cache.order(ClientOrderId.from_str("A001-1"))
+        assert order is not None and order.price == Price.from_str("9.99")
+        assert order.quantity == Quantity.from_str("1")
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [dict(instrument="AAPL"), dict(quantity=D("1E+20")), dict(price=D("1E+15"))],
+    ids=["venue-less-symbol", "beyond-quantity-range", "beyond-price-range"],
+)
+def test_rc7_value_errors_before_the_hook_are_native_refusals(boundary, changes):
+    """#163 gate P3: a sizing or symbol bug is a quiet refusal, not an account halt."""
+
+    def on_quote(strategy):
+        assert strategy.runtime.request(intent(**changes))
+        drain_with(boundary, lambda: pytest.fail("a refused order must not reach the hook"))
+
+    engine, strategy = run_witness(boundary, on_quote)
+    try:
+        assert (strategy.runtime.last_refusal or "").startswith("native validation refused")
+        assert boundary.book.registrations == {} and boundary.guard.active
+    finally:
+        engine.dispose()
+
+
+def test_a_command_for_an_unregistered_client_is_denied_natively_and_released(boundary):
+    """#163 gate P0: only a registered ExecutionClient reaches a wire. rc8's ExecutionEngine
+    routes a command only to a registered client (crates/execution/src/engine/mod.rs:2191-2205,
+    or OrderDeniedReason::NoExecutionClient) and claims the order for that client before it
+    sends (:2524-2541); an order addressed to an unregistered client is denied, never sent,
+    and the OrderDenied releases its registration."""
+
+    def on_quote(strategy):
+        assert strategy.runtime.request(intent())
+        drain_with(boundary, lambda: None)
+
+    engine, strategy = run_witness(boundary, on_quote, client_id="NOWHERE")
+    try:
+        order = strategy.cache.order(ClientOrderId.from_str("A001-1"))
+        assert order is not None and order.status.name == "DENIED" and order.venue_order_id is None
+        released = boundary.book.registrations["A001-1"]["unsent"]
+        assert released.startswith("denied before the venue") and "client NOWHERE" in released
+        assert boundary.guard.active
+    finally:
+        engine.dispose()
+
+
+def test_the_shipped_prepare_on_row8_custody_pacer_and_guard_sends_exactly_once(row8):
+    """#163 dsh-TUI P2-2: one proof joins the shipped _prepare with row 8's real custody, pacer,
+    guard and writer lease in rc8's BacktestEngine. A recheck refused in the hook releases and
+    sends nothing; an admitted ENTRY registers, counts one wire request and reaches the venue."""
+    joined = NS(runtime=row8.runtime, config=row8.cfg, services=row8.services)
+    done: list[str] = []
+
+    def on_quote(strategy):
+        if done:
+            return
+        done.append("quote")
+        row8.services.submit_allowed = lambda _iid, _side, _qty, own_id: own_id is None
+        assert strategy.runtime.request(intent(cid="A001-refused"))
+        row8.services.submit_allowed = lambda *_args: True
+        assert strategy.runtime.request(intent(cid="A001-sent"))
+
+    engine, strategy = run_witness(joined, on_quote)
+    try:
+        assert row8.book.registrations["A001-refused"]["unsent"].startswith("NotSent")
+        assert strategy.cache.order(ClientOrderId.from_str("A001-refused")) is None
+        sent = strategy.cache.order(ClientOrderId.from_str("A001-sent"))
+        assert sent is not None and sent.venue_order_id is not None  # the simulated venue took it
+        assert "unsent" not in row8.book.registrations["A001-sent"]
+        assert row8.pacer.wire_requests == 1 and row8.guard.entry_allowed()
     finally:
         engine.dispose()

@@ -8,7 +8,12 @@ import pytest
 from test_paper_config import ROOT, account, ns
 
 from sextant.paper.config import load_budget
-from sextant.paper.runtime import PaperIntent, PaperRuntime, PaperServices
+from sextant.paper.runtime import (
+    NativeRefusal,
+    PaperIntent,
+    PaperRuntime,
+    PaperServices,
+)
 
 
 @pytest.fixture
@@ -31,11 +36,21 @@ def boundary():
     book.available_exit = lambda _iid, *, exclude_client_id=None: D("10")
 
     def register(cid, instrument, side, quantity, *, source):
+        if book.registrations.get(cid, {}).get("unsent"):
+            raise RuntimeError("a released unsent registration is closed; use a new client ID")
         book.registrations[cid] = dict(
             instrument=instrument, side=side, quantity=str(quantity), source=source
         )
 
     book.register = register
+
+    def release_unsent(cid, *, reason):
+        assert reason
+        book.registrations[cid]["unsent"] = reason
+
+    book.release_unsent = release_unsent
+
+    book.refresh = lambda: False  # this contract stub has no file to reload
     queued, sent = [], []
     budget = load_budget(ROOT / "lanes/limits.yaml", cfg.lane)
     values = dict(request_budget=180, broker_limit=200, window_s=D("60"))
@@ -57,7 +72,7 @@ def boundary():
         budget,
         services,
         now_ns=lambda: clock[0],
-        send=lambda intent, before_wire: (before_wire(), sent.append(intent)),
+        prepare=lambda intent: lambda: sent.append(intent),
     )
     runtime.open()
     return NS(
@@ -189,7 +204,7 @@ def test_sell_residual_is_rechecked_after_registration(boundary, action):
     assert boundary.runtime.request(intent(action))
     flush(boundary)
     assert boundary.sent == []
-    assert "A001-1" in boundary.book.registrations
+    assert boundary.book.registrations["A001-1"]["unsent"]  # never sent: custody closes it
 
 
 def test_unknown_or_future_custody_never_opens_entry(boundary):
@@ -201,16 +216,47 @@ def test_unknown_or_future_custody_never_opens_entry(boundary):
 
 
 def test_registration_precedes_native_dispatch_and_duplicate_id_is_refused(boundary):
-    def send(value, before_wire):
-        assert value.client_order_id in boundary.book.registrations
-        before_wire()
-        boundary.sent.append(value)
+    def prepare(value):
+        assert value.client_order_id not in boundary.book.registrations  # validation first
 
-    boundary.runtime.send = send
+        def command():
+            assert value.client_order_id in boundary.book.registrations  # durable before submit
+            boundary.sent.append(value)
+
+        return command
+
+    boundary.runtime.prepare = prepare
     assert boundary.runtime.request(intent())
     flush(boundary)
     assert len(boundary.sent) == 1
     assert not boundary.runtime.request(intent())
+
+
+def test_the_runtime_runs_its_own_hook_before_the_native_command(boundary):
+    """#163 gate P0: the native layer only prepares; it never receives the hook, so a command
+    runs only after the runtime has registered and counted it (upstream RestCaller.call)."""
+    calls: list[str] = []
+
+    def prepare(value):
+        calls.append("prepare")
+        return lambda: calls.append(f"command:{'A001-1' in boundary.book.registrations}")
+
+    boundary.runtime.prepare = prepare
+    assert boundary.runtime.request(intent("EXIT"))
+    _kind, send, options = boundary.queued.pop()
+    assert options["admission"]()
+    send(lambda: calls.append("counted"))
+    assert calls == ["prepare", "counted", "command:True"]
+    assert boundary.runtime.request(intent("EXIT", cid="A001-2"))
+    _kind, send, options = boundary.queued.pop()
+    assert options["admission"]()
+
+    def refusing_pacer():
+        raise ValueError("one admitted paced action permits one wire request")
+
+    send(refusing_pacer)
+    assert calls[-1] == "prepare" and boundary.guard.active  # the command never ran
+    assert boundary.book.registrations["A001-2"]["unsent"]
 
 
 @pytest.mark.parametrize("action,side", [("ENTRY", "BUY"), ("EXIT", "SELL"), ("PROTECT", "SELL")])
@@ -243,7 +289,7 @@ def test_final_submission_refusal_preserves_lineage_without_dispatch(boundary, a
     send(lambda: wire.append("accounted"))
     assert boundary.sent == []
     assert wire == []
-    assert "A001-1" in boundary.book.registrations
+    assert boundary.book.registrations["A001-1"]["unsent"]  # lineage kept, closed as unsent
     assert not boundary.runtime.request(order)
 
 
@@ -258,43 +304,72 @@ def test_owner_halt_during_registration_prevents_native_dispatch(boundary):
     assert boundary.runtime.request(intent())
     flush(boundary)
     assert boundary.sent == []
-    assert "A001-1" in boundary.book.registrations
+    assert boundary.book.registrations["A001-1"]["unsent"]
 
 
 def test_possible_send_failure_retains_lineage_and_halts(boundary):
-    def failed_send(_value, before_wire):
-        before_wire()
+    def command():
         raise TimeoutError("fixture unknown native outcome")
 
-    boundary.runtime.send = failed_send
+    boundary.runtime.prepare = lambda _value: command
     assert boundary.runtime.request(intent())
     with pytest.raises(TimeoutError):
         flush(boundary)
-    assert "A001-1" in boundary.book.registrations
+    assert "unsent" not in boundary.book.registrations["A001-1"]  # the hook counted it: unknown
     assert not boundary.guard.active
 
 
 def test_native_validation_before_wire_refuses_without_halting(boundary):
-    def invalid_send(_value, _before_wire):
-        raise ValueError("fixture native validation refused")
+    def prepare(_value):
+        raise NativeRefusal("fixture native validation refused")
 
-    boundary.runtime.send = invalid_send
+    boundary.runtime.prepare = prepare
     assert boundary.runtime.request(intent())
     flush(boundary)
     assert boundary.guard.active
     assert boundary.runtime.last_refusal is not None
     assert boundary.sent == []
-    assert "A001-1" in boundary.book.registrations
+    assert boundary.book.registrations == {}  # native validation precedes durable registration
 
 
-def test_unexpected_error_before_wire_still_halts(boundary):
-    def failed_send(_value, _before_wire):
-        raise RuntimeError("fixture unexpected native failure")
+@pytest.mark.parametrize("error", [TimeoutError("t"), RuntimeError("r"), ValueError("v")])
+def test_an_unexpected_prepare_error_registers_nothing_and_halts(boundary, error):
+    """Only NativeRefusal is a quiet refusal. Any other error while preparing halts, and the
+    runtime has registered and sent nothing (#163 gate P1-C)."""
 
-    boundary.runtime.send = failed_send
-    assert boundary.runtime.request(intent())
-    with pytest.raises(RuntimeError):
+    def prepare(_value):
+        raise error
+
+    boundary.runtime.prepare = prepare
+    assert boundary.runtime.request(intent("EXIT"))
+    flush(boundary)  # an admission error before the token halts and pops (#163 P1-2)
+    assert not boundary.guard.active and type(error).__name__ in boundary.runtime.last_error
+    assert boundary.book.registrations == {} and boundary.sent == []
+
+
+def test_a_refusal_at_the_pacer_hook_is_released_without_a_halt(boundary):
+    def pacer_hook():
+        raise ValueError("one admitted paced action permits one wire request")
+
+    assert boundary.runtime.request(intent("EXIT"))
+    _kind, send, options = boundary.queued[0]
+    assert options["admission"]()
+    send(pacer_hook)
+    assert boundary.sent == [] and boundary.guard.active
+    assert boundary.book.registrations["A001-1"]["unsent"]
+    assert boundary.runtime.last_refusal.startswith("refused at the wire hook")
+
+
+@pytest.mark.parametrize("error", [ValueError("after the hook"), TimeoutError("after the hook")])
+def test_an_error_once_the_wire_is_counted_is_never_released(boundary, error):
+    def command():
+        raise error
+
+    boundary.runtime.prepare = lambda _value: command
+    assert boundary.runtime.request(intent("EXIT"))
+    with pytest.raises(type(error)):
         flush(boundary)
+    assert "unsent" not in boundary.book.registrations["A001-1"]
     assert not boundary.guard.active
 
 
@@ -306,29 +381,26 @@ def test_final_admission_error_is_not_native_validation(boundary):
 
     boundary.services.submit_allowed = submit_allowed
     assert boundary.runtime.request(intent())
-    with pytest.raises(ValueError):
-        flush(boundary)
+    flush(boundary)  # the error halts inside admission, which returns False (#163 P1-2)
     assert not boundary.guard.active
     assert boundary.sent == []
+    assert boundary.book.registrations["A001-1"]["unsent"]  # halted, and never sent
+    assert "admission error halts" in boundary.runtime.last_refusal
 
 
-@pytest.mark.parametrize("inside_hook", [False, True])
-def test_validation_error_once_wire_hook_starts_still_halts(boundary, inside_hook):
-    def failed_send(_value, before_wire):
-        before_wire()
+def test_validation_error_once_wire_hook_returns_still_halts(boundary):
+    """A raise inside row 8's hook is a refusal before counting (pacer.py; #151 review)."""
+
+    def command():
         raise ValueError("fixture native failure after accounting")
 
-    def before_wire():
-        if inside_hook:
-            raise ValueError("fixture accounting hook failure")
-
-    boundary.runtime.send = failed_send
+    boundary.runtime.prepare = lambda _value: command
     assert boundary.runtime.request(intent())
     _kind, send, _options = boundary.queued[0]
     with pytest.raises(ValueError):
-        send(before_wire)
+        send(lambda: None)
     assert not boundary.guard.active
-    assert "A001-1" in boundary.book.registrations
+    assert "unsent" not in boundary.book.registrations["A001-1"]
 
 
 def test_close_fences_already_queued_commands(boundary):
@@ -372,3 +444,53 @@ def test_native_eligibility_is_required_for_protective_send_too(boundary):
 def test_intents_reject_nondecimal_or_invalid_money(field, value):
     with pytest.raises(ValueError):
         intent(**{field: value})
+
+
+def test_an_admission_error_at_the_drain_halts_and_pops_instead_of_wedging(boundary):
+    """#163 #88 review P1-2: the pacer pops a False; a raise would stay at the queue head."""
+
+    def submit_allowed(_iid, _side, _qty, _own_id):
+        raise ValueError("fixture admission error at drain")
+
+    assert boundary.runtime.request(intent("EXIT"))
+    boundary.services.submit_allowed = submit_allowed
+    _kind, _send, options = boundary.queued[0]
+    assert options["admission"]() is False
+    assert not boundary.guard.active and boundary.book.registrations == {}
+
+
+def test_a_late_denial_releases_only_this_writers_live_registration(boundary):
+    """A denial after the lease closed, or for another writer's row, rewrites nothing."""
+    assert boundary.runtime.request(intent("EXIT"))
+    flush(boundary)
+    boundary.book.register("A001-other", "AAPL.XNAS", "SELL", D("1"), source="another writer")
+    boundary.runtime.denied("A001-other", "fixture denial")
+    assert "unsent" not in boundary.book.registrations["A001-other"]
+    boundary.runtime.close()
+    boundary.runtime.denied("A001-1", "fixture late denial")
+    assert "unsent" not in boundary.book.registrations["A001-1"]
+
+
+def test_a_cancel_refused_at_the_pacer_hook_keeps_the_real_reason(boundary):
+    boundary.book.register("A001-1", "AAPL.XNAS", "BUY", D("1"), source="fixture")
+    assert boundary.runtime.request(intent("CANCEL"))
+    _kind, send, options = boundary.queued[0]
+    assert options["admission"]()
+
+    def pacer_hook():
+        boundary.runtime._refuse("fixture refusal inside the pacer's recheck")
+        raise ValueError("one admitted paced action permits one wire request")
+
+    send(pacer_hook)
+    assert boundary.runtime.last_refusal == (
+        "refused at the wire hook: fixture refusal inside the pacer's recheck"
+    )
+    assert boundary.guard.active
+
+
+def test_close_clears_the_runtime_bookkeeping(boundary):
+    assert boundary.runtime.request(intent("EXIT"))
+    flush(boundary)
+    assert boundary.runtime._registrars
+    boundary.runtime.close()
+    assert boundary.runtime._registrars == {} and boundary.runtime._kill_prices == {}

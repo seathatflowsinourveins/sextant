@@ -1,10 +1,11 @@
 """ADR-0004 N1/N2; first-leg run adapted from pinned first_leg.py::_run.
 
 The pinned entry ADR supplies the house extension/retest policy, not an edge.
-The rc7 ATR/RMA formulas consume native completed bars in Decimal arithmetic.
+The rc8 ATR/RMA formulas (unchanged from rc7) consume completed native bars in Decimal.
 A quote never changes an episode or its touch.
 """
 
+from bisect import bisect_right
 from collections import deque
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -94,6 +95,10 @@ class EntryState:
         if self.surge is not None:
             return  # An episode cannot renew its first anchor.
         self.surge = surge
+        self._rebuild_first_leg()
+
+    def _rebuild_first_leg(self) -> None:
+        self.run = []
         for tick in self.trades:
             self._first_leg(tick)
 
@@ -113,31 +118,80 @@ class EntryState:
             tick.instrument_id != self.instrument_id
             or identity in self.identities
             or not 0 <= tick.ts_event <= tick.ts_init <= now
-            or now - tick.ts_event > self.params.ns("max_data_age_s")
             or tick.price.as_decimal() <= 0
             or tick.size.as_decimal() <= 0
         ):
             return False
-        if self.last is not None and tick.ts_event < self.last.ts_event:
-            self.run = []
-            self.touch = self.episode_started = None
-            self._clear_retest()
-            return False
-        self.last = tick
-        self.trades.append(tick)
+        previous = self.last
+        late = previous is not None and tick.ts_event < previous.ts_event
+        # Deduplication spans the segment even after the rolling tape is pruned.
         self.identities.add(identity)
-        retain = max(self.params.ns("flow_share_window_s"), self.params.ns("first_leg_window_s"))
-        while self.trades and self.trades[0].ts_event < tick.ts_event - retain:
-            old = self.trades.popleft()
-            self.identities.discard((str(old.trade_id), old.ts_event, old.price, old.size))
+        if late:
+            self.trades.insert(
+                bisect_right(self.trades, tick.ts_event, key=lambda t: t.ts_event), tick
+            )
+        else:
+            self.last = tick
+            self.trades.append(tick)
+        retain = max(
+            self.params.ns("flow_share_window_s"),
+            self.params.ns("first_leg_window_s"),
+            self.params.ns("covered_flow_window_s"),
+            self.params.ns("covered_flow_baseline_min") * 60,
+        )
+        while self.trades and self.trades[0].ts_event < now - retain:
+            self.trades.popleft()
         price, size = tick.price.as_decimal(), tick.size.as_decimal()
         self.dollars += price * size
         self.volume += size
         self.vwap = self.dollars / self.volume
-        self.extension = self._extension(price)
+        assert self.last is not None
+        self.extension = self._extension(self.last.price.as_decimal())
+        if late or now - tick.ts_event > self.params.ns("max_data_age_s"):
+            self._veto(tick)
+            return False
+        if previous is not None and price < previous.price.as_decimal():
+            self.run = []
         self._first_leg(tick)
         self._reclaim(tick)
         return True
+
+    def _veto(self, tick: TradeTick) -> None:
+        self.reclaim_event_ns = None
+        if self.run and tick.ts_event >= self.run[0].ts_event:
+            qualified = set(self.run)
+            self._rebuild_first_leg()
+            # A late print can remove qualification, never add to it.
+            self.run = [trade for trade in self.run if trade in qualified]
+        if self.touch is None:
+            return
+        assert self.vwap is not None and self.last is not None
+        price, at = tick.price.as_decimal(), tick.ts_event
+        if (
+            self.last.price.as_decimal() < self.vwap
+            or self.extension is Extension.EXTENDED
+            or (self.trough is not None and self.trough < self.vwap)
+            or (
+                at >= self.touch[0]
+                and (price < self.vwap or self._extension(price) is Extension.EXTENDED)
+            )
+        ):
+            self.touch = self.episode_started = None
+            self._clear_retest()
+        elif at >= self.touch[0]:
+            if not self.confirmed and price == self.vwap:
+                self._clear_retest()
+            elif self.high is not None and price > self.high:
+                self.high = price
+                if self.hold_started is not None and at >= self.hold_started:
+                    self.trough = self.hold_started = None
+            elif (
+                self.trough is not None
+                and self.hold_started is not None
+                and at >= self.hold_started
+                and price < self.trough
+            ):
+                self.trough, self.hold_started = price, at
 
     def _extension(self, price: Decimal) -> Extension:
         if self.vwap is None or not self.atr.initialized:
@@ -272,12 +326,16 @@ class EntryState:
             return False
         baseline = coverage.counts.get(baseline_ns)
         recent = coverage.counts.get(window_ns)
+        observed_baseline = sum(now - baseline_ns < t.ts_event <= now for t in self.trades)
+        observed_recent = sum(now - window_ns < t.ts_event <= now for t in self.trades)
         return bool(
             type(baseline) is int
             and type(recent) is int
-            and baseline > 0
-            and recent >= 0
+            and baseline >= observed_baseline > 0
+            and recent >= observed_recent >= 0
             and (window_ns >= baseline_ns or recent <= baseline)
             and (window_ns <= baseline_ns or recent >= baseline)
             and recent * baseline_ns >= baseline * window_ns * self.params["covered_flow_ratio"]
+            and observed_recent * baseline_ns
+            >= observed_baseline * window_ns * self.params["covered_flow_ratio"]
         )

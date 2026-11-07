@@ -44,11 +44,13 @@ def test_out_of_order_print_clears_first_leg_without_extending_it(price):
     for at, value in ((0, "10.01"), (1, "10.02"), (2, "10.03")):
         feed(s, at, value)
     assert s.first_leg_ready(D("10.03"), START + 2 * SEC)
-    previous = (s.last, s.vwap, s.volume)
+    previous = s.last
     late = trade("1.5", price, lag=600_000_000)
     assert not s.on_trade(late, now=late.ts_init)
     assert not s.first_leg_ready(D("10.03"), late.ts_init)
-    assert (s.last, s.vwap, s.volume) == previous
+    assert s.last == previous
+    assert s.dollars == D("3006") + D(price) * 100
+    assert s.volume == 400
     for at in (3, 4, 5):
         feed(s, at, "10.03")
     assert s.first_leg_ready(D("10.03"), START + 5 * SEC)

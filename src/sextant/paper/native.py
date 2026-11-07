@@ -5,7 +5,9 @@ PaperStrategy's hook counts native simulated commands, not broker wire sends.
 A broker account still owes adapter-level row-8 wiring and acceptance receipts.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from typing import Any, cast
 
 from nautilus_trader.common import Environment
@@ -33,7 +35,7 @@ from nautilus_trader.model import (
 from nautilus_trader.trading import Strategy
 
 from sextant.paper.config import PaperAccount, PaperBudget
-from sextant.paper.runtime import PaperIntent, PaperRuntime, PaperServices
+from sextant.paper.runtime import NativeRefusal, PaperIntent, PaperRuntime, PaperServices
 from sextant.paper.sessions import Session, session_at
 
 
@@ -80,7 +82,7 @@ class PaperStrategy(Strategy):
             config.budget,
             config.services,
             now_ns=lambda: self.clock.timestamp_ns(),
-            send=self._dispatch,
+            prepare=self._prepare,
         )
 
     def on_start(self):
@@ -90,35 +92,40 @@ class PaperStrategy(Strategy):
     def on_stop(self):
         self.runtime.close()
 
-    def _dispatch(self, intent: PaperIntent, before_wire) -> None:
-        iid = InstrumentId.from_str(intent.instrument)
-        cid = ClientOrderId.from_str(intent.client_order_id)
+    def _prepare(self, intent: PaperIntent) -> Callable[[], None]:
+        """Validate and build one native command; the runtime runs it after its own hook.
+
+        Building is the native OrderFactory's and sending is Strategy's submit_order,
+        cancel_order or modify_order. The command reaches a wire only through the native
+        RiskEngine and the ExecutionEngine's registered client, which denies anything else
+        (rc8 crates/execution/src/engine/mod.rs:2191-2205, OrderDeniedReason::NoExecutionClient).
+        """
+        try:
+            iid = InstrumentId.from_str(intent.instrument)
+            cid = ClientOrderId.from_str(intent.client_order_id)
+        except ValueError as error:  # a venue-less symbol such as 'AAPL' (#163 gate P3)
+            raise NativeRefusal(str(error)) from error
         instrument = self.cache.instrument(iid)
         if not isinstance(instrument, Equity):
-            raise ValueError("shared paper slice supports cached US equities only")
+            raise NativeRefusal("shared paper slice supports cached US equities only")
         client = ClientId.from_str(self.account.client_id)
         outside = session_at(self.clock.timestamp_ns()) is not Session.RTH
         params = {"extended_hours": outside} if self.account.broker == "ALPACA" else {}
         if intent.action in {"CANCEL", "MODIFY"}:
             order = self.cache.order(cid)
             if order is None or order.instrument_id != iid:
-                raise ValueError("native order identity is unavailable or mismatched")
+                raise NativeRefusal("native order identity is unavailable or mismatched")
             if intent.action == "CANCEL":
-                before_wire()
-                self.cancel_order(cid, client_id=client)
-            else:
-                if outside and order.order_type.name != "LIMIT":
-                    raise ValueError("outside RTH cannot amend a non-LIMIT native order")
-                before_wire()
-                self.modify_order(
-                    cid, price=Price.from_str(str(intent.price)), client_id=client, params=params
-                )
-            return
+                return lambda: self.cancel_order(cid, client_id=client)
+            if outside and order.order_type.name != "LIMIT":
+                raise NativeRefusal("outside RTH cannot amend a non-LIMIT native order")
+            price = _exact(intent.price, instrument.price_precision, Price.from_str)
+            return lambda: self.modify_order(cid, price=price, client_id=client, params=params)
         kwargs: dict[str, Any] = dict(
             instrument_id=iid,
             client_order_id=cid,
             order_side=OrderSide.BUY if intent.action == "ENTRY" else OrderSide.SELL,
-            quantity=Quantity.from_str(str(intent.quantity)),
+            quantity=_exact(intent.quantity, instrument.size_precision, Quantity.from_str),
             time_in_force=TimeInForce.DAY if intent.time_in_force == "DAY" else TimeInForce.GTC,
         )
         if self.account.broker == "INTERACTIVE_BROKERS" and outside:
@@ -129,15 +136,44 @@ class PaperStrategy(Strategy):
                 + "}"
             ]
         if intent.order_type in {"LIMIT", "STOP_LIMIT"}:
-            kwargs["price"] = Price.from_str(str(intent.price))
+            kwargs["price"] = _exact(intent.price, instrument.price_precision, Price.from_str)
         if intent.order_type in {"STOP_MARKET", "STOP_LIMIT"}:
-            kwargs["trigger_price"] = Price.from_str(str(intent.trigger_price))
+            trigger = _exact(intent.trigger_price, instrument.price_precision, Price.from_str)
+            kwargs["trigger_price"] = trigger
         if intent.order_type == "TRAILING_STOP_MARKET":
             kwargs["trailing_offset"] = intent.trailing_offset
             kwargs["trailing_offset_type"] = TrailingOffsetType.PRICE
-        order = getattr(self.order_factory, intent.order_type.lower())(**kwargs)
-        before_wire()
-        self.submit_order(order, client_id=client, params=params)
+        try:
+            order = getattr(self.order_factory, intent.order_type.lower())(**kwargs)
+        except ValueError as error:  # a native shape refusal, before the hook
+            raise NativeRefusal(str(error)) from error
+        return lambda: self.submit_order(order, client_id=client, params=params)
+
+    def on_order_denied(self, event) -> None:
+        """rc7 denies on this node, before any venue: custody releases the registration."""
+        self.runtime.denied(str(event.client_order_id), str(event.reason))
+
+
+def _exact(value, precision: int, make):
+    """rc7's RiskEngine denies a finer precision after submit; refuse it before the hook.
+
+    The value must be representable at the instrument's precision; trailing zeros are fine,
+    so 9.990 builds as 9.99 and 10.0 shares as 10 (#163 #88 review).
+    """
+    step, number = Decimal(1).scaleb(-precision), None
+    try:
+        number = Decimal(str(value))
+        exact = number.quantize(step) if number.is_finite() else None
+    except InvalidOperation:  # an absurd magnitude such as 1E+30 (#163 gate P3)
+        exact = None
+    if exact is None or exact != number:
+        raise NativeRefusal(
+            f"{value} is not representable at the instrument's precision {precision}"
+        )
+    try:
+        return make(format(exact, "f"))
+    except ValueError as error:  # outside rc7's Price or Quantity range, such as 1E+20
+        raise NativeRefusal(str(error)) from error
 
 
 @dataclass

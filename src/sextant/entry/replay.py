@@ -1,6 +1,6 @@
 """One entry episode through native BacktestEngine; no feed or broker client.
 
-Framework shape: Nautilus rc7's backtest example, Strategy, OrderFactory, native
+Framework shape: Nautilus rc8's backtest example, Strategy, OrderFactory, native
 clock, FixedRiskSizer and cash account. N1/N2/N4/N5: pinned entry ADR and runtime
 slice in docs/manifest.md. Extended-hours is recorded intent, not bridge proof.
 """
