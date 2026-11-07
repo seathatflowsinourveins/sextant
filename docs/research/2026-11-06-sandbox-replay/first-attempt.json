@@ -1,0 +1,323 @@
+{
+  "aa_comparison": {
+    "economics": "UNAVAILABLE",
+    "equal": true,
+    "normalized": {
+      "economic_status": "UNAVAILABLE",
+      "fills": [
+        {
+          "event_ns": 1793108163000000000,
+          "instrument": "AAA.ALPACA",
+          "price": "10.34",
+          "quantity": "1538",
+          "side": "BUY"
+        },
+        {
+          "event_ns": 1793108224000000000,
+          "instrument": "AAA.ALPACA",
+          "price": "10.46",
+          "quantity": "1538",
+          "side": "SELL"
+        }
+      ],
+      "net": {
+        "AAA.ALPACA": "0"
+      }
+    }
+  },
+  "attempt": "stack-b6ea54c-1",
+  "cases": [
+    {
+      "case": "recorded",
+      "error": "RuntimeError: Strategy order_id_tag conflict for 'S0R', explicitly define unique order_id_tag values",
+      "observations": {},
+      "state": "FAIL",
+      "trial_id": 107
+    },
+    {
+      "case": "aa_a",
+      "error": "Mechanism only; historical/executable/economic authority unavailable",
+      "observations": {
+        "all_orders_namespaced": true,
+        "broker_execution": "NOT_RUN",
+        "case": "aa_a",
+        "component_counts": {
+          "custody_observations": 581,
+          "entry_bar_callbacks": 7,
+          "entry_trade_callbacks": 135,
+          "exit_bar_callbacks": 7,
+          "exit_quote_callbacks": 430,
+          "exit_trade_callbacks": 135,
+          "guard_checks": 572,
+          "native_fill_callbacks": 2,
+          "native_sizing_calls": 1,
+          "ranking_admission_checks": 434,
+          "ranking_contexts": 1,
+          "ranking_publications": 430,
+          "ranking_refusals": 10,
+          "ranking_trade_callbacks": 135,
+          "reentry:WAIT:cooldown": 11,
+          "reentry_admission_checks": 11,
+          "strategy_starts": 1,
+          "strategy_stops": 1
+        },
+        "daily_net_returns": null,
+        "economic_status": "UNAVAILABLE",
+        "entry_allowed": true,
+        "errors": [],
+        "fills": [
+          {
+            "cid": "S0A.AAA.3bed9a9460564516898f657a00b67943",
+            "event_ns": 1793108163000000000,
+            "instrument": "AAA.ALPACA",
+            "price": "10.34",
+            "quantity": "1538",
+            "side": "BUY"
+          },
+          {
+            "cid": "S0A.AAA.27ce8e7de544414d97c558eb857a2118",
+            "event_ns": 1793108224000000000,
+            "instrument": "AAA.ALPACA",
+            "price": "10.46",
+            "quantity": "1538",
+            "side": "SELL"
+          }
+        ],
+        "flat_receipt": true,
+        "guard_loaded": true,
+        "guard_state": "ACTIVE",
+        "input_bars": 7,
+        "input_events": 572,
+        "instruments": 1,
+        "live_s_isolation": "NOT_RUN",
+        "mechanism_complete": true,
+        "minimum_net": "0",
+        "native_account_id": "ALPACA-001",
+        "native_order_types": [
+          "LIMIT"
+        ],
+        "native_orders": 2,
+        "net": {
+          "AAA.ALPACA": "0"
+        },
+        "owner_status": null,
+        "owner_untouched": true,
+        "pnl": null,
+        "stream": "DISABLED"
+      },
+      "state": "PRUNED",
+      "trial_id": 108
+    },
+    {
+      "case": "aa_b",
+      "error": "Mechanism only; historical/executable/economic authority unavailable",
+      "observations": {
+        "all_orders_namespaced": true,
+        "broker_execution": "NOT_RUN",
+        "case": "aa_b",
+        "component_counts": {
+          "custody_observations": 581,
+          "entry_bar_callbacks": 7,
+          "entry_trade_callbacks": 135,
+          "exit_bar_callbacks": 7,
+          "exit_quote_callbacks": 430,
+          "exit_trade_callbacks": 135,
+          "guard_checks": 572,
+          "native_fill_callbacks": 2,
+          "native_sizing_calls": 1,
+          "ranking_admission_checks": 434,
+          "ranking_contexts": 1,
+          "ranking_publications": 430,
+          "ranking_refusals": 10,
+          "ranking_trade_callbacks": 135,
+          "reentry:WAIT:cooldown": 11,
+          "reentry_admission_checks": 11,
+          "strategy_starts": 1,
+          "strategy_stops": 1
+        },
+        "daily_net_returns": null,
+        "economic_status": "UNAVAILABLE",
+        "entry_allowed": true,
+        "errors": [],
+        "fills": [
+          {
+            "cid": "S0B.AAA.d8ae1198e0354e42897b4e9ad6884ecb",
+            "event_ns": 1793108163000000000,
+            "instrument": "AAA.ALPACA",
+            "price": "10.34",
+            "quantity": "1538",
+            "side": "BUY"
+          },
+          {
+            "cid": "S0B.AAA.83de50df6e17493e94640b0a7b453688",
+            "event_ns": 1793108224000000000,
+            "instrument": "AAA.ALPACA",
+            "price": "10.46",
+            "quantity": "1538",
+            "side": "SELL"
+          }
+        ],
+        "flat_receipt": true,
+        "guard_loaded": true,
+        "guard_state": "ACTIVE",
+        "input_bars": 7,
+        "input_events": 572,
+        "instruments": 1,
+        "live_s_isolation": "NOT_RUN",
+        "mechanism_complete": true,
+        "minimum_net": "0",
+        "native_account_id": "ALPACA-001",
+        "native_order_types": [
+          "LIMIT"
+        ],
+        "native_orders": 2,
+        "net": {
+          "AAA.ALPACA": "0"
+        },
+        "owner_status": null,
+        "owner_untouched": true,
+        "pnl": null,
+        "stream": "DISABLED"
+      },
+      "state": "PRUNED",
+      "trial_id": 109
+    },
+    {
+      "case": "kill_owner",
+      "error": "Mechanism only; historical/executable/economic authority unavailable",
+      "observations": {
+        "all_orders_namespaced": true,
+        "broker_execution": "NOT_RUN",
+        "case": "kill_owner",
+        "component_counts": {
+          "custody_observations": 581,
+          "entry_bar_callbacks": 7,
+          "entry_trade_callbacks": 135,
+          "exit_bar_callbacks": 7,
+          "exit_quote_callbacks": 430,
+          "exit_trade_callbacks": 135,
+          "guard_checks": 572,
+          "native_fill_callbacks": 2,
+          "native_sizing_calls": 1,
+          "ranking_admission_checks": 434,
+          "ranking_contexts": 1,
+          "ranking_publications": 430,
+          "ranking_refusals": 10,
+          "ranking_trade_callbacks": 135,
+          "reentry:WAIT:flat_lineage_unavailable": 116,
+          "reentry_admission_checks": 116,
+          "strategy_starts": 1,
+          "strategy_stops": 1
+        },
+        "daily_net_returns": null,
+        "economic_status": "UNAVAILABLE",
+        "entry_allowed": false,
+        "errors": [],
+        "fills": [
+          {
+            "cid": "S0K.AAA.09d05ba65cdf4a5fb4d41aaeb914f003",
+            "event_ns": 1793108163000000000,
+            "instrument": "AAA.ALPACA",
+            "price": "10.34",
+            "quantity": "1538",
+            "side": "BUY"
+          },
+          {
+            "cid": "S0K.AAA.9a33666708e0461bb78f5c2bc1c634f3",
+            "event_ns": 1793108172000000000,
+            "instrument": "AAA.ALPACA",
+            "price": "10.50",
+            "quantity": "1538",
+            "side": "SELL"
+          }
+        ],
+        "flat_receipt": false,
+        "guard_loaded": true,
+        "guard_state": "REDUCING",
+        "input_bars": 7,
+        "input_events": 572,
+        "instruments": 1,
+        "live_s_isolation": "NOT_RUN",
+        "mechanism_complete": true,
+        "minimum_net": "0",
+        "native_account_id": "ALPACA-001",
+        "native_order_types": [
+          "LIMIT"
+        ],
+        "native_orders": 3,
+        "net": {
+          "AAA.ALPACA": "0"
+        },
+        "owner_status": "ACCEPTED",
+        "owner_untouched": true,
+        "pnl": null,
+        "stream": "DISABLED"
+      },
+      "state": "PRUNED",
+      "trial_id": 110
+    },
+    {
+      "case": "unknown",
+      "error": "Mechanism only; historical/executable/economic authority unavailable",
+      "observations": {
+        "all_orders_namespaced": true,
+        "broker_execution": "NOT_RUN",
+        "case": "unknown",
+        "component_counts": {
+          "custody_observations": 574,
+          "entry_bar_callbacks": 7,
+          "entry_trade_callbacks": 135,
+          "exit_bar_callbacks": 7,
+          "exit_quote_callbacks": 430,
+          "exit_trade_callbacks": 135,
+          "guard_checks": 572,
+          "ranking_contexts": 1,
+          "ranking_publications": 430,
+          "ranking_refusals": 10,
+          "ranking_trade_callbacks": 135,
+          "strategy_starts": 1,
+          "strategy_stops": 1
+        },
+        "daily_net_returns": null,
+        "economic_status": "UNAVAILABLE",
+        "entry_allowed": false,
+        "errors": [],
+        "fills": [],
+        "flat_receipt": true,
+        "guard_loaded": false,
+        "guard_state": "HALTED",
+        "input_bars": 7,
+        "input_events": 572,
+        "instruments": 1,
+        "live_s_isolation": "NOT_RUN",
+        "mechanism_complete": true,
+        "minimum_net": "0",
+        "native_account_id": "ALPACA-001",
+        "native_order_types": [],
+        "native_orders": 0,
+        "net": {
+          "AAA.ALPACA": "0"
+        },
+        "owner_status": null,
+        "owner_untouched": true,
+        "pnl": null,
+        "stream": "DISABLED"
+      },
+      "state": "PRUNED",
+      "trial_id": 111
+    }
+  ],
+  "cumulative_n_at_finish": 112,
+  "handoff_hashes": {
+    "outcome_manifest": "fd347bc23f77460e043affad79c38131fd9250762f25f6d0115d887e68d56dfa",
+    "outcome_rows": "41268128dfde7a0f4d20d04954ecf7c48244117c432e7c56e525b31e204f7b16",
+    "reserve_manifest": "d062fecf59869a82a7ebe6300e9bf2e8d90e1cdb9a6af164f2f818ae10bf3d0f",
+    "reserve_rows": "b3d1f7287d49786fc73bfe999337944d90cc7162a4a87cbdde46bf6a75a1a783"
+  },
+  "implementation_sha": "b6ea54cd1cb03cfd34b57b480f2e13d42b18941a",
+  "interpretation": "Selected native mechanism observations; the canonical ledger retains full rows/results. The recorded construction failure and cooldown-clock defect require fresh counted retries. No economic or live-feed S acceptance.",
+  "issue": 111,
+  "reservation_commit": "3487877f6d7c15380ee192bef6a2e3239731460f",
+  "terminal_commit": "e5a02968ae6484f72b04bf076a46e5723167dac6",
+  "tier": "MODELED"
+}
