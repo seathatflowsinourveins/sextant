@@ -235,12 +235,14 @@ def evaluate(
     results: list[dict[str, Any]] = []
     censored: Counter[str] = Counter()
     censored_role: Counter[str] = Counter()
+    censored_detail: Counter[tuple[str, str]] = Counter()
     evaluated_role: Counter[str] = Counter()
     for (symbol, day), target in targets.items():
         i = index.get(day)
         if i is None or i < LOOKBACK:
             censored["calendar"] += 1
             censored_role[target.role] += 1
+            censored_detail[(target.role, "calendar")] += 1
             continue
         prior_days = sessions[i - LOOKBACK : i]
         days = [*prior_days, day]
@@ -249,6 +251,7 @@ def evaluate(
         if current is None:
             censored["opening_window"] += 1
             censored_role[target.role] += 1
+            censored_detail[(target.role, "opening_window")] += 1
             continue
         prior = []
         for prior_day in prior_days:
@@ -260,11 +263,13 @@ def evaluate(
         if len(prior) != LOOKBACK:
             censored["prior_opening_window"] += 1
             censored_role[target.role] += 1
+            censored_detail[(target.role, "prior_opening_window")] += 1
             continue
         facts = _facts(symbol, prior_days, bars, spec)
         if facts is None:
             censored["daily_facts"] += 1
             censored_role[target.role] += 1
+            censored_detail[(target.role, "daily_facts")] += 1
             continue
         as_of = int(datetime.combine(day, WINDOW_END, NY).timestamp()) * NS
         verdict = screen(
@@ -384,6 +389,9 @@ def evaluate(
         evaluated=len(results),
         censored=dict(censored),
         censored_role=dict(censored_role),
+        censored_by_role_reason={
+            f"{role}:{reason}": count for (role, reason), count in sorted(censored_detail.items())
+        },
         censored_total=sum(censored.values()),
         evaluated_role=dict(evaluated_role),
         reasons=dict(Counter(row["reason"] for row in results)),
