@@ -190,6 +190,7 @@ def evaluate(
     calendar: Path,
     thresholds: Path,
     spec: StocksInPlaySpec,
+    fallback: Path | None = None,
 ) -> dict[str, Any]:
     events = [row for row in _jsonl(freeze / "events.jsonl") if row["cohort"] == "selected_gainer"]
     controls = _jsonl(freeze / "controls.jsonl")
@@ -198,7 +199,13 @@ def evaluate(
     anchors = {row["event_id"]: row for row in _jsonl(thresholds)}
 
     primary = {(row["event_id"]): row for row in controls if row["role"] == "primary"}
+    replacements = {}
+    if fallback is not None and fallback.exists():
+        replacements = {
+            row["event_id"]: row for row in json.loads(fallback.read_text())["replacements"]
+        }
     targets: dict[tuple[str, date], SymbolDay] = {}
+    replaced = 0
     for event in events:
         key = (event["symbol"], date.fromisoformat(event["day"]))
         targets[key] = SymbolDay(
@@ -208,7 +215,10 @@ def evaluate(
             event["event_id"],
             "",
         )
-        control = primary.get(event["event_id"])
+        replacement = replacements.get(event["event_id"])
+        control = replacement if replacement is not None else primary.get(event["event_id"])
+        if replacement is not None:
+            replaced += 1
         if control is not None:
             ckey = (control["ticker"], date.fromisoformat(control["day"]))
             targets.setdefault(
@@ -377,6 +387,8 @@ def evaluate(
         censored_total=sum(censored.values()),
         evaluated_role=dict(evaluated_role),
         reasons=dict(Counter(row["reason"] for row in results)),
+        fallback_used=replaced,
+        fallback_file=str(fallback) if fallback is not None else None,
         passers=len(passers),
         top30=len(top_keys["top30"]),
         top100=len(top_keys["top100"]),
@@ -407,9 +419,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--calendar", type=Path, required=True)
     parser.add_argument("--thresholds", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--fallback", type=Path)
     args = parser.parse_args(argv)
     spec = StocksInPlaySpec(PARAMETERS)
-    report = evaluate(args.freeze, args.raw, args.calendar, args.thresholds, spec)
+    report = evaluate(
+        args.freeze,
+        args.raw,
+        args.calendar,
+        args.thresholds,
+        spec,
+        fallback=args.fallback,
+    )
     args.output.mkdir(parents=True, exist_ok=True)
     (args.output / "sip.json").write_text(json.dumps(report, indent=2, sort_keys=True))
     print(
