@@ -1,5 +1,5 @@
 {
-  "recorded_at": "2026-11-06T15:28:06+00:00",
+  "recorded_at": "2026-11-06T16:25:48+00:00",
   "registry_format": "JSON subset of YAML 1.2; unchanged upstream schema_version 1",
   "validator_source": "seathatflowsinourveins/northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:src/northstar_trading/research/registry.py",
   "validator_sha256": "d9df78e9d88006d2d088dc8cf24fec6bb7334b989e501cd713937df32b440672",
@@ -12,7 +12,7 @@
       "source_knowable_at": "2026-11-06T15:28:06+00:00",
       "data_knowable_at": null,
       "compute_admitted": false,
-      "sha256": "06fc1d956f544c3f08d90af84810cb76842c281368a8b50f93476735c1331e78"
+      "sha256": "dc7ebbf072bc0dd1d59fe5bfc14dde0f8c43f4cbc3c77b936b5fda9979ee44fe"
     },
     {
       "id": "orb-stocks-in-play",

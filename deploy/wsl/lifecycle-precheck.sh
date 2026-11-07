@@ -9,6 +9,8 @@ git fetch --prune --quiet origin || exit 1
 [ "$(git worktree list --porcelain | grep -c '^worktree ')" -gt 1 ] && exit 0
 # A local branch whose branch on GitHub is gone.
 git for-each-ref --format='%(upstream:track)' refs/heads | grep -q '\[gone\]' && exit 0
+# An OmniRoute runtime key missing, duplicated, failing or within 7 days of its expiry (#94).
+python3 -I scripts/omni_keys.py due > /dev/null 2>&1 && exit 0
 # A newer Orca release than the pin, out at least as long as Dependabot's cooldown here, 3 days.
 pin=$(sed -n 's|.*/releases/download/\(v[0-9.]*\)/orca-ide_.*|\1|p' deploy/wsl/sextant.user-data)
 release=$(gh release view -R stablyai/orca --json tagName,publishedAt --jq '.tagName + " " + .publishedAt') || exit 1

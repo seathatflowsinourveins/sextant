@@ -5,6 +5,8 @@ import json
 import re
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).parents[2]
 LIVE = ROOT / "lanes" / "live"
 NOTE = ROOT / "docs" / "research" / "2026-11-06-live-gates.md"
@@ -48,4 +50,20 @@ def test_main_carries_no_promotion_and_no_live_deployment() -> None:
 def test_no_live_endpoint_in_code() -> None:
     live = re.compile(r"(?<!paper-)api\.alpaca\.markets|:(4001|7496)\b")
     for path in [*(ROOT / "src").rglob("*.py"), *(ROOT / "scripts").glob("*")]:
-        assert not live.search(path.read_text()), path
+        if path.is_file():
+            assert not live.search(path.read_text()), path
+
+
+def test_endpoint_scan_ignores_directories_and_still_rejects_live_scripts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "src").mkdir()
+    scripts = tmp_path / "scripts"
+    (scripts / "__pycache__").mkdir(parents=True)
+    script = scripts / "launcher.sh"
+    script.write_text("https://paper-api.alpaca.markets\n")
+    monkeypatch.setitem(globals(), "ROOT", tmp_path)
+    test_no_live_endpoint_in_code()
+    script.write_text("https://api.alpaca.markets\n")
+    with pytest.raises(AssertionError, match=r"launcher\.sh"):
+        test_no_live_endpoint_in_code()

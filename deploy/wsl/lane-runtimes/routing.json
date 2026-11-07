@@ -1,0 +1,7 @@
+{
+  "base_url": "http://127.0.0.1:22128/v1",
+  "combo": "sextant-gpt",
+  "strategy": "auto",
+  "models": ["codex/gpt-6.1-sol-max"],
+  "source": "northstar@b384d298d217d3f8d9aa83356994629536a34795:config/native-runtimes.json; OmniRoute@191dce8d534ceb56c28a08e71381284a9a87838f:src/shared/validation/schemas/combo.ts"
+}

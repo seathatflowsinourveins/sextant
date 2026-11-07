@@ -1,0 +1,28 @@
+{
+  "read_date": "2026-11-06",
+  "comparison_source": "https://artificialanalysis.ai/models",
+  "authority": "Owner model rule on #58; lead interim catalog ruling msg_6b44d16c9617, 2026-11-06 (ADR-0030)",
+  "gpt": {
+    "model": "gpt-6.1-sol",
+    "effort": "max",
+    "vendor_source": "https://developers.openai.com/api/docs/models/gpt-6.1-sol"
+  },
+  "claude": {
+    "runtime": "native Claude Code",
+    "model": "claude-opus-5-5",
+    "effort": "max",
+    "vendor_source": "https://platform.claude.com/docs/en/models/opus-5-5/overview",
+    "effort_source": "https://platform.claude.com/docs/en/build-with-claude/effort"
+  },
+  "google": {
+    "preferred": "Gemini 4 Carbon (High)",
+    "antigravity": "gemini-4-argon-high",
+    "router_connections": ["agy", "antigravity"],
+    "effort": "high",
+    "status": "interim: Carbon not in this account's catalog (Google staged trusted-partner rollout)",
+    "catalog_witness": "agy 1.4.6 models, authenticated vendor list, 2026-11-06",
+    "vendor_source": "https://antigravity.google/docs/models",
+    "thinking_source": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/start/get-started-with-gemini-4",
+    "carbon_source": "https://blog.google/innovation-and-ai/models-and-research/gemini-models/introducing-gemini-4-carbon/"
+  }
+}

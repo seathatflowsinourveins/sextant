@@ -74,3 +74,7 @@ Source inventory only; no code copied. All trading paths below are at northstar-
 - **Authority:** the lead's ruling on [#72](https://github.com/seathatflowsinourveins/sextant/issues/72#issuecomment-6689961145), carried by [#102](https://github.com/seathatflowsinourveins/sextant/issues/102). L2 is otherwise unchanged.
 - **Writer:** L2 names the Alpaca lane as the single writer, and no Sextant paper lane operates yet. Until one does, **the lead is the single writer**. The lead's PRs append through the one `lesson/1` appender (#96). When a paper lane operates, the writer passes to it: Paper B (#78) first, with a dated amendment. There is never a second writer, and other lanes hand their lessons to the current writer.
 - **Revisit when:** a paper lane operates (handover, owner-confirmed), or a lesson lands outside the current writer.
+
+## Design 2026-11-06: L4's separate proposal job
+
+[Nightly proposal contract](../research/2026-11-06-nightly-proposals.md): pinned candidate-only/Orca seams, explicit unavailable inputs, one-ledger custody and pending behavioral witnesses. Design only; no runner, registry/appender write, schedule installation or activation. L3/L5 adoption stays a separate consuming-runtime action.

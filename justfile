@@ -45,9 +45,21 @@ reflection:
 shelf:
     bash deploy/wsl/shelf.sh
 
+# Inside the clean distro only: issue #62's pinned native Orca CLI roster.
+lane-runtimes:
+    bash deploy/wsl/lane-runtimes/install.sh
+
+# Durable fresh router, through upstream's own systemd unit generator; run from main after handover.
+omniroute *args:
+    bash deploy/wsl/lane-runtimes/service.sh {{args}}
+
 # Inside the clean distro only: AO at its pin, its daemon tab, and the hand-off of a lane PR. See docs/start.md.
 ao *args:
     bash deploy/wsl/ao.sh {{args}}
+
+# Inside the clean distro only: OmniRoute's per-runtime keys: status, due or renew. See issue #94.
+omni-keys *args:
+    python3 -I scripts/omni_keys.py {{args}}
 
 # Inside the clean distro only: the Sextant GitHub App's own rate budget for AO and the lane tabs. See docs/start.md.
 gh-app *args:
@@ -60,6 +72,11 @@ prove:
 # Import a disposable copy of the committed research docs into local OpenViking.
 index:
     bash deploy/openviking/index.sh
+
+# Score `qmd search` on this repo's gold queries with qmd's own bench harness, BM25 only, no model.
+qmd-bench fixture="docs/research/2026-11-06-qmd-bench/fixture.json":
+    qmd update >&2
+    node --input-type=module -e "const { runBenchmark } = await import(process.argv[1] + '/../dist/bench/bench.js'); await runBenchmark(process.argv[2], { json: true, backends: ['bm25'], dbPath: '.qmd/index.sqlite', configPath: '.qmd/index.yml' });" "$(dirname "$(readlink -f "$(command -v qmd)")")" "{{fixture}}"
 
 # Opt into the pinned OMC plugin for this Claude session (native settings precedence).
 omc:

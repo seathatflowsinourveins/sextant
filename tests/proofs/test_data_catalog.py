@@ -10,6 +10,7 @@ Offline: no key, network, stream or order.
 import hashlib
 import json
 from datetime import date, datetime, time, timedelta
+from importlib.metadata import version
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
@@ -135,6 +136,24 @@ def test_finra_short_interest_is_known_at_publication_and_regsho_at_its_file_tim
 
 
 # --- Catalog provenance (upstream test_r1_pit03_*) -------------------------------------------
+
+
+def test_catalog_metadata_records_the_engine_that_writes_it(tmp_path: Path) -> None:
+    CatalogStore(tmp_path)
+    metadata = json.loads((tmp_path / "metadata.json").read_text())
+    assert metadata["nautilus_trader"] == version("nautilus-trader")
+
+
+def test_a_catalog_from_rc7_requires_reingestion_and_is_not_relabelled(tmp_path: Path) -> None:
+    CatalogStore(tmp_path)
+    metadata_path = tmp_path / "metadata.json"
+    metadata = json.loads(metadata_path.read_text())
+    metadata["nautilus_trader"] = "2.0.0rc7"
+    legacy = json.dumps(metadata, indent=2, sort_keys=True).encode()
+    metadata_path.write_bytes(legacy)
+    with pytest.raises(ValueError, match="re-ingest into a fresh root"):
+        CatalogStore(tmp_path)
+    assert metadata_path.read_bytes() == legacy
 
 
 def test_proof_checks_real_bars_and_replays_immutably(tmp_path: Path) -> None:

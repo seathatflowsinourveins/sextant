@@ -1,0 +1,169 @@
+{
+  "after": {
+    "backtest": {
+      "backtest_end": 1597408199458000000,
+      "backtest_start": 1597399200223000000,
+      "fills": 16,
+      "hold_flat_orders": 0,
+      "hold_flat_pnl_usdt": "0",
+      "realized_pnl_usdt": "-0.48822178",
+      "round_trips": 8,
+      "source": "nautechsystems/nautilus_trader@55c0e82053142bce3a5cba4de4221d3929c2d3bc:examples/backtest/crypto_ema_cross_ethusdt_trade_ticks.py",
+      "strategy": "EMACross",
+      "total_orders": 16,
+      "total_positions": 8,
+      "window": "backtest"
+    },
+    "replay": {
+      "backtest_end": 1597417198693000000,
+      "backtest_start": 1597408199458000001,
+      "fills": 12,
+      "hold_flat_orders": 0,
+      "hold_flat_pnl_usdt": "0",
+      "realized_pnl_usdt": "-0.29792230",
+      "round_trips": 6,
+      "source": "nautechsystems/nautilus_trader@55c0e82053142bce3a5cba4de4221d3929c2d3bc:examples/backtest/crypto_ema_cross_ethusdt_trade_ticks.py",
+      "strategy": "EMACross",
+      "total_orders": 12,
+      "total_positions": 6,
+      "window": "replay"
+    }
+  },
+  "baseline_main": "43831154f51f5ed16b43b391e76d812dd4eb890f",
+  "baseline_thin_slice_sha256": "5192630e7399ec927b427a5ad0dab7cb714f1b9bd2e54a2b1b2d8b9b5c4b5634",
+  "before": {
+    "backtest": {
+      "backtest_end": 1597408199458000000,
+      "backtest_start": 1597399200223000000,
+      "fills": 16,
+      "hold_flat_orders": 0,
+      "hold_flat_pnl_usdt": "0",
+      "realized_pnl_usdt": "-0.48822178",
+      "source": "nautechsystems/nautilus_trader@55c0e82053142bce3a5cba4de4221d3929c2d3bc:examples/backtest/crypto_ema_cross_ethusdt_trade_ticks.py",
+      "strategy": "EMACross",
+      "total_orders": 16,
+      "total_positions": 8,
+      "window": "backtest"
+    },
+    "replay": {
+      "backtest_end": 1597417198693000000,
+      "backtest_start": 1597408199458000001,
+      "fills": 12,
+      "hold_flat_orders": 0,
+      "hold_flat_pnl_usdt": "0",
+      "realized_pnl_usdt": "-0.29792230",
+      "source": "nautechsystems/nautilus_trader@55c0e82053142bce3a5cba4de4221d3929c2d3bc:examples/backtest/crypto_ema_cross_ethusdt_trade_ticks.py",
+      "strategy": "EMACross",
+      "total_orders": 12,
+      "total_positions": 6,
+      "window": "replay"
+    }
+  },
+  "cumulative_trials_after": 40,
+  "cumulative_trials_before": 28,
+  "economic_differences": [],
+  "intended_corrections": {
+    "native_round_trips": {
+      "backtest": 8,
+      "replay": 6
+    },
+    "synthetic_exit_tiers": [
+      "MODELED",
+      "MODELED"
+    ]
+  },
+  "method": "Main and candidate run unchanged fixture economics on rc8, with the documented native TradeCount registered in the baseline too. All baseline and candidate arms count in the same retained TrialLog.",
+  "native_statistics_after": [
+    {
+      "general": {
+        "Long Ratio": "0.5"
+      },
+      "returns": {
+        "Average (Return)": "-0.001238808729466984",
+        "Average Loss (Return)": "-0.001991807042884357",
+        "Average Win (Return)": "0.0010201862107851345",
+        "Profit Factor": "0.1707304286710745",
+        "Returns Kurtosis": null,
+        "Returns Skewness": null,
+        "Returns Volatility (252 days)": null,
+        "Risk Return Ratio": null,
+        "Sharpe Ratio (252 days)": null,
+        "Sortino Ratio (252 days)": null,
+        "Tail Ratio": null
+      },
+      "trade_count": 8.0
+    },
+    {
+      "general": {
+        "Long Ratio": "0.5"
+      },
+      "returns": {
+        "Average (Return)": "-0.0009687901290626444",
+        "Average Loss (Return)": "-0.0033713632626453513",
+        "Average Win (Return)": "0.0038363561381027688",
+        "Profit Factor": "0.568962143683763",
+        "Returns Kurtosis": null,
+        "Returns Skewness": null,
+        "Returns Volatility (252 days)": null,
+        "Risk Return Ratio": null,
+        "Sharpe Ratio (252 days)": null,
+        "Sortino Ratio (252 days)": null,
+        "Tail Ratio": null
+      },
+      "trade_count": 6.0
+    }
+  ],
+  "native_statistics_before": [
+    {
+      "general": {
+        "Long Ratio": "0.5"
+      },
+      "returns": {
+        "Average (Return)": "-0.001238808729466984",
+        "Average Loss (Return)": "-0.001991807042884357",
+        "Average Win (Return)": "0.0010201862107851345",
+        "Profit Factor": "0.1707304286710745",
+        "Returns Kurtosis": null,
+        "Returns Skewness": null,
+        "Returns Volatility (252 days)": null,
+        "Risk Return Ratio": null,
+        "Sharpe Ratio (252 days)": null,
+        "Sortino Ratio (252 days)": null,
+        "Tail Ratio": null
+      },
+      "trade_count": 8.0
+    },
+    {
+      "general": {
+        "Long Ratio": "0.5"
+      },
+      "returns": {
+        "Average (Return)": "-0.0009687901290626444",
+        "Average Loss (Return)": "-0.0033713632626453513",
+        "Average Win (Return)": "0.0038363561381027688",
+        "Profit Factor": "0.568962143683763",
+        "Returns Kurtosis": null,
+        "Returns Skewness": null,
+        "Returns Volatility (252 days)": null,
+        "Risk Return Ratio": null,
+        "Sharpe Ratio (252 days)": null,
+        "Sortino Ratio (252 days)": null,
+        "Tail Ratio": null
+      },
+      "trade_count": 6.0
+    }
+  ],
+  "native_statistics_differences": [],
+  "new_thin_slice_sha256": "05867f839989525589998fd561fc16a1331d6e6449e0d694f883fad7a2d0b492",
+  "normalized_fill_hashes": {
+    "backtest": {
+      "after": "b54c1bc39eefaf1b800fafc3bfe1b582f2c8ce99b76d2efce729143357d12041",
+      "before": "b54c1bc39eefaf1b800fafc3bfe1b582f2c8ce99b76d2efce729143357d12041"
+    },
+    "replay": {
+      "after": "0b053a2b415924b18bb7464172504516ac84a27ae4fdde44d3f0d11030c1012f",
+      "before": "0b053a2b415924b18bb7464172504516ac84a27ae4fdde44d3f0d11030c1012f"
+    }
+  },
+  "runtime_native_pin": "d53849b216e20f2c122ca01b4dd0da377638b186"
+}

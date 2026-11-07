@@ -13,6 +13,7 @@ import pytest
 from sextant.backtest.exit_witness import FIXTURE, run
 from sextant.exits import policy
 from sextant.exits.policy import REGISTRY, Bar1mArming, BreachRun, ExitParams
+from sextant.validation.trials import TrialLog
 
 ROOT = Path(__file__).parents[2]
 S = 1_000_000_000
@@ -133,12 +134,14 @@ def test_sim_sells_on_the_first_persisted_bid_breach_and_logs_both_arms(tmp_path
     assert kinds[:2] == ["protected_from_fill", "initial_trigger"]
     assert events[0]["ts"] == events[1]["ts"]  # protected from the first fill
     assert "armed" not in kinds  # no eligible trades, so no gain lock (X3)
-    sell = next(e for e in events if e["event"] == "breach_sell")
+    sell = next(e for e in events if e["event"].startswith("breach_sell"))
     assert D(sell["limit"]) <= D(sell["trigger"])
     assert managed.exit_label == "managed_sell"
-    rows = [json.loads(line) for line in (tmp_path / "ledger.jsonl").read_text().splitlines()]
-    assert [r["arm"] for r in rows] == ["exit-engine-x2-x5", "hold-to-end"]
-    assert [r["tier"] for r in rows] == ["SIMULATED", "MODELED"]
+    rows = TrialLog(tmp_path / "reports/research/trials.parquet").records
+    assert [r["strategy"] for r in rows] == ["exit-engine-x2-x5", "hold-to-end"]
+    assert [json.loads(r["config"])["tier"] for r in rows] == ["MODELED", "MODELED"]
+    assert managed.tier == control.tier == "MODELED"
+    assert managed.execution == control.execution == "synthetic Nautilus replay"
     assert managed.entry == control.entry
 
 

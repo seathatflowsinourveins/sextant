@@ -18,7 +18,8 @@ OSAP/JKP and the HXZ screen have not been completed for a US-movers hypothesis.
 - Two windows of the file's time span, with the engine's own `run(start, end)`, and repeat runs on the loaded data with its `reset()`: `docs/concepts/backtesting/apis-and-runs.md` at the tag above. The example itself runs the whole file once.
 - The second window is the plan's sim replay over a later stretch of the same file. It is not an out-of-sample test, because nothing is fitted and it is one file.
 - The control is hold-flat, the same engine with no strategy: northstar-lanes@`00203275944a22655b3e14b221cfde9a265d549a`, `docs/adr/0003-philosophy-and-operating-principles.md`, P7 and P8, and the owner-approved plan's Phase 2.
-- The ledger row is the engine's own `BacktestResult`, plus the window and the source. The trial ledger and its gates arrive in Phase 4.
+- Strategy and hold-flat attempts enter one `reports/research/trials.parquet`, with the original 13-column schema and explicit MODELED tier. Native PortfolioStatistic/TradeCount includes archived NETTING cycles (8 backtest, 6 replay). Native fills and tearsheets have distinct per-run directories.
+- The custom merit calculator, inference, DSR/PBO/CPCV and paper/PIT gates are deferred to #147 under the owner's size ruling. Code binding remains UNVERIFIED. Native statistics confer no admission or session qualification. [Writer-slice evidence](../../docs/research/2026-11-06-ledger-merit.md).
 
 **Measured (`just slice`, 2026-11-06):**
 

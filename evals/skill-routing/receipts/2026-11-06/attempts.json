@@ -1,0 +1,53 @@
+{
+  "requestedModel": "claude-opus-5-5",
+  "requestedJudgeModel": "claude-opus-5-5",
+  "requestedEffort": "max",
+  "runtimeEvidenceLimit": "Native aggregates record CLI version, grader results and completion; they do not independently attest backend effort or retain every passing trace. The earlier failed pilot trace attested Opus 5.5 for that run only.",
+  "attempts": [
+    {
+      "result": "pilot-timeout.json",
+      "sha256": "9af540530adab347c7bf836f6761b3a49f52f89e431ee528bf0feb22c7b188a1",
+      "claudeVersion": "2.1.319",
+      "startedAt": "2026-11-06T17:29:43.144Z",
+      "nativeChildRuns": 2,
+      "status": "rejected: both arms timed out at the native 300-second default",
+      "stagedSourceSha": null
+    },
+    {
+      "result": "pilot-revised.json",
+      "sha256": "2464252b6528906f69a05cd59581d4fa8a7d33d9eed928e8fb9708b940a56870",
+      "claudeVersion": "2.1.318",
+      "startedAt": "2026-11-06T17:40:32.710Z",
+      "nativeChildRuns": 1,
+      "status": "completed pilot only: one with-arm run, not default acceptance",
+      "stagedSourceSha": "3f6faa5bedadd11343e05c26361d4ee3e316a869"
+    },
+    {
+      "result": "trading.json",
+      "sha256": "d3e5d51a8c4663539b0f3a8ead6c6194476ce09781e07607409700a23fdb4462",
+      "claudeVersion": "2.1.318",
+      "startedAt": "2026-11-06T17:47:18.463Z",
+      "nativeChildRuns": 54,
+      "status": "all cases retained; paper-journal incomplete at default 10 turns, whole case retested separately",
+      "stagedSourceSha": "3f6faa5bedadd11343e05c26361d4ee3e316a869"
+    },
+    {
+      "result": "compound.json",
+      "sha256": "0b811afd6cf178e90b243e4f16a88cf5622beef0e08127e70b423bb9c24cbd76",
+      "claudeVersion": "2.1.318",
+      "startedAt": "2026-11-06T18:35:23.764Z",
+      "nativeChildRuns": 12,
+      "status": "accepted: complete default three runs per arm, positive and unrelated control",
+      "stagedSourceSha": "3f6faa5bedadd11343e05c26361d4ee3e316a869"
+    },
+    {
+      "result": "paper-journal-retest.json",
+      "sha256": "024e262ec8e0b7c0cba26935438c7e0eaa5913b64cb349432f5a64d51f1e23fa",
+      "claudeVersion": "2.1.318",
+      "startedAt": "2026-11-06T18:42:53.893Z",
+      "nativeChildRuns": 6,
+      "status": "accepted whole-case retest: unchanged prompt/graders/skill bytes, native 200-turn cap",
+      "stagedSourceSha": "3f6faa5bedadd11343e05c26361d4ee3e316a869"
+    }
+  ]
+}

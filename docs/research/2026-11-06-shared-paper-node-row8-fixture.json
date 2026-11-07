@@ -1,0 +1,38 @@
+{
+  "status": "UNMERGED_ROW8_SOURCE_FIXTURE_NOT_DEPLOYMENT_AUTHORITY",
+  "read_date": "2026-11-06",
+  "source_base_sha": "64554f1bb51802bf07b15c9e3ced698725469400",
+  "source_worktree": "lane-custody",
+  "files_sha256": {
+    "execution/pacer.py": "4973d55bb8f3f310e30a30430302cdeb1da82728b63670b56665ab66c34f71c8",
+    "execution/alpaca.py": "df5e4b483b34e6811498b0c15dbfbad553706e413de73545d005184ab0aa039b",
+    "execution/state.py": "7758109f104e20dbfec37c357ea5a52afa667d6d5349b3ab4e0930cf954d5af0",
+    "execution/custody.py": "96667a24b0523292414b23c54e4c6226332f3d5c155852193608fed4ab1bf46c",
+    "execution/__init__.py": "1f739d306aa9cb6c8c1280eb73e7593144e6b191f77e5bd0dc326df9c202bb5a",
+    "risk/controls.py": "b4d1ce180b11a3dc2668fcab5f127cdad85cc984a485198a04d38ea10d7f0132",
+    "risk/guard.py": "c611e80421c01078e0d8a0bdb2a55b4e77454c7e041756d74afde6814b253513",
+    "risk/__init__.py": "ea16cab79f24d6fc8592f10735c6815ef7a108d9c1ee8ebf69024046dd287e5a",
+    "risk/gates.py": "a42e8c64f19999287f4b6f7fe8a8d3874a4811fa904809884da28a1aa8272e31"
+  },
+  "proof": "tests/proofs/test_paper_row8.py",
+  "result": "4 passed; standalone dependency checks skip until row 8 lands",
+  "p1_fixture": {
+    "status": "UNMERGED_ROW8_SOURCE_FIXTURE_NOT_DEPLOYMENT_AUTHORITY",
+    "source_pr": 117,
+    "source_head_sha": "cc9c44caddaf24d17074c65845dcc7cd08286eaf",
+    "files_sha256": {
+      "execution/pacer.py": "683035c59b3c5d7bbf5f4f0a756d206103ec2b2b8a7cf088cf16e45445440e85",
+      "execution/alpaca.py": "0e333b6fa05196f44b032ddcaf1b55d4f7a7aa63bbd0a9a79fd1e4d41e937530",
+      "execution/state.py": "7758109f104e20dbfec37c357ea5a52afa667d6d5349b3ab4e0930cf954d5af0",
+      "execution/custody.py": "9104254afc63e75856d51bb62217fea9de13dfd46e2e2576ed124e7f40a6124d",
+      "execution/__init__.py": "1f739d306aa9cb6c8c1280eb73e7593144e6b191f77e5bd0dc326df9c202bb5a",
+      "risk/controls.py": "a92b43ab8c69e67bd21b54812d8515197e40a3cb50c6d8c01472e1a6f0c35731",
+      "risk/guard.py": "e2085ca283cc36a4deb75815603417b6942b7427212f61f1ef8d3b6c74303aea",
+      "risk/__init__.py": "ea16cab79f24d6fc8592f10735c6815ef7a108d9c1ee8ebf69024046dd287e5a",
+      "risk/gates.py": "3b6f79e89ca6e8a953e8bb016c126ac7b3a7849008e345f0d0505ac9d7b56f20"
+    },
+    "read_date": "2026-11-06",
+    "proof": "tests/proofs/test_paper_row8.py::test_repeated_flatten_ticks_do_not_resell_without_a_new_snapshot",
+    "result": "75 paper proofs passed; one 10-share EXIT, second EXIT refused, no resend over four later ticks without a fresh snapshot; unmerged source only"
+  }
+}

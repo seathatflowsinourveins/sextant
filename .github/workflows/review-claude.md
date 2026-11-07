@@ -5,6 +5,7 @@ on:
   pull_request_target:
     types: [opened, synchronize, reopened, ready_for_review]
     acknowledge-risk: true
+  bots: ["dependabot[bot]", "sextant-lanes-seathatflows[bot]"]
 if: ${{ contains(github.event.pull_request.body, 'Agent-Family dsh') }}
 permissions:
   contents: read

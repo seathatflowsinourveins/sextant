@@ -13,6 +13,12 @@ import pytest
 
 ROOT = Path(__file__).parents[2]
 LOCK = ROOT / ".devcontainer" / "qmd" / "package-lock.json"
+BENCH = Path("docs") / "research" / "2026-11-06-qmd-bench"
+DEFAULTS = {
+    "embed": "hf:ggml-org/embeddinggemma-300M-GGUF/embeddinggemma-300M-Q8_0.gguf",
+    "generate": "hf:tobil/qmd-query-expansion-1.7B-gguf/qmd-query-expansion-1.7B-q4_k_m.gguf",
+    "rerank": "hf:ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF/qwen3-reranker-0.6b-q8_0.gguf",
+}
 INTEGRITY = "sha512-zjfVwrObPB618B6x8SdhlGv/tX9OxRHsbQnr5DUtBvqPK6HGQ27lM+9/BAY5okpjrHVnW56hLyDkqoTcsrVLzA=="  # noqa: E501
 
 
@@ -32,9 +38,23 @@ def test_qmd_is_pinned_by_lockfile_in_its_own_tree() -> None:
 def test_project_index_stays_in_the_tree_and_derived() -> None:
     config = (ROOT / ".qmd" / "index.yml").read_text()
     assert "path: ./docs" in config and "path: ./lanes" in config
-    # No update hook, no outside path and no model override: the fields qmd gates for trust.
-    assert "update:" not in config and "models:" not in config
+    # No update hook, no outside path and no custom model: the fields qmd gates for trust.
+    # The models are qmd's built-in defaults (dist/llm.js), which `qmd update` writes and trusts.
+    assert "update:" not in config
+    assert config.split("models:\n")[1].splitlines() == [f"  {k}: {v}" for k, v in DEFAULTS.items()]
     assert ".qmd/index.sqlite*" in (ROOT / ".gitignore").read_text().splitlines()
+
+
+def test_bench_fixture_names_files_that_exist_and_runs_bm25_only() -> None:
+    # The #113 gold set, scored by qmd's own bench harness (dist/bench/bench.js at the pin).
+    fixture = json.loads((ROOT / BENCH / "fixture.json").read_text())
+    queries = fixture["queries"]
+    assert len(queries) == 30 and {q["type"] for q in queries} == {"exact", "semantic"}
+    for query in queries:
+        for expected in query["expected_files"]:
+            assert (ROOT / expected).is_file(), f"{query['id']}: {expected} moved; update the gold"
+    recipe = (ROOT / "justfile").read_text()
+    assert "backends: ['bm25']" in recipe and "/../dist/bench/bench.js" in recipe
 
 
 @pytest.mark.local
@@ -70,6 +90,8 @@ def test_qmd_search_finds_the_decision_without_a_model(tmp_path: Path) -> None:
         return done.stdout
 
     run("update")
+    # `qmd update` rewrites a project config that lacks the default models; ours already has them.
+    assert (work / ".qmd" / "index.yml").read_bytes() == (ROOT / ".qmd" / "index.yml").read_bytes()
     hits = run("search", "OpenViking", "-n", "3", "--files")
     assert "qmd://docs/adr/0022-memory-rag-and-enhanced-dsh.md" in hits
     # BM25 only: nothing under the user's config or cache, and no model fetched.

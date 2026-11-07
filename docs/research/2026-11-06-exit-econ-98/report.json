@@ -1,0 +1,166 @@
+{
+  "issue": 98,
+  "execution_model": "minute-bar-approximate",
+  "tier": "MODELED",
+  "implementation": "92008be903825e7f6bf3ecf75be3d3235de65b29",
+  "params": {
+    "prearm_buffer_fraction": "0.01",
+    "prearm_range_multiple": "1",
+    "prearm_range_window_s": "10",
+    "gain_lock_giveback_fraction": "0.1",
+    "breach_persist_count": "3",
+    "breach_persist_span_s": "1",
+    "chase_cap_fraction": null,
+    "chase_min_interval_s": null,
+    "take_profit_above_h_fraction": "0.10",
+    "take_profit_step_fraction": "0.02",
+    "backstop_min_separation_fraction": "0.05",
+    "quote_max_age_s": "1"
+  },
+  "params_hash": "f4e334dde969c027fa7e9a9d5c4e77054a303a71c8f68aefd27d744d2f7df716",
+  "inputs": {
+    "minute-bars-2026-10-26_29.jsonl": "105caeee0645455aa0e1de23a1720639347062061944ea3d49eedb6d99a86a69",
+    "fills-2026-10-26_29.jsonl": "55eee2b64506c19e23d4c421c803be687daf06ebb39a2b84f621ea2a90618c0f",
+    "b-owner-first-orders.json": "5e95de9eaefd9e24cfbd96850ab499fdfa6505e83dcf205ca485584ad5d9e6d3"
+  },
+  "study": "northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:scripts/research/b_exit_replay.py sha256:143ab1dd4356e513c6b69d16928fdf594739f62ba170a87bfd6cd384eb99725a",
+  "cohort": 1025,
+  "arms": {
+    "exit-engine-starts-rw-dropped/3": {
+      "n": 1025,
+      "mean_bps": "-49.71288104544344375585893207",
+      "median_bps": "-5.419673177952573070559892000",
+      "win_rate": "0.4351219512195121951219512195",
+      "pnl_units": "-5.095570307157952984975540537"
+    },
+    "hold_flat/3": {
+      "n": 1025,
+      "mean_bps": "76.44154155886256837408115509",
+      "median_bps": "10.49175164967006598680264000",
+      "win_rate": "0.5707317073170731707317073171",
+      "pnl_units": "7.835258009783413258343318397"
+    },
+    "C5-n22-k3-R-OFF-tape/3": {
+      "n": 1025,
+      "mean_bps": "35.42920815644583838177492899",
+      "median_bps": "-9.589062156819679332308368000",
+      "win_rate": "0.4068292682926829268292682927",
+      "pnl_units": "3.631493836035698434131930221"
+    },
+    "C5-n22-k3-R-OFF-study/3": {
+      "n": 1025,
+      "mean_bps": "54.77910426075420867241713708",
+      "median_bps": "-7.684130727762803234501348000",
+      "win_rate": "0.4214634146341463414634146341",
+      "pnl_units": "5.614858186727306388922756551"
+    },
+    "exit-engine-starts-rw-dropped/6": {
+      "n": 1025,
+      "mean_bps": "-53.51909002622870654885062624",
+      "median_bps": "-15.49501661129568106312292300",
+      "win_rate": "0.3902439024390243902439024390",
+      "pnl_units": "-5.485706727688442421257189190"
+    },
+    "hold_flat/6": {
+      "n": 1025,
+      "mean_bps": "70.41680167442957970696879719",
+      "median_bps": "4.486802639472105578884230000",
+      "win_rate": "0.52",
+      "pnl_units": "7.217722171629031919964301712"
+    },
+    "C5-n22-k3-R-OFF-tape/6": {
+      "n": 1025,
+      "mean_bps": "29.61908139231021617295749555",
+      "median_bps": "-15.53519632118853908737177200",
+      "win_rate": "0.3804878048780487804878048780",
+      "pnl_units": "3.035955842711797157728143294"
+    },
+    "C5-n22-k3-R-OFF-study/6": {
+      "n": 1025,
+      "mean_bps": "48.76086505771507066841421122",
+      "median_bps": "-13.68362533692722371967655000",
+      "win_rate": "0.3931707317073170731707317073",
+      "pnl_units": "4.997988668415794743512456650"
+    },
+    "exit-engine-starts-rw-strict/3": {
+      "n": 1025,
+      "mean_bps": "76.44154155886256837408115509",
+      "median_bps": "10.49175164967006598680264000",
+      "win_rate": "0.5707317073170731707317073171",
+      "pnl_units": "7.835258009783413258343318397"
+    },
+    "exit-engine-starts-rw-strict/6": {
+      "n": 1025,
+      "mean_bps": "70.41680167442957970696879719",
+      "median_bps": "4.486802639472105578884230000",
+      "win_rate": "0.52",
+      "pnl_units": "7.217722171629031919964301712"
+    }
+  },
+  "attribution": {
+    "exit-engine-starts-rw-dropped/3": {
+      "flat_1555": {
+        "n": 263,
+        "managed_mean_bps": "-10.88461980492811699654830751",
+        "hold_mean_bps": "-10.88461980492811699654830751",
+        "gap_contribution_bps": "0E-28",
+        "tp_touched": 0
+      },
+      "gain_lock": {
+        "n": 374,
+        "managed_mean_bps": "31.34409760880137857550036872",
+        "hold_mean_bps": "69.41141618537651985978858749",
+        "gap_contribution_bps": "-13.88992892452595399055979892",
+        "tp_touched": 0
+      },
+      "prearm": {
+        "n": 388,
+        "managed_mean_bps": "-154.1642798159153367703616968",
+        "hold_mean_bps": "142.4107357041221879535166421",
+        "gap_contribution_bps": "-112.2644936797800581393802878",
+        "tp_touched": 0
+      }
+    },
+    "exit-engine-starts-rw-dropped/6": {
+      "flat_1555": {
+        "n": 309,
+        "managed_mean_bps": "-19.24756665074250424536130852",
+        "hold_mean_bps": "-19.24756665074250424536130852",
+        "gap_contribution_bps": "0E-28",
+        "tp_touched": 0
+      },
+      "gain_lock": {
+        "n": 332,
+        "managed_mean_bps": "37.02029461787632323203533916",
+        "hold_mean_bps": "76.57125703925023769693259675",
+        "gap_contribution_bps": "-12.81065319404501424619111175",
+        "tp_touched": 0
+      },
+      "prearm": {
+        "n": 384,
+        "managed_mean_bps": "-159.3757994659894002963306778",
+        "hold_mean_bps": "137.2475585269236304585365605",
+        "gap_contribution_bps": "-111.1252385066132720096283117",
+        "tp_touched": 0
+      }
+    },
+    "exit-engine-starts-rw-strict/3": {
+      "flat_1555": {
+        "n": 1025,
+        "managed_mean_bps": "76.44154155886256837408115509",
+        "hold_mean_bps": "76.44154155886256837408115509",
+        "gap_contribution_bps": "0E-28",
+        "tp_touched": 0
+      }
+    },
+    "exit-engine-starts-rw-strict/6": {
+      "flat_1555": {
+        "n": 1025,
+        "managed_mean_bps": "70.41680167442957970696879719",
+        "hold_mean_bps": "70.41680167442957970696879719",
+        "gap_contribution_bps": "0E-28",
+        "tp_touched": 0
+      }
+    }
+  }
+}

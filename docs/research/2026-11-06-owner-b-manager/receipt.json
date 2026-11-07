@@ -1,0 +1,3227 @@
+{
+ "summary": {
+  "distributions": {
+   "gap1_ns": {
+    "samples_ns": [
+     1000000000,
+     1000000000,
+     2000000000
+    ],
+    "observed": 3,
+    "censored": 0
+   },
+   "gap2_ns": {
+    "samples_ns": [
+     1000000000,
+     1000000000
+    ],
+    "observed": 2,
+    "censored": 1
+   }
+  },
+  "attempts": 16,
+  "recovery_label": "engine stop and start in sim; not a process death and not broker reconciliation",
+  "limitation": "one-second synthetic quote grid; not a live latency bound"
+ },
+ "cumulative_attempts": 32,
+ "implementation_sha": "8fa4414d18caf60a1b66b72ed49a67982dffe084",
+ "code_hash": "32019a70e2d6b4e362a6ce023097ba4812289394fbc1350c85148a9e08eaa771",
+ "code_versions": [
+  "3b5192667901536b1878e8e918516e4ba4f685df",
+  "8fa4414d18caf60a1b66b72ed49a67982dffe084"
+ ],
+ "ledger_sha256": "fc2b3c5d2e52b099dd08efa22ddcf21c76a98d2f7f473d64e4fdb90561b64d6f",
+ "export": {
+  "sha256": "7592f70f17782fb35b38e78860db309051d4db7ab01c479e577a8c6cbef8f304",
+  "orders": 162,
+  "symbols": 31,
+  "sources": {
+   "node": 35,
+   "owner": 118,
+   "coordinator-autoprotect": 9
+  },
+  "fifo_lots": 97,
+  "fifo_gross_usd": "-15372.014069821952",
+  "lifo_gross_usd": "-14810.94419682195200",
+  "first_fill": "2026-10-29T02:36:48.401546Z",
+  "last_fill": "2026-11-03T15:48:12.528314Z",
+  "unmatched_sells": [
+   {
+    "symbol": "SPCX",
+    "quantity": "1"
+   },
+   {
+    "symbol": "SQQQ",
+    "quantity": "92"
+   },
+   {
+    "symbol": "XP",
+    "quantity": "1"
+   },
+   {
+    "symbol": "CLRO",
+    "quantity": "558"
+   },
+   {
+    "symbol": "CHOW",
+    "quantity": "810"
+   },
+   {
+    "symbol": "EVGO",
+    "quantity": "1"
+   }
+  ],
+  "open_lots": [
+   {
+    "symbol": "CLRO",
+    "quantity": "2561",
+    "basis": "5.61"
+   },
+   {
+    "symbol": "CLRO",
+    "quantity": "333",
+    "basis": "7.128799"
+   },
+   {
+    "symbol": "EVGO",
+    "quantity": "1",
+    "basis": "1.92"
+   },
+   {
+    "symbol": "INO",
+    "quantity": "4140",
+    "basis": "2.1"
+   },
+   {
+    "symbol": "IONQ",
+    "quantity": "115",
+    "basis": "30.16"
+   },
+   {
+    "symbol": "NFE",
+    "quantity": "354",
+    "basis": "5.59"
+   },
+   {
+    "symbol": "SOXL",
+    "quantity": "39",
+    "basis": "98"
+   },
+   {
+    "symbol": "SOXS",
+    "quantity": "73",
+    "basis": "43.14"
+   },
+   {
+    "symbol": "SPAX",
+    "quantity": "2600",
+    "basis": "8.59"
+   },
+   {
+    "symbol": "STX",
+    "quantity": "655",
+    "basis": "661.69"
+   },
+   {
+    "symbol": "TQQQ",
+    "quantity": "52",
+    "basis": "69.39"
+   }
+  ],
+  "tier": "OBSERVED_ORDER_SUMMARIES",
+  "paired": false
+ },
+ "arms": [
+  {
+   "arm_run_id": "a3f292c4-9509-4a0b-9b9c-614b7fdb710b",
+   "latency_ns": 100000000,
+   "scenario": "normal",
+   "arm": "option-b",
+   "sold": "8",
+   "residual": "2",
+   "gross_pnl_usd": "15.04",
+   "house_orders": [
+    {
+     "id": "O-20261106-143002-001-001-1",
+     "type": "TRAILING_STOP_MARKET",
+     "status": "CANCELED",
+     "quantity": "8",
+     "leaves": "8",
+     "reduce_only": false
+    },
+    {
+     "id": "O-20261106-143007-001-001-2",
+     "type": "LIMIT",
+     "status": "FILLED",
+     "quantity": "8",
+     "leaves": "0",
+     "reduce_only": false
+    }
+   ],
+   "owner_exits": [
+    {
+     "id": "owner-reservation",
+     "type": "LIMIT",
+     "status": "ACCEPTED",
+     "quantity": "2",
+     "leaves": "2",
+     "reduce_only": false
+    }
+   ],
+   "resting_trails": [],
+   "cancel_ack_ns": 1793975407000000000,
+   "limit_accepted_ns": 1793975408000000000,
+   "first_fill_ns": 1793975409000000000,
+   "gap1_ns": 1000000000,
+   "gap2_ns": 1000000000,
+   "max_house_exits": 1,
+   "reservation_violations": [],
+   "owner_mutations": [],
+   "limit_submissions": 1,
+   "stops": 0,
+   "restarts": 0,
+   "recovery_label": "engine stop and start in sim; not a process death and not broker reconciliation",
+   "recovery_operations": [
+    "Strategy.stop",
+    "Strategy.resume"
+   ],
+   "paused": false,
+   "pages": [
+    "owner_reserved_unprotected"
+   ],
+   "exit_reason": "adopted",
+   "emulations": 0,
+   "releases": 0,
+   "actions": [
+    {
+     "action": "trail",
+     "order_id": "O-20261106-143002-001-001-1",
+     "ts": 1793975402000000000
+    },
+    {
+     "action": "cancel",
+     "order_id": "O-20261106-143002-001-001-1",
+     "ts": 1793975406000000000
+    },
+    {
+     "action": "limit",
+     "order_id": "O-20261106-143007-001-001-2",
+     "ts": 1793975407000000000
+    }
+   ],
+   "events": [
+    {
+     "ts": "1793975402000000000",
+     "event": "adoption",
+     "entry": "100.02",
+     "high": "100.00",
+     "trigger": "99.81996"
+    },
+    {
+     "ts": "1793975403000000000",
+     "event": "accepted"
+    },
+    {
+     "ts": "1793975406000000000",
+     "event": "persisted_breach",
+     "trigger": "101.79996"
+    },
+    {
+     "ts": "1793975407000000000",
+     "event": "persisted_breach",
+     "trigger": "101.79996"
+    },
+    {
+     "ts": "1793975407000000000",
+     "event": "canceled"
+    },
+    {
+     "ts": "1793975408000000000",
+     "event": "accepted"
+    },
+    {
+     "ts": "1793975409000000000",
+     "event": "sell_fill",
+     "qty": "8",
+     "price": "101.90"
+    },
+    {
+     "ts": "1793975409000000000",
+     "event": "pause_and_page"
+    }
+   ]
+  },
+  {
+   "arm_run_id": "3e826500-d429-44b7-ba1b-15eb7ff35a4f",
+   "latency_ns": 100000000,
+   "scenario": "normal",
+   "arm": "native-trail-o0",
+   "sold": "0",
+   "residual": "10",
+   "gross_pnl_usd": "13.44",
+   "house_orders": [
+    {
+     "id": "O-20261106-143002-001-001-1",
+     "type": "TRAILING_STOP_MARKET",
+     "status": "ACCEPTED",
+     "quantity": "8",
+     "leaves": "8",
+     "reduce_only": false
+    }
+   ],
+   "owner_exits": [
+    {
+     "id": "owner-reservation",
+     "type": "LIMIT",
+     "status": "ACCEPTED",
+     "quantity": "2",
+     "leaves": "2",
+     "reduce_only": false
+    }
+   ],
+   "resting_trails": [
+    {
+     "id": "O-20261106-143002-001-001-1",
+     "type": "TRAILING_STOP_MARKET",
+     "status": "ACCEPTED",
+     "quantity": "8",
+     "leaves": "8",
+     "reduce_only": false
+    }
+   ],
+   "cancel_ack_ns": null,
+   "limit_accepted_ns": null,
+   "first_fill_ns": null,
+   "gap1_ns": null,
+   "gap2_ns": null,
+   "max_house_exits": 1,
+   "reservation_violations": [],
+   "owner_mutations": [],
+   "limit_submissions": 0,
+   "stops": 0,
+   "restarts": 0,
+   "recovery_label": "engine stop and start in sim; not a process death and not broker reconciliation",
+   "recovery_operations": [
+    "Strategy.stop",
+    "Strategy.resume"
+   ],
+   "paused": false,
+   "pages": [],
+   "exit_reason": "adopted",
+   "emulations": 0,
+   "releases": 0,
+   "actions": [
+    {
+     "action": "trail",
+     "order_id": "O-20261106-143002-001-001-1",
+     "ts": 1793975402000000000
+    }
+   ],
+   "events": [
+    {
+     "ts": "1793975402000000000",
+     "event": "adoption",
+     "entry": "100.02",
+     "high": "100.00",
+     "trigger": "99.81996"
+    },
+    {
+     "ts": "1793975403000000000",
+     "event": "accepted"
+    }
+   ]
+  },
+  {
+   "arm_run_id": "2b086623-3067-44b2-95e3-bb2c4e086761",
+   "latency_ns": 100000000,
+   "scenario": "normal",
+   "arm": "hold",
+   "sold": "0",
+   "residual": "10",
+   "gross_pnl_usd": "13.44",
+   "house_orders": [],
+   "owner_exits": [
+    {
+     "id": "owner-reservation",
+     "type": "LIMIT",
+     "status": "ACCEPTED",
+     "quantity": "2",
+     "leaves": "2",
+     "reduce_only": false
+    }
+   ],
+   "resting_trails": [],
+   "cancel_ack_ns": null,
+   "limit_accepted_ns": null,
+   "first_fill_ns": null,
+   "gap1_ns": null,
+   "gap2_ns": null,
+   "max_house_exits": 0,
+   "reservation_violations": [],
+   "owner_mutations": [],
+   "limit_submissions": 0,
+   "stops": 0,
+   "restarts": 0,
+   "recovery_label": "engine stop and start in sim; not a process death and not broker reconciliation",
+   "recovery_operations": [
+    "Strategy.stop",
+    "Strategy.resume"
+   ],
+   "paused": false,
+   "pages": [],
+   "exit_reason": "",
+   "emulations": 0,
+   "releases": 0,
+   "actions": [],
+   "events": []
+  },
+  {
+   "arm_run_id": "44727087-9145-4f32-990e-dcbbe54007f8",
+   "latency_ns": 200000000,
+   "scenario": "normal",
+   "arm": "option-b",
+   "sold": "8",
+   "residual": "2",
+   "gross_pnl_usd": "15.04",
+   "house_orders": [
+    {
+     "id": "O-20261106-143002-001-001-1",
+     "type": "TRAILING_STOP_MARKET",
+     "status": "CANCELED",
+     "quantity": "8",
+     "leaves": "8",
+     "reduce_only": false
+    },
+    {
+     "id": "O-20261106-143007-001-001-2",
+     "type": "LIMIT",
+     "status": "FILLED",
+     "quantity": "8",
+     "leaves": "0",
+     "reduce_only": false
+    }
+   ],
+   "owner_exits": [
+    {
+     "id": "owner-reservation",
+     "type": "LIMIT",
+     "status": "ACCEPTED",
+     "quantity": "2",
+     "leaves": "2",
+     "reduce_only": false
+    }
+   ],
+   "resting_trails": [],
+   "cancel_ack_ns": 1793975407000000000,
+   "limit_accepted_ns": 1793975408000000000,
+   "first_fill_ns": 1793975409000000000,
+   "gap1_ns": 1000000000,
+   "gap2_ns": 1000000000,
+   "max_house_exits": 1,
+   "reservation_violations": [],
+   "owner_mutations": [],
+   "limit_submissions": 1,
+   "stops": 0,
+   "restarts": 0,
+   "recovery_label": "engine stop and start in sim; not a process death and not broker reconciliation",
+   "recovery_operations": [
+    "Strategy.stop",
+    "Strategy.resume"
+   ],
+   "paused": false,
+   "pages": [
+    "owner_reserved_unprotected"
+   ],
+   "exit_reason": "adopted",
+   "emulations": 0,
+   "releases": 0,
+   "actions": [
+    {
+     "action": "trail",
+     "order_id": "O-20261106-143002-001-001-1",
+     "ts": 1793975402000000000
+    },
+    {
+     "action": "cancel",
+     "order_id": "O-20261106-143002-001-001-1",
+     "ts": 1793975406000000000
+    },
+    {
+     "action": "limit",
+     "order_id": "O-20261106-143007-001-001-2",
+     "ts": 1793975407000000000
+    }
+   ],
+   "events": [
+    {
+     "ts": "1793975402000000000",
+     "event": "adoption",
+     "entry": "100.02",
+     "high": "100.00",
+     "trigger": "99.81996"
+    },
+    {
+     "ts": "1793975403000000000",
+     "event": "accepted"
+    },
+    {
+     "ts": "1793975406000000000",
+     "event": "persisted_breach",
+     "trigger": "101.79996"
+    },
+    {
+     "ts": "1793975407000000000",
+     "event": "persisted_breach",
+     "trigger": "101.79996"
+    },
+    {
+     "ts": "1793975407000000000",
+     "event": "canceled"
+    },
+    {
+     "ts": "1793975408000000000",
+     "event": "accepted"
+    },
+    {
+     "ts": "1793975409000000000",
+     "event": "sell_fill",
+     "qty": "8",
+     "price": "101.90"
+    },
+    {
+     "ts": "1793975409000000000",
+     "event": "pause_and_page"
+    }
+   ]
+  },
+  {
+   "arm_run_id": "ad0181cc-8a9a-4ffc-858c-a2631af491de",
+   "latency_ns": 200000000,
+   "scenario": "normal",
+   "arm": "native-trail-o0",
+   "sold": "0",
+   "residual": "10",
+   "gross_pnl_usd": "13.44",
+   "house_orders": [
+    {
+     "id": "O-20261106-143002-001-001-1",
+     "type": "TRAILING_STOP_MARKET",
+     "status": "ACCEPTED",
+     "quantity": "8",
+     "leaves": "8",
+     "reduce_only": false
+    }
+   ],
+   "owner_exits": [
+    {
+     "id": "owner-reservation",
+     "type": "LIMIT",
+     "status": "ACCEPTED",
+     "quantity": "2",
+     "leaves": "2",
+     "reduce_only": false
+    }
+   ],
+   "resting_trails": [
+    {
+     "id": "O-20261106-143002-001-001-1",
+     "type": "TRAILING_STOP_MARKET",
+     "status": "ACCEPTED",
+     "quantity": "8",
+     "leaves": "8",
+     "reduce_only": false
+    }
+   ],
+   "cancel_ack_ns": null,
+   "limit_accepted_ns": null,
+   "first_fill_ns": null,
+   "gap1_ns": null,
+   "gap2_ns": null,
+   "max_house_exits": 1,
+   "reservation_violations": [],
+   "owner_mutations": [],
+   "limit_submissions": 0,
+   "stops": 0,
+   "restarts": 0,
+   "recovery_label": "engine stop and start in sim; not a process death and not broker reconciliation",
+   "recovery_operations": [
+    "Strategy.stop",
+    "Strategy.resume"
+   ],
+   "paused": false,
+   "pages": [],
+   "exit_reason": "adopted",
+   "emulations": 0,
+   "releases": 0,
+   "actions": [
+    {
+     "action": "trail",
+     "order_id": "O-20261106-143002-001-001-1",
+     "ts": 1793975402000000000
+    }
+   ],
+   "events": [
+    {
+     "ts": "1793975402000000000",
+     "event": "adoption",
+     "entry": "100.02",
+     "high": "100.00",
+     "trigger": "99.81996"
+    },
+    {
+     "ts": "1793975403000000000",
+     "event": "accepted"
+    }
+   ]
+  },
+  {
+   "arm_run_id": "b6750d8e-382c-4fcb-adb4-bfe3f5538938",
+   "latency_ns": 200000000,
+   "scenario": "normal",
+   "arm": "hold",
+   "sold": "0",
+   "residual": "10",
+   "gross_pnl_usd": "13.44",
+   "house_orders": [],
+   "owner_exits": [
+    {
+     "id": "owner-reservation",
+     "type": "LIMIT",
+     "status": "ACCEPTED",
+     "quantity": "2",
+     "leaves": "2",
+     "reduce_only": false
+    }
+   ],
+   "resting_trails": [],
+   "cancel_ack_ns": null,
+   "limit_accepted_ns": null,
+   "first_fill_ns": null,
+   "gap1_ns": null,
+   "gap2_ns": null,
+   "max_house_exits": 0,
+   "reservation_violations": [],
+   "owner_mutations": [],
+   "limit_submissions": 0,
+   "stops": 0,
+   "restarts": 0,
+   "recovery_label": "engine stop and start in sim; not a process death and not broker reconciliation",
+   "recovery_operations": [
+    "Strategy.stop",
+    "Strategy.resume"
+   ],
+   "paused": false,
+   "pages": [],
+   "exit_reason": "",
+   "emulations": 0,
+   "releases": 0,
+   "actions": [],
+   "events": []
+  },
+  {
+   "arm_run_id": "ee5cb62e-235c-488a-a49b-d2ce329c09e0",
+   "latency_ns": 1200000000,
+   "scenario": "normal",
+   "arm": "option-b",
+   "sold": "0",
+   "residual": "10",
+   "gross_pnl_usd": "13.44",
+   "house_orders": [
+    {
+     "id": "O-20261106-143003-001-001-1",
+     "type": "TRAILING_STOP_MARKET",
+     "status": "CANCELED",
+     "quantity": "8",
+     "leaves": "8",
+     "reduce_only": false
+    },
+    {
+     "id": "O-20261106-143008-001-001-2",
+     "type": "LIMIT",
+     "status": "CANCELED",
+     "quantity": "8",
+     "leaves": "8",
+     "reduce_only": false
+    },
+    {
+     "id": "O-20261106-143013-001-001-3",
+     "type": "TRAILING_STOP_MARKET",
+     "status": "ACCEPTED",
+     "quantity": "8",
+     "leaves": "8",
+     "reduce_only": false
+    }
+   ],
+   "owner_exits": [
+    {
+     "id": "owner-reservation",
+     "type": "LIMIT",
+     "status": "ACCEPTED",
+     "quantity": "2",
+     "leaves": "2",
+     "reduce_only": false
+    }
+   ],
+   "resting_trails": [
+    {
+     "id": "O-20261106-143013-001-001-3",
+     "type": "TRAILING_STOP_MARKET",
+     "status": "ACCEPTED",
+     "quantity": "8",
+     "leaves": "8",
+     "reduce_only": false
+    }
+   ],
+   "cancel_ack_ns": 1793975408000000000,
+   "limit_accepted_ns": 1793975410000000000,
+   "first_fill_ns": null,
+   "gap1_ns": 2000000000,
+   "gap2_ns": null,
+   "max_house_exits": 1,
+   "reservation_violations": [],
+   "owner_mutations": [],
+   "limit_submissions": 1,
+   "stops": 0,
+   "restarts": 0,
+   "recovery_label": "engine stop and start in sim; not a process death and not broker reconciliation",
+   "recovery_operations": [
+    "Strategy.stop",
+    "Strategy.resume"
+   ],
+   "paused": false,
+   "pages": [],
+   "exit_reason": "adopted",
+   "emulations": 0,
+   "releases": 0,
+   "actions": [
+    {
+     "action": "trail",
+     "order_id": "O-20261106-143003-001-001-1",
+     "ts": 1793975403000000000
+    },
+    {
+     "action": "cancel",
+     "order_id": "O-20261106-143003-001-001-1",
+     "ts": 1793975406000000000
+    },
+    {
+     "action": "limit",
+     "order_id": "O-20261106-143008-001-001-2",
+     "ts": 1793975408000000000
+    },
+    {
+     "action": "cancel",
+     "order_id": "O-20261106-143008-001-001-2",
+     "ts": 1793975411000000000
+    },
+    {
+     "action": "trail",
+     "order_id": "O-20261106-143013-001-001-3",
+     "ts": 1793975413000000000
+    }
+   ],
+   "events": [
+    {
+     "ts": "1793975403000000000",
+     "event": "adoption",
+     "entry": "100.02",
+     "high": "102.00",
+     "trigger": "99.81996"
+    },
+    {
+     "ts": "1793975405000000000",
+     "event": "accepted"
+    },
+    {
+     "ts": "1793975406000000000",
+     "event": "persisted_breach",
+     "trigger": "101.79996"
+    },
+    {
+     "ts": "1793975407000000000",
+     "event": "persisted_breach",
+     "trigger": "101.79996"
+    },
+    {
+     "ts": "1793975408000000000",
+     "event": "persisted_breach",
+     "trigger": "101.79996"
+    },
+    {
+     "ts": "1793975408000000000",
+     "event": "canceled"
+    },
+    {
+     "ts": "1793975410000000000",
+     "event": "accepted"
+    },
+    {
+     "ts": "1793975413000000000",
+     "event": "canceled"
+    }
+   ]
+  },
+  {
+   "arm_run_id": "c1f265a0-9646-47f9-8e89-8a012f01d7a7",
+   "latency_ns": 1200000000,
+   "scenario": "normal",
+   "arm": "native-trail-o0",
+   "sold": "0",
+   "residual": "10",
+   "gross_pnl_usd": "13.44",
+   "house_orders": [
+    {
+     "id": "O-20261106-143003-001-001-1",
+     "type": "TRAILING_STOP_MARKET",
+     "status": "ACCEPTED",
+     "quantity": "8",
+     "leaves": "8",
+     "reduce_only": false
+    }
+   ],
+   "owner_exits": [
+    {
+     "id": "owner-reservation",
+     "type": "LIMIT",
+     "status": "ACCEPTED",
+     "quantity": "2",
+     "leaves": "2",
+     "reduce_only": false
+    }
+   ],
+   "resting_trails": [
+    {
+     "id": "O-20261106-143003-001-001-1",
+     "type": "TRAILING_STOP_MARKET",
+     "status": "ACCEPTED",
+     "quantity": "8",
+     "leaves": "8",
+     "reduce_only": false
+    }
+   ],
+   "cancel_ack_ns": null,
+   "limit_accepted_ns": null,
+   "first_fill_ns": null,
+   "gap1_ns": null,
+   "gap2_ns": null,
+   "max_house_exits": 1,
+   "reservation_violations": [],
+   "owner_mutations": [],
+   "limit_submissions": 0,
+   "stops": 0,
+   "restarts": 0,
+   "recovery_label": "engine stop and start in sim; not a process death and not broker reconciliation",
+   "recovery_operations": [
+    "Strategy.stop",
+    "Strategy.resume"
+   ],
+   "paused": false,
+   "pages": [],
+   "exit_reason": "adopted",
+   "emulations": 0,
+   "releases": 0,
+   "actions": [
+    {
+     "action": "trail",
+     "order_id": "O-20261106-143003-001-001-1",
+     "ts": 1793975403000000000
+    }
+   ],
+   "events": [
+    {
+     "ts": "1793975403000000000",
+     "event": "adoption",
+     "entry": "100.02",
+     "high": "102.00",
+     "trigger": "99.81996"
+    },
+    {
+     "ts": "1793975405000000000",
+     "event": "accepted"
+    }
+   ]
+  },
+  {
+   "arm_run_id": "04c74a07-f55f-4d06-916e-aa88fd46f8cd",
+   "latency_ns": 1200000000,
+   "scenario": "normal",
+   "arm": "hold",
+   "sold": "0",
+   "residual": "10",
+   "gross_pnl_usd": "13.44",
+   "house_orders": [],
+   "owner_exits": [
+    {
+     "id": "owner-reservation",
+     "type": "LIMIT",
+     "status": "ACCEPTED",
+     "quantity": "2",
+     "leaves": "2",
+     "reduce_only": false
+    }
+   ],
+   "resting_trails": [],
+   "cancel_ack_ns": null,
+   "limit_accepted_ns": null,
+   "first_fill_ns": null,
+   "gap1_ns": null,
+   "gap2_ns": null,
+   "max_house_exits": 0,
+   "reservation_violations": [],
+   "owner_mutations": [],
+   "limit_submissions": 0,
+   "stops": 0,
+   "restarts": 0,
+   "recovery_label": "engine stop and start in sim; not a process death and not broker reconciliation",
+   "recovery_operations": [
+    "Strategy.stop",
+    "Strategy.resume"
+   ],
+   "paused": false,
+   "pages": [],
+   "exit_reason": "",
+   "emulations": 0,
+   "releases": 0,
+   "actions": [],
+   "events": []
+  },
+  {
+   "arm_run_id": "45fb4801-4c01-48b6-ae71-6d3ba3018339",
+   "latency_ns": 200000000,
+   "scenario": "after_cancel_ack",
+   "arm": "option-b",
+   "sold": "0",
+   "residual": "10",
+   "gross_pnl_usd": "15.84",
+   "house_orders": [
+    {
+     "id": "O-20261106-143002-001-001-1",
+     "type": "TRAILING_STOP_MARKET",
+     "status": "CANCELED",
+     "quantity": "8",
+     "leaves": "8",
+     "reduce_only": false
+    },
+    {
+     "id": "O-20261106-143009-001-001-2",
+     "type": "TRAILING_STOP_MARKET",
+     "status": "ACCEPTED",
+     "quantity": "8",
+     "leaves": "8",
+     "reduce_only": false
+    }
+   ],
+   "owner_exits": [
+    {
+     "id": "owner-reservation",
+     "type": "LIMIT",
+     "status": "ACCEPTED",
+     "quantity": "2",
+     "leaves": "2",
+     "reduce_only": false
+    }
+   ],
+   "resting_trails": [
+    {
+     "id": "O-20261106-143009-001-001-2",
+     "type": "TRAILING_STOP_MARKET",
+     "status": "ACCEPTED",
+     "quantity": "8",
+     "leaves": "8",
+     "reduce_only": false
+    }
+   ],
+   "cancel_ack_ns": 1793975407000000000,
+   "limit_accepted_ns": null,
+   "first_fill_ns": null,
+   "gap1_ns": null,
+   "gap2_ns": null,
+   "max_house_exits": 1,
+   "reservation_violations": [],
+   "owner_mutations": [],
+   "limit_submissions": 0,
+   "stops": 1,
+   "restarts": 1,
+   "recovery_label": "engine stop and start in sim; not a process death and not broker reconciliation",
+   "recovery_operations": [
+    "Strategy.stop",
+    "Strategy.resume"
+   ],
+   "paused": false,
+   "pages": [],
+   "exit_reason": "adopted",
+   "emulations": 0,
+   "releases": 0,
+   "actions": [
+    {
+     "action": "trail",
+     "order_id": "O-20261106-143002-001-001-1",
+     "ts": 1793975402000000000
+    },
+    {
+     "action": "cancel",
+     "order_id": "O-20261106-143002-001-001-1",
+     "ts": 1793975406000000000
+    },
+    {
+     "action": "trail",
+     "order_id": "O-20261106-143009-001-001-2",
+     "ts": 1793975409000000000
+    }
+   ],
+   "events": [
+    {
+     "ts": "1793975402000000000",
+     "event": "adoption",
+     "entry": "100.02",
+     "high": "100.00",
+     "trigger": "99.81996"
+    },
+    {
+     "ts": "1793975403000000000",
+     "event": "accepted"
+    },
+    {
+     "ts": "1793975406000000000",
+     "event": "persisted_breach",
+     "trigger": "101.79996"
+    },
+    {
+     "ts": "1793975407000000000",
+     "event": "persisted_breach",
+     "trigger": "101.79996"
+    },
+    {
+     "ts": "1793975407000000000",
+     "event": "canceled"
+    },
+    {
+     "ts": "1793975409000000000",
+     "event": "restart"
+    },
+    {
+     "ts": "1793975410000000000",
+     "event": "accepted"
+    }
+   ]
+  },
+  {
+   "arm_run_id": "d604a9f6-8628-41be-b555-15c529e79fe6",
+   "latency_ns": 200000000,
+   "scenario": "after_limit_accept",
+   "arm": "option-b",
+   "sold": "3",
+   "residual": "7",
+   "gross_pnl_usd": "15.54",
+   "house_orders": [
+    {
+     "id": "O-20261106-143002-001-001-1",
+     "type": "TRAILING_STOP_MARKET",
+     "status": "CANCELED",
+     "quantity": "8",
+     "leaves": "8",
+     "reduce_only": false
+    },
+    {
+     "id": "O-20261106-143007-001-001-2",
+     "type": "LIMIT",
+     "status": "CANCELED",
+     "quantity": "8",
+     "leaves": "5",
+     "reduce_only": false
+    },
+    {
+     "id": "O-20261106-143012-001-001-3",
+     "type": "TRAILING_STOP_MARKET",
+     "status": "ACCEPTED",
+     "quantity": "5",
+     "leaves": "5",
+     "reduce_only": false
+    }
+   ],
+   "owner_exits": [
+    {
+     "id": "owner-reservation",
+     "type": "LIMIT",
+     "status": "ACCEPTED",
+     "quantity": "2",
+     "leaves": "2",
+     "reduce_only": false
+    }
+   ],
+   "resting_trails": [
+    {
+     "id": "O-20261106-143012-001-001-3",
+     "type": "TRAILING_STOP_MARKET",
+     "status": "ACCEPTED",
+     "quantity": "5",
+     "leaves": "5",
+     "reduce_only": false
+    }
+   ],
+   "cancel_ack_ns": 1793975407000000000,
+   "limit_accepted_ns": 1793975408000000000,
+   "first_fill_ns": 1793975409000000000,
+   "gap1_ns": 1000000000,
+   "gap2_ns": 1000000000,
+   "max_house_exits": 1,
+   "reservation_violations": [],
+   "owner_mutations": [],
+   "limit_submissions": 1,
+   "stops": 1,
+   "restarts": 1,
+   "recovery_label": "engine stop and start in sim; not a process death and not broker reconciliation",
+   "recovery_operations": [
+    "Strategy.stop",
+    "Strategy.resume"
+   ],
+   "paused": false,
+   "pages": [],
+   "exit_reason": "adopted",
+   "emulations": 0,
+   "releases": 0,
+   "actions": [
+    {
+     "action": "trail",
+     "order_id": "O-20261106-143002-001-001-1",
+     "ts": 1793975402000000000
+    },
+    {
+     "action": "cancel",
+     "order_id": "O-20261106-143002-001-001-1",
+     "ts": 1793975406000000000
+    },
+    {
+     "action": "limit",
+     "order_id": "O-20261106-143007-001-001-2",
+     "ts": 1793975407000000000
+    },
+    {
+     "action": "cancel",
+     "order_id": "O-20261106-143007-001-001-2",
+     "ts": 1793975411000000000
+    },
+    {
+     "action": "trail",
+     "order_id": "O-20261106-143012-001-001-3",
+     "ts": 1793975412000000000
+    }
+   ],
+   "events": [
+    {
+     "ts": "1793975402000000000",
+     "event": "adoption",
+     "entry": "100.02",
+     "high": "100.00",
+     "trigger": "99.81996"
+    },
+    {
+     "ts": "1793975403000000000",
+     "event": "accepted"
+    },
+    {
+     "ts": "1793975406000000000",
+     "event": "persisted_breach",
+     "trigger": "101.79996"
+    },
+    {
+     "ts": "1793975407000000000",
+     "event": "persisted_breach",
+     "trigger": "101.79996"
+    },
+    {
+     "ts": "1793975407000000000",
+     "event": "canceled"
+    },
+    {
+     "ts": "1793975408000000000",
+     "event": "accepted"
+    },
+    {
+     "ts": "1793975411000000000",
+     "event": "restart"
+    },
+    {
+     "ts": "1793975412000000000",
+     "event": "canceled"
+    },
+    {
+     "ts": "1793975413000000000",
+     "event": "accepted"
+    }
+   ]
+  },
+  {
+   "arm_run_id": "5002600f-3f3d-46a9-80ec-edc8e6a7d32b",
+   "latency_ns": 200000000,
+   "scenario": "unfilled",
+   "arm": "option-b",
+   "sold": "0",
+   "residual": "10",
+   "gross_pnl_usd": "14.24",
+   "house_orders": [
+    {
+     "id": "O-20261106-143002-001-001-1",
+     "type": "TRAILING_STOP_MARKET",
+     "status": "CANCELED",
+     "quantity": "8",
+     "leaves": "8",
+     "reduce_only": false
+    },
+    {
+     "id": "O-20261106-143007-001-001-2",
+     "type": "LIMIT",
+     "status": "CANCELED",
+     "quantity": "8",
+     "leaves": "8",
+     "reduce_only": false
+    },
+    {
+     "id": "O-20261106-143011-001-001-3",
+     "type": "TRAILING_STOP_MARKET",
+     "status": "ACCEPTED",
+     "quantity": "8",
+     "leaves": "8",
+     "reduce_only": false
+    }
+   ],
+   "owner_exits": [
+    {
+     "id": "owner-reservation",
+     "type": "LIMIT",
+     "status": "ACCEPTED",
+     "quantity": "2",
+     "leaves": "2",
+     "reduce_only": false
+    }
+   ],
+   "resting_trails": [
+    {
+     "id": "O-20261106-143011-001-001-3",
+     "type": "TRAILING_STOP_MARKET",
+     "status": "ACCEPTED",
+     "quantity": "8",
+     "leaves": "8",
+     "reduce_only": false
+    }
+   ],
+   "cancel_ack_ns": 1793975407000000000,
+   "limit_accepted_ns": 1793975408000000000,
+   "first_fill_ns": null,
+   "gap1_ns": 1000000000,
+   "gap2_ns": null,
+   "max_house_exits": 1,
+   "reservation_violations": [],
+   "owner_mutations": [],
+   "limit_submissions": 1,
+   "stops": 0,
+   "restarts": 0,
+   "recovery_label": "engine stop and start in sim; not a process death and not broker reconciliation",
+   "recovery_operations": [
+    "Strategy.stop",
+    "Strategy.resume"
+   ],
+   "paused": false,
+   "pages": [],
+   "exit_reason": "adopted",
+   "emulations": 0,
+   "releases": 0,
+   "actions": [
+    {
+     "action": "trail",
+     "order_id": "O-20261106-143002-001-001-1",
+     "ts": 1793975402000000000
+    },
+    {
+     "action": "cancel",
+     "order_id": "O-20261106-143002-001-001-1",
+     "ts": 1793975406000000000
+    },
+    {
+     "action": "limit",
+     "order_id": "O-20261106-143007-001-001-2",
+     "ts": 1793975407000000000
+    },
+    {
+     "action": "cancel",
+     "order_id": "O-20261106-143007-001-001-2",
+     "ts": 1793975410000000000
+    },
+    {
+     "action": "trail",
+     "order_id": "O-20261106-143011-001-001-3",
+     "ts": 1793975411000000000
+    }
+   ],
+   "events": [
+    {
+     "ts": "1793975402000000000",
+     "event": "adoption",
+     "entry": "100.02",
+     "high": "100.00",
+     "trigger": "99.81996"
+    },
+    {
+     "ts": "1793975403000000000",
+     "event": "accepted"
+    },
+    {
+     "ts": "1793975406000000000",
+     "event": "persisted_breach",
+     "trigger": "101.79996"
+    },
+    {
+     "ts": "1793975407000000000",
+     "event": "persisted_breach",
+     "trigger": "101.79996"
+    },
+    {
+     "ts": "1793975407000000000",
+     "event": "canceled"
+    },
+    {
+     "ts": "1793975408000000000",
+     "event": "accepted"
+    },
+    {
+     "ts": "1793975411000000000",
+     "event": "canceled"
+    },
+    {
+     "ts": "1793975412000000000",
+     "event": "accepted"
+    }
+   ]
+  },
+  {
+   "arm_run_id": "2b067ade-02c7-4fcb-aaa0-3e02bc5008ae",
+   "latency_ns": 200000000,
+   "scenario": "owner_add",
+   "arm": "option-b",
+   "sold": "0",
+   "residual": "11",
+   "gross_pnl_usd": "13.44",
+   "house_orders": [
+    {
+     "id": "O-20261106-143002-001-001-1",
+     "type": "TRAILING_STOP_MARKET",
+     "status": "ACCEPTED",
+     "quantity": "8",
+     "leaves": "8",
+     "reduce_only": false
+    }
+   ],
+   "owner_exits": [
+    {
+     "id": "owner-reservation",
+     "type": "LIMIT",
+     "status": "ACCEPTED",
+     "quantity": "2",
+     "leaves": "2",
+     "reduce_only": false
+    }
+   ],
+   "resting_trails": [
+    {
+     "id": "O-20261106-143002-001-001-1",
+     "type": "TRAILING_STOP_MARKET",
+     "status": "ACCEPTED",
+     "quantity": "8",
+     "leaves": "8",
+     "reduce_only": false
+    }
+   ],
+   "cancel_ack_ns": null,
+   "limit_accepted_ns": null,
+   "first_fill_ns": null,
+   "gap1_ns": null,
+   "gap2_ns": null,
+   "max_house_exits": 1,
+   "reservation_violations": [],
+   "owner_mutations": [],
+   "limit_submissions": 0,
+   "stops": 0,
+   "restarts": 0,
+   "recovery_label": "engine stop and start in sim; not a process death and not broker reconciliation",
+   "recovery_operations": [
+    "Strategy.stop",
+    "Strategy.resume"
+   ],
+   "paused": true,
+   "pages": [
+    "owner_add"
+   ],
+   "exit_reason": "adopted",
+   "emulations": 0,
+   "releases": 0,
+   "actions": [
+    {
+     "action": "trail",
+     "order_id": "O-20261106-143002-001-001-1",
+     "ts": 1793975402000000000
+    }
+   ],
+   "events": [
+    {
+     "ts": "1793975402000000000",
+     "event": "adoption",
+     "entry": "100.02",
+     "high": "100.00",
+     "trigger": "99.81996"
+    },
+    {
+     "ts": "1793975403000000000",
+     "event": "accepted"
+    },
+    {
+     "ts": "1793975405000000000",
+     "event": "pause_and_page"
+    }
+   ]
+  },
+  {
+   "arm_run_id": "4fb3cb7d-ece8-4715-9f74-b3a45fa94864",
+   "latency_ns": 200000000,
+   "scenario": "adopted_below",
+   "arm": "option-b",
+   "sold": "8",
+   "residual": "2",
+   "gross_pnl_usd": "-16.16",
+   "house_orders": [
+    {
+     "id": "O-20261106-143002-001-001-1",
+     "type": "TRAILING_STOP_MARKET",
+     "status": "CANCELED",
+     "quantity": "8",
+     "leaves": "8",
+     "reduce_only": false
+    },
+    {
+     "id": "O-20261106-143006-001-001-2",
+     "type": "LIMIT",
+     "status": "FILLED",
+     "quantity": "8",
+     "leaves": "0",
+     "reduce_only": false
+    }
+   ],
+   "owner_exits": [
+    {
+     "id": "owner-reservation",
+     "type": "LIMIT",
+     "status": "ACCEPTED",
+     "quantity": "2",
+     "leaves": "2",
+     "reduce_only": false
+    }
+   ],
+   "resting_trails": [],
+   "cancel_ack_ns": 1793975406000000000,
+   "limit_accepted_ns": 1793975407000000000,
+   "first_fill_ns": 1793975407000000000,
+   "gap1_ns": 1000000000,
+   "gap2_ns": 0,
+   "max_house_exits": 1,
+   "reservation_violations": [],
+   "owner_mutations": [],
+   "limit_submissions": 1,
+   "stops": 0,
+   "restarts": 0,
+   "recovery_label": "engine stop and start in sim; not a process death and not broker reconciliation",
+   "recovery_operations": [
+    "Strategy.stop",
+    "Strategy.resume"
+   ],
+   "paused": false,
+   "pages": [
+    "owner_reserved_unprotected"
+   ],
+   "exit_reason": "adopted-below-trigger",
+   "emulations": 0,
+   "releases": 0,
+   "actions": [
+    {
+     "action": "trail",
+     "order_id": "O-20261106-143002-001-001-1",
+     "ts": 1793975402000000000
+    },
+    {
+     "action": "cancel",
+     "order_id": "O-20261106-143002-001-001-1",
+     "ts": 1793975405000000000
+    },
+    {
+     "action": "limit",
+     "order_id": "O-20261106-143006-001-001-2",
+     "ts": 1793975406000000000
+    }
+   ],
+   "events": [
+    {
+     "ts": "1793975402000000000",
+     "event": "adoption",
+     "entry": "100.02",
+     "high": "98.00",
+     "trigger": "99.81996"
+    },
+    {
+     "ts": "1793975403000000000",
+     "event": "accepted"
+    },
+    {
+     "ts": "1793975405000000000",
+     "event": "persisted_breach",
+     "trigger": "99.81996"
+    },
+    {
+     "ts": "1793975406000000000",
+     "event": "persisted_breach",
+     "trigger": "99.81996"
+    },
+    {
+     "ts": "1793975406000000000",
+     "event": "canceled"
+    },
+    {
+     "ts": "1793975407000000000",
+     "event": "accepted"
+    },
+    {
+     "ts": "1793975407000000000",
+     "event": "sell_fill",
+     "qty": "8",
+     "price": "98.00"
+    },
+    {
+     "ts": "1793975407000000000",
+     "event": "pause_and_page"
+    }
+   ]
+  },
+  {
+   "arm_run_id": "b11edae4-9442-4563-baba-f23c8480d644",
+   "latency_ns": 200000000,
+   "scenario": "outside",
+   "arm": "option-b",
+   "sold": "8",
+   "residual": "2",
+   "gross_pnl_usd": "-0.16",
+   "house_orders": [
+    {
+     "id": "O-20261106-143002-001-001-1",
+     "type": "LIMIT",
+     "status": "FILLED",
+     "quantity": "8",
+     "leaves": "0",
+     "reduce_only": false
+    }
+   ],
+   "owner_exits": [
+    {
+     "id": "owner-reservation",
+     "type": "LIMIT",
+     "status": "ACCEPTED",
+     "quantity": "2",
+     "leaves": "2",
+     "reduce_only": false
+    }
+   ],
+   "resting_trails": [],
+   "cancel_ack_ns": null,
+   "limit_accepted_ns": 1793975404000000000,
+   "first_fill_ns": 1793975407000000000,
+   "gap1_ns": null,
+   "gap2_ns": 3000000000,
+   "max_house_exits": 1,
+   "reservation_violations": [],
+   "owner_mutations": [],
+   "limit_submissions": 0,
+   "stops": 0,
+   "restarts": 0,
+   "recovery_label": "engine stop and start in sim; not a process death and not broker reconciliation",
+   "recovery_operations": [
+    "Strategy.stop",
+    "Strategy.resume"
+   ],
+   "paused": false,
+   "pages": [
+    "owner_reserved_unprotected"
+   ],
+   "exit_reason": "adopted",
+   "emulations": 1,
+   "releases": 1,
+   "actions": [
+    {
+     "action": "trail",
+     "order_id": "O-20261106-143002-001-001-1",
+     "ts": 1793975402000000000
+    }
+   ],
+   "events": [
+    {
+     "ts": "1793975402000000000",
+     "event": "adoption",
+     "entry": "100.02",
+     "high": "100.00",
+     "trigger": "99.81996"
+    },
+    {
+     "ts": "1793975404000000000",
+     "event": "accepted"
+    },
+    {
+     "ts": "1793975406000000001",
+     "event": "chase",
+     "limit": "99.00"
+    },
+    {
+     "ts": "1793975407000000000",
+     "event": "sell_fill",
+     "qty": "8",
+     "price": "100.00"
+    },
+    {
+     "ts": "1793975407000000000",
+     "event": "pause_and_page"
+    }
+   ]
+  },
+  {
+   "arm_run_id": "56d34115-3f9c-40a9-b5a6-575177a4c1f3",
+   "latency_ns": 200000000,
+   "scenario": "owner_reserved",
+   "arm": "option-b",
+   "sold": "0",
+   "residual": "10",
+   "gross_pnl_usd": "15.84",
+   "house_orders": [
+    {
+     "id": "O-20261106-143007-001-001-1",
+     "type": "TRAILING_STOP_MARKET",
+     "status": "ACCEPTED",
+     "quantity": "10",
+     "leaves": "10",
+     "reduce_only": false
+    }
+   ],
+   "owner_exits": [
+    {
+     "id": "owner-reservation",
+     "type": "LIMIT",
+     "status": "CANCELED",
+     "quantity": "10",
+     "leaves": "10",
+     "reduce_only": false
+    }
+   ],
+   "resting_trails": [
+    {
+     "id": "O-20261106-143007-001-001-1",
+     "type": "TRAILING_STOP_MARKET",
+     "status": "ACCEPTED",
+     "quantity": "10",
+     "leaves": "10",
+     "reduce_only": false
+    }
+   ],
+   "cancel_ack_ns": null,
+   "limit_accepted_ns": null,
+   "first_fill_ns": null,
+   "gap1_ns": null,
+   "gap2_ns": null,
+   "max_house_exits": 1,
+   "reservation_violations": [],
+   "owner_mutations": [],
+   "limit_submissions": 0,
+   "stops": 0,
+   "restarts": 0,
+   "recovery_label": "engine stop and start in sim; not a process death and not broker reconciliation",
+   "recovery_operations": [
+    "Strategy.stop",
+    "Strategy.resume"
+   ],
+   "paused": false,
+   "pages": [
+    "owner_reserved_unprotected"
+   ],
+   "exit_reason": "owner_reserved_unprotected",
+   "emulations": 0,
+   "releases": 0,
+   "actions": [
+    {
+     "action": "trail",
+     "order_id": "O-20261106-143007-001-001-1",
+     "ts": 1793975407000000000
+    }
+   ],
+   "events": [
+    {
+     "ts": "1793975402000000000",
+     "event": "pause_and_page"
+    },
+    {
+     "ts": "1793975402000000000",
+     "event": "adoption",
+     "entry": "100.02",
+     "high": "100.00",
+     "trigger": "99.81996"
+    },
+    {
+     "ts": "1793975408000000000",
+     "event": "accepted"
+    }
+   ]
+  },
+  {
+   "arm_run_id": "b75ca216-85cd-44af-9584-654219e1ed2c",
+   "latency_ns": 100000000,
+   "scenario": "normal",
+   "arm": "option-b",
+   "sold": "8",
+   "residual": "2",
+   "gross_pnl_usd": "15.04",
+   "house_orders": [
+    {
+     "id": "O-20261106-143002-001-001-1",
+     "type": "TRAILING_STOP_MARKET",
+     "status": "CANCELED",
+     "quantity": "8",
+     "leaves": "8",
+     "reduce_only": false
+    },
+    {
+     "id": "O-20261106-143007-001-001-2",
+     "type": "LIMIT",
+     "status": "FILLED",
+     "quantity": "8",
+     "leaves": "0",
+     "reduce_only": false
+    }
+   ],
+   "owner_exits": [
+    {
+     "id": "owner-reservation",
+     "type": "LIMIT",
+     "status": "ACCEPTED",
+     "quantity": "2",
+     "leaves": "2",
+     "reduce_only": false
+    }
+   ],
+   "resting_trails": [],
+   "cancel_ack_ns": 1793975407000000000,
+   "limit_accepted_ns": 1793975408000000000,
+   "first_fill_ns": 1793975409000000000,
+   "gap1_ns": 1000000000,
+   "gap2_ns": 1000000000,
+   "max_house_exits": 1,
+   "reservation_violations": [],
+   "owner_mutations": [],
+   "limit_submissions": 1,
+   "stops": 0,
+   "restarts": 0,
+   "recovery_label": "engine stop and start in sim; not a process death and not broker reconciliation",
+   "recovery_operations": [
+    "Strategy.stop",
+    "Strategy.resume"
+   ],
+   "paused": false,
+   "pages": [
+    "owner_reserved_unprotected"
+   ],
+   "exit_reason": "adopted",
+   "emulations": 0,
+   "releases": 0,
+   "actions": [
+    {
+     "action": "trail",
+     "order_id": "O-20261106-143002-001-001-1",
+     "ts": 1793975402000000000
+    },
+    {
+     "action": "cancel",
+     "order_id": "O-20261106-143002-001-001-1",
+     "ts": 1793975406000000000
+    },
+    {
+     "action": "limit",
+     "order_id": "O-20261106-143007-001-001-2",
+     "ts": 1793975407000000000
+    }
+   ],
+   "events": [
+    {
+     "ts": "1793975402000000000",
+     "event": "adoption",
+     "entry": "100.02",
+     "high": "100.00",
+     "trigger": "99.81996"
+    },
+    {
+     "ts": "1793975403000000000",
+     "event": "accepted"
+    },
+    {
+     "ts": "1793975406000000000",
+     "event": "persisted_breach",
+     "trigger": "101.79996"
+    },
+    {
+     "ts": "1793975407000000000",
+     "event": "persisted_breach",
+     "trigger": "101.79996"
+    },
+    {
+     "ts": "1793975407000000000",
+     "event": "canceled"
+    },
+    {
+     "ts": "1793975408000000000",
+     "event": "accepted"
+    },
+    {
+     "ts": "1793975409000000000",
+     "event": "sell_fill",
+     "qty": "8",
+     "price": "101.90"
+    },
+    {
+     "ts": "1793975409000000000",
+     "event": "page"
+    }
+   ]
+  },
+  {
+   "arm_run_id": "61d93ab5-83a0-48cb-9920-cbb6f88ca7d2",
+   "latency_ns": 100000000,
+   "scenario": "normal",
+   "arm": "native-trail-o0",
+   "sold": "0",
+   "residual": "10",
+   "gross_pnl_usd": "13.44",
+   "house_orders": [
+    {
+     "id": "O-20261106-143002-001-001-1",
+     "type": "TRAILING_STOP_MARKET",
+     "status": "ACCEPTED",
+     "quantity": "8",
+     "leaves": "8",
+     "reduce_only": false
+    }
+   ],
+   "owner_exits": [
+    {
+     "id": "owner-reservation",
+     "type": "LIMIT",
+     "status": "ACCEPTED",
+     "quantity": "2",
+     "leaves": "2",
+     "reduce_only": false
+    }
+   ],
+   "resting_trails": [
+    {
+     "id": "O-20261106-143002-001-001-1",
+     "type": "TRAILING_STOP_MARKET",
+     "status": "ACCEPTED",
+     "quantity": "8",
+     "leaves": "8",
+     "reduce_only": false
+    }
+   ],
+   "cancel_ack_ns": null,
+   "limit_accepted_ns": null,
+   "first_fill_ns": null,
+   "gap1_ns": null,
+   "gap2_ns": null,
+   "max_house_exits": 1,
+   "reservation_violations": [],
+   "owner_mutations": [],
+   "limit_submissions": 0,
+   "stops": 0,
+   "restarts": 0,
+   "recovery_label": "engine stop and start in sim; not a process death and not broker reconciliation",
+   "recovery_operations": [
+    "Strategy.stop",
+    "Strategy.resume"
+   ],
+   "paused": false,
+   "pages": [],
+   "exit_reason": "adopted",
+   "emulations": 0,
+   "releases": 0,
+   "actions": [
+    {
+     "action": "trail",
+     "order_id": "O-20261106-143002-001-001-1",
+     "ts": 1793975402000000000
+    }
+   ],
+   "events": [
+    {
+     "ts": "1793975402000000000",
+     "event": "adoption",
+     "entry": "100.02",
+     "high": "100.00",
+     "trigger": "99.81996"
+    },
+    {
+     "ts": "1793975403000000000",
+     "event": "accepted"
+    }
+   ]
+  },
+  {
+   "arm_run_id": "3a4957db-bc6d-401e-b97c-d472821e3a75",
+   "latency_ns": 100000000,
+   "scenario": "normal",
+   "arm": "hold",
+   "sold": "0",
+   "residual": "10",
+   "gross_pnl_usd": "13.44",
+   "house_orders": [],
+   "owner_exits": [
+    {
+     "id": "owner-reservation",
+     "type": "LIMIT",
+     "status": "ACCEPTED",
+     "quantity": "2",
+     "leaves": "2",
+     "reduce_only": false
+    }
+   ],
+   "resting_trails": [],
+   "cancel_ack_ns": null,
+   "limit_accepted_ns": null,
+   "first_fill_ns": null,
+   "gap1_ns": null,
+   "gap2_ns": null,
+   "max_house_exits": 0,
+   "reservation_violations": [],
+   "owner_mutations": [],
+   "limit_submissions": 0,
+   "stops": 0,
+   "restarts": 0,
+   "recovery_label": "engine stop and start in sim; not a process death and not broker reconciliation",
+   "recovery_operations": [
+    "Strategy.stop",
+    "Strategy.resume"
+   ],
+   "paused": false,
+   "pages": [],
+   "exit_reason": "",
+   "emulations": 0,
+   "releases": 0,
+   "actions": [],
+   "events": []
+  },
+  {
+   "arm_run_id": "0e92aff0-d82e-455c-835b-8174de6b1063",
+   "latency_ns": 200000000,
+   "scenario": "normal",
+   "arm": "option-b",
+   "sold": "8",
+   "residual": "2",
+   "gross_pnl_usd": "15.04",
+   "house_orders": [
+    {
+     "id": "O-20261106-143002-001-001-1",
+     "type": "TRAILING_STOP_MARKET",
+     "status": "CANCELED",
+     "quantity": "8",
+     "leaves": "8",
+     "reduce_only": false
+    },
+    {
+     "id": "O-20261106-143007-001-001-2",
+     "type": "LIMIT",
+     "status": "FILLED",
+     "quantity": "8",
+     "leaves": "0",
+     "reduce_only": false
+    }
+   ],
+   "owner_exits": [
+    {
+     "id": "owner-reservation",
+     "type": "LIMIT",
+     "status": "ACCEPTED",
+     "quantity": "2",
+     "leaves": "2",
+     "reduce_only": false
+    }
+   ],
+   "resting_trails": [],
+   "cancel_ack_ns": 1793975407000000000,
+   "limit_accepted_ns": 1793975408000000000,
+   "first_fill_ns": 1793975409000000000,
+   "gap1_ns": 1000000000,
+   "gap2_ns": 1000000000,
+   "max_house_exits": 1,
+   "reservation_violations": [],
+   "owner_mutations": [],
+   "limit_submissions": 1,
+   "stops": 0,
+   "restarts": 0,
+   "recovery_label": "engine stop and start in sim; not a process death and not broker reconciliation",
+   "recovery_operations": [
+    "Strategy.stop",
+    "Strategy.resume"
+   ],
+   "paused": false,
+   "pages": [
+    "owner_reserved_unprotected"
+   ],
+   "exit_reason": "adopted",
+   "emulations": 0,
+   "releases": 0,
+   "actions": [
+    {
+     "action": "trail",
+     "order_id": "O-20261106-143002-001-001-1",
+     "ts": 1793975402000000000
+    },
+    {
+     "action": "cancel",
+     "order_id": "O-20261106-143002-001-001-1",
+     "ts": 1793975406000000000
+    },
+    {
+     "action": "limit",
+     "order_id": "O-20261106-143007-001-001-2",
+     "ts": 1793975407000000000
+    }
+   ],
+   "events": [
+    {
+     "ts": "1793975402000000000",
+     "event": "adoption",
+     "entry": "100.02",
+     "high": "100.00",
+     "trigger": "99.81996"
+    },
+    {
+     "ts": "1793975403000000000",
+     "event": "accepted"
+    },
+    {
+     "ts": "1793975406000000000",
+     "event": "persisted_breach",
+     "trigger": "101.79996"
+    },
+    {
+     "ts": "1793975407000000000",
+     "event": "persisted_breach",
+     "trigger": "101.79996"
+    },
+    {
+     "ts": "1793975407000000000",
+     "event": "canceled"
+    },
+    {
+     "ts": "1793975408000000000",
+     "event": "accepted"
+    },
+    {
+     "ts": "1793975409000000000",
+     "event": "sell_fill",
+     "qty": "8",
+     "price": "101.90"
+    },
+    {
+     "ts": "1793975409000000000",
+     "event": "page"
+    }
+   ]
+  },
+  {
+   "arm_run_id": "30464c86-e2f6-4823-8f27-dcf0725b2c8a",
+   "latency_ns": 200000000,
+   "scenario": "normal",
+   "arm": "native-trail-o0",
+   "sold": "0",
+   "residual": "10",
+   "gross_pnl_usd": "13.44",
+   "house_orders": [
+    {
+     "id": "O-20261106-143002-001-001-1",
+     "type": "TRAILING_STOP_MARKET",
+     "status": "ACCEPTED",
+     "quantity": "8",
+     "leaves": "8",
+     "reduce_only": false
+    }
+   ],
+   "owner_exits": [
+    {
+     "id": "owner-reservation",
+     "type": "LIMIT",
+     "status": "ACCEPTED",
+     "quantity": "2",
+     "leaves": "2",
+     "reduce_only": false
+    }
+   ],
+   "resting_trails": [
+    {
+     "id": "O-20261106-143002-001-001-1",
+     "type": "TRAILING_STOP_MARKET",
+     "status": "ACCEPTED",
+     "quantity": "8",
+     "leaves": "8",
+     "reduce_only": false
+    }
+   ],
+   "cancel_ack_ns": null,
+   "limit_accepted_ns": null,
+   "first_fill_ns": null,
+   "gap1_ns": null,
+   "gap2_ns": null,
+   "max_house_exits": 1,
+   "reservation_violations": [],
+   "owner_mutations": [],
+   "limit_submissions": 0,
+   "stops": 0,
+   "restarts": 0,
+   "recovery_label": "engine stop and start in sim; not a process death and not broker reconciliation",
+   "recovery_operations": [
+    "Strategy.stop",
+    "Strategy.resume"
+   ],
+   "paused": false,
+   "pages": [],
+   "exit_reason": "adopted",
+   "emulations": 0,
+   "releases": 0,
+   "actions": [
+    {
+     "action": "trail",
+     "order_id": "O-20261106-143002-001-001-1",
+     "ts": 1793975402000000000
+    }
+   ],
+   "events": [
+    {
+     "ts": "1793975402000000000",
+     "event": "adoption",
+     "entry": "100.02",
+     "high": "100.00",
+     "trigger": "99.81996"
+    },
+    {
+     "ts": "1793975403000000000",
+     "event": "accepted"
+    }
+   ]
+  },
+  {
+   "arm_run_id": "db207393-22eb-428c-9f3a-dc0dcee6385a",
+   "latency_ns": 200000000,
+   "scenario": "normal",
+   "arm": "hold",
+   "sold": "0",
+   "residual": "10",
+   "gross_pnl_usd": "13.44",
+   "house_orders": [],
+   "owner_exits": [
+    {
+     "id": "owner-reservation",
+     "type": "LIMIT",
+     "status": "ACCEPTED",
+     "quantity": "2",
+     "leaves": "2",
+     "reduce_only": false
+    }
+   ],
+   "resting_trails": [],
+   "cancel_ack_ns": null,
+   "limit_accepted_ns": null,
+   "first_fill_ns": null,
+   "gap1_ns": null,
+   "gap2_ns": null,
+   "max_house_exits": 0,
+   "reservation_violations": [],
+   "owner_mutations": [],
+   "limit_submissions": 0,
+   "stops": 0,
+   "restarts": 0,
+   "recovery_label": "engine stop and start in sim; not a process death and not broker reconciliation",
+   "recovery_operations": [
+    "Strategy.stop",
+    "Strategy.resume"
+   ],
+   "paused": false,
+   "pages": [],
+   "exit_reason": "",
+   "emulations": 0,
+   "releases": 0,
+   "actions": [],
+   "events": []
+  },
+  {
+   "arm_run_id": "b21f44ca-080c-4073-aa39-0dfc7d20c1e3",
+   "latency_ns": 1200000000,
+   "scenario": "normal",
+   "arm": "option-b",
+   "sold": "0",
+   "residual": "10",
+   "gross_pnl_usd": "13.44",
+   "house_orders": [
+    {
+     "id": "O-20261106-143003-001-001-1",
+     "type": "TRAILING_STOP_MARKET",
+     "status": "CANCELED",
+     "quantity": "8",
+     "leaves": "8",
+     "reduce_only": false
+    },
+    {
+     "id": "O-20261106-143008-001-001-2",
+     "type": "LIMIT",
+     "status": "CANCELED",
+     "quantity": "8",
+     "leaves": "8",
+     "reduce_only": false
+    },
+    {
+     "id": "O-20261106-143013-001-001-3",
+     "type": "TRAILING_STOP_MARKET",
+     "status": "ACCEPTED",
+     "quantity": "8",
+     "leaves": "8",
+     "reduce_only": false
+    }
+   ],
+   "owner_exits": [
+    {
+     "id": "owner-reservation",
+     "type": "LIMIT",
+     "status": "ACCEPTED",
+     "quantity": "2",
+     "leaves": "2",
+     "reduce_only": false
+    }
+   ],
+   "resting_trails": [
+    {
+     "id": "O-20261106-143013-001-001-3",
+     "type": "TRAILING_STOP_MARKET",
+     "status": "ACCEPTED",
+     "quantity": "8",
+     "leaves": "8",
+     "reduce_only": false
+    }
+   ],
+   "cancel_ack_ns": 1793975408000000000,
+   "limit_accepted_ns": 1793975410000000000,
+   "first_fill_ns": null,
+   "gap1_ns": 2000000000,
+   "gap2_ns": null,
+   "max_house_exits": 1,
+   "reservation_violations": [],
+   "owner_mutations": [],
+   "limit_submissions": 1,
+   "stops": 0,
+   "restarts": 0,
+   "recovery_label": "engine stop and start in sim; not a process death and not broker reconciliation",
+   "recovery_operations": [
+    "Strategy.stop",
+    "Strategy.resume"
+   ],
+   "paused": false,
+   "pages": [],
+   "exit_reason": "adopted",
+   "emulations": 0,
+   "releases": 0,
+   "actions": [
+    {
+     "action": "trail",
+     "order_id": "O-20261106-143003-001-001-1",
+     "ts": 1793975403000000000
+    },
+    {
+     "action": "cancel",
+     "order_id": "O-20261106-143003-001-001-1",
+     "ts": 1793975406000000000
+    },
+    {
+     "action": "limit",
+     "order_id": "O-20261106-143008-001-001-2",
+     "ts": 1793975408000000000
+    },
+    {
+     "action": "cancel",
+     "order_id": "O-20261106-143008-001-001-2",
+     "ts": 1793975411000000000
+    },
+    {
+     "action": "trail",
+     "order_id": "O-20261106-143013-001-001-3",
+     "ts": 1793975413000000000
+    }
+   ],
+   "events": [
+    {
+     "ts": "1793975403000000000",
+     "event": "adoption",
+     "entry": "100.02",
+     "high": "102.00",
+     "trigger": "99.81996"
+    },
+    {
+     "ts": "1793975405000000000",
+     "event": "accepted"
+    },
+    {
+     "ts": "1793975406000000000",
+     "event": "persisted_breach",
+     "trigger": "101.79996"
+    },
+    {
+     "ts": "1793975407000000000",
+     "event": "persisted_breach",
+     "trigger": "101.79996"
+    },
+    {
+     "ts": "1793975408000000000",
+     "event": "persisted_breach",
+     "trigger": "101.79996"
+    },
+    {
+     "ts": "1793975408000000000",
+     "event": "canceled"
+    },
+    {
+     "ts": "1793975410000000000",
+     "event": "accepted"
+    },
+    {
+     "ts": "1793975413000000000",
+     "event": "canceled"
+    }
+   ]
+  },
+  {
+   "arm_run_id": "620e235e-8df1-4163-b8fd-925def6dd3e0",
+   "latency_ns": 1200000000,
+   "scenario": "normal",
+   "arm": "native-trail-o0",
+   "sold": "0",
+   "residual": "10",
+   "gross_pnl_usd": "13.44",
+   "house_orders": [
+    {
+     "id": "O-20261106-143003-001-001-1",
+     "type": "TRAILING_STOP_MARKET",
+     "status": "ACCEPTED",
+     "quantity": "8",
+     "leaves": "8",
+     "reduce_only": false
+    }
+   ],
+   "owner_exits": [
+    {
+     "id": "owner-reservation",
+     "type": "LIMIT",
+     "status": "ACCEPTED",
+     "quantity": "2",
+     "leaves": "2",
+     "reduce_only": false
+    }
+   ],
+   "resting_trails": [
+    {
+     "id": "O-20261106-143003-001-001-1",
+     "type": "TRAILING_STOP_MARKET",
+     "status": "ACCEPTED",
+     "quantity": "8",
+     "leaves": "8",
+     "reduce_only": false
+    }
+   ],
+   "cancel_ack_ns": null,
+   "limit_accepted_ns": null,
+   "first_fill_ns": null,
+   "gap1_ns": null,
+   "gap2_ns": null,
+   "max_house_exits": 1,
+   "reservation_violations": [],
+   "owner_mutations": [],
+   "limit_submissions": 0,
+   "stops": 0,
+   "restarts": 0,
+   "recovery_label": "engine stop and start in sim; not a process death and not broker reconciliation",
+   "recovery_operations": [
+    "Strategy.stop",
+    "Strategy.resume"
+   ],
+   "paused": false,
+   "pages": [],
+   "exit_reason": "adopted",
+   "emulations": 0,
+   "releases": 0,
+   "actions": [
+    {
+     "action": "trail",
+     "order_id": "O-20261106-143003-001-001-1",
+     "ts": 1793975403000000000
+    }
+   ],
+   "events": [
+    {
+     "ts": "1793975403000000000",
+     "event": "adoption",
+     "entry": "100.02",
+     "high": "102.00",
+     "trigger": "99.81996"
+    },
+    {
+     "ts": "1793975405000000000",
+     "event": "accepted"
+    }
+   ]
+  },
+  {
+   "arm_run_id": "ea4c4928-0372-41ae-934b-92bbf85182a7",
+   "latency_ns": 1200000000,
+   "scenario": "normal",
+   "arm": "hold",
+   "sold": "0",
+   "residual": "10",
+   "gross_pnl_usd": "13.44",
+   "house_orders": [],
+   "owner_exits": [
+    {
+     "id": "owner-reservation",
+     "type": "LIMIT",
+     "status": "ACCEPTED",
+     "quantity": "2",
+     "leaves": "2",
+     "reduce_only": false
+    }
+   ],
+   "resting_trails": [],
+   "cancel_ack_ns": null,
+   "limit_accepted_ns": null,
+   "first_fill_ns": null,
+   "gap1_ns": null,
+   "gap2_ns": null,
+   "max_house_exits": 0,
+   "reservation_violations": [],
+   "owner_mutations": [],
+   "limit_submissions": 0,
+   "stops": 0,
+   "restarts": 0,
+   "recovery_label": "engine stop and start in sim; not a process death and not broker reconciliation",
+   "recovery_operations": [
+    "Strategy.stop",
+    "Strategy.resume"
+   ],
+   "paused": false,
+   "pages": [],
+   "exit_reason": "",
+   "emulations": 0,
+   "releases": 0,
+   "actions": [],
+   "events": []
+  },
+  {
+   "arm_run_id": "f41c9c76-4acc-4388-a2c5-2cf3ffd998de",
+   "latency_ns": 200000000,
+   "scenario": "after_cancel_ack",
+   "arm": "option-b",
+   "sold": "0",
+   "residual": "10",
+   "gross_pnl_usd": null,
+   "house_orders": [
+    {
+     "id": "O-20261106-143002-001-001-1",
+     "type": "TRAILING_STOP_MARKET",
+     "status": "CANCELED",
+     "quantity": "8",
+     "leaves": "8",
+     "reduce_only": false
+    },
+    {
+     "id": "O-20261106-143010-001-001-2",
+     "type": "TRAILING_STOP_MARKET",
+     "status": "ACCEPTED",
+     "quantity": "8",
+     "leaves": "8",
+     "reduce_only": false
+    }
+   ],
+   "owner_exits": [
+    {
+     "id": "owner-reservation",
+     "type": "LIMIT",
+     "status": "ACCEPTED",
+     "quantity": "2",
+     "leaves": "2",
+     "reduce_only": false
+    }
+   ],
+   "resting_trails": [
+    {
+     "id": "O-20261106-143010-001-001-2",
+     "type": "TRAILING_STOP_MARKET",
+     "status": "ACCEPTED",
+     "quantity": "8",
+     "leaves": "8",
+     "reduce_only": false
+    }
+   ],
+   "cancel_ack_ns": 1793975407000000000,
+   "limit_accepted_ns": null,
+   "first_fill_ns": null,
+   "gap1_ns": null,
+   "gap2_ns": null,
+   "max_house_exits": 1,
+   "reservation_violations": [],
+   "owner_mutations": [],
+   "limit_submissions": 0,
+   "stops": 1,
+   "restarts": 1,
+   "recovery_label": "engine stop and start in sim; not a process death and not broker reconciliation",
+   "recovery_operations": [
+    "Strategy.stop",
+    "Strategy.resume"
+   ],
+   "paused": false,
+   "pages": [],
+   "exit_reason": "adopted",
+   "emulations": 0,
+   "releases": 0,
+   "actions": [
+    {
+     "action": "trail",
+     "order_id": "O-20261106-143002-001-001-1",
+     "ts": 1793975402000000000
+    },
+    {
+     "action": "cancel",
+     "order_id": "O-20261106-143002-001-001-1",
+     "ts": 1793975406000000000
+    },
+    {
+     "action": "trail",
+     "order_id": "O-20261106-143010-001-001-2",
+     "ts": 1793975410000000000
+    }
+   ],
+   "events": [
+    {
+     "ts": "1793975402000000000",
+     "event": "adoption",
+     "entry": "100.02",
+     "high": "100.00",
+     "trigger": "99.81996"
+    },
+    {
+     "ts": "1793975403000000000",
+     "event": "accepted"
+    },
+    {
+     "ts": "1793975406000000000",
+     "event": "persisted_breach",
+     "trigger": "101.79996"
+    },
+    {
+     "ts": "1793975407000000000",
+     "event": "persisted_breach",
+     "trigger": "101.79996"
+    },
+    {
+     "ts": "1793975407000000000",
+     "event": "canceled"
+    },
+    {
+     "ts": "1793975410000000000",
+     "event": "restart"
+    },
+    {
+     "ts": "1793975411000000000",
+     "event": "accepted"
+    }
+   ]
+  },
+  {
+   "arm_run_id": "9805623a-dd0f-4413-ae53-9cc06d3fa73a",
+   "latency_ns": 200000000,
+   "scenario": "after_limit_accept",
+   "arm": "option-b",
+   "sold": "3",
+   "residual": "7",
+   "gross_pnl_usd": null,
+   "house_orders": [
+    {
+     "id": "O-20261106-143002-001-001-1",
+     "type": "TRAILING_STOP_MARKET",
+     "status": "CANCELED",
+     "quantity": "8",
+     "leaves": "8",
+     "reduce_only": false
+    },
+    {
+     "id": "O-20261106-143007-001-001-2",
+     "type": "LIMIT",
+     "status": "CANCELED",
+     "quantity": "8",
+     "leaves": "5",
+     "reduce_only": false
+    },
+    {
+     "id": "O-20261106-143011-001-001-3",
+     "type": "TRAILING_STOP_MARKET",
+     "status": "ACCEPTED",
+     "quantity": "5",
+     "leaves": "5",
+     "reduce_only": false
+    }
+   ],
+   "owner_exits": [
+    {
+     "id": "owner-reservation",
+     "type": "LIMIT",
+     "status": "ACCEPTED",
+     "quantity": "2",
+     "leaves": "2",
+     "reduce_only": false
+    }
+   ],
+   "resting_trails": [
+    {
+     "id": "O-20261106-143011-001-001-3",
+     "type": "TRAILING_STOP_MARKET",
+     "status": "ACCEPTED",
+     "quantity": "5",
+     "leaves": "5",
+     "reduce_only": false
+    }
+   ],
+   "cancel_ack_ns": 1793975407000000000,
+   "limit_accepted_ns": 1793975408000000000,
+   "first_fill_ns": 1793975409000000000,
+   "gap1_ns": 1000000000,
+   "gap2_ns": 1000000000,
+   "max_house_exits": 1,
+   "reservation_violations": [],
+   "owner_mutations": [],
+   "limit_submissions": 1,
+   "stops": 1,
+   "restarts": 1,
+   "recovery_label": "engine stop and start in sim; not a process death and not broker reconciliation",
+   "recovery_operations": [
+    "Strategy.stop",
+    "Strategy.resume"
+   ],
+   "paused": false,
+   "pages": [],
+   "exit_reason": "adopted",
+   "emulations": 0,
+   "releases": 0,
+   "actions": [
+    {
+     "action": "trail",
+     "order_id": "O-20261106-143002-001-001-1",
+     "ts": 1793975402000000000
+    },
+    {
+     "action": "cancel",
+     "order_id": "O-20261106-143002-001-001-1",
+     "ts": 1793975406000000000
+    },
+    {
+     "action": "limit",
+     "order_id": "O-20261106-143007-001-001-2",
+     "ts": 1793975407000000000
+    },
+    {
+     "action": "cancel",
+     "order_id": "O-20261106-143007-001-001-2",
+     "ts": 1793975410000000000
+    },
+    {
+     "action": "trail",
+     "order_id": "O-20261106-143011-001-001-3",
+     "ts": 1793975411000000000
+    }
+   ],
+   "events": [
+    {
+     "ts": "1793975402000000000",
+     "event": "adoption",
+     "entry": "100.02",
+     "high": "100.00",
+     "trigger": "99.81996"
+    },
+    {
+     "ts": "1793975403000000000",
+     "event": "accepted"
+    },
+    {
+     "ts": "1793975406000000000",
+     "event": "persisted_breach",
+     "trigger": "101.79996"
+    },
+    {
+     "ts": "1793975407000000000",
+     "event": "persisted_breach",
+     "trigger": "101.79996"
+    },
+    {
+     "ts": "1793975407000000000",
+     "event": "canceled"
+    },
+    {
+     "ts": "1793975408000000000",
+     "event": "accepted"
+    },
+    {
+     "ts": "1793975410000000000",
+     "event": "restart"
+    },
+    {
+     "ts": "1793975411000000000",
+     "event": "canceled"
+    },
+    {
+     "ts": "1793975412000000000",
+     "event": "accepted"
+    }
+   ]
+  },
+  {
+   "arm_run_id": "7ca331d4-82d8-4070-b857-5629237db459",
+   "latency_ns": 200000000,
+   "scenario": "unfilled",
+   "arm": "option-b",
+   "sold": "0",
+   "residual": "10",
+   "gross_pnl_usd": null,
+   "house_orders": [
+    {
+     "id": "O-20261106-143002-001-001-1",
+     "type": "TRAILING_STOP_MARKET",
+     "status": "CANCELED",
+     "quantity": "8",
+     "leaves": "8",
+     "reduce_only": false
+    },
+    {
+     "id": "O-20261106-143007-001-001-2",
+     "type": "LIMIT",
+     "status": "CANCELED",
+     "quantity": "8",
+     "leaves": "8",
+     "reduce_only": false
+    },
+    {
+     "id": "O-20261106-143011-001-001-3",
+     "type": "TRAILING_STOP_MARKET",
+     "status": "ACCEPTED",
+     "quantity": "8",
+     "leaves": "8",
+     "reduce_only": false
+    }
+   ],
+   "owner_exits": [
+    {
+     "id": "owner-reservation",
+     "type": "LIMIT",
+     "status": "ACCEPTED",
+     "quantity": "2",
+     "leaves": "2",
+     "reduce_only": false
+    }
+   ],
+   "resting_trails": [
+    {
+     "id": "O-20261106-143011-001-001-3",
+     "type": "TRAILING_STOP_MARKET",
+     "status": "ACCEPTED",
+     "quantity": "8",
+     "leaves": "8",
+     "reduce_only": false
+    }
+   ],
+   "cancel_ack_ns": 1793975407000000000,
+   "limit_accepted_ns": 1793975408000000000,
+   "first_fill_ns": null,
+   "gap1_ns": 1000000000,
+   "gap2_ns": null,
+   "max_house_exits": 1,
+   "reservation_violations": [],
+   "owner_mutations": [],
+   "limit_submissions": 1,
+   "stops": 0,
+   "restarts": 0,
+   "recovery_label": "engine stop and start in sim; not a process death and not broker reconciliation",
+   "recovery_operations": [
+    "Strategy.stop",
+    "Strategy.resume"
+   ],
+   "paused": false,
+   "pages": [],
+   "exit_reason": "adopted",
+   "emulations": 0,
+   "releases": 0,
+   "actions": [
+    {
+     "action": "trail",
+     "order_id": "O-20261106-143002-001-001-1",
+     "ts": 1793975402000000000
+    },
+    {
+     "action": "cancel",
+     "order_id": "O-20261106-143002-001-001-1",
+     "ts": 1793975406000000000
+    },
+    {
+     "action": "limit",
+     "order_id": "O-20261106-143007-001-001-2",
+     "ts": 1793975407000000000
+    },
+    {
+     "action": "cancel",
+     "order_id": "O-20261106-143007-001-001-2",
+     "ts": 1793975410000000000
+    },
+    {
+     "action": "trail",
+     "order_id": "O-20261106-143011-001-001-3",
+     "ts": 1793975411000000000
+    }
+   ],
+   "events": [
+    {
+     "ts": "1793975402000000000",
+     "event": "adoption",
+     "entry": "100.02",
+     "high": "100.00",
+     "trigger": "99.81996"
+    },
+    {
+     "ts": "1793975403000000000",
+     "event": "accepted"
+    },
+    {
+     "ts": "1793975406000000000",
+     "event": "persisted_breach",
+     "trigger": "101.79996"
+    },
+    {
+     "ts": "1793975407000000000",
+     "event": "persisted_breach",
+     "trigger": "101.79996"
+    },
+    {
+     "ts": "1793975407000000000",
+     "event": "canceled"
+    },
+    {
+     "ts": "1793975408000000000",
+     "event": "accepted"
+    },
+    {
+     "ts": "1793975411000000000",
+     "event": "canceled"
+    },
+    {
+     "ts": "1793975412000000000",
+     "event": "accepted"
+    }
+   ]
+  },
+  {
+   "arm_run_id": "51178b61-059b-4eff-8918-87b6211ce7e3",
+   "latency_ns": 200000000,
+   "scenario": "owner_add",
+   "arm": "option-b",
+   "sold": "0",
+   "residual": "11",
+   "gross_pnl_usd": null,
+   "house_orders": [
+    {
+     "id": "O-20261106-143002-001-001-1",
+     "type": "TRAILING_STOP_MARKET",
+     "status": "ACCEPTED",
+     "quantity": "8",
+     "leaves": "8",
+     "reduce_only": false
+    }
+   ],
+   "owner_exits": [
+    {
+     "id": "owner-reservation",
+     "type": "LIMIT",
+     "status": "ACCEPTED",
+     "quantity": "2",
+     "leaves": "2",
+     "reduce_only": false
+    }
+   ],
+   "resting_trails": [
+    {
+     "id": "O-20261106-143002-001-001-1",
+     "type": "TRAILING_STOP_MARKET",
+     "status": "ACCEPTED",
+     "quantity": "8",
+     "leaves": "8",
+     "reduce_only": false
+    }
+   ],
+   "cancel_ack_ns": null,
+   "limit_accepted_ns": null,
+   "first_fill_ns": null,
+   "gap1_ns": null,
+   "gap2_ns": null,
+   "max_house_exits": 1,
+   "reservation_violations": [],
+   "owner_mutations": [],
+   "limit_submissions": 0,
+   "stops": 0,
+   "restarts": 0,
+   "recovery_label": "engine stop and start in sim; not a process death and not broker reconciliation",
+   "recovery_operations": [
+    "Strategy.stop",
+    "Strategy.resume"
+   ],
+   "paused": true,
+   "pages": [
+    "owner_add"
+   ],
+   "exit_reason": "adopted",
+   "emulations": 0,
+   "releases": 0,
+   "actions": [
+    {
+     "action": "trail",
+     "order_id": "O-20261106-143002-001-001-1",
+     "ts": 1793975402000000000
+    }
+   ],
+   "events": [
+    {
+     "ts": "1793975402000000000",
+     "event": "adoption",
+     "entry": "100.02",
+     "high": "100.00",
+     "trigger": "99.81996"
+    },
+    {
+     "ts": "1793975403000000000",
+     "event": "accepted"
+    },
+    {
+     "ts": "1793975405000000000",
+     "event": "pause_and_page"
+    }
+   ]
+  },
+  {
+   "arm_run_id": "803bcb8f-e52e-4ad3-aa31-d2a61e8f78b9",
+   "latency_ns": 200000000,
+   "scenario": "adopted_below",
+   "arm": "option-b",
+   "sold": "8",
+   "residual": "2",
+   "gross_pnl_usd": null,
+   "house_orders": [
+    {
+     "id": "O-20261106-143002-001-001-1",
+     "type": "TRAILING_STOP_MARKET",
+     "status": "CANCELED",
+     "quantity": "8",
+     "leaves": "8",
+     "reduce_only": false
+    },
+    {
+     "id": "O-20261106-143006-001-001-2",
+     "type": "LIMIT",
+     "status": "FILLED",
+     "quantity": "8",
+     "leaves": "0",
+     "reduce_only": false
+    }
+   ],
+   "owner_exits": [
+    {
+     "id": "owner-reservation",
+     "type": "LIMIT",
+     "status": "ACCEPTED",
+     "quantity": "2",
+     "leaves": "2",
+     "reduce_only": false
+    }
+   ],
+   "resting_trails": [],
+   "cancel_ack_ns": 1793975406000000000,
+   "limit_accepted_ns": 1793975407000000000,
+   "first_fill_ns": 1793975407000000000,
+   "gap1_ns": 1000000000,
+   "gap2_ns": 0,
+   "max_house_exits": 1,
+   "reservation_violations": [],
+   "owner_mutations": [],
+   "limit_submissions": 1,
+   "stops": 0,
+   "restarts": 0,
+   "recovery_label": "engine stop and start in sim; not a process death and not broker reconciliation",
+   "recovery_operations": [
+    "Strategy.stop",
+    "Strategy.resume"
+   ],
+   "paused": false,
+   "pages": [
+    "owner_reserved_unprotected"
+   ],
+   "exit_reason": "adopted-below-trigger",
+   "emulations": 0,
+   "releases": 0,
+   "actions": [
+    {
+     "action": "trail",
+     "order_id": "O-20261106-143002-001-001-1",
+     "ts": 1793975402000000000
+    },
+    {
+     "action": "cancel",
+     "order_id": "O-20261106-143002-001-001-1",
+     "ts": 1793975405000000000
+    },
+    {
+     "action": "limit",
+     "order_id": "O-20261106-143006-001-001-2",
+     "ts": 1793975406000000000
+    }
+   ],
+   "events": [
+    {
+     "ts": "1793975402000000000",
+     "event": "adoption",
+     "entry": "100.02",
+     "high": "98.00",
+     "trigger": "99.81996"
+    },
+    {
+     "ts": "1793975403000000000",
+     "event": "accepted"
+    },
+    {
+     "ts": "1793975405000000000",
+     "event": "persisted_breach",
+     "trigger": "99.81996"
+    },
+    {
+     "ts": "1793975406000000000",
+     "event": "persisted_breach",
+     "trigger": "99.81996"
+    },
+    {
+     "ts": "1793975406000000000",
+     "event": "canceled"
+    },
+    {
+     "ts": "1793975407000000000",
+     "event": "accepted"
+    },
+    {
+     "ts": "1793975407000000000",
+     "event": "sell_fill",
+     "qty": "8",
+     "price": "98.00"
+    },
+    {
+     "ts": "1793975407000000000",
+     "event": "page"
+    }
+   ]
+  },
+  {
+   "arm_run_id": "b1be436e-905f-4709-9658-ecd90a2d5889",
+   "latency_ns": 200000000,
+   "scenario": "outside",
+   "arm": "option-b",
+   "sold": "8",
+   "residual": "2",
+   "gross_pnl_usd": null,
+   "house_orders": [
+    {
+     "id": "O-20261106-143002-001-001-1",
+     "type": "LIMIT",
+     "status": "FILLED",
+     "quantity": "8",
+     "leaves": "0",
+     "reduce_only": false
+    }
+   ],
+   "owner_exits": [
+    {
+     "id": "owner-reservation",
+     "type": "LIMIT",
+     "status": "ACCEPTED",
+     "quantity": "2",
+     "leaves": "2",
+     "reduce_only": false
+    }
+   ],
+   "resting_trails": [],
+   "cancel_ack_ns": null,
+   "limit_accepted_ns": 1793975404000000000,
+   "first_fill_ns": 1793975407000000000,
+   "gap1_ns": null,
+   "gap2_ns": 3000000000,
+   "max_house_exits": 1,
+   "reservation_violations": [],
+   "owner_mutations": [],
+   "limit_submissions": 0,
+   "stops": 0,
+   "restarts": 0,
+   "recovery_label": "engine stop and start in sim; not a process death and not broker reconciliation",
+   "recovery_operations": [
+    "Strategy.stop",
+    "Strategy.resume"
+   ],
+   "paused": false,
+   "pages": [
+    "owner_reserved_unprotected"
+   ],
+   "exit_reason": "adopted",
+   "emulations": 1,
+   "releases": 1,
+   "actions": [
+    {
+     "action": "trail",
+     "order_id": "O-20261106-143002-001-001-1",
+     "ts": 1793975402000000000
+    }
+   ],
+   "events": [
+    {
+     "ts": "1793975402000000000",
+     "event": "adoption",
+     "entry": "100.02",
+     "high": "100.00",
+     "trigger": "99.81996"
+    },
+    {
+     "ts": "1793975404000000000",
+     "event": "accepted"
+    },
+    {
+     "ts": "1793975406000000001",
+     "event": "chase",
+     "limit": "99.00"
+    },
+    {
+     "ts": "1793975407000000000",
+     "event": "sell_fill",
+     "qty": "8",
+     "price": "100.00"
+    },
+    {
+     "ts": "1793975407000000000",
+     "event": "page"
+    }
+   ]
+  },
+  {
+   "arm_run_id": "f7468ae8-d0be-44ee-b411-374e1e55f862",
+   "latency_ns": 200000000,
+   "scenario": "owner_reserved",
+   "arm": "option-b",
+   "sold": "0",
+   "residual": "10",
+   "gross_pnl_usd": null,
+   "house_orders": [
+    {
+     "id": "O-20261106-143007-001-001-1",
+     "type": "TRAILING_STOP_MARKET",
+     "status": "ACCEPTED",
+     "quantity": "10",
+     "leaves": "10",
+     "reduce_only": false
+    }
+   ],
+   "owner_exits": [
+    {
+     "id": "owner-reservation",
+     "type": "LIMIT",
+     "status": "CANCELED",
+     "quantity": "10",
+     "leaves": "10",
+     "reduce_only": false
+    }
+   ],
+   "resting_trails": [
+    {
+     "id": "O-20261106-143007-001-001-1",
+     "type": "TRAILING_STOP_MARKET",
+     "status": "ACCEPTED",
+     "quantity": "10",
+     "leaves": "10",
+     "reduce_only": false
+    }
+   ],
+   "cancel_ack_ns": null,
+   "limit_accepted_ns": null,
+   "first_fill_ns": null,
+   "gap1_ns": null,
+   "gap2_ns": null,
+   "max_house_exits": 1,
+   "reservation_violations": [],
+   "owner_mutations": [],
+   "limit_submissions": 0,
+   "stops": 0,
+   "restarts": 0,
+   "recovery_label": "engine stop and start in sim; not a process death and not broker reconciliation",
+   "recovery_operations": [
+    "Strategy.stop",
+    "Strategy.resume"
+   ],
+   "paused": false,
+   "pages": [
+    "owner_reserved_unprotected"
+   ],
+   "exit_reason": "owner_reserved_unprotected",
+   "emulations": 0,
+   "releases": 0,
+   "actions": [
+    {
+     "action": "trail",
+     "order_id": "O-20261106-143007-001-001-1",
+     "ts": 1793975407000000000
+    }
+   ],
+   "events": [
+    {
+     "ts": "1793975402000000000",
+     "event": "page"
+    },
+    {
+     "ts": "1793975402000000000",
+     "event": "adoption",
+     "entry": "100.02",
+     "high": "100.00",
+     "trigger": "99.81996"
+    },
+    {
+     "ts": "1793975408000000000",
+     "event": "accepted"
+    }
+   ]
+  }
+ ],
+ "economic_scope": "normal paired synthetic arms only; earlier drill PnL retained as superseded development output, not economic evidence",
+ "canonical_triallog": "not implemented; retained for design row 10, never pooled with #41 MODELED rows",
+ "raw_artifacts": "reports/owner-b-witness/<artifact> in each ledger row; regenerates offline from committed code",
+ "not_verified": [
+  "live-node external owner-fill claims",
+  "process-death recovery",
+  "broker reconciliation",
+  "Alpaca native stop election basis",
+  "qualified tick/TCA replay economics",
+  "paper installation, account protection or admission"
+ ]
+}

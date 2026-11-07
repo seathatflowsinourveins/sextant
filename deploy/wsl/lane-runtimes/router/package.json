@@ -1,0 +1,7 @@
+{
+  "name": "sextant-omniroute",
+  "private": true,
+  "dependencies": {
+    "omniroute": "3.8.53"
+  }
+}

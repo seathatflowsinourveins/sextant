@@ -33,6 +33,19 @@ The old campaign closed AO because it "would add a second dispatcher" (northstar
 - **Off by default, and left off:** AO's own reviewer (`autoReview`, `backend/internal/domain/projectconfig.go`), issue intake (`trackerIntake.enabled`, `backend/internal/domain/tracker.go`) and AO's orchestrator. So AO starts no work by itself and doesn't review. `review` stays gh-aw's.
 - **The hard guard is GitHub's:** the rulesets require `ci`, `source` and `review`, which run from the base branch. Nothing an AO worker pushes can merge past them or change them.
 
+## Offline proof isolation
+
+Directory discovery exposed an inherited `BASH_ENV` overriding the proof's
+PATH-based fake `ao` with the running daemon. The failed test claim was refused
+and rolled back. The proof helper now uses the existing Python 3.13
+`subprocess.run(env=...)` seam with an explicit environment: unchanged HOME,
+the fixture bin directory plus `os.defpath`, and only the fixture inputs.
+Two controlled cases first failed for an exported Bash function and a startup
+file; all five AO proofs then passed. Merging main retained its additional
+startup-file regression; all six AO proofs pass with the explicit environment.
+The harness script, version refusal, handoff checks and one-writer guard are
+unchanged.
+
 ## Not verified
 
 - Whether `ao spawn --branch` with an existing remote branch checks it out, or starts a new local branch from `main`. The prompt covers both cases by resetting to `origin/<head>`.

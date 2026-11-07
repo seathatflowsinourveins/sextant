@@ -1,0 +1,26 @@
+{
+  "schema_version": "1.1",
+  "name": "research-draft",
+  "tags": [
+    "research"
+  ],
+  "execution": {
+    "prompt": "Turn this research hypothesis into two strategy draft variants for later review: unusual opening activity may precede a continuation move. Specify the edge thesis, entry/exit structure, invalidation and what evidence each variant still lacks. This is a draft, not a trading instruction.",
+    "allowed_tools": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Skill"
+    ],
+    "append_system_prompt": "Read-only fixture evaluation: no orders, broker/data endpoints, credential access, file writes, shell commands or publication. Missing evidence stays unavailable. Give a concise response for the requested planning or review task.",
+    "timeout_seconds": 3600
+  },
+  "graders": [
+    {
+      "name": "skill-fired",
+      "type": "tool_used",
+      "tool": "Skill",
+      "input_match": "\"skill\"\\s*:\\s*\"(?:[\\w-]+:)?edge-strategy-designer\""
+    }
+  ]
+}
