@@ -97,10 +97,15 @@ def measure(freeze: Path, raw_root: Path, output: Path) -> dict[str, Any]:
         if day not in index or index[day] == 0:
             missing.append(event["event_id"])
             continue
-        prior = sessions[index[day] - 1]
-        prior_rows = _bars(raw_root, event["symbol"], prior)
-        prior_close = _official_close(prior_rows)
-        if prior_close is None:
+        prior = None
+        prior_close = None
+        for back in range(1, 16):
+            candidate = sessions[index[day] - back]
+            found = _official_close(_bars(raw_root, event["symbol"], candidate))
+            if found is not None:
+                prior, prior_close = candidate, found
+                break
+        if prior is None or prior_close is None:
             missing.append(event["event_id"])
             continue
         series = _event_series(raw_root, event["symbol"], day, prior)
