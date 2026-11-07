@@ -144,13 +144,50 @@ def test_missed_reclaim_requires_a_new_pullback_and_hold() -> None:
     for at, price in ((9, "10.06"), (10, "10.08"), (11, "10.09"), (12, "10.10")):
         feed(s, at, price)
         assert not s.reclaim_ready(D(price), D("0.10"), START + at * SEC, covered_flow=True)
-    for at, price in ((13, "10.07"), (14, "10.07")):
+    for at, price in ((13, "10.02"), (14, "10.02")):
         feed(s, at, price)
         assert not s.reclaim_ready(D(price), D("0.10"), START + at * SEC, covered_flow=True)
-    feed(s, 15, "10.08")
-    assert s.reclaim_ready(D("10.08"), D("0.10"), START + 15 * SEC, covered_flow=True)
+    feed(s, 15, "10.03")
+    assert s.reclaim_ready(D("10.03"), D("0.10"), START + 15 * SEC, covered_flow=True)
     feed(s, 16, "10.11")
     assert not s.reclaim_ready(D("10.11"), D("0.10"), START + 16 * SEC, covered_flow=True)
+
+
+@pytest.mark.parametrize(("middle", "last"), [("10.04", "10.05"), ("10.03", "10.04")])
+def test_consumed_reclaim_needs_a_pullback_below_its_event(middle, last) -> None:
+    s = extended_state()
+    for at, price in (
+        (3, "10.03"),
+        (4, "10.04"),
+        (5, "10.05"),
+        (6, "10.02"),
+        (7, "10.02"),
+        (8, "10.03"),
+    ):
+        feed(s, at, price)
+    assert s.reclaim_ready(D("10.03"), D("0.10"), START + 8 * SEC, covered_flow=True)
+    feed(s, 9, middle)
+    feed(s, 11, last)
+    assert not s.reclaim_ready(D(last), D("0.10"), START + 11 * SEC, covered_flow=True)
+    for at in (12, 13):
+        feed(s, at, "10.02")
+        assert not s.reclaim_ready(D("10.02"), D("0.10"), START + at * SEC, covered_flow=True)
+    feed(s, 14, "10.03")
+    assert s.reclaim_ready(D("10.03"), D("0.10"), START + 14 * SEC, covered_flow=True)
+
+
+def test_a_confirmed_retest_at_vwap_keeps_its_confirmation() -> None:
+    s = state()
+    for offset in (-180, -120, -60):
+        s.on_bar(bar(offset), now=START)
+    feed(s, 0, "10.00", size=10600)
+    for at, price in ((1, "11.00"), (2, "9.99"), (3, "10.03"), (4, "10.04"), (5, "10.05")):
+        feed(s, at, price)
+    assert s.confirmed and s.vwap == D("10.01")
+    feed(s, 6, "10.01")
+    assert s.confirmed
+    assert s.trough == s.vwap == D("10.01")
+    assert s.hold_started == START + 6 * SEC
 
 
 @pytest.mark.parametrize("invalid_price", ["9.98", "11.10"])

@@ -26,7 +26,7 @@ from nautilus_trader.model import (
 )
 from nautilus_trader.trading import Strategy
 
-from sextant.entry.orders import limit_price, within_chase
+from sextant.entry.orders import funding_unit_cost, limit_price, within_chase
 from sextant.entry.parameters import EntryParameters, number
 from sextant.entry.signals import EntryState, Surge, TradeCoverage
 from sextant.entry.sizing import SegmentBasis, size_entry
@@ -61,6 +61,7 @@ class _ReplayEntry(Strategy):
         self.buffer, self.basis_path = number(buffer, "buffer"), basis_path
         self.regular_hours, self.confidence = regular_hours, confidence
         self.coverage: TradeCoverage | None = config.inputs["coverage"]
+        self.commission_rate: Decimal | None = config.inputs["commission_rate"]
         self.quote: QuoteTick | None = None
         self.entry: Any = None
         self.first_limit: Decimal | None = None
@@ -68,6 +69,7 @@ class _ReplayEntry(Strategy):
         self.basis: Decimal | None = None
         self.events: list[dict[str, Any]] = []
         self.expired = False
+        self.reclaim_decided_ns: int | None = None
 
     def on_start(self) -> None:
         account = self.portfolio.account(self.instrument.venue)
@@ -90,7 +92,12 @@ class _ReplayEntry(Strategy):
         now = self.clock.timestamp_ns()
         if self.signals.on_trade(trade, now=now):
             self.events.append(dict(action="TRADE", ts=now, extension=str(self.signals.extension)))
-            self._decide()
+            event_ns = self.signals.reclaim_event_ns
+            try:
+                self._decide()
+            finally:
+                if event_ns is not None:
+                    self.reclaim_decided_ns = event_ns
 
     def on_quote(self, quote: QuoteTick) -> None:
         if self.quote is not None and quote.ts_event < self.quote.ts_event:
@@ -118,7 +125,9 @@ class _ReplayEntry(Strategy):
         if free is not None and self.entry is not None and self.entry.is_open:
             free += self.entry.leaves_qty.as_decimal() * self.entry.price.as_decimal()
             # Full-order caps include fills, but funding is needed only for the leaves.
-            free += self.entry.filled_qty.as_decimal() * price
+            free += self.entry.filled_qty.as_decimal() * funding_unit_cost(
+                price, self.commission_rate, self.instrument.quote_currency.precision
+            )
         volume = sum(
             (
                 t.price.as_decimal() * t.size.as_decimal()
@@ -139,6 +148,7 @@ class _ReplayEntry(Strategy):
             dollar_volume=volume,
             confidence=None if setup == "FIRST_LEG" else self.confidence,
             prearm_stopouts=0,
+            commission_rate=self.commission_rate,
         )
 
     def _decide(self) -> None:
@@ -183,8 +193,11 @@ class _ReplayEntry(Strategy):
         setup = None
         if self.signals.first_leg_ready(price, now):
             setup = "FIRST_LEG"
-        elif self.signals.reclaim_ready(
-            price, self.buffer, now, covered_flow=self.signals.covered_flow(now, self.coverage)
+        elif (
+            self.signals.reclaim_event_ns != self.reclaim_decided_ns
+            and self.signals.reclaim_ready(
+                price, self.buffer, now, covered_flow=self.signals.covered_flow(now, self.coverage)
+            )
         ):
             setup = "RECLAIM"
         if setup is None:
@@ -244,6 +257,10 @@ class _ReplayEntry(Strategy):
         else:
             self._decide()
 
+    def on_order_modify_rejected(self, event) -> None:
+        if self.expired:
+            self._expire(None)
+
     def on_order_accepted(self, event) -> None:
         if self.expired:
             self._expire(None)
@@ -267,8 +284,12 @@ def run_replay(
     coverage: TradeCoverage | None = None,
     latency_model: StaticLatencyModel | None = None,
     fill_model: Any = None,
+    commission_rate: Decimal | None = None,
 ) -> ReplayResult:
-    """A bounded caller runs one fresh arm/process under timeout; this creates no client."""
+    """Offline arm; commission_rate must bound the explicit model's per-fill fees.
+
+    An unavailable fee bound refuses entry. It is never inferred from fixtures.
+    """
     starting_cash = number(starting_cash, "starting_cash")
     engine = BacktestEngine(
         BacktestEngineConfig(bypass_logging=True, risk_engine=RiskEngineConfig(bypass=False))
@@ -302,6 +323,7 @@ def run_replay(
                 regular_hours=regular_hours,
                 confidence=confidence,
                 coverage=coverage,
+                commission_rate=commission_rate,
             )
         )
         engine.add_strategy(strategy)

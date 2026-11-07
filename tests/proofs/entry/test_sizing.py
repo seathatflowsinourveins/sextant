@@ -56,6 +56,7 @@ def sizing(instrument, **overrides):
         "dollar_volume": D("100000"),
         "confidence": None,
         "prearm_stopouts": 0,
+        "commission_rate": D(0),
     }
     return size_entry(**(kwargs | overrides))
 

@@ -1,15 +1,33 @@
 """Exercise our entry boundary through real native matching, risk and clock events."""
 
 from decimal import Decimal as D
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from nautilus_trader.common import Clock, OrderFactory
+from nautilus_trader.core import UUID4
 from nautilus_trader.execution import (
     LimitOrderPartialFillModel,
     MakerTakerFeeModel,
     StaticLatencyModel,
 )
+from nautilus_trader.model import (
+    AccountId,
+    OrderAccepted,
+    OrderCanceled,
+    OrderModifyRejected,
+    OrderPendingUpdate,
+    OrderSide,
+    OrderSubmitted,
+    Quantity,
+    StrategyId,
+    TimeInForce,
+    TraderId,
+    VenueOrderId,
+)
 
+import sextant.entry.replay as entry_replay
 from sextant.entry.orders import limit_price
 from sextant.entry.replay import run_replay
 from sextant.entry.signals import Surge, TradeCoverage
@@ -30,7 +48,10 @@ def replay(instrument, tmp_path, data, **overrides):
         regular_hours=True,
         confidence=None,
         fee_model=MakerTakerFeeModel(maker_rate=D(0), taker_rate=D(0)),
+        commission_rate=D(0),
     )
+    if "fee_model" in overrides and "commission_rate" not in overrides:
+        arguments["commission_rate"] = None
     return run_replay(**(arguments | overrides))
 
 
@@ -133,6 +154,34 @@ def test_partial_fill_reprice_respects_full_position_caps(
         assert result.orders[0]["price"] == initial_ask
     assert D(0) < D(result.orders[0]["filled_qty"]) < D(quantity)
     assert result.orders[0]["status"] == "CANCELED"
+
+
+@pytest.mark.parametrize("fee_bound", [None, D("0.01")])
+def test_nonzero_commission_never_overdraws_cash(instrument, tmp_path, fee_bound):
+    overrides = dict(
+        starting_cash=D("1000"),
+        params=params(stop_ref_fraction="1", portfolio_slots=1),
+        fee_model=MakerTakerFeeModel(maker_rate=D("0.01"), taker_rate=D("0.01")),
+    )
+    if fee_bound is not None:
+        overrides["commission_rate"] = fee_bound
+    result = replay(
+        instrument,
+        tmp_path,
+        [
+            quote(0, "10.00", "10.01"),
+            trade(0, "10.01", size=10000),
+            trade(1, "10.01", size=10000),
+            trade(2, "10.01", size=10000),
+        ],
+        **overrides,
+    )
+    if fee_bound is None:
+        assert result.orders == []
+        assert any("commission_rate" in e.get("reason", "") for e in result.events)
+    else:
+        assert len(result.orders) == 1 and result.orders[0]["status"] == "FILLED"
+        assert D(result.orders[0]["filled_qty"]) <= D("98")
 
 
 def test_outside_rth_is_plain_limit_with_extended_hours_intent(instrument, tmp_path) -> None:
@@ -267,6 +316,80 @@ def test_missed_reclaim_never_submits_at_a_later_fresh_high(instrument, tmp_path
     assert result.orders == []
 
 
+@pytest.mark.parametrize(("middle", "last"), [("10.04", "10.05"), ("10.03", "10.04")])
+def test_consumed_reclaim_cannot_rearm_on_rising_or_flat_tape(instrument, tmp_path, middle, last):
+    result = replay(
+        instrument,
+        tmp_path,
+        [
+            bar(-180),
+            bar(-120),
+            bar(-60),
+            quote(0, "9.99", "10.00"),
+            trade(0, "10.00", size=10000),
+            trade(1, "11.00"),
+            trade(2, "9.99"),
+            trade(3, "10.03"),
+            trade(4, "10.04"),
+            trade(5, "10.05"),
+            trade(6, "10.02"),
+            trade(7, "10.02"),
+            quote("7.9", "10.19", "10.20"),
+            trade(8, "10.03"),
+            trade(9, middle),
+            quote("10.9", middle, last),
+            trade(11, last),
+        ],
+        surge=None,
+        confidence=D("0.5"),
+        coverage=TradeCoverage(
+            IID,
+            "fixture-segment",
+            START - 60 * SEC,
+            START + 11 * SEC,
+            START + 11 * SEC,
+            "TEST complete eligible tape",
+        ),
+    )
+    assert result.orders == []
+    assert not any(e["action"] == "SUBMIT" for e in result.events)
+
+
+def test_refused_reclaim_cannot_enter_on_a_later_quote(instrument, tmp_path):
+    result = replay(
+        instrument,
+        tmp_path,
+        [
+            bar(-180),
+            bar(-120),
+            bar(-60),
+            quote(0, "9.99", "10.00"),
+            trade(0, "10.00", size=10000),
+            trade(1, "11.00"),
+            trade(2, "9.99"),
+            trade(3, "10.03"),
+            trade(4, "10.04"),
+            trade(5, "10.05"),
+            trade(6, "10.02"),
+            trade(7, "10.02"),
+            quote("7.9", "10.19", "10.20"),
+            trade(8, "10.03"),
+            quote(9, "10.02", "10.03"),
+        ],
+        surge=None,
+        confidence=D("0.5"),
+        coverage=TradeCoverage(
+            IID,
+            "fixture-segment",
+            START - 60 * SEC,
+            START + 9 * SEC,
+            START + 9 * SEC,
+            "TEST complete eligible tape",
+        ),
+    )
+    assert result.orders == []
+
+
 def test_ttl_during_unacknowledged_submit_cancels_after_acceptance(instrument, tmp_path):
     result = replay(
         instrument,
@@ -286,6 +409,76 @@ def test_ttl_during_unacknowledged_submit_cancels_after_acceptance(instrument, t
     assert result.orders[0]["filled_qty"] == "0"
     assert [e["ts"] for e in result.events if e["action"] == "CANCEL"] == [START + 12 * SEC]
     assert not any(e["action"] == "MODIFY" for e in result.events)
+
+
+def test_ttl_cancels_after_a_modify_rejection_without_waiting_for_data(instrument, tmp_path):
+    clock = Clock.new_test()
+    clock.set_time(START + 2 * SEC)
+    factory = OrderFactory(TraderId("TEST-001"), StrategyId("ENTRY-001"), clock)
+    order = factory.limit(
+        IID,
+        OrderSide.BUY,
+        Quantity.from_int(10),
+        instrument.make_price(D("10.02")),
+        time_in_force=TimeInForce.DAY,
+    )
+    account_id, venue_id = AccountId("SIM-001"), VenueOrderId("TEST-1")
+
+    def fields() -> dict[str, Any]:
+        return dict(
+            trader_id=order.trader_id,
+            strategy_id=order.strategy_id,
+            instrument_id=order.instrument_id,
+            client_order_id=order.client_order_id,
+            account_id=account_id,
+            event_id=UUID4(),
+            ts_event=clock.timestamp_ns(),
+            ts_init=clock.timestamp_ns(),
+        )
+
+    order.apply(OrderSubmitted(**fields()))
+    order.apply(OrderAccepted(**fields(), venue_order_id=venue_id, reconciliation=False))
+    clock.set_time(START + 3 * SEC)
+    order.apply(OrderPendingUpdate(**fields(), venue_order_id=venue_id, reconciliation=False))
+
+    class ExpiredEntry(entry_replay._ReplayEntry):
+        @property
+        def cache(self) -> Any:
+            return SimpleNamespace(order=lambda _key: order)
+
+        @property
+        def clock(self) -> Any:
+            return clock
+
+        def cancel_order(self, *args, **kwargs):
+            order.apply(OrderCanceled(**fields(), venue_order_id=venue_id, reconciliation=False))
+
+    entry = ExpiredEntry(
+        entry_replay._ReplayEntryConfig(
+            instrument=instrument,
+            params=params(),
+            segment="fixture-segment",
+            surge=None,
+            buffer=D("0.10"),
+            basis_path=tmp_path / "basis.json",
+            regular_hours=True,
+            confidence=None,
+            coverage=None,
+            commission_rate=D(0),
+        )
+    )
+    entry.entry = order
+    clock.set_time(START + 7 * SEC)
+    entry._expire(None)
+    assert order.is_pending_update and entry.events == []
+    clock.set_time(START + 8 * SEC)
+    rejection = OrderModifyRejected(
+        **fields(), venue_order_id=venue_id, reconciliation=False, reason="TEST rejected modify"
+    )
+    order.apply(rejection)
+    entry.on_order_modify_rejected(rejection)
+    assert order.is_closed and order.status.name == "CANCELED"
+    assert [e["ts"] for e in entry.events if e["action"] == "CANCEL"] == [START + 8 * SEC]
 
 
 def test_reprice_rechecks_first_leg_cap(instrument, tmp_path):

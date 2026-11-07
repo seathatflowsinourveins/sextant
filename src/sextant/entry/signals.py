@@ -78,6 +78,7 @@ class EntryState:
         self.trough: Decimal | None = None
         self.hold_started: int | None = None
         self.reclaim_event_ns: int | None = None
+        self.reclaim_consumed_price: Decimal | None = None
 
     def arm(self, surge: Surge) -> None:
         if (
@@ -212,7 +213,7 @@ class EntryState:
             self.touch = None
             self._clear_retest()
             return
-        if price == level:
+        if price == level and not self.confirmed:
             self._clear_retest()
             return
         if not self.confirmed:
@@ -223,6 +224,13 @@ class EntryState:
             ] and at - self.reclaim_run[0].ts_event >= p.ns("reclaim_trades_span_s")
             return
         assert self.high is not None
+        if self.reclaim_consumed_price is not None:
+            if price >= self.reclaim_consumed_price:
+                self.high = max(self.high, price)
+                return
+            self.reclaim_consumed_price = None
+            self.trough, self.hold_started = price, at
+            return
         if self.trough is not None and self.hold_started is not None:
             if (
                 price > self.trough
@@ -231,6 +239,7 @@ class EntryState:
                 and self.trough >= level
             ):
                 self.reclaim_event_ns = at
+                self.reclaim_consumed_price = price
                 self.trough, self.hold_started = None, None
                 self.high = max(self.high, price)
                 return  # Consume this retest even when the caller cannot enter.

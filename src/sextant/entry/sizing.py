@@ -14,6 +14,7 @@ from typing import Any
 from nautilus_trader.model import Equity, Money, Price, Quantity
 from nautilus_trader.risk import FixedRiskSizer
 
+from sextant.entry.orders import funding_unit_cost
 from sextant.entry.parameters import EntryParameters, number
 
 
@@ -92,10 +93,12 @@ def size_entry(
     dollar_volume: Decimal | None,
     confidence: Decimal | None,
     prearm_stopouts: int,
+    commission_rate: Decimal | None = None,
 ) -> Sizing:
     planned = distance = multiplier = None
     try:
         entry = number(entry, "entry")
+        commission_rate = number(commission_rate, "commission_rate", zero=True)
         trigger = number(initial_trigger, "initial_trigger")
         equity, basis = number(equity, "equity"), number(basis, "basis")
         buying_power = number(buying_power, "buying_power")
@@ -132,7 +135,8 @@ def size_entry(
         distance = entry - stop
         candidates = {
             "risk": planned / distance,
-            "buying_power": buying_power / entry,
+            "buying_power": buying_power
+            / funding_unit_cost(entry, commission_rate, instrument.quote_currency.precision),
             "flow": params["flow_share_cap"] * dollar_volume / entry,
         }
         hard_limit = min(candidates["buying_power"], candidates["flow"])
@@ -143,6 +147,7 @@ def size_entry(
             stop_loss=native_stop,
             equity=Money.from_str(f"{equity} {instrument.quote_currency}"),
             risk=planned / equity,
+            commission_rate=commission_rate,
             hard_limit=hard_limit,
         )
         whole = quantity.as_decimal().to_integral_value(rounding=ROUND_FLOOR)

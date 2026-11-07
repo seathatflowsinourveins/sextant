@@ -19,3 +19,10 @@ def limit_price(ask: Decimal, price_increment: Decimal) -> Decimal:
 
 def within_chase(price: Decimal, first_limit: Decimal, params: EntryParameters) -> bool:
     return price <= first_limit * (1 + params["entry_chase_bps"] / 10_000)
+
+
+def funding_unit_cost(price: Decimal, commission_rate: Decimal | None, precision: int) -> Decimal:
+    """N5: reserve the declared fee bound, rounded up per whole-share fill."""
+    rate = number(commission_rate, "commission_rate", zero=True)
+    quantum = Decimal(1).scaleb(-precision)
+    return price + (price * rate).quantize(quantum, rounding=ROUND_CEILING)
