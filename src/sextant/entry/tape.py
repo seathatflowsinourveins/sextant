@@ -1,4 +1,4 @@
-"""Parameter-horizon native tape with predecessor checkpoints; ADR-0004 records authority."""
+"""Parameter-horizon native tape; ADR-0004 records the source search and pending ruling."""
 
 from bisect import bisect_left, bisect_right
 

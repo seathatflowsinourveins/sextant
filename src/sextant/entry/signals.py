@@ -1,6 +1,6 @@
 """ADR-0004 N1/N2, with the source pins and late-data deviations in docs/manifest.md."""
 
-from bisect import bisect_right
+from bisect import bisect_left
 from collections import namedtuple
 from collections.abc import Mapping
 from copy import copy
@@ -118,8 +118,7 @@ class _Fold(_Reclaim):
     def __init__(self, params):
         super().__init__(params)
         self.ordered = _Reclaim(params)
-        self.surge = None
-        self.run = ()
+        self.surge, self.run = None, ()
         self.previous = self.vwap = self.last_atr = None
         self.dollars = self.volume = Decimal(0)
         self.extension = Extension.UNKNOWN
@@ -168,14 +167,14 @@ class EntryState:
         self.bar_type = BarType.from_str(
             f"{instrument_id}-{params['atr_bar_minutes']}-MINUTE-LAST-EXTERNAL"
         )
-        self.last_bar_ns = -1
-        self.atr_times, self.atrs = [], []
+        self.last_bar_ns, self.atr_times, self.atrs = -1, [], []
         self.history_ns = max(
             params.ns(name) * (60 if name.endswith("_min") else 1)
             for name in params.values
             if name.endswith(("_s", "_min"))
         )
-        self.tape = Tape(_Fold(params))
+        self.fold = _Fold(params)
+        self.tape = Tape(self.fold)
         self.reset_segment(segment, start_ns=start_ns)
 
     def __getattr__(self, name):
@@ -184,21 +183,22 @@ class EntryState:
     def reset_segment(self, segment: str, *, start_ns: int) -> None:
         if not segment or type(start_ns) is not int or start_ns < 0:
             raise ValueError("segment identity and event-time start required")
-        old = self.tape
-        self.segment, self.segment_start_ns = segment, start_ns
-        self.failure = None
-        self.last = None
-        self.fold = _Fold(self.params)
-        self.tape = Tape(self.fold)
-        self.tape.floor = self.prune_at = start_ns
-        if start_ns < old.floor:
-            self.failure = "segment start precedes retained history"
+        try:
+            fold, last = _Fold(self.params), None
+            tape = Tape(fold)
+            tape.floor = start_ns
+            if start_ns < self.tape.floor:
+                raise ValueError("segment start precedes retained history")
+            for tick, eligible, atr in self.tape.rows(start_ns):
+                fold, last = tape.add(tick, eligible, atr, None), tick
+                assert fold is not None
+            fold.reclaim_event_ns = None
+        except Exception as exc:
+            self.failure = f"{type(exc).__name__}: {exc}"
             return
-        for tick, eligible, atr in old.rows(start_ns):
-            folded = self.tape.add(tick, eligible, atr, self.surge)
-            assert folded is not None
-            self.fold, self.last = folded, tick
-        self.fold.reclaim_event_ns = None
+        self.segment, self.segment_start_ns = segment, start_ns
+        self.fold, self.last, self.tape = fold, last, tape
+        self.failure, self.prune_at = None, start_ns
 
     def arm(self, surge: Surge) -> None:
         if (
@@ -246,7 +246,7 @@ class EntryState:
             self.last is None or tick.ts_event >= self.last.ts_event
         ) and now - tick.ts_event <= self.params.ns("max_data_age_s")
         try:
-            index = bisect_right(self.atr_times, tick.ts_event) - 1
+            index = bisect_left(self.atr_times, tick.ts_event) - 1
             atr = None if index < 0 else self.atrs[index]
             folded = self.tape.add(tick, eligible, atr, self.surge)
             if folded is None:
@@ -257,7 +257,7 @@ class EntryState:
             if self.last.ts_event >= self.prune_at:
                 self.tape.prune(self.last.ts_event - self.history_ns)
                 self.prune_at = self.last.ts_event + self.params.ns("max_data_age_s")
-                index = max(0, bisect_right(self.atr_times, self.tape.floor) - 1)
+                index = max(0, bisect_left(self.atr_times, self.tape.floor) - 1)
                 del self.atr_times[:index], self.atrs[:index]
             if not eligible:
                 self.fold.reclaim_event_ns = None
