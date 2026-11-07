@@ -9,7 +9,7 @@
 #   - claim: docs/cli/README.md and docs/scm-observer.md, `ao spawn --claim-pr`, AO's own PR ownership,
 #     with --no-takeover so a second owner is refused. The lifecycle manager then sends that session
 #     each failed check and review comment (backend/internal/lifecycle/reactions.go). It never merges.
-# usage: ao.sh install | daemon | project | claim <pr-number>
+# usage: ao.sh install | daemon | project | credential | claim <pr-number>
 set -Eeuo pipefail
 
 pin_version=0.14.10
@@ -18,6 +18,7 @@ port=3301
 project=sextant
 clone="$HOME/.ao/repos/sextant"
 repo_url=https://github.com/seathatflowsinourveins/sextant
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 install() {
   local setup
@@ -46,9 +47,19 @@ daemon() {
 # AO works in its own clone, so its worktrees never hold a branch an Orca worktree has checked out.
 project() {
   [[ -d "$clone/.git" ]] || git clone -q "$repo_url" "$clone"
+  credential
   if ! ao project get "$project" > /dev/null 2>&1; then
     ao project add --path "$clone" --id "$project" --name "Sextant (AO fix-CI/review)" --worker-agent codex
   fi
+}
+
+# AO's sessions outlive the App's one-hour installation token, which each inherits at spawn. So git in
+# AO's clone, which every AO worktree shares, asks bin/gh, and bin/gh mints a fresh token per call. The
+# empty helper first resets the user's global helper list (git/git@v2.56.0
+# a018953688f1b10bddf91bff8747068f5f4746a4:Documentation/gitcredentials.adoc:199-201).
+credential() {
+  git -C "$clone" config --local --replace-all credential.https://github.com.helper ''
+  git -C "$clone" config --local --add credential.https://github.com.helper "!$here/github-app/bin/gh auth git-credential"
 }
 
 claim() {
@@ -86,9 +97,10 @@ case "${1:-}" in
   install) install ;;
   daemon) daemon ;;
   project) project ;;
+  credential) credential ;;
   claim) claim "${2:-}" ;;
   *)
-    echo "usage: ao.sh install | daemon | project | claim <pr-number>" >&2
+    echo "usage: ao.sh install | daemon | project | credential | claim <pr-number>" >&2
     exit 2
     ;;
 esac

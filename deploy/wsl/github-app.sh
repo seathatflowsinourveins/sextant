@@ -5,7 +5,8 @@
 #   install                 npm ci of the pinned @octokit/auth-app, scripts off
 #   ids                     App ID from the public GET /apps/{slug}; installation ID with the App's JWT
 #   run -- CMD...           CMD once, with GH_TOKEN and AO_GITHUB_TOKEN set to a fresh installation token
-#   daemon                  `ao.sh daemon` under the App, restarted on a new token before each expires
+#   daemon                  `ao.sh daemon` under the App, restarted on a new token before each expires,
+#                           with bin/gh first on PATH so its long-lived sessions mint per gh call too
 #   tab -- CMD...           a lane tab: `run`, with bin/gh first on PATH so every gh call gets a fresh token
 set -Eeuo pipefail
 
@@ -43,7 +44,7 @@ case "${1:-}" in
   install) npm ci --prefix "$app" --ignore-scripts --no-audit --no-fund ;;
   ids) ids ;;
   run) shift; minted run "$@" ;;
-  daemon) minted supervise -- bash "$here/ao.sh" daemon ;;
+  daemon) PATH="$app/bin:$PATH" minted supervise -- bash "$here/ao.sh" daemon ;;
   tab) shift; PATH="$app/bin:$PATH" minted run "$@" ;;
   *)
     sed -n '2,/^set -/{/^set -/!p;}' "$0" >&2
