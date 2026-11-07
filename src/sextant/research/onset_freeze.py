@@ -11,7 +11,6 @@ exchange identity service.
 
 from __future__ import annotations
 
-import argparse
 import csv
 import hashlib
 import io
@@ -391,15 +390,10 @@ def write_json(path: Path, value: Any) -> None:
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--events", type=Path, required=True)
-    parser.add_argument("--tickers", type=Path, required=True)
-    parser.add_argument("--out", type=Path, required=True)
-    args = parser.parse_args()
-
-    events, events_sha = load_events(args.events)
-    tickers, tickers_sha = load_tickers(args.tickers)
+def freeze(events_path: Path, tickers_path: Path, out: Path) -> dict[str, Any]:
+    """Write the frozen cohort, controls, rule, windows and closed manifest."""
+    events, events_sha = load_events(events_path)
+    tickers, tickers_sha = load_tickers(tickers_path)
     cohort = [
         e
         for e in events
@@ -414,15 +408,15 @@ def main() -> int:
     }
     event_rows, control_rows, stats = controls(cohort, tickers, seed)
 
-    args.out.mkdir(parents=True, exist_ok=False)
-    (args.out / "events.jsonl").write_text(
+    out.mkdir(parents=True, exist_ok=False)
+    (out / "events.jsonl").write_text(
         "".join(json.dumps(row, sort_keys=True) + "\n" for row in event_rows)
     )
-    (args.out / "controls.jsonl").write_text(
+    (out / "controls.jsonl").write_text(
         "".join(json.dumps(row, sort_keys=True) + "\n" for row in control_rows)
     )
-    (args.out / "rule.md").write_text(RULE)
-    write_json(args.out / "windows.json", WINDOWS)
+    (out / "rule.md").write_text(RULE)
+    write_json(out / "windows.json", WINDOWS)
     script_sha = sha256_file(Path(__file__))
     manifest = {
         "format": "sextant.onset.freeze/1",
@@ -455,19 +449,11 @@ def main() -> int:
             "control_ticker_rule": "empty_relatedtickers_and_not_delisted_Q",
         },
         "files": {
-            name: sha256_file(args.out / name)
+            name: sha256_file(out / name)
             for name in ("events.jsonl", "controls.jsonl", "rule.md", "windows.json")
         },
     }
-    write_json(args.out / "manifest.json", manifest)
-    lines = [
-        f"{sha256_file(args.out / name)}  {name}"
-        for name in sorted(p.name for p in args.out.iterdir())
-    ]
-    (args.out / "SHA256SUMS").write_text("\n".join(lines) + "\n")
-    print(json.dumps({"counts": manifest["counts"], "files": manifest["files"]}, indent=2))
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+    write_json(out / "manifest.json", manifest)
+    lines = [f"{sha256_file(out / name)}  {name}" for name in sorted(p.name for p in out.iterdir())]
+    (out / "SHA256SUMS").write_text("\n".join(lines) + "\n")
+    return manifest

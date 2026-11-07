@@ -12,10 +12,8 @@ live endpoint is reachable.
 
 from __future__ import annotations
 
-import argparse
 import hashlib
 import json
-from collections.abc import Sequence
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -158,28 +156,3 @@ def pull_fallbacks(
     )
     (output / "fallback.json").write_text(json.dumps(body, indent=2, sort_keys=True))
     return body
-
-
-def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--freeze", type=Path, required=True)
-    parser.add_argument("--raw", type=Path, required=True)
-    parser.add_argument("--catalog", type=Path, required=True)
-    parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--deadline", required=True)
-    parser.add_argument("--force", action="store_true")
-    args = parser.parse_args(argv)
-    body = pull_fallbacks(
-        args.freeze,
-        args.raw,
-        args.catalog,
-        args.output,
-        deadline=datetime.fromisoformat(args.deadline.replace("Z", "+00:00")),
-        force=args.force,
-    )
-    print(json.dumps(body, indent=2, sort_keys=True))
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

@@ -12,7 +12,6 @@ one-minute SIP bars. It is not a tick aggregation and not a venue feed claim.
 
 from __future__ import annotations
 
-import argparse
 import json
 from collections import Counter, defaultdict
 from collections.abc import Sequence
@@ -28,7 +27,6 @@ from nautilus_trader.model import Bar, BarType, InstrumentId, Price, Quantity
 
 from sextant.data.alpaca_history import raw_path, read_raw, symbol_name, timestamp
 from sextant.research.detectors.stocks_in_play import (
-    PARAMETERS,
     DailyFacts,
     OpeningWindow,
     StocksInPlaySpec,
@@ -418,37 +416,3 @@ def evaluate(
         rows=sorted(results, key=lambda row: (row["day"], row["symbol"])),
         event_rows=sorted(event_rows.values(), key=lambda row: (row["day"], row["symbol"])),
     )
-
-
-def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--freeze", type=Path, required=True)
-    parser.add_argument("--raw", type=Path, required=True)
-    parser.add_argument("--calendar", type=Path, required=True)
-    parser.add_argument("--thresholds", type=Path, required=True)
-    parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--fallback", type=Path)
-    args = parser.parse_args(argv)
-    spec = StocksInPlaySpec(PARAMETERS)
-    report = evaluate(
-        args.freeze,
-        args.raw,
-        args.calendar,
-        args.thresholds,
-        spec,
-        fallback=args.fallback,
-    )
-    args.output.mkdir(parents=True, exist_ok=True)
-    (args.output / "sip.json").write_text(json.dumps(report, indent=2, sort_keys=True))
-    print(
-        json.dumps(
-            {k: v for k, v in report.items() if k not in {"rows", "event_rows"}},
-            indent=2,
-            sort_keys=True,
-        )
-    )
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

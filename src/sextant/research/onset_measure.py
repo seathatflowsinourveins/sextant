@@ -8,7 +8,6 @@ it does not claim a detector flag.
 
 from __future__ import annotations
 
-import argparse
 import json
 from collections import Counter
 from datetime import date, datetime, time
@@ -142,17 +141,3 @@ def measure(freeze: Path, raw_root: Path, output: Path) -> dict[str, Any]:
     )
     (output / "thresholds-summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True))
     return summary
-
-
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--freeze", type=Path, required=True)
-    parser.add_argument("--raw", type=Path, required=True)
-    parser.add_argument("--output", type=Path, required=True)
-    args = parser.parse_args(argv)
-    print(json.dumps(measure(args.freeze, args.raw, args.output), indent=2, sort_keys=True))
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

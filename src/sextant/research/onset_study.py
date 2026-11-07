@@ -281,25 +281,99 @@ def pull(
     return summary
 
 
+def _deadline(text: str) -> datetime:
+    return datetime.fromisoformat(text.replace("Z", "+00:00"))
+
+
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
-    pull_parser = sub.add_parser("pull")
+
+    freeze_parser = sub.add_parser("freeze", help="write the frozen cohort and controls")
+    freeze_parser.add_argument("--events", type=Path, required=True)
+    freeze_parser.add_argument("--tickers", type=Path, required=True)
+    freeze_parser.add_argument("--out", type=Path, required=True)
+
+    measure_parser = sub.add_parser("measure", help="measure threshold minutes")
+    measure_parser.add_argument("--freeze", type=Path, required=True)
+    measure_parser.add_argument("--raw", type=Path, required=True)
+    measure_parser.add_argument("--output", type=Path, required=True)
+
+    sip_parser = sub.add_parser("sip", help="evaluate the Stocks in Play detector")
+    sip_parser.add_argument("--freeze", type=Path, required=True)
+    sip_parser.add_argument("--raw", type=Path, required=True)
+    sip_parser.add_argument("--calendar", type=Path, required=True)
+    sip_parser.add_argument("--thresholds", type=Path, required=True)
+    sip_parser.add_argument("--output", type=Path, required=True)
+    sip_parser.add_argument("--fallback", type=Path)
+
+    pull_parser = sub.add_parser("pull", help="pull the event and primary control days")
     pull_parser.add_argument("--freeze", type=Path, required=True)
     pull_parser.add_argument("--raw", type=Path, required=True)
     pull_parser.add_argument("--catalog", type=Path, required=True)
     pull_parser.add_argument("--output", type=Path, required=True)
     pull_parser.add_argument("--deadline", required=True)
+
+    fallback_parser = sub.add_parser("fallback", help="pull the frozen backup controls")
+    fallback_parser.add_argument("--freeze", type=Path, required=True)
+    fallback_parser.add_argument("--raw", type=Path, required=True)
+    fallback_parser.add_argument("--catalog", type=Path, required=True)
+    fallback_parser.add_argument("--output", type=Path, required=True)
+    fallback_parser.add_argument("--deadline", required=True)
+    fallback_parser.add_argument("--force", action="store_true")
+
     args = parser.parse_args(argv)
-    if args.command == "pull":
+    if args.command == "freeze":
+        from sextant.research.onset_freeze import freeze
+
+        manifest = freeze(args.events, args.tickers, args.out)
+        print(json.dumps({"counts": manifest["counts"], "files": manifest["files"]}, indent=2))
+    elif args.command == "measure":
+        from sextant.research.onset_measure import measure
+
+        print(json.dumps(measure(args.freeze, args.raw, args.output), indent=2, sort_keys=True))
+    elif args.command == "sip":
+        from sextant.research.detectors.stocks_in_play import PARAMETERS, StocksInPlaySpec
+        from sextant.research.onset_sip import evaluate
+
+        report = evaluate(
+            args.freeze,
+            args.raw,
+            args.calendar,
+            args.thresholds,
+            StocksInPlaySpec(PARAMETERS),
+            fallback=args.fallback,
+        )
+        args.output.mkdir(parents=True, exist_ok=True)
+        (args.output / "sip.json").write_text(json.dumps(report, indent=2, sort_keys=True))
+        print(
+            json.dumps(
+                {k: v for k, v in report.items() if k not in {"rows", "event_rows"}},
+                indent=2,
+                sort_keys=True,
+            )
+        )
+    elif args.command == "pull":
         summary = pull(
             args.freeze,
             args.raw,
             args.catalog,
             args.output,
-            deadline=datetime.fromisoformat(args.deadline.replace("Z", "+00:00")),
+            deadline=_deadline(args.deadline),
         )
         print(json.dumps(summary, indent=2, sort_keys=True))
+    else:
+        from sextant.research.onset_fallback import pull_fallbacks
+
+        body = pull_fallbacks(
+            args.freeze,
+            args.raw,
+            args.catalog,
+            args.output,
+            deadline=_deadline(args.deadline),
+            force=args.force,
+        )
+        print(json.dumps(body, indent=2, sort_keys=True))
     return 0
 
 
