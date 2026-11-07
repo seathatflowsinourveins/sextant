@@ -6,10 +6,42 @@ breach it, and three of them over 2 s persist (ADR-0005 X4).
 """
 
 import dataclasses
+from dataclasses import dataclass
 from decimal import Decimal as D
 
-from sextant.backtest.exit_position_witness import Buy, Quote, Result, run
+from nautilus_trader.backtest import BacktestEngine
+from nautilus_trader.config import BacktestEngineConfig, LoggerConfig, RiskEngineConfig
+from nautilus_trader.execution import MakerTakerFeeModel
+from nautilus_trader.model import (
+    AccountType,
+    AggressorSide,
+    Money,
+    OmsType,
+    OrderFilled,
+    OrderSide,
+    Price,
+    Quantity,
+    QuoteTick,
+    TimeInForce,
+    TradeId,
+    TradeTick,
+    Venue,
+)
+from nautilus_trader.trading import Strategy
+
+from sextant.backtest.exit_position_witness import (
+    EQUITY,
+    NS,
+    START,
+    USD,
+    Buy,
+    Quote,
+    Result,
+    run,
+)
 from sextant.backtest.exit_witness import FIXTURE
+from sextant.exits.engine import ExitEngine, ExitEngineConfig
+from sextant.exits.policy import ExitParams
 
 FLAT = Quote("100.00", "100.02")
 LOW = Quote("99.50", "99.52")
@@ -82,30 +114,23 @@ def test_the_decimal_basis_is_the_entry_orders_avg_px() -> None:
     assert D(sell["qty"]) == 10 and r.position == 0
 
 
-def test_a_same_order_fill_after_the_breach_sell_is_still_covered_until_flat() -> None:
-    """The entry's remainder fills while the managed sell rests. The venue resizes that
-    reduce-only sell to the position (orders/advanced.md:228-231), so the one exit covers all 10.
-
-    The protected quantity follows the native position throughout, and one sell works at a time
-    (ADR-0007:19). The chase is off (#98). Each later bid moves up through the resting limit,
-    because an L1 maker fill needs a market move (fill-prices-and-matching.md, "L1 books").
-    Each move fills the bid's displayed 2."""
+def test_a_same_order_remainder_is_canceled_before_it_buys_into_the_breach() -> None:
+    """ADR-0005:36 (#169): the breach cancels the entry's remainder and proves it terminal before
+    the one exit, so the remainder never buys into the breach and the venue never resizes the exit
+    over it. The chase is off (#98). Each later bid moves up through the resting limit, because an
+    L1 maker fill needs a market move (fill-prices-and-matching.md, "L1 books"); each move fills the
+    bid's displayed 2."""
     wide = Quote("99.50", "100.05", bid_size="2")  # breaches; the ask is above the entry limit
-    through = Quote("99.60", "100.01", bid_size="2")  # fills the entry's remaining 4
+    through = Quote("99.60", "100.01", bid_size="2")  # would have filled the remaining 4
     rising = [Quote(f"99.6{d}", "100.05", bid_size="2") for d in (2, 4, 6, 8)]
     no_chase = dataclasses.replace(FIXTURE, chase_cap_fraction=None, chase_min_interval_s=None)
     r = run([THIN] + [wide] * 3 + [through] + rising, [Buy(0, "10")], no_chase)
-    assert [(q, p) for _c, q, p in r.buy_fills] == [("6", "100.02"), ("4", "100.02")]
-    assert "add_paused" not in _kinds(r) and r.pages == []
+    assert [(q, p) for _c, q, p in r.buy_fills] == [("6", "100.02")]
     (sell,) = _breach_sells(r)
-    assert D(sell["qty"]) == 6  # the position when the breach persisted
-    # The late 4 joined the protected position: the record after its fill adds exactly 4.
-    i = _kinds(r).index("entry_fill")
-    before = [D(e["qty"]) for e in r.events[:i] if e["event"].startswith("protected_")][-1]
-    assert r.events[i + 1]["event"] == "protected_qty"
-    assert D(r.events[i + 1]["qty"]) == before + 4
-    assert [(D(q), D(f)) for _c, q, f in r.sells] == [(D(10), D(10))]
+    assert D(sell["qty"]) == 6 and "entry_fill" not in _kinds(r)
+    assert [(D(q), D(f)) for _c, q, f in r.sells] == [(D(6), D(6))]
     assert r.max_working_sells == 1 and r.position == 0 and _kinds(r)[-1] == "flat"
+    assert not r.paused and r.pages == []
 
 
 def test_every_position_event_follows_its_order_fill() -> None:
@@ -119,3 +144,234 @@ def test_every_position_event_follows_its_order_fill() -> None:
         "filled_sell",
         "position_closed",
     ]
+
+
+# Tapes with buyer-initiated prints and owner orders (#169-#171, #209-#212, A2), one item a second
+# from START. An
+# owner order goes through `Strategy.submit_order` itself, never the engine's own path, so the
+# house never registers it (ADR-0007:16). Its fills still land in the one NETTING position, as in
+# #166's owner model: the account's merged net quantity.
+@dataclass(frozen=True)
+class Trade:
+    price: str
+
+
+@dataclass(frozen=True)
+class Order:
+    """A LIMIT sent just before the engine reads quote item `at`: at `price`, else that quote's
+    ask (a BUY) or bid (a SELL)."""
+
+    at: int
+    qty: str
+    side: OrderSide = OrderSide.BUY
+    price: str | None = None
+    owner: bool = False
+
+
+@dataclass(frozen=True)
+class Tape:
+    events: list[dict[str, str]]
+    pages: list[str]
+    paused: bool
+    fills: list[tuple[int, str, str, str, bool]]  # (second, side, qty, price, owner)
+    status: dict[str, str]  # each order's final status, keyed "house-1", "owner-1", ...
+    net: D
+    timeline: list[tuple[int, str, str]]  # (second, order, native event), each order's in order
+
+
+class Scripted(ExitEngine):
+    script: tuple[Order, ...] = ()
+
+    def on_start(self) -> None:
+        super().on_start()
+        self.seen = 0
+        self.owner_ids: set[str] = set()
+        self.names: dict[str, str] = {}
+
+    def on_quote(self, quote: QuoteTick) -> None:
+        for o in (o for o in self.script if o.at == self.seen):
+            ref = quote.ask_price if o.side == OrderSide.BUY else quote.bid_price
+            price = ref if o.price is None else Price.from_str(o.price)
+            qty = Quantity.from_str(o.qty)
+            order = self.order_factory.limit(
+                EQUITY.id, o.side, qty, price, time_in_force=TimeInForce.GTC
+            )
+            cid, who = str(order.client_order_id), "owner" if o.owner else "house"
+            self.names[cid] = f"{who}-{sum(n.startswith(who) for n in self.names.values()) + 1}"
+            if o.owner:
+                self.owner_ids.add(cid)
+                Strategy.submit_order(self, order)
+            else:
+                self.submit_order(order)
+        self.seen += 1
+        super().on_quote(quote)
+
+    def on_trade(self, trade: TradeTick) -> None:
+        self.seen += 1
+        super().on_trade(trade)
+
+
+def _tick(i: int, item: Quote | Trade) -> QuoteTick | TradeTick:
+    ts = START + i * NS
+    if isinstance(item, Trade):
+        price, size = Price.from_str(item.price), Quantity.from_str("1")
+        return TradeTick(EQUITY.id, price, size, AggressorSide.BUY, TradeId(str(i)), ts, ts)
+    bid, ask = Price.from_str(item.bid), Price.from_str(item.ask)
+    sizes = Quantity.from_str(item.bid_size), Quantity.from_str(item.ask_size)
+    return QuoteTick(EQUITY.id, bid, ask, *sizes, ts, ts)
+
+
+def tape_run(
+    items: list[Quote | Trade],
+    script: list[Order],
+    params: ExitParams = FIXTURE,
+    *,
+    session: str = "rth",
+    risk: RiskEngineConfig | None = None,
+) -> Tape:
+    engine = BacktestEngine(
+        BacktestEngineConfig(
+            logging=LoggerConfig(bypass_logging=True),
+            risk_engine=risk or RiskEngineConfig(bypass=False),
+        )
+    )
+    try:
+        engine.add_venue(
+            venue=Venue("SIM"),
+            oms_type=OmsType.NETTING,
+            account_type=AccountType.MARGIN,
+            starting_balances=[Money(1_000_000, USD)],
+            base_currency=USD,
+            fee_model=MakerTakerFeeModel(maker_rate=D(0), taker_rate=D(0)),
+            use_reduce_only=True,
+            liquidity_consumption=True,
+        )
+        engine.add_instrument(EQUITY)
+        engine.add_data([_tick(i, item) for i, item in enumerate(items)])
+        strategy = Scripted(
+            ExitEngineConfig(
+                instrument_id=EQUITY.id,
+                params=params,
+                round_trip_cost=D("0.01"),
+                session=session,
+            )
+        )
+        strategy.script = tuple(script)
+        engine.add_strategy(strategy)
+        engine.run()
+        orders = engine.cache.orders(instrument_id=EQUITY.id)
+        fills = sorted(
+            (
+                (e.ts_event - START) // NS,
+                e.order_side.name,
+                str(e.last_qty),
+                str(e.last_px),
+                str(e.client_order_id) in strategy.owner_ids,
+            )
+            for o in orders
+            for e in o.events()
+            if isinstance(e, OrderFilled)
+        )
+        net = sum((D(q) if s == "BUY" else -D(q) for _t, s, q, _p, _o in fills), D(0))
+        name = {
+            o.client_order_id: strategy.names.get(str(o.client_order_id), f"engine-{o.side.name}")
+            for o in orders
+        }
+        status = {name[o.client_order_id]: o.status.name for o in orders}
+        timeline = sorted(
+            (
+                ((e.ts_event - START) // NS, name[o.client_order_id], type(e).__name__)
+                for o in orders
+                for e in o.events()
+            ),
+            key=lambda x: x[0],
+        )
+        return Tape(
+            list(strategy.events),
+            list(strategy.pages),
+            strategy.paused,
+            fills,
+            status,
+            net,
+            timeline,
+        )
+    finally:
+        engine.dispose()
+
+
+STARTS = ExitParams.starts()
+
+
+def _sold(t: Tape, *, owner: bool | None = None) -> D:
+    return sum((D(q) for _t, s, q, _p, o in t.fills if s == "SELL" and owner in (None, o)), D(0))
+
+
+def test_a_partial_entrys_remainder_is_canceled_and_terminal_before_the_breach_sell() -> None:
+    """#169, ADR-0005:36: cancel a partial entry's remainder and prove it terminal before a close.
+    The LIMIT BUY 10 @ 100.50 takes 6 @ 100.02, bids of 99.50 persist, then the ask comes back to
+    the limit. The remainder never fills, so the position never reopens on the old order."""
+    thin = Quote("100.00", "100.02", ask_size="6")
+    wide, back = Quote("99.50", "100.55"), Quote("100.48", "100.50")
+    t = tape_run([thin] + [wide] * 4 + [back] * 6, [Order(0, "10", price="100.50")])
+    assert [(s, q, p) for _t, s, q, p, _o in t.fills] == [
+        ("BUY", "6", "100.02"),
+        ("SELL", "6", "99.50"),
+    ]
+    assert t.status == {"house-1": "CANCELED", "engine-SELL": "FILLED"}
+    kinds = [e["event"] for e in t.events]
+    assert kinds.count("protected_from_fill") == 1 and t.net == 0
+    # The breach persisted at second 3; the remainder's cancel was terminal there, and the sell went
+    # out on the next bid (ADR-0005:36: the crossing is retained exit intent, not permission).
+    assert (3, "house-1", "OrderCanceled") in t.timeline
+    assert next(x for x in t.timeline if x[1] == "engine-SELL")[0] == 4
+    assert [e["ts"] for e in t.events if e["event"] == "breach_sell_prearm"] == [
+        str(START + 4 * NS)
+    ]
+
+
+def test_a_reopened_position_takes_its_basis_from_its_own_fills() -> None:
+    """#169: the opening order's lifetime `Order.avg_px` blends the fills of a position that has
+    closed. rc8's `Position.avg_px_open` is a Decimal of this position's own fills."""
+    thin = Quote("100.00", "100.02", ask_size="6")
+    above, back = Quote("100.00", "100.55"), Quote("100.48", "100.50")
+    owner_sells_6 = Order(1, "6", side=OrderSide.SELL, owner=True)
+    t = tape_run([thin] + [above] * 2 + [back] * 3, [Order(0, "10", price="100.50"), owner_sells_6])
+    assert [(s, q, p) for _t, s, q, p, _o in t.fills] == [
+        ("BUY", "6", "100.02"),
+        ("SELL", "6", "100.00"),
+        ("BUY", "4", "100.50"),
+    ]
+    entries = [D(e["entry"]) for e in t.events if e["event"] == "protected_from_fill"]
+    assert entries == [D("100.02"), D("100.50")]  # never the blended 100.2120
+
+
+def test_an_owner_buy_after_a_house_exit_is_never_adopted_or_sold() -> None:
+    """#209, ADR-0007:16-17: only a position a house order opened is protected. After the house's
+    exit, an owner BUY on the flat symbol pauses it and pages; its shares are never sold."""
+    dip, lower = Quote("99.60", "99.62"), Quote("99.30", "99.32")
+    items = [FLAT] * 3 + [LOW] * 3 + [dip] * 3 + [lower] * 6
+    t = tape_run(items, [Order(0, "10"), Order(6, "5", owner=True)])
+    assert _sold(t) == 10 and t.net == 5  # the house sold its own 10, never the owner's 5
+    assert [D(e["entry"]) for e in t.events if e["event"] == "protected_from_fill"] == [D("100.02")]
+    assert t.paused and t.pages == ["quantity_mismatch"]
+
+
+def _remainder_tape() -> list[Quote | Trade]:
+    """#210's tape: a LIMIT BUY 10 @ 5.07 meets 6 at 5.01; the quote holds 5.06/5.08 with prints at
+    5.06, the lock arms; at second 71 the ask ticks to 5.07 and the remaining 4 fill there."""
+    items: list[Quote | Trade] = [Quote("5.00", "5.01", ask_size="6")]
+    items += [Quote("5.06", "5.08"), Trade("5.06")] * 35
+    return items + [Quote("5.06", "5.07"), Trade("5.06")] * 30
+
+
+def test_a_remainders_own_fill_never_raises_h_so_an_unchanged_bid_never_sells() -> None:
+    """#210 cause 1, ADR-0005:27: H is the high of eligible trades, and the house's own fill is
+    not one. Raising H to the remainder's 5.07 put the lock on the unchanged 5.06 bid."""
+    for params in (FIXTURE, STARTS):
+        t = tape_run(_remainder_tape(), [Order(0, "10", price="5.07")], params)
+        assert [(s, q, p) for _t, s, q, p, _o in t.fills] == [
+            ("BUY", "6", "5.01"),
+            ("BUY", "4", "5.07"),
+        ]
+        assert "armed" in [e["event"] for e in t.events]
+        assert _sold(t) == 0 and t.net == 10
