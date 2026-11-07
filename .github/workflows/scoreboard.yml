@@ -9,22 +9,35 @@ on:
   schedule:
     - cron: "17 6 * * *"
   workflow_dispatch:
-permissions:
-  actions: read
-  contents: read
-  issues: write
-  pull-requests: read
+    inputs:
+      jit_smoke:
+        description: Prove the branch's ephemeral runner without running the scoreboard
+        type: boolean
+        default: false
+permissions: {}
 concurrency:
-  group: scoreboard
+  group: scoreboard-${{ github.event_name == 'workflow_dispatch' && inputs.jit_smoke && github.ref || 'daily' }}
   cancel-in-progress: true
 jobs:
   scoreboard:
-    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+      pull-requests: read
+    # The docker profile serves workflow files from main only; a branch dispatch reaches sealed jobs.
+    if: ${{ github.ref == 'refs/heads/main' && (github.event_name != 'workflow_dispatch' || !inputs.jit_smoke) }}
+    runs-on: [self-hosted, linux, x64, sextant-jit-docker]
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # devcontainers/ci installs its CLI with npm, which the runner image lacks.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          package-manager-cache: false
       - name: Prove every manifest row, in the sandbox
         id: prove
         uses: devcontainers/ci@513af61f4de4f75d37e4438f184ba4358f0fc1ca # v0.3.1900000450
@@ -61,3 +74,106 @@ jobs:
           issue-number: ${{ vars.SCOREBOARD_ISSUE }}
           title: Scoreboard
           content-filepath: scoreboard.md
+  jit-smoke:
+    if: ${{ github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.jit_smoke }}
+    runs-on: [self-hosted, linux, x64, sextant-jit-docker]
+    permissions:
+      contents: read
+    timeout-minutes: 5
+    outputs:
+      job-root: ${{ steps.smoke.outputs.job-root }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verify actual runner and sibling Docker access
+        id: smoke
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test -n "$SEXTANT_RUNNER_IMAGE"
+          test -z "${ACTIONS_RUNNER_INPUT_JITCONFIG:-}"
+          docker info --format '{{json .SecurityOptions}}' | jq -e 'index("name=rootless") != null'
+          test "$(stat -f -c %T "$SEXTANT_JIT_ROOT")" = tmpfs
+          printf '%s\n' sibling-ok > "$GITHUB_WORKSPACE/jit-witness"
+          echo "job-root=$SEXTANT_JIT_ROOT" >> "$GITHUB_OUTPUT"
+          docker volume create "sextant-jit-witness-$GITHUB_RUN_ID" >/dev/null
+          docker run --rm --network none -v "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE:ro" \
+            mcr.microsoft.com/devcontainers/base:ubuntu24.04@sha256:ec556aed93f62aa6d13fe72c5db09da4e29a7c9b87c568dbca0ee5717466926a \
+            bash -c 'test "$(cat "$1/jit-witness")" = sibling-ok' -- "$GITHUB_WORKSPACE"
+  jit-sealed-smoke:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.jit_smoke }}
+    runs-on: [self-hosted, linux, x64, sextant-jit-sealed]
+    permissions:
+      contents: read
+    timeout-minutes: 30
+    outputs:
+      job-root: ${{ steps.isolation.outputs.job-root }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: No daemon socket, no Docker API and no other job root
+        id: isolation
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test -n "$SEXTANT_RUNNER_IMAGE"
+          test -z "${DOCKER_HOST:-}${GH_AW_DOCKER_SOCK_PATH:-}${ACTIONS_RUNNER_INPUT_JITCONFIG:-}"
+          test "$(stat -f -c %T "$SEXTANT_JIT_ROOT")" = tmpfs
+          test ! -e /run/user/1501/docker.sock
+          test ! -e /var/run/docker.sock
+          if docker version >/dev/null 2>&1; then exit 1; fi
+          gateway=$(python3 -c 'import socket, struct; print(*[socket.inet_ntoa(struct.pack("<L", int(r.split()[2], 16))) for r in open("/proc/net/route") if r.split()[1] == "00000000"])')
+          for address in 127.0.0.1 $gateway 10.0.2.2; do
+            if timeout 3 bash -c "exec 3<>/dev/tcp/$address/2375" 2>/dev/null; then exit 1; fi
+          done
+          # Ports a docker job publishes (AWF's squid 3128, gh-aw's MCP gateway 8080) bind to loopback.
+          for port in 3128 8080; do
+            if timeout 3 bash -c "exec 3<>/dev/tcp/$gateway/$port" 2>/dev/null; then exit 1; fi
+          done
+          # The egress filter drops private, shared and link-local destinations besides DNS.
+          for target in 10.0.2.1/80 10.0.2.2/80 169.254.169.254/80; do
+            if timeout 3 bash -c "exec 3<>/dev/tcp/$target" 2>/dev/null; then exit 1; fi
+          done
+          echo "job-root=$SEXTANT_JIT_ROOT" >> "$GITHUB_OUTPUT"
+      # The ci job's heaviest steps, to witness that PR code fits this slot without Docker.
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - run: uv sync --frozen
+      - run: uv run --frozen npx --yes "pyright@$(jq -r .dependencies.pyright .devcontainer/agents/package.json)"
+      - run: uv run --frozen pytest
+  jit-cleanup-smoke:
+    if: ${{ github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch' && inputs.jit_smoke }}
+    needs: [jit-smoke, jit-sealed-smoke]
+    runs-on: [self-hosted, linux, x64, sextant-jit-docker]
+    permissions:
+      contents: read
+    timeout-minutes: 5
+    steps:
+      - name: Both previous job roots, the sealed network and the named volume were removed
+        env:
+          PREVIOUS_ROOT: ${{ needs.jit-smoke.outputs.job-root }}
+          SEALED_ROOT: ${{ needs.jit-sealed-smoke.outputs.job-root }}
+        run: |
+          test "$SEXTANT_JIT_ROOT" != "$PREVIOUS_ROOT"
+          if docker volume inspect "sextant-jit-witness-$GITHUB_RUN_ID" >/dev/null 2>&1; then exit 1; fi
+          # The sealed slot cleans up after its own job ends, concurrently with this job's start.
+          for _ in $(seq 30); do
+            if ! docker network inspect "${SEALED_ROOT##*/}" >/dev/null 2>&1 &&
+              docker run --rm --network none --mount type=bind,src=/run/user/1501,dst=/runtime,readonly \
+                mcr.microsoft.com/devcontainers/base:ubuntu24.04@sha256:ec556aed93f62aa6d13fe72c5db09da4e29a7c9b87c568dbca0ee5717466926a \
+                bash -c 'for root; do test -n "$root" && test ! -e "/runtime/${root##*/}" || exit 1; done' -- "$PREVIOUS_ROOT" "$SEALED_ROOT"; then
+              exit 0
+            fi
+            sleep 2
+          done
+          exit 1

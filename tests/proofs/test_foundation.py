@@ -85,7 +85,7 @@ def test_source_rule_is_enforced() -> None:
 
 
 def test_review_is_compiled_by_gh_aw_and_sets_the_required_check() -> None:
-    for name, engine in (("review", "id: deepseek-harness"), ("review-claude", "engine: claude")):
+    for name, engine in (("review", "id: deepseek-harness"), ("review-claude", "  id: claude\n")):
         source = (WORKFLOWS / f"{name}.md").read_text()
         assert engine in source
         assert "pull_request_target" in source
@@ -104,7 +104,8 @@ def test_rubric_is_verbatim_upstream() -> None:
 def test_ci_gives_pr_code_no_secret_and_no_cache() -> None:
     ci = (WORKFLOWS / "ci.yml").read_text()
     assert "pull_request_target" in ci
-    assert "runs-on: ubuntu-" in ci
+    assert "runs-on: [self-hosted, linux, x64, sextant-jit-sealed]" in ci
+    assert "docker://" not in ci
     assert "secrets." not in ci
     assert "enable-cache: false" in ci
     assert "package-manager-cache: false" in ci

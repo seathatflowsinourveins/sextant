@@ -9,3 +9,12 @@ rules:
     ignore:
       - review.lock.yml
       - review-claude.lock.yml
+  # gh-aw 1.0.1's ARC/DinD tool-cache redirection writes only trusted RUNNER_TEMP-derived
+  # paths, before PR content executes. Exact generated steps only; no rule is disabled.
+  # Source: gh-aw 0627fdbe compiler; zizmor configuration read 2026-11-07.
+  github-env:
+    ignore:
+      - review.lock.yml:542:9
+      - review.lock.yml:553:9
+      - review-claude.lock.yml:542:9
+      - review-claude.lock.yml:553:9

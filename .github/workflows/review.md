@@ -12,13 +12,25 @@ permissions:
   pull-requests: read
 environment: review
 checkout: {}
+runs-on: [self-hosted, linux, x64, sextant-jit-docker]
+runs-on-slim: [self-hosted, linux, x64, sextant-jit-docker]
+runner:
+  topology: arc-dind
 strict: false
 engine:
   id: deepseek-harness
   env:
     ANTHROPIC_BASE_URL: https://api.deepseek.com/anthropic
     ANTHROPIC_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-model: anthropic/deepseek-v4-pro
+model: anthropic/deepseek-flash
+# AWF's API proxy prices only models in its own tables, which lack DeepSeek's API name deepseek-flash
+# (gh-aw reference/glossary.md "Missing Model AI Credits Pricing"). DeepSeek's published peak rates
+# for it, in $/1M tokens (api-docs.deepseek.com/quick_start/pricing, read 2026-11-07), bound the guard.
+models:
+  default-ai-credits-pricing:
+    input: 0.3
+    output: 1.2
+    cache_read: 0.006
 imports:
   - shared/deepseek-harness.md
 network:
@@ -30,6 +42,7 @@ tools:
     mode: gh-proxy
     toolsets: [repos, pull_requests]
 safe-outputs:
+  runs-on: [self-hosted, linux, x64, sextant-jit-docker]
   threat-detection: false
   create-check-run:
     name: review

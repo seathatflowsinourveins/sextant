@@ -1,0 +1,10 @@
+{
+  "memory_floor_gib": {"value": 20, "authority": "Owner/lead #53, 2026-11-07; MemAvailable, handbook/practices.md"},
+  "memory_max_gib": {"value": 6, "authority": "28 GiB available receipt minus owner's 20 GiB floor, with 2 GiB margin; systemd MemoryMax; uncalibrated starting cap"},
+  "runners": {"value": 2, "authority": "#201: one serial slot per label-routed profile (sealed, docker), both inside the whole-UID memory cap; uncalibrated starting concurrency"},
+  "boot_wait_seconds": {"value": 300, "authority": "#201 boot enablement (lead, 2026-11-07): bound on waiting for UID 1501's daemon and for GitHub before a slot stops for operator attention; uncalibrated starting value"},
+  "restart_seconds": {"value": 2, "authority": "Installed upstream dockerd-rootless-setuptool.sh systemd unit RestartSec=2; uncalibrated starting delay"},
+  "start_limit": {"value": "20 starts per 300 s", "authority": "#201 lifecycle (lead, 2026-11-07): systemd.unit(5) StartLimitBurst/StartLimitIntervalSec bound restarts after failures; normal job cadence stays below it; uncalibrated starting value"},
+  "sealed_subnet": {"value": "10.231.0.0/24", "authority": "#201: one sealed job at a time on a user-defined bridge outside Docker's default address pools (172.17.0.0/16-172.31.0.0/16, 192.168.0.0/16) and RootlessKit's 10.0.2.0/24; uncalibrated"},
+  "runner_group_id": {"value": 1, "authority": "GitHub repository JIT REST documented default runner group; read 2026-11-07"}
+}

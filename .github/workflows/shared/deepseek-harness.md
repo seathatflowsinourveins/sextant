@@ -1,7 +1,6 @@
 ---
 engine:
   id: deepseek-harness
-  detection-engine: copilot
   version: "0.2.2-rc.1"
   display-name: DeepSeek Harness
   description: DeepSeek Harness (dsh) with headless execution and multi-provider LLM support
@@ -134,8 +133,12 @@ engine:
         mkdirSync(homeRoot, { recursive: true, mode: 0o700 });
         const dshHome = mkdtempSync(join(homeRoot, "gh-aw-"));
         const patchPath = join(dshHome, "cordis.patch.yml");
+        // ADR-0030 max effort, dsh 0.2.2-rc.1's documented keys: a hand-declared model reasons only
+        // when it offers efforts, and adaptive thinking makes pi-ai's anthropic-messages send
+        // output_config.effort, which DeepSeek's Anthropic endpoint supports.
+        const effort = isAnthropic ? "max" : undefined;
         const patch = [
-          { id: "agent-default-model", config: { provider: "awf-proxy", model } },
+          { id: "agent-default-model", config: { provider: "awf-proxy", model, ...(effort && { reasoningEffort: effort }) } },
           {
             id: "llm-pi-ai",
             config: {
@@ -145,7 +148,14 @@ engine:
                   apiKeyEnv,
                   api: isAnthropic ? "anthropic-messages" : "openai-completions",
                   baseURL,
-                  models: [{ id: model, name: model }],
+                  ...(effort && { reasoning: effort }),
+                  models: [
+                    {
+                      id: model,
+                      name: model,
+                      ...(effort && { reasoningEfforts: { [effort]: effort }, compat: { forceAdaptiveThinking: true } }),
+                    },
+                  ],
                 },
               },
             },
@@ -186,8 +196,9 @@ imports:
   - shared/deepseek-harness.md
 ```
 
-This unsupported sample pins `@deepseek-ai/dsh@0.2.0-rc.2` and runs its one-shot
-`headless` profile. The prompt is piped verbatim through stdin, not exposed in
+This unsupported sample pinned `@deepseek-ai/dsh@0.2.0-rc.2`; Sextant pins 0.2.2-rc.1 and runs its one-shot
+`headless` profile. On the Anthropic route the patch requests max reasoning effort
+(`reasoningEffort`, `reasoningEfforts`, `compat.forceAdaptiveThinking` and the route's `reasoning`). The prompt is piped verbatim through stdin, not exposed in
 process arguments. Each run uses a fresh private `$DSH_HOME` under `.dsh`;
 `cordis.patch.yml` selects the model and provider endpoint without overwriting
 repository settings. The patch contains credential environment-variable names,

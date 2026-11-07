@@ -1,0 +1,4 @@
+self-hosted-runner:
+  labels:
+    - sextant-jit-sealed
+    - sextant-jit-docker

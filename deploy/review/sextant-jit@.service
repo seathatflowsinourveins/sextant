@@ -1,0 +1,20 @@
+# Install under the credential producer's user manager, never as sextant-review.service.
+# One instance per profile, enabled at boot with lingering: sextant-jit@sealed, sextant-jit@docker.
+[Unit]
+Description=Sextant serial ephemeral JIT runner slot (%i)
+# Bounded retries (systemd.unit(5)): a transient failure restarts, a persistent one stops the slot.
+StartLimitIntervalSec=300
+StartLimitBurst=20
+[Service]
+Type=exec
+ExecStart=/usr/local/lib/sextant-jit/jit.sh %i
+Restart=always
+# The TERM trap cleans up and exits 130 (systemd.service(5) SuccessExitStatus=).
+SuccessExitStatus=130
+RestartSec=2
+LimitCORE=0
+KillMode=mixed
+# Covers on_exit's 60 s daemon-lock wait, cleanup and deregistration.
+TimeoutStopSec=120
+[Install]
+WantedBy=default.target

@@ -12,7 +12,15 @@ permissions:
   pull-requests: read
 environment: review
 checkout: {}
-engine: claude
+runs-on: [self-hosted, linux, x64, sextant-jit-docker]
+runs-on-slim: [self-hosted, linux, x64, sextant-jit-docker]
+runner:
+  topology: arc-dind
+engine:
+  id: claude
+  env:
+    # Claude Code's documented effort setting; gh-aw's ?effort= applies only in routed mode.
+    CLAUDE_CODE_EFFORT_LEVEL: max
 model: opus
 network:
   allowed:
@@ -22,6 +30,7 @@ tools:
     mode: gh-proxy
     toolsets: [repos, pull_requests]
 safe-outputs:
+  runs-on: [self-hosted, linux, x64, sextant-jit-docker]
   threat-detection: false
   create-check-run:
     name: review
