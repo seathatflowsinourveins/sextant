@@ -1,6 +1,8 @@
 {
   "memory_floor_gib": {"value": 20, "authority": "Owner/lead #53, 2026-11-07; MemAvailable, handbook/practices.md"},
-  "memory_max_gib": {"value": 6, "authority": "28 GiB available receipt minus owner's 20 GiB floor, with 2 GiB margin; systemd MemoryMax; uncalibrated starting cap"},
+  "memory_max_gib": {"value": 13, "authority": "2 x 6 GiB per-slot hard limits plus 320 MiB measured non-container RSS = 12.3125 GiB, rounded up to 13 GiB; systemd MemoryMax and Docker --memory, read 2026-11-07; measured 2026-11-07 16:21:06 EST; not load-tested"},
+  "slot_memory_gib": {"value": 6, "authority": "#201 per-slot Docker --memory hard limit at jit.sh; Docker container memory resource constraints, read 2026-11-07; uncalibrated starting value"},
+  "memory_overhead_mib": {"value": 320, "authority": "Measured 2026-11-07 16:21:06 EST at zero docker scopes under user@1501.service/user.slice: rootlesskit 53052 + dockerd 152616 + containerd 79272 + /proc/self/exe 19744 + user manager (systemd 12892, (sd-pam) 4088, dbus-daemon 5164) = 326828 kB = 319.2 MiB, rounded up to 320 MiB; two transient docker CLI clients excluded; one sample, not load-tested"},
   "runners": {"value": 2, "authority": "#201: one serial slot per label-routed profile (sealed, docker), both inside the whole-UID memory cap; uncalibrated starting concurrency"},
   "boot_wait_seconds": {"value": 300, "authority": "#201 boot enablement (lead, 2026-11-07): bound on waiting for UID 1501's daemon and for GitHub before a slot stops for operator attention; uncalibrated starting value"},
   "restart_seconds": {"value": 2, "authority": "Installed upstream dockerd-rootless-setuptool.sh systemd unit RestartSec=2; uncalibrated starting delay"},

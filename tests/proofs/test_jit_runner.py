@@ -87,6 +87,38 @@ def test_each_slot_is_a_boot_enabled_template_instance_that_stops_cleanly() -> N
     assert limits["runners"]["value"] == 2 and limits["boot_wait_seconds"]["value"] == 300
 
 
+def test_the_whole_account_cap_holds_both_slot_limits_plus_the_measured_daemon() -> None:
+    limits = json.loads((REVIEW / "limits.json").read_text())
+    floor = limits["memory_floor_gib"]["value"]
+    cap = limits["memory_max_gib"]["value"]
+    slot = limits["slot_memory_gib"]["value"]
+    overhead = limits["memory_overhead_mib"]["value"]
+    runners = limits["runners"]["value"]
+    # Two 6 GiB slots plus the 320 MiB measured non-container RSS; 13 GiB is the smallest whole GiB.
+    assert runners == 2 and slot == 6
+    assert overhead >= 320
+    needed_mib = runners * slot * 1024 + overhead
+    smallest_cap = (needed_mib + 1023) // 1024
+    assert cap >= smallest_cap
+    conf = (REVIEW / "user-1501-limits.conf").read_text()
+    assert "[Slice]" in conf
+    assert f"MemoryMax={cap}G" in conf and "MemorySwapMax=0" in conf
+    readme = (REVIEW / "README.md").read_text()
+    assert f"Admission needs {floor + cap} GiB `MemAvailable`" in readme
+    jit = (REVIEW / "jit.sh").read_text()
+    assert '--memory "${slot_gib}g"' in jit and '--memory-swap "${slot_gib}g"' in jit
+    assert '--memory "${cap}g"' not in jit
+    _jit(
+        f"cap={cap}; slot_gib={slot}; runner_count={runners}; "
+        f"overhead_mib={overhead}; cap_covers_slots"
+    )
+    _jit(
+        f"cap={smallest_cap - 1}; slot_gib={slot}; runner_count={runners}; "
+        f"overhead_mib={overhead}; cap_covers_slots",
+        expect_ok=False,
+    )
+
+
 def test_the_runner_id_is_recorded_and_only_the_configuration_reaches_the_container(
     tmp_path: Path,
 ) -> None:

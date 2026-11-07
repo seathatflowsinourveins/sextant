@@ -247,6 +247,11 @@ arm_exit() {
   trap 'exit 130' INT TERM
 }
 
+# The whole-account cap must hold every slot's hard limit plus the daemon's measured RSS.
+cap_covers_slots() {
+  (( cap * 1024 >= runner_count * slot_gib * 1024 + overhead_mib ))
+}
+
 main() {
   profile=${1:-}
   runner_labels "$profile" >/dev/null || { echo 'usage: jit.sh sealed|docker' >&2; exit 2; }
@@ -265,7 +270,13 @@ main() {
   [[ $(stat -f -c %T "$review_runtime") == tmpfs ]]
   floor=$(jq -r .memory_floor_gib.value "$installed/limits.json")
   cap=$(jq -r .memory_max_gib.value "$installed/limits.json")
+  slot_gib=$(jq -r .slot_memory_gib.value "$installed/limits.json")
+  runner_count=$(jq -r .runners.value "$installed/limits.json")
+  overhead_mib=$(jq -r .memory_overhead_mib.value "$installed/limits.json")
   sealed_subnet=$(jq -r .sealed_subnet.value "$installed/limits.json")
+  cap_covers_slots || {
+    echo 'JIT admission refused: the whole-account cap does not hold both slots and the daemon' >&2; exit 1;
+  }
   available_kib=$(awk '$1 == "MemAvailable:" {print $2}' /proc/meminfo)
   (( available_kib >= (floor + cap) * 1024 * 1024 )) || {
     echo 'JIT admission refused: insufficient MemAvailable for the floor plus cap' >&2; exit 1;
@@ -298,7 +309,7 @@ main() {
   local options labels args=() label
   mapfile -t options < <(runner_options "$profile" "$root" "$name")
   container=$(docker create --rm --interactive --name "$name" --user 0 \
-    --memory "${cap}g" --memory-swap "${cap}g" --ulimit core=0 "${options[@]}" \
+    --memory "${slot_gib}g" --memory-swap "${slot_gib}g" --ulimit core=0 "${options[@]}" \
     --env "SEXTANT_RUNNER_IMAGE=$image" "$image")
   [[ "$container" =~ ^[0-9a-f]{64}$ ]]
   flock --unlock 8

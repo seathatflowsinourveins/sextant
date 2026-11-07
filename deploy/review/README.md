@@ -36,6 +36,7 @@ Native job logs and summaries provide tamper evidence, not an independent attest
   - [port publishing](https://docs.docker.com/engine/network/port-publishing/): "Setting the default bind address for containers";
   - [Docker with iptables](https://docs.docker.com/engine/network/firewall-iptables/): `DOCKER-USER`;
   - [rootless troubleshooting](https://docs.docker.com/engine/security/rootless/troubleshoot/): "Entering into dockerd namespaces";
+  - [container memory resource constraints](https://docs.docker.com/engine/containers/resource_constraints/): `--memory` and `--memory-swap` hard limits;
   - [prune label filters](https://docs.docker.com/reference/cli/docker/system/prune/);
   - the CLI's `DOCKER_CONFIG`;
   - [build variables](https://docs.docker.com/build/building/variables/): `BUILDX_CONFIG`.
@@ -46,7 +47,7 @@ Native job logs and summaries provide tamper evidence, not an independent attest
   - `systemd.exec(5)` (`PrivateTmp=`: in a user manager it implies `PrivateUsers=`);
   - `loginctl(1)` lingering: "a user manager is spawned for the user at boot";
   - util-linux `setpriv(1)`.
-  - Values and authorities are in `limits.json`; the cap and concurrency are uncalibrated starts.
+  - Values and authorities are in `limits.json`; the per-slot limit and concurrency are uncalibrated starts, and the whole-account cap is measured from both slots plus the rootless daemon.
 
 ## Two profiles
 
@@ -114,13 +115,13 @@ The owner accepted this residual on 2026-11-07 (#201): "Accept + add exit cleanu
 
 1. Build `Dockerfile` with the dedicated rootless daemon. Save the image to root-owned `/var/lib/sextant-jit/runner.tar`, and record `docker image inspect --format '{{.Id}}'` in root-owned `/usr/local/lib/sextant-jit/runner-image`.
 2. Under `/usr/local/lib/sextant-jit/`, install `jit.sh` and `limits.json`, and create the root-owned empty `docker-config` directory.
-3. Install `user-1501-limits.conf` as `/etc/systemd/system/user-1501.slice.d/sextant-jit.conf` and apply the 6 GiB/zero-swap cap.
+3. Install `user-1501-limits.conf` as `/etc/systemd/system/user-1501.slice.d/sextant-jit.conf` and apply the 13 GiB/zero-swap cap.
 4. Install `docker-jit.conf` as the dedicated user's Docker drop-in, and restart that daemon only.
 5. Install `sextant-jit@.service` under the producer's user manager, never as the old runner unit, and enable both instances: `systemctl --user enable --now sextant-jit@sealed sextant-jit@docker`.
 
 Lingering is on for both accounts, so both managers, the daemon and both slots start at boot. Each slot waits up to `boot_wait_seconds` (`limits.json`) for the daemon and for GitHub.
 
-Admission needs 26 GiB `MemAvailable`: the 20 GiB floor plus the 6 GiB cap.
+Admission needs 33 GiB `MemAvailable`: the 20 GiB floor plus the 13 GiB cap.
 
 Restarts follow `Restart=always`: a slot restarts after each job and after a failure, at most `start_limit` times (`limits.json`), so a transient failure recovers and a persistent one leaves the slot down for operator attention.
 
