@@ -30,7 +30,7 @@ build-backend = "uv_build"
 [tool.ruff]
 line-length = 100
 target-version = "py313"
-extend-exclude = [".devcontainer/post_install.py", "src/sextant/strategies/ema_cross.py", "src/sextant/research/b_exit_replay.py", ".claude/skills"]
+extend-exclude = [".devcontainer/post_install.py", "src/sextant/strategies/ema_cross.py", "src/sextant/research/b_exit_replay.py", ".claude/skills", "scripts/scenario-c1"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "S", "RUF"]
