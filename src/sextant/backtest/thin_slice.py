@@ -8,6 +8,7 @@ Each source is pinned in docs/manifest.md:
 - Hold-flat as the control, and a later window as the sim replay: northstar-lanes ADR-0003, P7 and
   P8, and the owner-approved plan's Phase 2
 - The ledger row: the engine's own BacktestResult
+- Realized P&L: native Portfolio.realized_pnls; rc7/rc8 accounting and reports API in the manifest
 """
 
 from __future__ import annotations
@@ -79,16 +80,6 @@ def _strategy() -> EMACross:
     )
 
 
-def _realized_pnl(engine: BacktestEngine) -> Decimal:
-    positions = engine.generate_positions_report()
-    if positions.empty:
-        return Decimal(0)
-    return sum(
-        (Money.from_str(value).as_decimal() for value in positions["realized_pnl"]),
-        start=Decimal(0),
-    )
-
-
 def run_window(window: str, out: Path) -> Run:
     """Run the hold-flat control, then the strategy, over one window. Write the fills and page."""
     ticks = TestDataProvider.trades_from_binance_csv(
@@ -101,7 +92,8 @@ def run_window(window: str, out: Path) -> Run:
 
     engine = _engine(ticks)
     engine.run(start=start, end=end)
-    hold_flat = _realized_pnl(engine)
+    hold_flat = engine.portfolio.realized_pnls(BINANCE_VENUE, target_currency=USDT).get(USDT)
+    hold_flat = hold_flat.as_decimal() if hold_flat is not None else Decimal(0)
     hold_flat_orders = engine.get_result().total_orders
 
     engine.reset()
@@ -109,7 +101,8 @@ def run_window(window: str, out: Path) -> Run:
     engine.run(start=start, end=end)
     result = engine.get_result()
     fills = engine.generate_order_fills_report()
-    pnl = _realized_pnl(engine)
+    pnl = engine.portfolio.realized_pnls(BINANCE_VENUE, target_currency=USDT).get(USDT)
+    pnl = pnl.as_decimal() if pnl is not None else Decimal(0)
 
     out.mkdir(parents=True, exist_ok=True)
     fills.to_csv(out / f"fills-{window}.csv")
