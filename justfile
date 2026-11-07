@@ -16,7 +16,7 @@ lint:
     uv run --frozen ruff format --check .
     uv run --frozen pyright
     uv run --frozen zizmor --offline .github/workflows
-    actionlint .github/workflows/ci.yml .github/workflows/source.yml .github/workflows/scoreboard.yml .github/workflows/dependabot-automerge.yml
+    actionlint .github/workflows/ci.yml .github/workflows/source.yml .github/workflows/scoreboard.yml .github/workflows/dependabot-automerge.yml .github/workflows/consolidation.yml
 
 test:
     uv run --frozen pytest

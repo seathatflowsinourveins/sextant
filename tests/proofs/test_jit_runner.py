@@ -440,6 +440,7 @@ def test_pr_code_and_docker_free_jobs_run_only_on_the_sealed_profile() -> None:
     sealed = {job for job, labels in routes.items() if labels == SEALED}
     assert sealed == {
         "ci.yml/ci",
+        "consolidation.yml/report",
         "source.yml/source",
         "dependabot-automerge.yml/automerge",
         "scoreboard.yml/jit-sealed-smoke",

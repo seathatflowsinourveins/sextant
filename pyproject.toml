@@ -21,6 +21,9 @@ requests = { git = "https://github.com/psf/requests", rev = "6e83187b8feb273ed4c
 
 [dependency-groups]
 dev = ["pytest==9.2.0", "ruff==0.17.4", "zizmor==1.32.0"]
+# The weekly consolidation report only (.github/workflows/consolidation.yml); ci never installs it.
+# mypy-extensions, which isort needs at 1.1.0 or later, is held at 1.1.0: 1.2.0 is under two weeks old.
+consolidation = ["vulture==2.16", "pylint==4.1.3", "mypy-extensions==1.1.0"]
 
 [build-system]
 requires = ["uv_build>=0.13.7,<0.14"]
