@@ -122,9 +122,9 @@ def test_the_decimal_basis_is_the_positions_avg_px_open() -> None:
 def test_a_same_order_remainder_is_canceled_before_it_buys_into_the_breach() -> None:
     """ADR-0005:36 (#169): the breach cancels the entry's remainder and proves it terminal before
     the one exit, so the remainder never buys into the breach and the venue never resizes the exit
-    over it. The chase is off (#98). Each later bid moves up through the resting limit, because an
-    L1 maker fill needs a market move (fill-prices-and-matching.md, "L1 books"); each move fills the
-    bid's displayed 2."""
+    over it. The chase is off (#98), so the resting sell pages. Each later bid moves up through the
+    resting limit, because an L1 maker fill needs a market move (fill-prices-and-matching.md, "L1
+    books"); each move fills the bid's displayed 2."""
     wide = Quote("99.50", "100.05", bid_size="2")  # breaches; the ask is above the entry limit
     through = Quote("99.60", "100.01", bid_size="2")  # would have filled the remaining 4
     rising = [Quote(f"99.6{d}", "100.05", bid_size="2") for d in (2, 4, 6, 8)]
@@ -135,7 +135,7 @@ def test_a_same_order_remainder_is_canceled_before_it_buys_into_the_breach() -> 
     assert D(sell["qty"]) == 6 and "entry_fill" not in _kinds(r)
     assert [(D(q), D(f)) for _c, q, f in r.sells] == [(D(6), D(6))]
     assert r.max_working_sells == 1 and r.position == 0 and _kinds(r)[-1] == "flat"
-    assert not r.paused and r.pages == []
+    assert not r.paused and r.pages == ["chase_unavailable"]
 
 
 def test_every_position_event_follows_its_order_fill() -> None:
@@ -241,8 +241,8 @@ class Scripted(ExitEngine):
         super().on_trade(trade)
 
 
-def _tick(i: int, item: Quote | Trade) -> QuoteTick | TradeTick:
-    ts = START + i * NS
+def _tick(start: int, i: int, item: Quote | Trade) -> QuoteTick | TradeTick:
+    ts = start + i * NS
     if isinstance(item, Trade):
         price, size = Price.from_str(item.price), Quantity.from_str("1")
         return TradeTick(EQUITY.id, price, size, AggressorSide.BUY, TradeId(str(i)), ts, ts)
@@ -259,6 +259,7 @@ def tape_run(
     session: str = "rth",
     risk: RiskEngineConfig | None = None,
     latency: StaticLatencyModel | None = None,
+    start: int = START,
 ) -> Tape:
     engine = BacktestEngine(
         BacktestEngineConfig(
@@ -279,7 +280,7 @@ def tape_run(
             latency_model=latency,
         )
         engine.add_instrument(EQUITY)
-        engine.add_data([_tick(i, item) for i, item in enumerate(items)])
+        engine.add_data([_tick(start, i, item) for i, item in enumerate(items)])
         strategy = Scripted(
             ExitEngineConfig(
                 instrument_id=EQUITY.id,
@@ -294,7 +295,7 @@ def tape_run(
         orders = engine.cache.orders(instrument_id=EQUITY.id)
         fills = sorted(
             (
-                (e.ts_event - START) // NS,
+                (e.ts_event - start) // NS,
                 e.order_side.name,
                 str(e.last_qty),
                 str(e.last_px),
@@ -305,14 +306,16 @@ def tape_run(
             if isinstance(e, OrderFilled)
         )
         net = sum((D(q) if s == "BUY" else -D(q) for _t, s, q, _p, _o in fills), D(0))
-        name = {
-            o.client_order_id: strategy.names.get(str(o.client_order_id), f"engine-{o.side.name}")
-            for o in orders
-        }
+        name, seen = {}, []  # the engine's own orders: engine-SELL, then engine-SELL-2, ...
+        for o in orders:
+            seen.append(o.side.name)
+            n = seen.count(o.side.name)
+            label = f"engine-{o.side.name}" + (f"-{n}" if n > 1 else "")
+            name[o.client_order_id] = strategy.names.get(str(o.client_order_id), label)
         status = {name[o.client_order_id]: o.status.name for o in orders}
         timeline = sorted(
             (
-                ((e.ts_event - START) // NS, name[o.client_order_id], type(e).__name__)
+                ((e.ts_event - start) // NS, name[o.client_order_id], type(e).__name__)
                 for o in orders
                 for e in o.events()
             ),
@@ -331,7 +334,9 @@ def tape_run(
         engine.dispose()
 
 
+NO_CHASE = dataclasses.replace(FIXTURE, chase_cap_fraction=None, chase_min_interval_s=None)
 STARTS = ExitParams.starts()
+PRE = START - 3600 * NS  # 08:30 ET, pre-market (sextant.paper.sessions)
 
 
 def _sold(t: Tape, *, owner: bool | None = None) -> D:
@@ -378,11 +383,11 @@ def test_a_crossing_is_retained_through_a_rebound_while_the_remainder_cancels() 
 
 
 def test_the_cancel_first_exit_cancels_only_the_houses_own_orders() -> None:
-    """ADR-0007:16-17: cancel acts only on house orders. An owner BUY LIMIT rests below the market
-    while the breach persists; the house exit never cancels it."""
+    """ADR-0007:16-19: cancel acts only on house orders, and a working order the house didn't send
+    freezes the symbol and pages before any cancel. An owner BUY LIMIT rests below the market."""
     owner_bid = Order(1, "5", price="99.00", owner=True)
     t = tape_run([FLAT] * 3 + [LOW] * 4, [Order(0, "10"), owner_bid])
-    assert _sold(t, owner=False) == 10
+    assert _sold(t) == 0 and t.paused and t.pages == ["foreign_order"]
     assert t.status["owner-1"] == "ACCEPTED"
     assert not [x for x in t.timeline if x[1] == "owner-1" and "Cancel" in x[2]]
 
@@ -568,3 +573,203 @@ def test_a_late_cancel_from_a_closed_cycle_never_sells_the_next_position() -> No
     script = [Order(0, "10", price="100.50"), owner_sells_6, Order(5, "10")]
     t = tape_run([thin] + [wide] * 4 + [again] * 6, script, latency=late)
     assert t.status["house-1"] == "CANCELED" and _sold(t, owner=False) == 0 and t.net == 10
+
+
+def test_an_owner_add_while_the_managed_sell_rests_is_never_sold_back() -> None:
+    """#170, ADR-0007:17: the venue resizes a resting reduce-only sell to the position, so after an
+    owner add it would sell the owner's shares. The pause cancels the house's resting sell."""
+    wide, owner_fill = (
+        Quote("99.50", "100.05", bid_size="2"),
+        Quote("99.50", "100.01", bid_size="2"),
+    )
+    rising = [Quote(f"{D('99.52') + D('0.02') * i}", "100.05", bid_size="2") for i in range(10)]
+    script = [Order(0, "10"), Order(4, "5", price="100.05", owner=True)]
+    t = tape_run([FLAT] + [wide] * 3 + [owner_fill] + rising, script, NO_CHASE)
+    assert _sold(t) == 2 and t.net == 13  # no sell fill after the owner's 5 landed
+    assert t.paused and t.pages == ["chase_unavailable", "owner_add"]
+    assert t.status["owner-1"] == "FILLED" and t.status["engine-SELL"] == "CANCELED"
+
+
+def test_a_resting_sell_with_the_chase_unavailable_pages() -> None:
+    """#211 part 1: with the chase rows unavailable (#98) the sell rests at the breach bid and never
+    follows the price, so a person is paged. The control's chase sells out."""
+    thin_low = Quote("99.50", "99.52", bid_size="2")
+    falling = [
+        Quote(f"{D('99.48') - D('0.02') * i}", f"{D('99.50') - D('0.02') * i}") for i in range(20)
+    ]
+    t = tape_run([FLAT] * 5 + [thin_low] * 3 + falling, [Order(0, "10")], NO_CHASE)
+    assert _sold(t) == 2 and t.net == 8
+    assert t.pages == ["chase_unavailable"] and not t.paused
+    control = tape_run([FLAT] * 5 + [thin_low] * 3 + falling, [Order(0, "10")], FIXTURE)
+    assert control.net == 0 and control.pages == []
+
+
+def test_outside_rth_a_stale_bid_never_prices_the_exit() -> None:
+    """#211 part 2, ADR-0005 X2: a quote needs age <= quote_max_age_s on every path that prices
+    the exit. One quote at second 0, then only falling prints; the breach persists at second 6."""
+    items: list[Quote | Trade] = [Quote("100.00", "100.02")] + [Trade("100.02")] * 3
+    items += [Trade(f"{D('99.70') - D('0.10') * i}") for i in range(12)]
+    t = tape_run(items, [Order(0, "10")], session="outside", start=PRE)
+    assert not [e for e in t.events if e["event"].startswith("breach_sell")]
+    assert t.pages == ["awaiting_quote"] and t.net == 10
+
+
+def test_outside_rth_a_zero_bid_never_prices_the_exit() -> None:
+    """#211 part 2: a one-sided quote (bid 0.00) never prices the sell; it was denied
+    PRICE_NOT_POSITIVE and then held with no retry and no page."""
+    items: list[Quote | Trade] = [Quote("100.00", "100.02")] + [Trade("100.02")] * 3
+    items += [Quote("0.00", "100.02", bid_size="0")]
+    items += [Trade(f"{D('99.70') - D('0.10') * i}") for i in range(10)]
+    t = tape_run(items, [Order(0, "10")], NO_CHASE, session="outside", start=PRE)
+    assert "engine-SELL" not in t.status
+    assert t.pages == ["awaiting_quote"] and t.net == 10
+
+
+def test_a_denied_managed_sell_pauses_and_pages() -> None:
+    """#211: a denied or rejected managed sell is never left as the exit with no page. RiskEngine's
+    submit throttle (one order per 10 s) denies the sell 5 s after the entry."""
+    risk = RiskEngineConfig(bypass=False, max_order_submit_rate="1/00:00:10")
+    t = tape_run([FLAT] * 3 + [LOW] * 6, [Order(0, "10")], risk=risk)
+    assert t.status["engine-SELL"] == "DENIED"
+    assert t.paused and t.pages == ["sell_refused"] and t.net == 10
+
+
+def test_an_owner_resting_sell_freezes_the_symbol_instead_of_a_second_exit() -> None:
+    """#212, ADR-0007:18-19: an owner SELL LIMIT 10 @ 100.50 reserves the 10. A foreign open order
+    freezes the symbol and pages; the house never adds a second full-size exit."""
+    up = Quote("100.50", "100.52")
+    owner_tp = Order(1, "10", side=OrderSide.SELL, price="100.50", owner=True)
+    t = tape_run([FLAT] * 3 + [LOW] * 4 + [up] * 3, [Order(0, "10"), owner_tp])
+    assert _sold(t, owner=False) == 0 and t.net == 0  # only the owner's own sell: never short
+    # The owner's fill left the account flat with every order terminal, which clears the pause.
+    assert t.pages == ["foreign_order"] and not t.paused
+
+
+def test_an_owner_resting_buy_at_the_house_sell_fails_closed_with_a_page() -> None:
+    """A2, Alpaca User Protection (read 2026-11-07): a SELL LIMIT at or below an opposite-side
+    resting BUY LIMIT is refused with HTTP 403, in paper too. The owner's BUY is never canceled,
+    so the house never sends that sell: the symbol freezes and pages, never a silent hold."""
+    owner_bid = Order(1, "5", price="99.50", owner=True)  # rests: the ask stays above it
+    t = tape_run([FLAT] * 3 + [LOW] * 4, [Order(0, "10"), owner_bid])
+    assert "engine-SELL" not in t.status and t.net == 10
+    assert t.status["owner-1"] == "ACCEPTED"  # untouched
+    assert t.paused and t.pages == ["foreign_order"]
+
+
+def test_a_close_with_a_foreign_order_still_working_keeps_the_pause() -> None:
+    """#171's other side: only a verified flat clears a pause. The breach freezes on the owner's
+    resting BUY; the owner then sells the 10 flat, but that BUY still works, so the symbol stays
+    paused and the house never re-arms."""
+    owner_bid = Order(1, "5", price="99.00", owner=True)
+    owner_sells = Order(8, "10", side=OrderSide.SELL, owner=True)
+    t = tape_run([FLAT] * 3 + [LOW] * 7, [Order(0, "10"), owner_bid, owner_sells])
+    assert t.net == 0 and "flat" in [e["event"] for e in t.events]
+    assert t.paused and t.pages == ["foreign_order"] and t.status["owner-1"] == "ACCEPTED"
+
+
+def test_a_level_at_the_bid_is_refused_pages_and_is_set_once_the_bid_moves_up() -> None:
+    """#210 cause 2, a lead ruling at the boundary of two sourced rules: a $2 entry at the 2.03 ask
+    with a 0.03 spread puts entry - buffer on the unchanged 2.00 bid. rc8 rejects a stop already
+    in the market (matching_engine/mod.rs:4311-4330) and investor.gov enters a sell stop below the
+    market, so the level is refused and pages, and nothing sells. A tick up sets it."""
+    q, up = Quote("2.00", "2.03"), Quote("2.01", "2.03")
+    t = tape_run([q, Trade("2.03")] + [q] * 8 + [up] * 3, [Order(0, "10")], STARTS)
+    assert _sold(t) == 0 and t.net == 10 and t.pages == ["trigger_in_market"]
+    (first,) = [e for e in t.events if e["event"] == "initial_trigger"]
+    assert first["ts"] == str(START + 10 * NS) and D(first["trigger"]) < D("2.01")
+
+
+def test_a_level_the_bid_already_crossed_sells_after_persistence() -> None:
+    """ADR-0005:26 governs the other side of that boundary: starts' range is unknown until a print,
+    and the bid falls through entry - buffer before it. The level is set strictly above the bid,
+    and the persisted breach (X4: three bids over 1 s) sells; nothing sells at once."""
+    crash = Quote("98.00", "98.02")
+    t = tape_run([FLAT, crash, crash, Trade("98.01")] + [crash] * 4, [Order(0, "10")], STARTS)
+    (first,) = [e for e in t.events if e["event"] == "initial_trigger"]
+    assert first["ts"] == str(START + 4 * NS) and D(first["trigger"]) > D("98.00")
+    (sell,) = [e for e in t.events if e["event"].startswith("breach_sell")]
+    assert sell["ts"] == str(START + 6 * NS) and t.net == 0 and t.pages == ["chase_unavailable"]
+
+
+def test_a_lock_raised_onto_the_unchanged_bid_is_refused_in_both_sessions() -> None:
+    """#210 cause 2's third path (rc8 update_stop_market_order, mod.rs:6774-6812, refuses a modify
+    into the market): the lock arms below a flat 5.06/5.07 quote; one print at the ask raises H to
+    5.07, so H - spread lands on the 5.06 bid. The raise is refused against the bid in both
+    sessions, though outside RTH the breach input stays the trade."""
+    items: list[Quote | Trade] = [Quote("5.00", "5.01")]
+    items += [Quote("5.06", "5.07"), Trade("5.06")] * 35
+    items += [Quote("5.06", "5.07"), Trade("5.07")]
+    items += [Quote("5.06", "5.07"), Trade("5.06")] * 30
+    for session, start in (("rth", START), ("outside", PRE)):
+        t = tape_run(items, [Order(0, "10")], STARTS, session=session, start=start)
+        assert "armed" in [e["event"] for e in t.events]
+        assert _sold(t) == 0 and t.net == 10, session
+
+
+def test_a_raise_made_while_the_bid_followed_the_high_stands_through_a_fast_drop() -> None:
+    """The other side of #210's raise rule (lead ruling): a raise that lands in the market only
+    because the bid fell after the high is a real drop, not a spike the bid never followed. The
+    print at 100.50 comes with the bid at 100.48, so the raise to 100.29996 stands, and the bid's
+    fall to 100.20 is a persisted breach (X4) that sends the exit."""
+    up, drop = Quote("100.48", "100.50"), Quote("100.20", "100.22")
+    t = tape_run([FLAT] * 3 + [up, Trade("100.50")] + [drop] * 4, [Order(0, "10")])
+    (sell,) = [e for e in t.events if e["event"].startswith("breach_sell")]
+    assert D(sell["trigger"]) == D("100.29996") and sell["ts"] == str(START + 7 * NS)
+
+
+def test_outside_rth_an_unknown_bid_keeps_the_previous_level_until_the_bid_recovers() -> None:
+    """Lead ruling with #211: a zero or stale bid can't judge a level, so it is unknown, never "in
+    the market". The level set at second 1 stands while the bid is 0.00 and prints rise; the
+    persisted trade breach then pages once, awaiting a quote, and nothing sells until one comes."""
+    items: list[Quote | Trade] = [Quote("100.00", "100.02"), Trade("100.02")]
+    items += [Quote("0.00", "100.02", bid_size="0")]
+    items += [Trade(p) for p in ("100.30", "100.50", "99.70", "99.60", "99.50", "99.45")]
+    items += [Quote("99.40", "99.42"), Trade("99.40"), Quote("99.40", "99.42")]
+    t = tape_run(items, [Order(0, "10")], session="outside", start=PRE)
+    (first,) = [e for e in t.events if e["event"] == "initial_trigger"]
+    (sell,) = [e for e in t.events if e["event"].startswith("breach_sell")]
+    assert sell["trigger"] == first["trigger"]  # never raised by the prints at 100.30-100.50
+    assert int(sell["ts"]) == PRE + 10 * NS and t.pages == ["awaiting_quote"]
+
+
+def test_outside_rth_no_level_is_set_against_an_unknown_bid_and_it_pages_once() -> None:
+    """Never refuse every level against a zero bid, and never set one from it: with no level yet,
+    a one-sided quote pages quote_unavailable once and the level is set when the bid returns."""
+    items: list[Quote | Trade] = [Quote("100.00", "100.02"), Quote("0.00", "100.02", bid_size="0")]
+    items += [Trade("100.02")] * 3 + [Quote("100.00", "100.02"), Trade("100.02")]
+    t = tape_run(items, [Order(0, "10")], session="outside", start=PRE)
+    assert t.pages == ["quote_unavailable"] and t.net == 10
+    (first,) = [e for e in t.events if e["event"] == "initial_trigger"]
+    assert int(first["ts"]) == PRE + 6 * NS
+
+
+def test_outside_rth_a_resting_sell_is_never_repriced_from_a_stale_bid() -> None:
+    """#211: the chase reprices only from a quote within quote_max_age_s (5 s here). The last quote
+    is at second 2; the sell rests above it from second 5 and follows the prints until second 7.
+    From second 8 the quote is stale, so the sell keeps its price and a person is paged."""
+    items: list[Quote | Trade] = [Quote("100.00", "100.02"), Trade("100.02")]
+    items += [Quote("99.40", "99.42")] + [Trade(p) for p in ("99.70", "99.65", "99.60", "99.55")]
+    items += [Trade(p) for p in ("99.50", "99.45", "99.40", "99.35")]
+    t = tape_run(items, [Order(0, "10")], session="outside", start=PRE)
+    chases = [int(e["ts"]) for e in t.events if e["event"] == "chase"]
+    assert chases and max(chases) == PRE + 7 * NS and t.pages == ["awaiting_quote"]
+
+
+def _handover(items: list[Quote | Trade], session: str, start: int) -> Tape:
+    return tape_run(items, [Order(0, "10")], session=session, start=start)
+
+
+def test_an_outside_exit_hands_over_at_0930_by_a_terminal_cancel() -> None:
+    """ADR-0005 venue limits, "terminal cancel precedes handover", on sextant.paper.sessions' XNYS
+    clock: a pre-market exit rests and chases on prints from 09:29:45. At 09:30:00 the engine
+    switches to bids, cancels that sell and waits until it is terminal; only then does the RTH exit
+    go out. The pre-market sell is never repriced after 09:30."""
+    items: list[Quote | Trade] = [Quote("100.00", "100.02")]
+    for i in range(1, 40):
+        px = D("99.80") - D("0.01") * i
+        items.append(Trade(f"{px}") if i % 2 else Quote(f"{px - D('0.40')}", f"{px + D('0.20')}"))
+    t = _handover(items, "outside", START - 20 * NS)  # 09:29:40; second 20 is 09:30:00
+    pre = [(s, e) for s, n, e in t.timeline if n == "engine-SELL"]
+    rth = [(s, e) for s, n, e in t.timeline if n == "engine-SELL-2"]
+    assert max(s for s, e in pre if e == "OrderUpdated") < 20 and (20, "OrderCanceled") in pre
+    assert min(s for s, e in rth if e == "OrderSubmitted") >= 20 and t.net == 0
