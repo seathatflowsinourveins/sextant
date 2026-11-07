@@ -23,4 +23,4 @@
 - TimesFM 3.0 is a bounded offline trial candidate at revision `43046b85ec22d584a13f8098c2ed39c889e129c2`, pending a scope confirmation; nothing else forecasting, LOB or RL is adopted.
 - A negative result is recorded and kept; it is never re-run until it turns positive.
 
-**Sources.** Harvested from northstar-lanes ADR-0004/0005/0009 and northstar-trading ADR-0019/0015 at the pins in `docs/manifest.md`; NautilusTrader `v2.0.0rc7` (`55c0e82053142bce3a5cba4de4221d3929c2d3bc`).
+**Sources.** Harvested from northstar-lanes ADR-0004/0005/0009 and northstar-trading ADR-0019/0015 at the pins in `docs/manifest.md`; NautilusTrader `v2.0.0rc8` (`d53849b216e20f2c122ca01b4dd0da377638b186`).

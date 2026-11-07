@@ -1,6 +1,8 @@
 # Carried from seathatflowsinourveins/northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:
-# src/northstar_trading/data/catalog.py; only the force-verify variable is renamed (ADR-0013).
-"""Decode against rc7's exported Arrow schema and use its typed catalog API."""
+# src/northstar_trading/data/catalog.py; force-verify variable renamed (ADR-0013).
+# rc8 adaptation: nautilus_trader@d53849b216e20f2c122ca01b4dd0da377638b186,
+# docs/concepts/backtesting/apis-and-runs.md (DataCatalogConfig); metadata names the pinned engine.
+"""Decode against the engine's exported Arrow schema and use its typed catalog API."""
 
 import hashlib
 import json
@@ -23,6 +25,7 @@ from nautilus_trader.backtest import (
     BacktestVenueConfig,
 )
 from nautilus_trader.common import LoggerConfig
+from nautilus_trader.config import DataCatalogConfig
 from nautilus_trader.execution import MakerTakerFeeModel
 from nautilus_trader.model import (
     Bar,
@@ -58,7 +61,7 @@ CATALOG_METADATA = {
     "feed": "sip",
     "adjustment": "raw",
     "currency": "USD",
-    "nautilus_trader": "2.0.0rc7",
+    "nautilus_trader": "2.0.0rc8",
     "alpaca_py": "0.44.0",
     "minute_known_at": "source timestamp + 1 minute",
     "daily_known_at": "next America/New_York midnight (conservative full-source-day close)",
@@ -420,7 +423,7 @@ def catalog_data_config(
     kind = bar_type(symbol, bar)
     return BacktestDataConfig(
         data_type=NautilusDataType.Bar,
-        catalog_path=str(root.resolve()),
+        catalog=DataCatalogConfig(path=str(root.resolve())),
         instrument_id=kind.instrument_id,
         bar_types=[str(kind)],
         start_time=start,
