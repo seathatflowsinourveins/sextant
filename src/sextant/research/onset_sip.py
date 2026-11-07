@@ -99,12 +99,15 @@ def _native_window(
     symbol: str, day: date, rows: Sequence[dict[str, Any]], spec: StocksInPlaySpec
 ) -> OpeningWindow | None:
     five = _opening(rows)
-    if len(five) != 5:
+    if not five:
         return None
     opened = datetime.combine(day, OPEN, NY)
     closed = opened + timedelta(minutes=spec.integer("opening_window"))
     opened_ns = int(opened.timestamp()) * NS
     closed_ns = int(closed.timestamp()) * NS
+    # The opening window is the 5-minute composite over every SIP trade bar
+    # printed in 09:30--09:35; a minute with no print is no trade, not a filled
+    # price. A window with no print at all is censored above.
     composite = _composite(symbol, spec)
     bar = Bar(
         composite,
