@@ -76,11 +76,8 @@ class _ReplayEntry(Strategy):
         if account is not None:
             free = account.balance_free(self.instrument.quote_currency)
             store = SegmentBasis(self.basis_path, str(account.id), self.parameters)
-            self.basis = store.freeze(
-                self.signals.segment,
-                None if free is None else free.as_decimal(),
-                first_read="node_start",
-            )
+            buying_power = None if free is None else free.as_decimal()
+            self.basis = store.freeze(self.signals.segment, buying_power, first_read="node_start")
         self.subscribe_trades(self.instrument.id)
         self.subscribe_quotes(self.instrument.id)
         self.subscribe_bars(self.signals.bar_type)
@@ -290,7 +287,7 @@ def run_replay(
 
     An unavailable fee bound refuses entry. It is never inferred from fixtures.
     """
-    starting_cash = number(starting_cash, "starting_cash")
+    starting_cash = number(starting_cash, "starting_cash", zero=True)
     engine = BacktestEngine(
         BacktestEngineConfig(bypass_logging=True, risk_engine=RiskEngineConfig(bypass=False))
     )

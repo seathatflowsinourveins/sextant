@@ -26,7 +26,7 @@ class SegmentBasis:
             self.receipt = json.loads(path.read_text())
             if self.receipt.get("account") != account:
                 raise ValueError("basis account mismatch")
-            number(self.receipt.get("basis"), "persisted basis")
+            number(self.receipt.get("basis"), "persisted basis", zero=True)
             if not self.receipt.get("segment") or not self.receipt.get("params_hash"):
                 raise ValueError("invalid basis receipt")
 
@@ -41,7 +41,7 @@ class SegmentBasis:
             return None
         if not segment or first_read not in {"segment_start", "node_start"}:
             raise ValueError("basis segment or first-read label")
-        basis = number(buying_power, "buying_power") * self.params["bp_target_fraction"]
+        basis = number(buying_power, "buying_power", zero=True) * self.params["bp_target_fraction"]
         receipt = dict(
             account=self.account,
             segment=segment,

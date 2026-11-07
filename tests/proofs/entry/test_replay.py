@@ -55,6 +55,36 @@ def replay(instrument, tmp_path, data, **overrides):
     return run_replay(**(arguments | overrides))
 
 
+@pytest.mark.parametrize(("ask", "expected_orders"), [("9.99", 0), ("10.00", 1)])
+def test_first_leg_native_ask_respects_quiet_bound(
+    instrument, tmp_path, ask, expected_orders
+) -> None:
+    result = replay(
+        instrument,
+        tmp_path,
+        [
+            quote(0, "9.98", ask),
+            trade(0, "10.01", size=10000),
+            trade(1, "10.02", size=10000),
+            trade(2, "10.03", size=10000),
+        ],
+    )
+    assert len(result.orders) == expected_orders, result.events
+
+
+def test_zero_cash_start_and_frozen_zero_restart_refuse_entry(instrument, tmp_path) -> None:
+    data = [quote(0, "10.00", "10.01")] + [trade(at, "10.01", size=10000) for at in (0, 1, 2)]
+    empty = replay(instrument, tmp_path, data, starting_cash=D(0))
+    assert not empty.orders
+    assert any(event["action"] == "REFUSE" for event in empty.events), empty.events
+    # The node-start zero stays frozen even when a restart has cash available.
+    restarted = replay(instrument, tmp_path, data)
+    assert not restarted.orders
+    assert any(
+        event["action"] == "REFUSE" and "basis" in event["reason"] for event in restarted.events
+    ), restarted.events
+
+
 def test_lower_trade_restart_is_witnessed_in_native_replay(instrument, tmp_path) -> None:
     result = replay(
         instrument,

@@ -123,6 +123,7 @@ class EntryState:
         retain = max(
             self.params.ns("flow_share_window_s"),
             self.params.ns("first_leg_window_s"),
+            self.params.ns("covered_flow_window_s"),
             self.params.ns("covered_flow_baseline_min") * 60,
         )
         while self.trades and self.trades[0].ts_event < tick.ts_event - retain:
@@ -181,7 +182,7 @@ class EntryState:
             flag
             and self.fresh(now)
             and ask.is_finite()
-            and ask > 0
+            and ask >= flag.quiet_price
             and flag.known_at <= now < flag.expires_ts
             and now - flag.first_print_ts <= p.ns("first_leg_window_s")
             and len(run) >= p["first_leg_trades_count"]
@@ -270,7 +271,7 @@ class EntryState:
             or coverage.instrument_id != self.instrument_id
             or coverage.segment != self.segment
             or not coverage.source
-            or not 0 <= coverage.start_ns <= now - baseline_ns
+            or not 0 <= coverage.start_ns <= now - max(baseline_ns, window_ns)
             or not now <= coverage.end_ns <= coverage.known_at <= now
         ):
             return False

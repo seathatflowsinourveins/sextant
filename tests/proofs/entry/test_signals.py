@@ -46,6 +46,15 @@ def test_first_leg_caps_ask_and_time_even_with_unknown_atr() -> None:
     assert not s.first_leg_ready(D("10.01"), START + 121 * SEC)
 
 
+@pytest.mark.parametrize(("ask", "ready"), [("9.99", False), ("10.00", True)])
+def test_first_leg_ask_is_at_or_above_quiet(ask, ready) -> None:
+    s = state()
+    arm(s)
+    for at, price in ((0, "10.01"), (1, "10.02"), (2, "10.03")):
+        feed(s, at, price)
+    assert s.first_leg_ready(D(ask), START + 2 * SEC) is ready
+
+
 def test_missing_atr_is_unknown_until_own_completed_bars_initialize() -> None:
     s = state()
     feed(s, 0, "10.00")
@@ -267,3 +276,26 @@ def test_covered_flow_needs_same_segment_causal_complete_receipt() -> None:
     s.reset_segment("next-segment")
     feed(s, 2, "10.01")
     assert not s.covered_flow(START + 2 * SEC, receipt)
+
+
+@pytest.mark.parametrize(
+    ("first_leg_window", "coverage_start", "last_trade", "covered"),
+    [("120", -60, -30, False), ("30", -120, -29, True)],
+    ids=["short-receipt-refuses", "wide-window-retained"],
+)
+def test_covered_flow_wider_window_is_attested_and_retained(
+    first_leg_window, coverage_start, last_trade, covered
+) -> None:
+    s = state(
+        covered_flow_window_s="120",
+        covered_flow_baseline_min="1",
+        first_leg_window_s=first_leg_window,
+        flow_share_window_s="30",
+    )
+    for at in (-90, last_trade):
+        feed(s, at, "10.01", size=10000)
+    receipt = TradeCoverage(
+        IID, "fixture-segment", START + coverage_start * SEC, START, START, "TEST complete tape"
+    )
+    # One baseline trade and two recent trades: 2 * 60 == 1 * 120.
+    assert s.covered_flow(START, receipt) is covered

@@ -15,10 +15,11 @@ The old campaign's "never stale" rule (seathatflowsinourveins/northstar@b384d298
 | Anthropic | Claude Opus 5.5, max effort | every Claude tab, native on the owner's sign-in; never through a router |
 | OpenAI | `gpt-6.1-sol`, highest effort. The page lists GPT-6.1 Sol **without** an Intelligence Index score; the only scored OpenAI entry is GPT-6 Astra (Max), 57. Sol is the owner's named exception, not a score-based pick | native Codex; OmniRoute's GPT lanes (Pi, OMP, OpenCode v2, Hermes, OpenHands SDK) |
 | Google | Gemini 4 Carbon (High), 60. Interim: Gemini 4 Argon High, the highest model the owner's Google account catalog exposes until Carbon appears there (#62). The owner dropped Gemini CLI, so the surface is Antigravity | Gemini CLI, Antigravity |
-| DeepSeek | to be pinned from DeepSeek's own list. The page's only scored DeepSeek entry is DeepSeek V4.1 Flash 1017 (Max), 33, among open weights | dsh |
+| DeepSeek | DeepSeek-V4.1-Flash-1017 (`deepseek-flash`), thinking enabled and `reasoning_effort=max`. DeepSeek's [model list](https://api-docs.deepseek.com/api/list-models/), [version list](https://api-docs.deepseek.com/quick_start/pricing/) and [effort contract](https://api-docs.deepseek.com/guides/thinking_mode/), read 2026-11-06, establish the latest listed generation and supported `max`; the default is only `high`. Artificial Analysis lists DeepSeek V4.1 Flash 1017 (Max), 33, among open weights | dsh |
 | Meta | to be confirmed from Meta's list. The page lists Muse Wonder unscored | Muse via OmniRoute |
 
 4. **The landscape stays current without anyone:** a daily Orca automation with a precheck reads the evaluation page and each vendor's list. When a family's top changes by 3 or more points, it opens a PR moving that pin, with the evidence. Built by the harness lane's tier 2 (#53).
+5. **No quota hold (owner, 2026-11-06 16:14 EST, [#58](https://github.com/seathatflowsinourveins/sextant/issues/58#issuecomment-6695763286)):** "nevergated the usage , i will reset it when it hit the limit". Keep authorised runtime work moving without a quota hold; post a hit limit immediately as an owner step and continue on available connections.
 
 ## Consequences
 - A pin without a dated read of both sources is unavailable, not a default (AGENTS.md Rule 2).

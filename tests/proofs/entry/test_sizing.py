@@ -1,5 +1,6 @@
 """Catch authority defaults, risk double-counting and funding-bound violations."""
 
+import json
 from decimal import Decimal as D
 
 import pytest
@@ -41,6 +42,42 @@ def test_basis_is_frozen_durable_and_account_segment_scoped(tmp_path) -> None:
     with pytest.raises(ValueError):
         SegmentBasis(path, "fixture-account", params())
     assert path.read_text() == "{"
+
+
+@pytest.mark.parametrize("first_read", ["node_start", "segment_start"])
+def test_zero_basis_first_read_is_durable_and_refuses_entry(
+    instrument, tmp_path, first_read
+) -> None:
+    path = tmp_path / "basis.json"
+    store = SegmentBasis(path, "fixture-account", params())
+    assert store.freeze("pre", D(0), first_read=first_read) == 0
+    restarted = SegmentBasis(path, "fixture-account", params())
+    frozen = restarted.freeze("pre", D("10000"), first_read="node_start")
+    assert frozen == 0
+    result = sizing(instrument, basis=frozen, buying_power=D(0))
+    assert result.quantity.as_decimal() == 0
+    assert result.refusal
+
+
+def test_zero_basis_receipt_loads_without_gaining_new_capital(instrument, tmp_path) -> None:
+    path = tmp_path / "basis.json"
+    path.write_text(
+        json.dumps(
+            dict(
+                account="fixture-account",
+                segment="pre",
+                basis="0",
+                first_read="node_start",
+                params_hash=params().params_hash,
+            )
+        )
+    )
+    store = SegmentBasis(path, "fixture-account", params())
+    frozen = store.freeze("pre", D("10000"), first_read="node_start")
+    assert frozen == 0
+    result = sizing(instrument, basis=frozen)
+    assert result.quantity.as_decimal() == 0
+    assert result.refusal
 
 
 def sizing(instrument, **overrides):
