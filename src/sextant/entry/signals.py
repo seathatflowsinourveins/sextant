@@ -224,11 +224,10 @@ class EntryState:
             ] and at - self.reclaim_run[0].ts_event >= p.ns("reclaim_trades_span_s")
             return
         assert self.high is not None
-        if self.reclaim_consumed_price is not None:
+        if self.reclaim_consumed_price is not None and self.trough is None:
             if price >= self.reclaim_consumed_price:
                 self.high = max(self.high, price)
                 return
-            self.reclaim_consumed_price = None
             self.trough, self.hold_started = price, at
             return
         if self.trough is not None and self.hold_started is not None:

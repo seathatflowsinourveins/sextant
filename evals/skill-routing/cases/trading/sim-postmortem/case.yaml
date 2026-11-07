@@ -1,0 +1,26 @@
+{
+  "schema_version": "1.1",
+  "name": "sim-postmortem",
+  "tags": [
+    "sim"
+  ],
+  "execution": {
+    "prompt": "Analyze post-trade signal outcomes for a sim research note: some signals were false positives, some opportunities were missed and the failures clustered in a different regime. Outline a postmortem and improvement backlog using only these observations; do not change weights or invent P&L.",
+    "allowed_tools": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Skill"
+    ],
+    "append_system_prompt": "Read-only fixture evaluation: no orders, broker/data endpoints, credential access, file writes, shell commands or publication. Missing evidence stays unavailable. Give a concise response for the requested planning or review task.",
+    "timeout_seconds": 3600
+  },
+  "graders": [
+    {
+      "name": "skill-fired",
+      "type": "tool_used",
+      "tool": "Skill",
+      "input_match": "\"skill\"\\s*:\\s*\"(?:[\\w-]+:)?signal-postmortem\""
+    }
+  ]
+}

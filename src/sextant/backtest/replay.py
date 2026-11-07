@@ -28,6 +28,7 @@ from nautilus_trader.config import (
     BacktestEngineConfig,
     BacktestRunConfig,
     BacktestVenueConfig,
+    DataCatalogConfig,
 )
 from nautilus_trader.execution import DefaultFillModel, MakerTakerFeeModel, StaticLatencyModel
 from nautilus_trader.model import AccountType, InstrumentId, NautilusDataType, OmsType
@@ -212,7 +213,7 @@ def run_once(
             data=[
                 BacktestDataConfig(
                     data_type=NautilusDataType.Bar,
-                    catalog_path=str(catalog.resolve()),
+                    catalog=DataCatalogConfig(path=str(catalog.resolve())),
                     instrument_id=i,
                     bar_types=[f"{i}-1-MINUTE-LAST-EXTERNAL"],
                 )

@@ -1,0 +1,26 @@
+{
+  "schema_version": "1.1",
+  "name": "options-research",
+  "tags": [
+    "options"
+  ],
+  "execution": {
+    "prompt": "Compare a protective put and a covered call for an educational research note around earnings. Explain their payoff shapes, Greeks, volatility exposure and missing pricing inputs. There are no option orders or executable prices.",
+    "allowed_tools": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Skill"
+    ],
+    "append_system_prompt": "Read-only fixture evaluation: no orders, broker/data endpoints, credential access, file writes, shell commands or publication. Missing evidence stays unavailable. Give a concise response for the requested planning or review task.",
+    "timeout_seconds": 3600
+  },
+  "graders": [
+    {
+      "name": "skill-fired",
+      "type": "tool_used",
+      "tool": "Skill",
+      "input_match": "\"skill\"\\s*:\\s*\"(?:[\\w-]+:)?options-strategy-advisor\""
+    }
+  ]
+}

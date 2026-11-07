@@ -176,6 +176,27 @@ def test_consumed_reclaim_needs_a_pullback_below_its_event(middle, last) -> None
     assert s.reclaim_ready(D("10.03"), D("0.10"), START + 14 * SEC, covered_flow=True)
 
 
+def test_invalidated_pullback_keeps_the_consumed_event_floor() -> None:
+    s = extended_state()
+    for at, price in (
+        (3, "10.03"),
+        (4, "10.04"),
+        (5, "10.05"),
+        (6, "10.02"),
+        (7, "10.02"),
+        (8, "10.03"),
+        (9, "10.02"),
+        (10, "10.06"),
+        (11, "10.04"),
+        (13, "10.05"),
+    ):
+        feed(s, at, price)
+    assert not s.reclaim_ready(D("10.05"), D("0.10"), START + 13 * SEC, covered_flow=True)
+    for at, price in ((14, "10.02"), (15, "10.02"), (16, "10.03")):
+        feed(s, at, price)
+    assert s.reclaim_ready(D("10.03"), D("0.10"), START + 16 * SEC, covered_flow=True)
+
+
 def test_a_confirmed_retest_at_vwap_keeps_its_confirmation() -> None:
     s = state()
     for offset in (-180, -120, -60):

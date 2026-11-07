@@ -33,6 +33,11 @@ KNOWN=(
   IB_PAPER_PASSWORD
   IB_PAPER_ACCOUNT_ID
   ALPHA_VANTAGE_API_KEY
+  OMNIROUTE_KEY_PI # router-minted by scripts/omni_keys.py, one per GPT runtime; never a Claude model
+  OMNIROUTE_KEY_OMP
+  OMNIROUTE_KEY_OPENCODE
+  OMNIROUTE_KEY_HERMES
+  OMNIROUTE_KEY_OPENHANDS
   # T9's box 2, the Mac's Keychain-only names the owner chose to move (sextant#58). Registry and comments
   # carried from northstar@0243050704565abaf3a95f0f09613cb974a331e5:scripts/keys.sh:48-75. Not the two
   # GITHUB_APP_NORTHSTAR_* keys: they stay with northstar (owner, 2026-11-06: "clean sota").

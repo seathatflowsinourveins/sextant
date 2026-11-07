@@ -23,7 +23,7 @@
 - Hold-flat is the control, not a formality: a strategy that does not beat it after costs has not earned a promotion ([ADR-0002](../../docs/adr/0002-philosophy-and-lanes.md)).
 - A replay with synthetic arrivals is not operational latency, and a minute-bar study is not tick execution; say which one a number came from.
 
-**Sources.** NautilusTrader `v2.0.0rc7` (`55c0e82053142bce3a5cba4de4221d3929c2d3bc`); skfolio 1.12.5 for allocator experiments; harvested northstar-lanes ADR-0009 and northstar-trading ADR-0013/0019 at the pins in `docs/manifest.md`; sim-lane build and enable gates from northstar-lanes ADR-0003's 2026-11-05 amendment and the trading checklist record.
+**Sources.** NautilusTrader `v2.0.0rc8` (`d53849b216e20f2c122ca01b4dd0da377638b186`); skfolio 1.12.5 for allocator experiments; harvested northstar-lanes ADR-0009 and northstar-trading ADR-0013/0019 at the pins in `docs/manifest.md`; sim-lane build and enable gates from northstar-lanes ADR-0003's 2026-11-05 amendment and the trading checklist record.
 
 **Row 6 mechanism proofs.** `timeout 180 uv run --frozen pytest tests/proofs/entry` exercises the entry reducer and native LIMIT lifecycle on explicit synthetic inputs. [Carry and limitations](../../docs/adr/0004-entry.md#replay-evidence); [entry registry](entry-parameters.json) retains unavailable values, including the six missing starts. This enables no account or continuous lane.
 

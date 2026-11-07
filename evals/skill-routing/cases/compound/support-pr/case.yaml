@@ -1,0 +1,26 @@
+{
+  "schema_version": "1.1",
+  "name": "support-pr",
+  "tags": [
+    "support"
+  ],
+  "execution": {
+    "prompt": "Write a pull request title and description for this verified documentation change: explain the existing research-only boundary, its upstream source references and the successful validation. The prepared diff only adds that explanation. I need the description text for review; do not publish it.",
+    "allowed_tools": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Skill"
+    ],
+    "append_system_prompt": "Read-only fixture evaluation: no orders, broker/data endpoints, credential access, file writes, shell commands or publication. Missing evidence stays unavailable. Give a concise response for the requested planning or review task.",
+    "timeout_seconds": 3600
+  },
+  "graders": [
+    {
+      "name": "skill-fired",
+      "type": "tool_used",
+      "tool": "Skill",
+      "input_match": "\"skill\"\\s*:\\s*\"(?:[\\w-]+:)?ce-commit-push-pr\""
+    }
+  ]
+}

@@ -8,18 +8,23 @@ From northstar-trading@`8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa`, read from a s
 | File | Lines here | Carried as |
 |---|---|---|
 | `data/alpaca_history.py` | 301 | Verbatim: the clocks, the immutable raw envelope (`land_raw`, `publish_once`), `asof`-dated REST history through alpaca-py |
-| `data/catalog.py` | 464 | Verbatim, except one environment variable's name: Nautilus rc7 typed writers, per-partition `asof` proofs, refusal of overlapping or rawless rewrites |
+| `data/catalog.py` | 467 | Carried typed writers, per-partition `asof` proofs and refusal of overlapping or rawless rewrites; one environment variable renamed, the backtest catalog configuration migrated to rc8 and the engine provenance label updated |
 | `catalysts/pit.py` | 185 | Verbatim: news, FRED/ALFRED, FINRA short-interest and Reg SHO known-at clocks, on the SEC business-day calendar they share |
 | `data/universe.py` | 192 | The dated-membership core: share-class intervals, overlap refusal, `universe_for_date`, the survivor fallback, plus a hash-checked loader for row 4's manifest |
 
+The rc8 configuration migration follows nautechsystems/nautilus_trader@`d53849b216e20f2c122ca01b4dd0da377638b186`, `docs/concepts/backtesting/apis-and-runs.md`: `BacktestDataConfig` takes `catalog=DataCatalogConfig(path=...)` in place of `catalog_path`. PR #87's engine-bump manifest row records this adaptation.
+
+Catalog metadata now records `nautilus_trader: 2.0.0rc8`, the pinned engine that reads and writes it. The carried metadata-equality guard rejects an existing rc7 root and requires re-ingestion into a fresh root. It preserves the existing `metadata.json`; do not relabel an old root in place.
+
 The proofs need nothing else. Left for the rows that use them: `completeness.py` (coverage reports), `fidelity.py` (the catalog→backtest probe), `scanner/security_master.py` (ranking identity), and `sharadar.py` (rights unconfirmed, #29 §5). The EDGAR-partial and asset-snapshot universe providers need northstar's catalysts store and are not carried.
 
-**One change from upstream.** Upstream's `report_provenance` lifted `survivor_only` for Sharadar. ADR-0013's decision says to keep it true until acceptance, so here no source lifts it; the PR that brings an acceptance receipt changes this.
+**Universe provenance change from upstream.** Upstream's `report_provenance` lifted `survivor_only` for Sharadar. ADR-0013's decision says to keep it true until acceptance, so here no source lifts it; the PR that brings an acceptance receipt changes this.
 
 **The universe seam with #42** (agreed on #42, and PR #107 matches it): row 11 owns `src/sextant/data/universe.py`; row 4 supplies member manifests and their sha256. A manifest loads only at its recorded hash.
 
 ## Proof (design row 11)
-`tests/proofs/test_data_catalog.py`, 21 offline cases:
+`tests/proofs/test_data_catalog.py`, 23 offline cases:
+- **Engine provenance:** a fresh catalog records the installed engine version; opening a catalog labelled rc7 requires re-ingestion and preserves its metadata bytes.
 - **`asof` replay:** a replay of 2024-11-29 at 10:00 New York reads exactly the 30 minute bars that opened 09:30–09:59, each known by 10:00.
 - **A later revision leaves it unchanged:** a revised raw response for the same session lands nowhere (the receipt is immutable), a rewrite of the catalog's bars is refused, and the replay's bytes are identical before and after.
 - **Determinism:** two fresh catalogs from the same receipts give byte-identical replays and provenance.

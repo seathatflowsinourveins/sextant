@@ -1,0 +1,423 @@
+{
+  "schemaVersion": 1,
+  "claudeVersion": "2.1.318",
+  "startedAt": "2026-11-06T18:35:23.764Z",
+  "durationSeconds": 274,
+  "costUsd": 2.8151544,
+  "partial": false,
+  "suite": {
+    "root": "/tmp/sextant-53-skill-evals-staged-v2/compound",
+    "ablation": "with-without",
+    "modelOverride": "claude-opus-5-5",
+    "judgeModel": "claude-opus-5-5",
+    "threshold": 1,
+    "concurrency": 3,
+    "plugins": [
+      {
+        "name": "compound-engineering",
+        "version": "3.36.0",
+        "path": "/tmp/sextant-53-skill-evals-staged-v2/compound"
+      }
+    ]
+  },
+  "cases": [
+    {
+      "name": "support-pr",
+      "dir": "evals/support-pr",
+      "source": "case_yaml",
+      "promptMarkdown": "Write a pull request title and description for this verified documentation change: explain the existing research-only boundary, its upstream source references and the successful validation. The prepared diff only adds that explanation. I need the description text for review; do not publish it.",
+      "runsPerCase": 3,
+      "timeoutSeconds": 3600,
+      "maxTurns": 10,
+      "graders": [
+        {
+          "name": "skill-fired",
+          "type": "tool_used",
+          "weight": 1,
+          "config": {
+            "tool": "Skill",
+            "input_match": "\"skill\"\\s*:\\s*\"(?:[\\w-]+:)?ce-commit-push-pr\""
+          }
+        }
+      ],
+      "arms": {
+        "with": [
+          {
+            "score": 1,
+            "passed": true,
+            "turns": 11,
+            "costUsd": 0.5727642,
+            "judgeCostUsd": 0,
+            "durationSeconds": 149,
+            "startedAt": "2026-11-06T18:35:23.965Z",
+            "error": null,
+            "tracePath": "/tmp/claude-eval-wYMtP4/out/trace.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "skill-fired",
+                "passed": true,
+                "weight": 1,
+                "explanation": "Skill called 1x (expected 1..∞)",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          },
+          {
+            "score": 1,
+            "passed": true,
+            "turns": 15,
+            "costUsd": 0.6091115999999999,
+            "judgeCostUsd": 0,
+            "durationSeconds": 155,
+            "startedAt": "2026-11-06T18:35:23.965Z",
+            "error": null,
+            "tracePath": "/tmp/claude-eval-ZVXM51/out/trace.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "skill-fired",
+                "passed": true,
+                "weight": 1,
+                "explanation": "Skill called 1x (expected 1..∞)",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          },
+          {
+            "score": 1,
+            "passed": true,
+            "turns": 15,
+            "costUsd": 0.7059447999999999,
+            "judgeCostUsd": 0,
+            "durationSeconds": 197,
+            "startedAt": "2026-11-06T18:35:23.965Z",
+            "error": null,
+            "tracePath": "/tmp/claude-eval-QIE0rF/out/trace.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "skill-fired",
+                "passed": true,
+                "weight": 1,
+                "explanation": "Skill called 1x (expected 1..∞)",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          }
+        ],
+        "without": [
+          {
+            "score": 0,
+            "passed": false,
+            "turns": 9,
+            "costUsd": 0.20114479999999998,
+            "judgeCostUsd": 0,
+            "durationSeconds": 71,
+            "startedAt": "2026-11-06T18:37:53.264Z",
+            "error": null,
+            "tracePath": "/tmp/claude-eval-Zc3GSu/out/trace.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "skill-fired",
+                "passed": false,
+                "weight": 1,
+                "explanation": "Skill called 0x (expected 1..∞)",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          },
+          {
+            "score": 0,
+            "passed": false,
+            "turns": 10,
+            "costUsd": 0.180523,
+            "judgeCostUsd": 0,
+            "durationSeconds": 60,
+            "startedAt": "2026-11-06T18:37:59.286Z",
+            "error": null,
+            "tracePath": "/tmp/claude-eval-KfEupg/out/trace.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "skill-fired",
+                "passed": false,
+                "weight": 1,
+                "explanation": "Skill called 0x (expected 1..∞)",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          },
+          {
+            "score": 0,
+            "passed": false,
+            "turns": 7,
+            "costUsd": 0.2220692,
+            "judgeCostUsd": 0,
+            "durationSeconds": 77,
+            "startedAt": "2026-11-06T18:38:40.747Z",
+            "error": null,
+            "tracePath": "/tmp/claude-eval-ChfCgP/out/trace.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "skill-fired",
+                "passed": false,
+                "weight": 1,
+                "explanation": "Skill called 0x (expected 1..∞)",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          }
+        ]
+      },
+      "aggregates": {
+        "score": 1,
+        "passRate": 1,
+        "scoreWithout": 0,
+        "passRateWithout": 0,
+        "delta": 1
+      }
+    },
+    {
+      "name": "unrelated-request",
+      "dir": "evals/unrelated-request",
+      "source": "case_yaml",
+      "promptMarkdown": "Sort these words alphabetically and return only the words: zebra, apple, maple.",
+      "runsPerCase": 3,
+      "timeoutSeconds": 3600,
+      "maxTurns": 10,
+      "graders": [
+        {
+          "name": "no-skill",
+          "type": "tool_used",
+          "weight": 1,
+          "config": {
+            "tool": "Skill",
+            "min": 0,
+            "max": 0,
+            "arm": "both"
+          }
+        },
+        {
+          "name": "sorted",
+          "type": "regex",
+          "weight": 1,
+          "config": {
+            "target": "last_message",
+            "pattern": "apple[\\s,]+maple[\\s,]+zebra",
+            "flags": "i",
+            "match": "contains"
+          }
+        }
+      ],
+      "arms": {
+        "with": [
+          {
+            "score": 1,
+            "passed": true,
+            "turns": 1,
+            "costUsd": 0.0647088,
+            "judgeCostUsd": 0,
+            "durationSeconds": 6,
+            "startedAt": "2026-11-06T18:38:59.317Z",
+            "error": null,
+            "tracePath": "/tmp/claude-eval-ncfYEw/out/trace.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "no-skill",
+                "passed": true,
+                "weight": 1,
+                "explanation": "Skill called 0x (expected 0..0)",
+                "withOnly": false,
+                "scored": true
+              },
+              {
+                "name": "sorted",
+                "passed": true,
+                "weight": 1,
+                "explanation": "matched apple[\\s,]+maple[\\s,]+zebra",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          },
+          {
+            "score": 1,
+            "passed": true,
+            "turns": 1,
+            "costUsd": 0.06564880000000001,
+            "judgeCostUsd": 0,
+            "durationSeconds": 6,
+            "startedAt": "2026-11-06T18:39:04.525Z",
+            "error": null,
+            "tracePath": "/tmp/claude-eval-xcQaeb/out/trace.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "no-skill",
+                "passed": true,
+                "weight": 1,
+                "explanation": "Skill called 0x (expected 0..0)",
+                "withOnly": false,
+                "scored": true
+              },
+              {
+                "name": "sorted",
+                "passed": true,
+                "weight": 1,
+                "explanation": "matched apple[\\s,]+maple[\\s,]+zebra",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          },
+          {
+            "score": 1,
+            "passed": true,
+            "turns": 1,
+            "costUsd": 0.0652088,
+            "judgeCostUsd": 0,
+            "durationSeconds": 6,
+            "startedAt": "2026-11-06T18:39:05.356Z",
+            "error": null,
+            "tracePath": "/tmp/claude-eval-2V0Txl/out/trace.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "no-skill",
+                "passed": true,
+                "weight": 1,
+                "explanation": "Skill called 0x (expected 0..0)",
+                "withOnly": false,
+                "scored": true
+              },
+              {
+                "name": "sorted",
+                "passed": true,
+                "weight": 1,
+                "explanation": "matched apple[\\s,]+maple[\\s,]+zebra",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          }
+        ],
+        "without": [
+          {
+            "score": 1,
+            "passed": true,
+            "turns": 1,
+            "costUsd": 0.0426608,
+            "judgeCostUsd": 0,
+            "durationSeconds": 5,
+            "startedAt": "2026-11-06T18:39:10.431Z",
+            "error": null,
+            "tracePath": "/tmp/claude-eval-rmQinw/out/trace.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "no-skill",
+                "passed": true,
+                "weight": 1,
+                "explanation": "Skill called 0x (expected 0..0)",
+                "withOnly": false,
+                "scored": true
+              },
+              {
+                "name": "sorted",
+                "passed": true,
+                "weight": 1,
+                "explanation": "matched apple[\\s,]+maple[\\s,]+zebra",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          },
+          {
+            "score": 1,
+            "passed": true,
+            "turns": 1,
+            "costUsd": 0.0426848,
+            "judgeCostUsd": 0,
+            "durationSeconds": 5,
+            "startedAt": "2026-11-06T18:39:11.158Z",
+            "error": null,
+            "tracePath": "/tmp/claude-eval-9bEEuz/out/trace.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "no-skill",
+                "passed": true,
+                "weight": 1,
+                "explanation": "Skill called 0x (expected 0..0)",
+                "withOnly": false,
+                "scored": true
+              },
+              {
+                "name": "sorted",
+                "passed": true,
+                "weight": 1,
+                "explanation": "matched apple[\\s,]+maple[\\s,]+zebra",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          },
+          {
+            "score": 1,
+            "passed": true,
+            "turns": 1,
+            "costUsd": 0.0426848,
+            "judgeCostUsd": 0,
+            "durationSeconds": 6,
+            "startedAt": "2026-11-06T18:39:15.826Z",
+            "error": null,
+            "tracePath": "/tmp/claude-eval-FpzzG1/out/trace.jsonl",
+            "skippedPaidGraders": false,
+            "graders": [
+              {
+                "name": "no-skill",
+                "passed": true,
+                "weight": 1,
+                "explanation": "Skill called 0x (expected 0..0)",
+                "withOnly": false,
+                "scored": true
+              },
+              {
+                "name": "sorted",
+                "passed": true,
+                "weight": 1,
+                "explanation": "matched apple[\\s,]+maple[\\s,]+zebra",
+                "withOnly": false,
+                "scored": true
+              }
+            ]
+          }
+        ]
+      },
+      "aggregates": {
+        "score": 1,
+        "passRate": 1,
+        "scoreWithout": 1,
+        "passRateWithout": 1,
+        "delta": 0
+      }
+    }
+  ],
+  "aggregates": {
+    "casesTotal": 2,
+    "casesPassed": 2,
+    "overallScore": 1,
+    "overallPassRate": 1,
+    "meanDelta": 0.5
+  }
+}

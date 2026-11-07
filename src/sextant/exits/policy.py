@@ -49,8 +49,9 @@ REGISTRY: tuple[Row, ...] = (
     Row(
         "chase_cap_fraction",
         "fraction of last",
-        Decimal("0.01"),
-        "implied by ADR-0019:296 (trading@7c5f852a), not a recorded start (lead ruling, #98)",
+        None,
+        "ADR-0019:296 (trading@7c5f852a) implies 0.01, which is not a recorded start: no "
+        "authority; X5 calibrates on tick replay after #130 (lead ruling, #98)",
     ),
     Row("chase_min_interval_s", "seconds", None, f"{ADR} X5; no value at either pin (#98)"),
     Row("take_profit_above_h_fraction", "fraction of H", Decimal("0.10"), f"{ADR} X5"),
@@ -58,6 +59,9 @@ REGISTRY: tuple[Row, ...] = (
     Row("backstop_min_separation_fraction", "fraction", Decimal("0.05"), f"{T19}:107"),
     Row("quote_max_age_s", "seconds (RTH; 2 outside)", Decimal(1), f"{LANES}:15"),
 )
+
+
+CHASE = ("chase_cap_fraction", "chase_min_interval_s")
 
 
 @dataclass(frozen=True)
@@ -70,7 +74,7 @@ class ExitParams:
     gain_lock_giveback_fraction: Decimal
     breach_persist_count: int
     breach_persist_span_s: Decimal
-    chase_cap_fraction: Decimal
+    chase_cap_fraction: Decimal | None  # None: unavailable, so the chase is off
     chase_min_interval_s: Decimal | None  # None: unavailable, so the chase is off
     take_profit_above_h_fraction: Decimal
     take_profit_step_fraction: Decimal
@@ -80,7 +84,7 @@ class ExitParams:
     def __post_init__(self) -> None:
         for f in fields(self):
             value = getattr(self, f.name)
-            if f.name == "chase_min_interval_s" and value is None:
+            if f.name in CHASE and value is None:
                 continue
             if f.name == "breach_persist_count":
                 if not isinstance(value, int) or value < 1:
@@ -88,17 +92,22 @@ class ExitParams:
             elif not isinstance(value, Decimal) or not value.is_finite() or value < 0:
                 raise ValueError(f"{f.name} must be a finite nonnegative Decimal")
         for name in ("gain_lock_giveback_fraction", "chase_cap_fraction"):
-            if getattr(self, name) >= 1:
+            if getattr(self, name) is not None and getattr(self, name) >= 1:
                 raise ValueError(f"{name} must be below 1")
         if self.take_profit_above_h_fraction <= self.take_profit_step_fraction:
             raise ValueError("take_profit_above_h_fraction must exceed take_profit_step_fraction")
+
+    @property
+    def chase_on(self) -> bool:
+        """X5's chase runs only when both its rows have a value (#98)."""
+        return self.chase_cap_fraction is not None and self.chase_min_interval_s is not None
 
     @classmethod
     def starts(cls) -> ExitParams:
         """Every row at its recorded start. A row without one stays unavailable (None)."""
         values: dict[str, object] = {row.name: row.start for row in REGISTRY}
         values["breach_persist_count"] = int(Decimal(str(values["breach_persist_count"])))
-        missing = [k for k, v in values.items() if v is None and k != "chase_min_interval_s"]
+        missing = [k for k, v in values.items() if v is None and k not in CHASE]
         if missing:
             raise ValueError(f"no recorded start: {missing}")
         return cls(**values)  # type: ignore[arg-type]
@@ -197,9 +206,10 @@ class BreachRun:
 
 # X5: the fast sell's limit, and the take-profit that rolls with H before a breach.
 def chase_limit(bid: Decimal, last: Decimal | None, p: ExitParams) -> Decimal:
-    """max(bid, last*(1-cap)): never below the bid."""
-    if last is None:
+    """max(bid, last*(1-cap)): never below the bid. With the chase off, the bid itself."""
+    if last is None or not p.chase_on:
         return bid
+    assert p.chase_cap_fraction is not None
     return max(bid, last * (ONE - p.chase_cap_fraction))
 
 

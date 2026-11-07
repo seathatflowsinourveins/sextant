@@ -1,0 +1,27 @@
+{
+  "schema_version": "1.1",
+  "name": "paper-journal",
+  "tags": [
+    "paper"
+  ],
+  "execution": {
+    "prompt": "Help me register this investment thesis in a trading journal and define its lifecycle: a research idea awaiting evidence, no open position, and an unresolved review date. State what should be tracked as it moves from screening to review and eventual closure. Do not create or alter any real position.",
+    "allowed_tools": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Skill"
+    ],
+    "append_system_prompt": "Read-only fixture evaluation: no orders, broker/data endpoints, credential access, file writes, shell commands or publication. Missing evidence stays unavailable. Give a concise response for the requested planning or review task.",
+    "timeout_seconds": 3600,
+    "max_turns": 200
+  },
+  "graders": [
+    {
+      "name": "skill-fired",
+      "type": "tool_used",
+      "tool": "Skill",
+      "input_match": "\"skill\"\\s*:\\s*\"(?:[\\w-]+:)?trader-memory-core\""
+    }
+  ]
+}
