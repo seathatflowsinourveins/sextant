@@ -41,6 +41,8 @@ NS = 1_000_000_000
 OPEN = time(9, 30)
 WINDOW_END = time(9, 35)
 RTH_CLOSE = time(16, 0)
+PRE = time(4, 0)
+POST = time(20, 0)
 LOOKBACK = 14
 
 
@@ -66,7 +68,7 @@ def _bars(raw_root: Path, symbol: str, day: date) -> list[dict[str, Any]]:
     path = raw_path(raw_root, "1min", symbol_name(symbol), day)
     if not path.exists():
         return []
-    return read_raw(path)
+    return sorted(read_raw(path), key=lambda row: timestamp(row["t"]))
 
 
 def _clock(row: dict[str, Any]) -> datetime:
@@ -127,9 +129,10 @@ def _native_window(
 def _daily(rows: Sequence[dict[str, Any]]) -> tuple[Decimal, Decimal, Decimal, Decimal] | None:
     """Return (high, low, close, volume) for one completed session, or None.
 
-    Session means every SIP minute bar returned for the calendar day
-    (04:00--20:00 ET), the consolidated-day proxy; not RTH only.
+    Session means the 04:00--20:00 ET SIP window, the extended-session proxy
+    used for ATR and ADV; not RTH only.
     """
+    rows = [row for row in rows if PRE <= _clock(row).time() < POST]
     if not rows:
         return None
     high = max(_decimal(row, "h") for row in rows)
@@ -370,6 +373,7 @@ def evaluate(
         censored_role=dict(censored_role),
         censored_total=sum(censored.values()),
         evaluated_role=dict(evaluated_role),
+        reasons=dict(Counter(row["reason"] for row in results)),
         passers=len(passers),
         top30=len(top_keys["top30"]),
         top100=len(top_keys["top100"]),
