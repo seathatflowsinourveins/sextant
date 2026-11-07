@@ -3,7 +3,7 @@
 from decimal import Decimal as D
 
 import pytest
-from nautilus_trader.model import InstrumentId
+from nautilus_trader.model import InstrumentId, Price
 
 from sextant.entry.signals import EntryState, Extension, Surge, TradeCoverage, classify
 
@@ -19,7 +19,7 @@ def extension(s, price):
 
 
 def arm(s: EntryState) -> None:
-    s.arm(Surge(IID, "fixture-segment", START, START, START + 120 * SEC, D("10"), "TEST"))
+    s.arm(Surge(IID, "fixture-segment", START, START, START, START + 120 * SEC, D("10"), "TEST"))
 
 
 def feed(s: EntryState, at, price, **kwargs) -> bool:
@@ -310,3 +310,31 @@ def test_covered_flow_wider_window_is_bound_to_attested_counts(
     )
     # One baseline trade and two recent trades: 2 * 60 == 1 * 120.
     assert s.covered_flow(START, receipt) is covered
+
+
+def test_the_first_leg_window_runs_from_the_surge_flag_as_n1_states() -> None:
+    # northstar-lanes ADR-0005 N1:46: "Within `first_leg_window_s` of a surge flag".
+    s = state()
+    flag = START + 50 * SEC
+    s.arm(Surge(IID, "fixture-segment", START, flag, flag, START + 300 * SEC, D("10"), "TEST"))
+    for at in (166, 167, 168):
+        feed(s, at, "10.01")
+    assert s.first_leg_ready(D("10.01"), flag + 120 * SEC)
+    assert not s.first_leg_ready(D("10.01"), flag + 121 * SEC)
+
+
+@pytest.mark.parametrize(
+    "quiet",
+    ["10", 10, 10.0, D("10"), Price.from_str("10.00")],
+    ids=["str", "int", "float", "decimal", "price"],
+)
+def test_arm_admits_only_a_decimal_or_price_quiet_price(quiet) -> None:
+    s = state()
+    surge = Surge(IID, "fixture-segment", START, START, START, START + 120 * SEC, quiet, "TEST")
+    if isinstance(quiet, D | Price):
+        s.arm(surge)
+        assert type(s.surge.quiet_price) is D and s.surge.quiet_price == 10
+    else:
+        with pytest.raises(ValueError, match="quiet price"):
+            s.arm(surge)
+        assert s.surge is None

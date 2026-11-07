@@ -103,10 +103,8 @@ class _ReplayEntry(Strategy):
 
     @_guarded
     def on_quote(self, quote: model.QuoteTick) -> None:
-        if (
-            not 0 <= quote.ts_event <= quote.ts_init <= self.clock.timestamp_ns()
-            or not 0 < quote.bid_price.as_decimal() <= quote.ask_price.as_decimal()
-            or (self.quote is not None and quote.ts_event < self.quote.ts_event)
+        if not 0 <= quote.ts_event <= quote.ts_init <= self.clock.timestamp_ns() or (
+            self.quote is not None and quote.ts_event < self.quote.ts_event
         ):
             return
         self.quote = quote
@@ -159,6 +157,8 @@ class _ReplayEntry(Strategy):
         quote = self.quote
         if quote is None or now - quote.ts_event > self.parameters.ns("max_data_age_s"):
             return
+        if not 0 < quote.bid_price.as_decimal() <= quote.ask_price.as_decimal():
+            return  # crossed or one-sided: UNKNOWN, never the older quote (first_leg.py:550)
         price = limit_price(
             quote.ask_price.as_decimal(), self.instrument.price_increment.as_decimal()
         )
@@ -208,7 +208,7 @@ class _ReplayEntry(Strategy):
             tags=[f"params_hash={self.parameters.params_hash}", f"setup={setup}"],
         )
         ttl, window = self.parameters.ns("entry_ttl_s"), self.parameters.ns("first_leg_window_s")
-        end = self.signals.surge.first_print_ts + window if setup == "FIRST_LEG" else now + ttl
+        end = self.signals.surge.flag_ts + window if setup == "FIRST_LEG" else now + ttl
         self.expiry_ns = expiry_ns = min(now + ttl, end)  # Northstar _expire_first_leg's min
         self._record(
             "SUBMIT",

@@ -45,7 +45,14 @@ def test_native_stale_print_inside_first_leg_still_vetoes(instrument, tmp_path, 
         tmp_path,
         sorted(data, key=lambda item: item.ts_init),
         surge=Surge(
-            IID, "fixture-segment", START, START + 6_650_000_000, START + 120 * SEC, D("10"), "TEST"
+            IID,
+            "fixture-segment",
+            START,
+            START,
+            START + 6_650_000_000,
+            START + 120 * SEC,
+            D("10"),
+            "TEST",
         ),
     )
     assert result.orders == [], result.events
@@ -171,7 +178,7 @@ def test_arming_cannot_credit_a_late_qualifying_print(lag):
     late = trade("1.5", "10.02", lag=lag)
     assert not s.on_trade(late, now=late.ts_init)
     known = late.ts_init + 50_000_000
-    s.arm(Surge(IID, "fixture-segment", START, known, START + 120 * SEC, D("10"), "TEST"))
+    s.arm(Surge(IID, "fixture-segment", START, START, known, START + 120 * SEC, D("10"), "TEST"))
     assert not s.first_leg_ready(D("10.03"), known + 50_000_000)
     feed(s, 8, "10.04")
     assert not s.first_leg_ready(D("10.04"), START + 8 * SEC)
@@ -235,7 +242,9 @@ def test_partial_fill_funding_credits_only_actual_leaves_and_fills(
         + [trade(at, "10.00", size=10000) for at in (0, 1, 2, 3)]
         + [quote("3.1", "10.00", "10.01"), quote(10, "10.00", "10.01")],
         starting_cash=D(cash),
-        surge=Surge(IID, "fixture-segment", START, START, START + 120 * SEC, D("9.90"), "TEST"),
+        surge=Surge(
+            IID, "fixture-segment", START, START, START, START + 120 * SEC, D("9.90"), "TEST"
+        ),
         params=params(stop_ref_fraction="1", portfolio_slots=1, flow_share_cap=flow_cap),
         commission_rate=rate,
         fee_model=MakerTakerFeeModel(maker_rate=rate, taker_rate=rate),

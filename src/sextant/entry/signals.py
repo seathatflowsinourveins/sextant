@@ -5,7 +5,7 @@ from collections.abc import Mapping
 from decimal import Decimal
 from enum import StrEnum
 
-from nautilus_trader.model import Bar, BarType, InstrumentId, TradeTick
+from nautilus_trader.model import Bar, BarType, InstrumentId, Price, TradeTick
 
 from sextant.entry.indicators import DecimalATR
 from sextant.entry.parameters import EntryParameters, number
@@ -18,7 +18,7 @@ class Extension(StrEnum):
 
 
 Surge = namedtuple(
-    "Surge", "instrument_id segment first_print_ts known_at expires_ts quiet_price source"
+    "Surge", "instrument_id segment first_print_ts flag_ts known_at expires_ts quiet_price source"
 )
 TradeCoverage = namedtuple(
     "TradeCoverage",
@@ -151,7 +151,7 @@ class _Setup(_Reclaim):
             in_window = (
                 flag.first_print_ts
                 <= tick.ts_event
-                <= min(flag.expires_ts, flag.first_print_ts + self.params.ns("first_leg_window_s"))
+                <= min(flag.expires_ts, flag.flag_ts + self.params.ns("first_leg_window_s"))
                 and price > flag.quiet_price
             )
             if not in_window or (self.previous is not None and price < self.previous):
@@ -197,12 +197,14 @@ class EntryState:
             or surge.segment != self.segment
             or not self.segment_start_ns
             <= surge.first_print_ts
+            <= surge.flag_ts
             <= surge.known_at
             < surge.expires_ts
             or not surge.source
+            or not isinstance(surge.quiet_price, Decimal | Price)
         ):
-            raise ValueError("invalid surge identity, segment, clocks or source")
-        number(surge.quiet_price, "quiet_price")
+            raise ValueError("invalid surge identity, segment, clocks, source or quiet price")
+        surge = surge._replace(quiet_price=number(Decimal(str(surge.quiet_price)), "quiet_price"))
         if self.surge is None and self.failure is None:
             self.setup.surge, self.setup.run = surge, ()
             self.setup.reclaim_event_ns = None
@@ -248,7 +250,7 @@ class EntryState:
                 return False
             while setup.seen and setup.seen[0][0] < tick.ts_event - setup.retain:
                 setup.identities.discard(setup.seen.popleft()[1])
-            atr = self.atr.value if tick.ts_event > self.atr_at else self.atr_before
+            atr = self.atr.value if tick.ts_event > self.atr_at else self.atr_before  # strict as-of
             setup.advance(tick, atr)
             setup.last = tick
             setup.identities.add(identity)
@@ -277,7 +279,7 @@ class EntryState:
             and ask.is_finite()
             and ask >= flag.quiet_price
             and flag.known_at <= now < flag.expires_ts
-            and now - flag.first_print_ts <= p.ns("first_leg_window_s")
+            and now - flag.flag_ts <= p.ns("first_leg_window_s")
             and len(run) >= p["first_leg_trades_count"]
             and run[-1].ts_event - run[0].ts_event >= p.ns("first_leg_span_s")
             and max(ask, run[-1].price.as_decimal())

@@ -25,7 +25,9 @@ def replay(instrument, tmp_path, data, **overrides):
         basis_path=tmp_path / "basis.json",
         segment="fixture-segment",
         segment_start_ns=START - 3600 * SEC,
-        surge=Surge(IID, "fixture-segment", START, START, START + 120 * SEC, D("10"), "TEST"),
+        surge=Surge(
+            IID, "fixture-segment", START, START, START, START + 120 * SEC, D("10"), "TEST"
+        ),
         buffer=D("0.10"),
         starting_cash=D("10000"),
         regular_hours=True,
@@ -151,7 +153,9 @@ def test_partial_fill_reprice_respects_full_position_caps(
             quote(10, "10.00", next_ask),
         ],
         starting_cash=D(cash),
-        surge=Surge(IID, "fixture-segment", START, START, START + 120 * SEC, D("9.90"), "TEST"),
+        surge=Surge(
+            IID, "fixture-segment", START, START, START, START + 120 * SEC, D("9.90"), "TEST"
+        ),
         params=params(stop_ref_fraction="0.1", flow_share_window_s="1"),
         latency_model=StaticLatencyModel(insert_latency_nanos=500_000_000),
         fill_model=LimitOrderPartialFillModel(prob_fill_on_limit=1.0, prob_slippage=0.0),
