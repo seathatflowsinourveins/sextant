@@ -261,6 +261,17 @@ class BManager(ExitEngine):
         self.exiting = True
         self.limit_started_ns = self.clock.timestamp_ns()
 
+    # B adopts supplied custody and reads native positions in _snapshot (ADR-0007:17-18). The base
+    # engine's own position tracking (R86, #129) is A/C's, so it never runs for B.
+    def on_position_opened(self, event) -> None:
+        return
+
+    def on_position_changed(self, event) -> None:
+        return
+
+    def on_position_closed(self, event) -> None:
+        return
+
     def on_order_filled(self, event) -> None:
         if event.order_side == OrderSide.SELL:
             self._record(

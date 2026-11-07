@@ -1,5 +1,5 @@
-"""The exit engine as a Nautilus strategy: protect the position from its first fill, raise the
-trigger on every event, sell on the first persisted breach and chase the managed LIMIT.
+"""The exit engine as a Nautilus strategy: protect the native position from its first fill, raise
+the trigger on every event, sell on the first persisted breach and chase the managed LIMIT.
 
 Policy: sextant.exits.policy (ADR-0005 X2-X6). Seams: nautechsystems/nautilus_trader@v2.0.0rc7
 55c0e82053142bce3a5cba4de4221d3929c2d3bc: `Strategy.subscribe_quotes`, `subscribe_trades` and
@@ -8,6 +8,20 @@ Policy: sextant.exits.policy (ADR-0005 X2-X6). Seams: nautechsystems/nautilus_tr
 method raises on an unchanged price, so the engine amends only a changed level, one at a time.
 Internal 1-minute bars come from eligible trades. Replay and sim only: this module places no
 broker order and holds no key.
+
+The protected quantity is the native position (R86, #129), read with `Cache.position` in
+`on_position_opened/changed/closed` (docs/concepts/cache.md:659-672, strategies.md:229-234). Each
+position event follows its `OrderFilled` (docs/concepts/events/index.md:123-160).
+- A fill of the position's opening order (`OrderFilled.client_order_id` equal to its
+  `opening_order_id`) grows the protection, so a partly filled entry is protected in full.
+- A BUY from any other order is an add, which pauses the symbol and pages (ADR-0007:17). Nothing
+  here clears a pause. Owner custody and reservations stay house logic (design row 8).
+- A close resets the protection, so a re-entry is protected afresh.
+- The basis is the opening order's `Order.avg_px`, a Decimal (MIGRATION_V2.md:480). rc7's
+  `Position.avg_px_open` is an f64, and Decimal only from rc8 (#87).
+- The managed sell is a reduce-only LIMIT for the whole position. If a later fill of the same entry
+  lands while it rests, the venue resizes it to the position: rc7's "Backtest reduce-only
+  resizing", docs/concepts/orders/advanced.md:228-231.
 
 Scope of this slice: the take-profit and backstop are computed as desired levels and reported. They
 are venue orders (Alpaca OCO/bracket, ADR-0005 X6), placed later by the custody row, not here.
@@ -27,8 +41,12 @@ from nautilus_trader.model import (
     InstrumentId,
     OrderFilled,
     OrderSide,
+    PositionChanged,
+    PositionClosed,
+    PositionId,
+    PositionOpened,
+    PositionSide,
     Price,
-    Quantity,
     QuoteTick,
     TimeInForce,
     TradeTick,
@@ -99,10 +117,13 @@ class ExitEngine(Strategy):
         self.arming = Bar1mArming()
         self.breach = BreachRun()
         self.protection: Protection | None = None
+        self.position_id: PositionId | None = None
+        self.entry_order_id: ClientOrderId | None = None
         self.sell_id: ClientOrderId | None = None
         self.one_tick = Decimal(0)
         self.amended_ns = 0
         self.paused = False
+        self.pages: list[str] = []
         self.events: list[dict[str, str]] = []
 
     def on_start(self) -> None:
@@ -137,19 +158,50 @@ class ExitEngine(Strategy):
             level = self.protection.entry + self.c_rt + floor
             self.arming.on_bar_close(bar.close.as_decimal(), level)
 
+    # Fills classify; the position events that follow each fill carry the quantity.
     def on_order_filled(self, event: OrderFilled) -> None:
         px, qty = event.last_px.as_decimal(), event.last_qty.as_decimal()
-        if event.order_side == OrderSide.BUY:
-            if self.protection is None:
-                self.protection = Protection(entry=px, qty=qty, high=px)
-                self._record(event.ts_event, "protected_from_fill", entry=px)
-                ok = self.bid is not None and self._quote_ok(event.ts_event)
-                self._step(event.ts_event, (self.bid if ok else None) if self.rth else self.last)
-            else:  # ADR-0007: an add to a managed symbol pauses it; custody is row 8
-                self.paused = True
-                self._record(event.ts_event, "add_paused", qty=qty)
-        else:
+        if event.order_side != OrderSide.BUY:
             self._record(event.ts_event, "sell_fill", price=px, qty=qty)
+        elif self.entry_order_id is not None and event.client_order_id != self.entry_order_id:
+            # ADR-0007:17: an add to a held symbol from another order pauses it and pages.
+            self._pause_and_page(event.ts_event, "owner_add", qty=qty)
+        elif self.entry_order_id is not None:  # the same entry order, filling further
+            if self.protection is not None:
+                self.protection.high = max(self.protection.high, px)
+            self._record(event.ts_event, "entry_fill", price=px, qty=qty)
+        # A first fill opens the native position, and on_position_opened protects it.
+
+    def on_position_opened(self, event: PositionOpened) -> None:
+        if event.instrument_id != self.instrument_id:
+            return
+        ts = event.ts_event
+        if self.paused:  # a page stands until a person clears it (ADR-0007:17)
+            self._record(ts, "paused_unprotected", qty=event.quantity.as_decimal())
+            return
+        if self.position_id is not None or event.side != PositionSide.LONG:
+            self._pause_and_page(ts, "quantity_mismatch", qty=event.quantity.as_decimal())
+            return
+        self.position_id, self.entry_order_id = event.position_id, event.opening_order_id
+        entry, qty = self._basis(), self._held()
+        self.protection = Protection(entry=entry, qty=qty, high=event.last_px.as_decimal())
+        self._record(ts, "protected_from_fill", entry=entry, qty=qty)
+        ok = self.bid is not None and self._quote_ok(ts)
+        self._step(ts, (self.bid if ok else None) if self.rth else self.last)
+
+    def on_position_changed(self, event: PositionChanged) -> None:
+        p = self.protection
+        if p is None or self.paused or event.position_id != self.position_id:
+            return
+        p.qty, p.entry = self._held(), self._basis()
+        self._record(event.ts_event, "protected_qty", qty=p.qty, entry=p.entry)
+
+    def on_position_closed(self, event: PositionClosed) -> None:
+        if event.position_id != self.position_id:
+            return
+        self._record(event.ts_event, "flat")
+        self.protection, self.position_id, self.entry_order_id = None, None, None
+        self.sell_id, self.arming, self.breach = None, Bar1mArming(), BreachRun()
 
     # One step of X2-X5 on an eligible observation (bid in RTH, trade outside).
     def _step(self, ts: int, observed: Decimal | None) -> None:
@@ -194,13 +246,16 @@ class ExitEngine(Strategy):
             self._chase(ts)
 
     def _sell(self, ts: int, p: Protection) -> None:
-        assert self.bid is not None and p.trigger is not None
+        """One managed LIMIT for the whole native position: one exit per quantity (ADR-0007:19)."""
+        assert self.bid is not None and p.trigger is not None and self.position_id is not None
+        position = self.cache.position(self.position_id)
+        assert position is not None and position.is_open
         # With either chase row unavailable (#98) the fast sell rests at the bid: chase off.
         last = self.last if self.p.chase_on else None
         order = self.order_factory.limit(
             instrument_id=self.instrument_id,
             order_side=OrderSide.SELL,
-            quantity=Quantity.from_str(str(p.qty)),
+            quantity=position.quantity,
             price=self._price(policy.chase_limit(self.bid, last, self.p)),
             time_in_force=TimeInForce.GTC,
             reduce_only=True,
@@ -209,7 +264,8 @@ class ExitEngine(Strategy):
         self.amended_ns = ts
         self.submit_order(order)
         kind = "breach_sell_gain_lock" if self.arming.armed else "breach_sell_prearm"
-        self._record(ts, kind, trigger=p.trigger, limit=order.price.as_decimal())
+        qty = position.quantity.as_decimal()
+        self._record(ts, kind, trigger=p.trigger, limit=order.price.as_decimal(), qty=qty)
 
     def _chase(self, ts: int) -> None:
         if self.sell_id is None or not self.p.chase_on:
@@ -241,10 +297,32 @@ class ExitEngine(Strategy):
         prices = [price for _, price in self.trades]
         return max(prices) - min(prices)
 
+    def _held(self) -> Decimal:
+        """The protected native position's quantity, from the cache."""
+        assert self.position_id is not None
+        position = self.cache.position(self.position_id)
+        assert position is not None
+        return position.quantity.as_decimal()
+
+    def _basis(self) -> Decimal:
+        """The opening order's `Order.avg_px`. While unpaused, every fill in the position is its."""
+        assert self.entry_order_id is not None
+        order = self.cache.order(self.entry_order_id)
+        assert order is not None and isinstance(order.avg_px, Decimal)
+        return order.avg_px
+
+    def _pause_and_page(self, ts: int, reason: str, **values: Decimal) -> None:
+        """ADR-0007:17-19: stop managing the symbol and page a person, once per reason."""
+        self.paused = True
+        if reason not in self.pages:
+            self.pages.append(reason)
+        kind = "add_paused" if reason == "owner_add" else "pause_and_page"
+        self._record(ts, kind, reason=reason, **values)
+
     def _price(self, value: Decimal) -> Price:
         """Round a sell limit up to the tick, so it never lands below the bid."""
         ticks = (value / self.one_tick).to_integral_value(rounding=ROUND_CEILING)
         return Price.from_str(str(ticks * self.one_tick))
 
-    def _record(self, ts: int, event: str, **values: Decimal) -> None:
+    def _record(self, ts: int, event: str, **values: Decimal | str) -> None:
         self.events.append({"ts": str(ts), "event": event} | {k: str(v) for k, v in values.items()})
