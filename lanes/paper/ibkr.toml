@@ -1,0 +1,59 @@
+# Offline inventory/registry only. The shared node has not consumed or applied these starts.
+state = "OFF"
+lane = "ibkr-paper"
+
+[sources]
+engine = "nautechsystems/nautilus_trader@v2.0.0rc8 d53849b216e20f2c122ca01b4dd0da377638b186"
+clients = "northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:src/northstar_trading/nodes/ibkr.py"
+gateway = "northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:deploy/ib-gateway.paper.yaml"
+
+[gateway]
+image = "ghcr.io/gnzsnz/ib-gateway:10.50.1f@sha256:1e2236804ac949b789197c225a048c0c891c9958f948c87166226e5b647ff581"
+ibc_version = "3.24.2"
+state = "NOT_STARTED"
+server_protocol_state = "UNVERIFIED"
+server_protocol_requirement = "Retained rc7 source requires >=213 (ibapi 5.0.0); rc8 compatibility UNVERIFIED until authorized qualification"
+source = "sources.gateway; docs/adr/0008-broker-roles.md B3"
+
+[controller_qualification]
+repository = "code-hustler-ft3d/ibg-controller"
+version = "v0.16.3"
+commit = "9c3a1f9037a9dfd3c644a7c6a4142a9e9e0d3b1a"
+state = "NOT_RUN"
+source = "docs/adr/0008-broker-roles.md B3; northstar@b384d298d217:docs/decisions/0019-execution-topology-lanes-throughput.md Current picks"
+
+[candidate]
+id = "C06"
+disposition = "CANDIDATE"
+implementation = "OFF"
+long_liquid_tier_first = true
+shorts = "OFF"
+reentry = "OFF"
+source = "docs/adr/0002-philosophy-and-lanes.md IBKR row; docs/adr/0024-extreme-mover-ranking-and-early-entry.md IBKR"
+
+# Decimal starts are strings. These rows are sourced starting values, not calibration or authority
+# to open a stream, size a candidate, start a Gateway or order. Missing reserves stay unavailable.
+[parameters]
+risk_per_trade = { start = "0.005", unit = "equity fraction", state = "UNCALIBRATED", source = "ADR-0002 IBKR profile" }
+leverage = { start = "1", unit = "multiple", state = "UNCALIBRATED", source = "ADR-0002 IBKR profile" }
+protective_stop_fraction = { start = "0.025", unit = "entry fraction", state = "UNCALIBRATED", source = "ADR-0002 IBKR profile" }
+emulated_stop_strict_upper_bound = { start = "0.03", unit = "entry fraction; strict less-than", state = "UNCALIBRATED", source = "ADR-0002 IBKR profile" }
+peak_actions_per_second = { start = "16", unit = "actions/s", state = "UNCALIBRATED", source = "ADR-0002 IBKR envelope" }
+long_only_peak_actions_per_second = { start = "12", unit = "actions/s", state = "UNCALIBRATED", source = "ADR-0002 IBKR envelope" }
+connection_timeout = { start = "30", unit = "seconds", state = "UNCALIBRATED", source = "sources.clients ibkr_paper_spec timeout_connection_secs" }
+request_timeout = { start = "60", unit = "seconds", state = "UNCALIBRATED", source = "sources.clients EXEC_REQUEST_TIMEOUT_SECS; sources.engine native config default" }
+use_regular_trading_hours = { start = false, unit = "boolean", state = "UNCALIBRATED", source = "ADR-0002 Keep the clocks distinct: supported 24/5; sources.engine crates/adapters/interactive_brokers/src/data/core.rs use_rth" }
+ignore_quote_tick_size_updates = { start = false, unit = "boolean", state = "UNCALIBRATED", source = "sources.engine crates/adapters/interactive_brokers/src/config.rs InteractiveBrokersDataClientConfig::default; src/python/config.rs" }
+batch_quotes = { start = true, unit = "boolean", state = "UNCALIBRATED", source = "sources.engine crates/adapters/interactive_brokers/src/config.rs InteractiveBrokersDataClientConfig::default; src/python/config.rs" }
+market_data_type = { start = "REALTIME", unit = "MarketDataType", state = "UNCALIBRATED", source = "sources.engine crates/adapters/interactive_brokers/src/config.rs InteractiveBrokersDataClientConfig::default; src/python/config.rs; account entitlement UNVERIFIED" }
+
+# References only: the shared node consumes these canonical registries, never copied starts here.
+[shared_parameters]
+request_budget_per_second = "lanes/limits.yaml:lanes.ibkr-paper.order_actions_budget_per_sec_ib_data"
+request_budget_after_paced_rotation = "lanes/limits.yaml:lanes.ibkr-paper.order_actions_budget_per_sec"
+order_action_ceiling_per_minute = "lanes/limits.yaml:owner_limits_per_min.ibkr_paper_and_live"
+market_data_lines = "lanes/limits.yaml:lanes.ibkr-paper.market_data_lines"
+oer_daily_ceiling = "lanes/limits.yaml:lanes.ibkr-paper.oer_max_per_day"
+working_orders_per_side_per_contract = "lanes/limits.yaml:lanes.ibkr-paper.max_working_orders_per_side_per_contract"
+reserve_per_open_position = "lanes/custody-parameters.json:reserve_per_open_position"
+reserve_per_exiting_position = "lanes/custody-parameters.json:reserve_per_exiting_position"
