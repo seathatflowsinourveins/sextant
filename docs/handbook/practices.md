@@ -75,3 +75,10 @@
 - Run harness proof subprocesses with explicit fixture environments; inherited Bash functions or startup files must not replace fake tools with the running service. [AO proof isolation](../research/2026-11-06-agent-orchestrator.md#offline-proof-isolation)
 - Probe a replacement router key before publishing its sealed value; a failed probe keeps the previous sealed bytes and router key. Check both in the regression. Hermes's gateway and sessions keep their launch key, so relaunch its clients and restart its gateway before revoking. [Renewal lesson](omni-keys.md)
 - Only the owner signs in, stores external keys and approves/applies live limits. The owner may halt at any time; the sanctioned guard and runner also halt automatically under their recorded causes, and the lead promotes, stages and demotes with a record. [ADR-0020](../adr/0020-live-lane.md)
+
+## Lessons from the clean distro's first day (2026-11-06, lead)
+- **Make setup steps converge, never skip.** A step that does nothing once its target exists never delivers later fixes: the daily sweep kept its first prompt until `lifecycle.sh` learned to edit in place (#55).
+- **No shared list that every lane appends to.** One `testpaths` line naming proof files made every lane PR conflict with every other. Configure by directory and marker once (#92).
+- **Measure the right column.** A memory floor written as "free" paused two lanes while 45 GB was available; say MemAvailable ([issue #44](https://github.com/seathatflowsinourveins/sextant/issues/44)).
+- **One shared token is one budget.** About 20 agents polling GitHub REST emptied 5,000 requests in under an hour. AO's ETag-guarded polls were not the cause; loops in lanes were. No polling, GraphQL reads first ([issue #44](https://github.com/seathatflowsinourveins/sextant/issues/44)).
+
