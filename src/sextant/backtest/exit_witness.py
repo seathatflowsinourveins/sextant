@@ -38,6 +38,7 @@ from nautilus_trader.testkit.providers import TestDataProvider, TestInstrumentPr
 
 from sextant.exits.engine import ExitEngine, ExitEngineConfig
 from sextant.exits.policy import ExitParams
+from sextant.validation.trials import WITNESS_PATH, TrialLog
 
 AUDUSD = TestInstrumentProvider.default_fx_ccy("AUD/USD")
 QTY = Decimal(100_000)
@@ -85,6 +86,7 @@ class Arm:
     exit: str
     exit_label: str
     gross_pnl_usd: str
+    execution: str = "synthetic Nautilus replay"
 
 
 def params_hash(params: ExitParams) -> str:
@@ -93,6 +95,15 @@ def params_hash(params: ExitParams) -> str:
 
 
 def run(out: Path, params: ExitParams = FIXTURE) -> tuple[Arm, Arm, list[dict[str, str]]]:
+    with TrialLog(out / WITNESS_PATH).attempts(
+        {"exit-engine-x2-x5": {"exit_engine": "1"}, "hold-to-end": {}},
+        {k: str(v) for k, v in asdict(params).items()},
+        dict(tier="MODELED", block_set_id=DATA),
+    ) as run_id:
+        return _run(out / "reports/exit-witness" / run_id, params)
+
+
+def _run(out: Path, params: ExitParams = FIXTURE) -> tuple[Arm, Arm, list[dict[str, str]]]:
     quotes = TestDataProvider.audusd_quotes()
     engine = BacktestEngine(
         BacktestEngineConfig(
@@ -133,7 +144,7 @@ def run(out: Path, params: ExitParams = FIXTURE) -> tuple[Arm, Arm, list[dict[st
     digest = params_hash(params)
     managed = Arm(
         "exit-engine-x2-x5",
-        "SIMULATED",
+        "MODELED",
         DATA,
         digest,
         str(entry),
@@ -152,13 +163,10 @@ def run(out: Path, params: ExitParams = FIXTURE) -> tuple[Arm, Arm, list[dict[st
         str((last_bid - entry) * QTY),
     )
     out.mkdir(parents=True, exist_ok=True)
-    with (out / "ledger.jsonl").open("a") as ledger:
-        for arm in (managed, control):
-            ledger.write(json.dumps(asdict(arm)) + "\n")
     (out / "exit-events.json").write_text(json.dumps(events, indent=1))
     return managed, control, events
 
 
 if __name__ == "__main__":
-    for row in run(Path("reports/exit-witness"))[:2]:
+    for row in run(Path(__file__).resolve().parents[3])[:2]:
         print(row)

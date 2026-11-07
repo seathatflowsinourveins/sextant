@@ -171,6 +171,20 @@ def test_arming_after_arrivals_replays_the_vetoed_print(lag):
     assert not s.first_leg_ready(D("10.03"), known + 50_000_000)
 
 
+@pytest.mark.parametrize("lag", [600_000_000, 5_100_000_000], ids=["late", "stale-late"])
+def test_arming_cannot_credit_a_late_qualifying_print(lag):
+    s = state()
+    feed(s, 0, "10.01")
+    feed(s, 2, "10.03")
+    late = trade("1.5", "10.02", lag=lag)
+    assert not s.on_trade(late, now=late.ts_init)
+    known = late.ts_init + 50_000_000
+    s.arm(Surge(IID, "fixture-segment", START, known, START + 120 * SEC, D("10"), "TEST"))
+    assert not s.first_leg_ready(D("10.03"), known + 50_000_000)
+    feed(s, 8, "10.04")
+    assert s.first_leg_ready(D("10.04"), START + 8 * SEC)
+
+
 def test_receipt_cannot_undercount_the_observed_tape(instrument, tmp_path):
     earlier = [trade(str(D(-50) + D("0.49") * i), "10.00") for i in range(100)]
     data = [*earlier, *reclaim_tape(), quote("7.9", "10.02", "10.03")]

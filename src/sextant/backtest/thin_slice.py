@@ -13,12 +13,12 @@ Each source is pinned in docs/manifest.md:
 
 from __future__ import annotations
 
-import json
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 
 from nautilus_trader.adapters.binance import BINANCE_VENUE
+from nautilus_trader.analysis import PortfolioStatistic
 from nautilus_trader.analysis.tearsheet import create_tearsheet
 from nautilus_trader.backtest import BacktestEngine
 from nautilus_trader.config import BacktestEngineConfig, RiskEngineConfig
@@ -27,6 +27,7 @@ from nautilus_trader.model import AccountType, BarType, Currency, Money, OmsType
 from nautilus_trader.testkit.providers import TestDataProvider, TestInstrumentProvider
 
 from sextant.strategies.ema_cross import EMACross, EMACrossConfig
+from sextant.validation.trials import WITNESS_PATH, TrialLog
 
 ETHUSDT = TestInstrumentProvider.ethusdt_binance()
 USDT = Currency.from_str("USDT")
@@ -46,6 +47,14 @@ class Run:
     hold_flat_pnl_usdt: str
     hold_flat_orders: int
     source: str
+    round_trips: int
+
+
+class TradeCount(PortfolioStatistic):
+    """rc8 docs/concepts/portfolio.md statistics example; native archived close cycles."""
+
+    def calculate_from_realized_pnls(self, realized_pnls: list[float]) -> float | None:
+        return float(len(realized_pnls))
 
 
 def _engine(ticks: list) -> BacktestEngine:
@@ -63,24 +72,36 @@ def _engine(ticks: list) -> BacktestEngine:
         starting_balances=[Money(1_000_000, USDT), Money(10, Currency.from_str("ETH"))],
         fee_model=MakerTakerFeeModel(maker_rate=Decimal("0.0001"), taker_rate=Decimal("0.0001")),
     )
+    engine.portfolio.register_statistic(TradeCount())
     engine.add_instrument(ETHUSDT)
     engine.add_data(ticks)
     return engine
 
 
-def _strategy() -> EMACross:
-    return EMACross(
-        EMACrossConfig(
-            instrument_id=ETHUSDT.id,
-            bar_type=BarType.from_str("ETHUSDT.BINANCE-250-TICK-LAST-INTERNAL"),
-            trade_size=Decimal("0.10"),
-            fast_ema_period=10,
-            slow_ema_period=20,
-        ),
+def _config() -> EMACrossConfig:
+    return EMACrossConfig(
+        instrument_id=ETHUSDT.id,
+        bar_type=BarType.from_str("ETHUSDT.BINANCE-250-TICK-LAST-INTERNAL"),
+        trade_size=Decimal("0.10"),
+        fast_ema_period=10,
+        slow_ema_period=20,
     )
 
 
+def _strategy() -> EMACross:
+    return EMACross(_config())
+
+
 def run_window(window: str, out: Path) -> Run:
+    with TrialLog(out / WITNESS_PATH).attempts(
+        {"hold_flat": {}, "EMACross": {"ema_cross": "1"}},
+        {key: str(value) for key, value in vars(_config()).items()},
+        dict(tier="MODELED", block_set_id=window),
+    ) as run_id:
+        return _run_window(window, out / "reports/thin-slice" / f"{window}-{run_id}")
+
+
+def _run_window(window: str, out: Path) -> Run:
     """Run the hold-flat control, then the strategy, over one window. Write the fills and page."""
     ticks = TestDataProvider.trades_from_binance_csv(
         instrument=ETHUSDT,
@@ -108,10 +129,11 @@ def run_window(window: str, out: Path) -> Run:
     fills.to_csv(out / f"fills-{window}.csv")
     create_tearsheet(
         engine,
-        output_path=str(out / f"merit-{window}.html"),
+        output_path=str(out / f"tearsheet-{window}.html"),
         title=f"EMACross, {window}: {pnl} USDT realized, hold-flat {hold_flat} USDT",
     )
     record = Run(
+        round_trips=int(engine.portfolio.statistics().pnls["USDT"]["Trade Count"]),
         strategy="EMACross",
         window=window,
         backtest_start=result.backtest_start,
@@ -126,11 +148,9 @@ def run_window(window: str, out: Path) -> Run:
         "examples/backtest/crypto_ema_cross_ethusdt_trade_ticks.py",
     )
     engine.dispose()
-    with (out / "ledger.jsonl").open("a") as ledger:
-        ledger.write(json.dumps(asdict(record)) + "\n")
     return record
 
 
 if __name__ == "__main__":
     for name in WINDOWS:
-        print(run_window(name, Path("reports/thin-slice")))
+        print(run_window(name, Path(__file__).resolve().parents[3]))

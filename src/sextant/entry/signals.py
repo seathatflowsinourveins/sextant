@@ -67,6 +67,7 @@ class EntryState:
         self.last: TradeTick | None = None
         self.trades.clear()
         self.identities.clear()
+        self.ineligible: set[TradeTick] = set()
         self.dollars = self.volume = Decimal(0)
         self.vwap: Decimal | None = None
         self.extension = Extension.UNKNOWN
@@ -101,6 +102,7 @@ class EntryState:
         self.run = []
         for tick in self.trades:
             self._first_leg(tick)
+        self.run = [tick for tick in self.run if tick not in self.ineligible]
 
     def on_bar(self, bar: Bar, *, now: int) -> bool:
         if (
@@ -148,6 +150,7 @@ class EntryState:
         assert self.last is not None
         self.extension = self._extension(self.last.price.as_decimal())
         if late or now - tick.ts_event > self.params.ns("max_data_age_s"):
+            self.ineligible.add(tick)
             self._veto(tick)
             return False
         if previous is not None and price < previous.price.as_decimal():
