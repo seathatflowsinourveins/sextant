@@ -52,7 +52,7 @@ def _official_close(rows: list[dict[str, Any]]) -> Decimal | None:
     last = None
     for row in rows:
         local = timestamp(row["t"]).astimezone(NY)
-        if local.time() < RTH_CLOSE:
+        if local.time() <= RTH_CLOSE:
             if last is None or timestamp(row["t"]) > timestamp(last["t"]):
                 last = row
     return None if last is None else _close(last)
