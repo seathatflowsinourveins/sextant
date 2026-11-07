@@ -181,15 +181,35 @@ def pull(
     needs = needed_days(targets, sessions, lookback)
     receipts_path = output / "pull-receipts.jsonl"
     receipts: list[dict[str, Any]] = []
+    known: dict[tuple[str, str], dict[str, Any]] = {}
+    if receipts_path.exists():
+        for line in receipts_path.read_text().splitlines():
+            if line.strip():
+                row = json.loads(line)
+                known[(row["symbol"], row["day"])] = row
     history = BoundedHistory(budget)
     catalog = CatalogStore(catalog_root, cache_intervals=True)
     try:
         for day in sorted(needs):
-            pending = [
-                symbol
-                for symbol in needs[day]
-                if not raw_path(raw_root, "1min", symbol, day).exists()
-            ]
+            pending = []
+            for symbol in needs[day]:
+                raw = raw_path(raw_root, "1min", symbol, day)
+                if raw.exists():
+                    key = (symbol, day.isoformat())
+                    receipt = known.get(key)
+                    if receipt is None:
+                        bars = decode_bars(read_raw(raw), symbol, "1min")
+                        receipt = dict(
+                            symbol=symbol,
+                            day=day.isoformat(),
+                            bars=len(bars),
+                            raw_sha256=_sha(raw),
+                            source_pages_sha256=None,
+                            resumed=True,
+                        )
+                    receipts.append(receipt)
+                else:
+                    pending.append(symbol)
             for start in range(0, len(pending), 50):
                 batch = pending[start : start + 50]
                 if not batch:
