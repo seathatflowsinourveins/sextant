@@ -12,10 +12,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 import resource
-import subprocess
 from collections.abc import Callable, Sequence
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
@@ -37,6 +35,7 @@ from sextant.data.alpaca_history import (
     read_raw,
 )
 from sextant.data.catalog import CatalogStore, decode_bars
+from sextant.research.onset_common import git
 
 
 class CaptureStopped(ValueError):
@@ -259,22 +258,10 @@ def require_reservation(
     )
 
 
-def _git(repository: Path, *args: str) -> bytes:
-    # The credentialed Python command needs the paper key; local git does not.
-    clean = {
-        k: v
-        for k, v in os.environ.items()
-        if not any(s in k.upper() for s in ("KEY", "SECRET", "TOKEN", "PASSWORD"))
-    }
-    return subprocess.check_output(
-        ["git", *args], cwd=repository, env=clean, stderr=subprocess.DEVNULL
-    )
-
-
 def canonical_snapshot(repository: Path, receipt_commit: str) -> tuple[str, bytes]:
     """Read the fetched ledger tip, so an old RUNNING receipt cannot reopen a closed trial."""
     if not re.fullmatch(r"[0-9a-f]{40}", receipt_commit):
         raise CaptureStopped("reservation_commit_required")
-    tip = _git(repository, "rev-parse", "refs/remotes/origin/ledger").decode().strip()
-    _git(repository, "merge-base", "--is-ancestor", receipt_commit, tip)
-    return tip, _git(repository, "show", f"{tip}:reports/research/sim-runner/trials.parquet")
+    tip = git(repository, "rev-parse", "refs/remotes/origin/ledger").decode().strip()
+    git(repository, "merge-base", "--is-ancestor", receipt_commit, tip)
+    return tip, git(repository, "show", f"{tip}:reports/research/sim-runner/trials.parquet")

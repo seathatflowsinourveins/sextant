@@ -25,7 +25,7 @@ from zoneinfo import ZoneInfo
 
 from nautilus_trader.model import Bar, BarType, InstrumentId, Price, Quantity
 
-from sextant.data.alpaca_history import raw_path, read_raw, symbol_name, timestamp
+from sextant.data.alpaca_history import symbol_name, timestamp
 from sextant.research.detectors.stocks_in_play import (
     DailyFacts,
     OpeningWindow,
@@ -33,6 +33,7 @@ from sextant.research.detectors.stocks_in_play import (
     opening_window,
     screen,
 )
+from sextant.research.onset_common import read_bars, read_jsonl, read_sessions
 
 NY = ZoneInfo("America/New_York")
 NS = 1_000_000_000
@@ -51,22 +52,6 @@ class SymbolDay:
     role: str
     event_id: str
     control_id: str
-
-
-def _jsonl(path: Path) -> list[dict[str, Any]]:
-    return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
-
-
-def _sessions(path: Path) -> list[date]:
-    body = json.loads(path.read_text())
-    return [date.fromisoformat(item["date"]) for item in body]
-
-
-def _bars(raw_root: Path, symbol: str, day: date) -> list[dict[str, Any]]:
-    path = raw_path(raw_root, "1min", symbol_name(symbol), day)
-    if not path.exists():
-        return []
-    return sorted(read_raw(path), key=lambda row: timestamp(row["t"]))
 
 
 def _clock(row: dict[str, Any]) -> datetime:
@@ -190,11 +175,13 @@ def evaluate(
     spec: StocksInPlaySpec,
     fallback: Path | None = None,
 ) -> dict[str, Any]:
-    events = [row for row in _jsonl(freeze / "events.jsonl") if row["cohort"] == "selected_gainer"]
-    controls = _jsonl(freeze / "controls.jsonl")
-    sessions = _sessions(calendar)
+    events = [
+        row for row in read_jsonl(freeze / "events.jsonl") if row["cohort"] == "selected_gainer"
+    ]
+    controls = read_jsonl(freeze / "controls.jsonl")
+    sessions = read_sessions(calendar)
     index = {day: i for i, day in enumerate(sessions)}
-    anchors = {row["event_id"]: row for row in _jsonl(thresholds)}
+    anchors = {row["event_id"]: row for row in read_jsonl(thresholds)}
 
     primary = {(row["event_id"]): row for row in controls if row["role"] == "primary"}
     replacements = {}
@@ -244,7 +231,7 @@ def evaluate(
             continue
         prior_days = sessions[i - LOOKBACK : i]
         days = [*prior_days, day]
-        bars = {d: _bars(raw_root, symbol, d) for d in days}
+        bars = {d: read_bars(raw_root, symbol, d, ordered=True) for d in days}
         current = _native_window(symbol, day, bars[day], spec)
         if current is None:
             censored["opening_window"] += 1

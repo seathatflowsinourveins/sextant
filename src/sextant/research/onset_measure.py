@@ -16,7 +16,8 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from sextant.data.alpaca_history import raw_path, read_raw, symbol_name, timestamp
+from sextant.data.alpaca_history import timestamp
+from sextant.research.onset_common import read_bars, read_jsonl, read_sessions
 
 NY = ZoneInfo("America/New_York")
 RTH_CLOSE = time(16, 0)
@@ -25,22 +26,6 @@ PRE = time(4, 0)
 POST = time(20, 0)
 FIVE = Decimal("1.05")
 TEN = Decimal("1.10")
-
-
-def _jsonl(path: Path) -> list[dict[str, Any]]:
-    return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
-
-
-def _sessions(path: Path) -> list[date]:
-    body = json.loads(path.read_text())
-    return [date.fromisoformat(item["date"]) for item in body]
-
-
-def _bars(raw_root: Path, symbol: str, day: date) -> list[dict[str, Any]]:
-    path = raw_path(raw_root, "1min", symbol_name(symbol), day)
-    if not path.exists():
-        return []
-    return read_raw(path)
 
 
 def _close(row: dict[str, Any]) -> Decimal:
@@ -59,10 +44,10 @@ def _official_close(rows: list[dict[str, Any]]) -> Decimal | None:
 
 def _event_series(raw_root: Path, symbol: str, day: date, prior: date) -> list[dict[str, Any]]:
     rows = []
-    for row in _bars(raw_root, symbol, prior):
+    for row in read_bars(raw_root, symbol, prior):
         if timestamp(row["t"]).astimezone(NY).time() >= POST:
             rows.append(row)
-    rows.extend(_bars(raw_root, symbol, day))
+    rows.extend(read_bars(raw_root, symbol, day))
     return sorted(rows, key=lambda row: timestamp(row["t"]))
 
 
@@ -86,8 +71,10 @@ def _first(rows: list[dict[str, Any]], prior_close: Decimal, multiple: Decimal) 
 
 
 def measure(freeze: Path, raw_root: Path, output: Path) -> dict[str, Any]:
-    events = [row for row in _jsonl(freeze / "events.jsonl") if row["cohort"] == "selected_gainer"]
-    sessions = _sessions(output / "calendar" / "alpaca_calendar" / "2020-01-01_2026-12-31.json")
+    events = [
+        row for row in read_jsonl(freeze / "events.jsonl") if row["cohort"] == "selected_gainer"
+    ]
+    sessions = read_sessions(output / "calendar" / "alpaca_calendar" / "2020-01-01_2026-12-31.json")
     index = {day: i for i, day in enumerate(sessions)}
     rows: list[dict[str, Any]] = []
     missing: list[str] = []
@@ -100,7 +87,7 @@ def measure(freeze: Path, raw_root: Path, output: Path) -> dict[str, Any]:
         prior_close = None
         for back in range(1, 16):
             candidate = sessions[index[day] - back]
-            found = _official_close(_bars(raw_root, event["symbol"], candidate))
+            found = _official_close(read_bars(raw_root, event["symbol"], candidate))
             if found is not None:
                 prior, prior_close = candidate, found
                 break

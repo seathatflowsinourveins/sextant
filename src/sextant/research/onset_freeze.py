@@ -16,13 +16,14 @@ import hashlib
 import io
 import json
 import re
-import subprocess
 import zipfile
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from functools import partial
 from pathlib import Path
 from typing import Any
+
+from sextant.research.onset_common import git, sha256_bytes, sha256_file
 
 NS = 1_000_000_000
 CLASSES = {
@@ -47,20 +48,6 @@ SCALES = {
     "5 - Large": 5,
 }
 SCALE_RE = re.compile(r"^(\d) - ")
-
-
-def sha256_bytes(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
-
-
-def sha256_file(path: Path) -> str:
-    return sha256_bytes(path.read_bytes())
-
-
-def git(head: str) -> str:
-    return subprocess.run(
-        ["git", *head.split()], check=True, capture_output=True, text=True
-    ).stdout.strip()
 
 
 def class_group(category: str) -> str | None:
@@ -437,8 +424,8 @@ def freeze(events_path: Path, tickers_path: Path, out: Path) -> dict[str, Any]:
         "exchanges": stats["exchanges"],
         "inputs": {"events.jsonl": events_sha, "tickers.csv": tickers_sha},
         "code": {
-            "head": git("rev-parse HEAD"),
-            "dirty": bool(git("status --porcelain")),
+            "head": git(Path.cwd(), "rev-parse", "HEAD").decode().strip(),
+            "dirty": bool(git(Path.cwd(), "status", "--porcelain")),
             "script_sha256": script_sha,
         },
         "labels": {

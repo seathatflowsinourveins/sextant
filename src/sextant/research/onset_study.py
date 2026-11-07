@@ -34,24 +34,17 @@ from sextant.research.onset_capture import (
     CaptureBudget,
     CaptureStopped,
 )
+from sextant.research.onset_common import read_jsonl, sha256_file
 
 
 def _json(path: Path) -> Any:
     return json.loads(path.read_text())
 
 
-def _jsonl(path: Path) -> list[dict[str, Any]]:
-    return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
-
-
-def _sha(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
 def load_freeze(directory: Path) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]]]:
-    events = _jsonl(directory / "events.jsonl")
+    events = read_jsonl(directory / "events.jsonl")
     controls: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for row in _jsonl(directory / "controls.jsonl"):
+    for row in read_jsonl(directory / "controls.jsonl"):
         controls[row["event_id"]].append(row)
     for rows in controls.values():
         rows.sort(key=lambda row: row["role"])
@@ -220,7 +213,7 @@ def pull(
                         symbol=symbol,
                         day=day.isoformat(),
                         bars=len(bars),
-                        raw_sha256=_sha(raw),
+                        raw_sha256=sha256_file(raw),
                         source_pages_sha256=None,
                         resumed=True,
                     )
@@ -254,7 +247,7 @@ def pull(
                             symbol=symbol,
                             day=day.isoformat(),
                             bars=len(bars),
-                            raw_sha256=_sha(raw),
+                            raw_sha256=sha256_file(raw),
                             source_pages_sha256=source_sha,
                         )
                     )
@@ -274,7 +267,7 @@ def pull(
         requests=budget.requests,
         bytes=budget.bytes,
         receipts=len(receipts),
-        receipts_sha256=_sha(receipts_path) if receipts_path is not None else None,
+        receipts_sha256=sha256_file(receipts_path) if receipts_path is not None else None,
     )
     if study_outputs:
         (output / "pull-summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True))

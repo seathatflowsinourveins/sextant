@@ -12,7 +12,6 @@ live endpoint is reachable.
 
 from __future__ import annotations
 
-import hashlib
 import json
 from datetime import date, datetime
 from decimal import Decimal
@@ -20,20 +19,13 @@ from pathlib import Path
 from typing import Any
 
 from sextant.data.alpaca_history import raw_path, read_raw, symbol_name
+from sextant.research.onset_common import sha256_file
 from sextant.research.onset_study import (
     load_freeze,
     market_sessions,
     pull,
     study_budget,
 )
-
-
-def _jsonl(path: Path) -> list[dict[str, Any]]:
-    return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
-
-
-def _sha(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def zero_bar_primaries(freeze: Path, raw_root: Path) -> list[dict[str, Any]]:
@@ -150,7 +142,7 @@ def pull_fallbacks(
         replacements=sorted(selected.values(), key=lambda item: item["event_id"]),
         unresolved_rows=unresolved,
         receipts=len(receipts),
-        receipts_sha256=_sha(output / "fallback-receipts.jsonl"),
+        receipts_sha256=sha256_file(output / "fallback-receipts.jsonl"),
         requests=budget.requests,
         bytes=budget.bytes,
     )
