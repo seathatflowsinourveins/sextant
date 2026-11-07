@@ -1,0 +1,9 @@
+{
+  "count": 10,
+  "format": "sextant.ledger.handoff/1",
+  "issue": 130,
+  "kind": "outcome",
+  "lane": "onset",
+  "rows_sha256": "411da120433cf17d3181f485b7e70d5775a86e9f18c26fd5e71ab5af34a99cc4",
+  "tier": "MODELED"
+}
