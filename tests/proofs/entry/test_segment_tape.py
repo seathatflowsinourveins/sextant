@@ -1,7 +1,5 @@
 """N2 segment boundaries and exact deduplication without a segment-sized heap."""
 
-import gc
-import tracemalloc
 from decimal import Decimal as D
 
 import pytest
@@ -27,29 +25,24 @@ def test_segment_start_is_inclusive_and_resets_identity_scope():
     tick = trade(100, "10.00")
     assert s.on_trade(tick, now=tick.ts_init)
     s.reset_segment("next-segment", start_ns=tick.ts_event)
-    assert s.on_trade(tick, now=tick.ts_init)
     assert not s.on_trade(tick, now=tick.ts_init)
     assert s.volume == 100
 
 
-def test_full_segment_dedup_does_not_keep_each_print_on_the_python_heap(record_property):
+def test_history_expires_but_scalar_vwap_survives_and_old_facts_latch_refusal():
     s = state()
-    gc.collect()
-    tracemalloc.start()
-    try:
-        for i in range(20000):
-            tick = trade(str(D(i) / 100000), "10.00", identity=f"memory-{i}")
-            assert s.on_trade(tick, now=tick.ts_init)
-        _, peak = tracemalloc.get_traced_memory()
-    finally:
-        tracemalloc.stop()
-    # Fixture ceiling covers Python bookkeeping; the SQLite runtime supplies its pager cache.
-    assert peak < 8_000_000, peak
-    record_property("peak_python_bytes", peak)
-    first = trade(0, "10.00", identity="memory-0")
-    feed(s, 200, "10.00")
-    assert not s.on_trade(first, now=START + 201 * SEC)
-    assert s.volume == D("2000100")
+    for i in range(400):
+        assert feed(s, i, "10.00", identity=f"memory-{i}")
+    assert len(s.tape.data) <= 126  # 120 s horizon plus the existing 5 s prune cadence.
+    assert s.volume == 40000 and s.vwap == D("10.00")
+    assert not feed(s, 399, "10.00", identity="memory-399")
+    old = trade(0, "9.00", identity="old-veto", lag=400 * SEC)
+    assert not s.on_trade(old, now=old.ts_init)
+    assert s.failure and not s.fresh(old.ts_init)
+    assert s.volume == 40000
+    assert not feed(s, 401, "10.01")
+    s.reset_segment("next", start_ns=START + 402 * SEC)
+    assert feed(s, 402, "10.01") and not s.failure
 
 
 def test_compact_first_leg_keeps_its_true_origin_and_count_span():

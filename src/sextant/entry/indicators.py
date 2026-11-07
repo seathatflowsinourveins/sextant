@@ -14,8 +14,6 @@ class DecimalATR:
 
     def handle_bar(self, bar: Bar) -> None:
         high, low, close = bar.high.as_decimal(), bar.low.as_decimal(), bar.close.as_decimal()
-        if not low <= close <= high:
-            return
         true_range = (
             high - low
             if self.previous_close is None

@@ -1,7 +1,7 @@
 """N5 sizing and durable basis; entry_sizing.py/persist.py pins are in docs/manifest.md."""
 
 import json
-from dataclasses import dataclass
+from collections import namedtuple
 from decimal import ROUND_FLOOR, Decimal
 from pathlib import Path
 from typing import Any
@@ -50,20 +50,17 @@ class SegmentBasis:
         return basis
 
 
-@dataclass(frozen=True)
-class Sizing:
-    quantity: Quantity
-    planned_risk: Decimal | None
-    stop_distance: Decimal | None
-    confidence_multiplier: Decimal | None
-    binding_term: str | None
-    refusal: str | None
-    params_hash: str
-
+class Sizing(
+    namedtuple(
+        "Sizing",
+        "quantity planned_risk stop_distance confidence_multiplier "
+        "binding_term refusal params_hash",
+    )
+):
     def journal(self) -> dict[str, Any]:
         return {
             name: str(value) if isinstance(value, (Decimal, Quantity)) else value
-            for name, value in vars(self).items()
+            for name, value in self._asdict().items()
         }
 
 
@@ -94,12 +91,9 @@ def size_entry(
             raise ValueError("initial_trigger must be below entry")
         if type(prearm_stopouts) is not int or prearm_stopouts < 0:
             raise ValueError("prearm_stopouts")
-        if confidence is None:
-            if setup not in {"FIRST_LEG", "HALT_RESUME"}:
-                raise ValueError("confidence unavailable for scored setup")
-        else:
-            if setup in {"FIRST_LEG", "HALT_RESUME"}:
-                raise ValueError("confidence supplied for unscored setup")
+        if (confidence is None) != (setup in {"FIRST_LEG", "HALT_RESUME"}):
+            raise ValueError("confidence authority differs from setup")
+        if confidence is not None:
             confidence = number(confidence, "confidence", zero=True)
             if confidence > 1:
                 raise ValueError("confidence exceeds one")

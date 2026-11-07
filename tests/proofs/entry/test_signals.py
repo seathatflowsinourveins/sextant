@@ -5,13 +5,17 @@ from decimal import Decimal as D
 import pytest
 from nautilus_trader.model import InstrumentId
 
-from sextant.entry.signals import EntryState, Extension, Surge, TradeCoverage
+from sextant.entry.signals import EntryState, Extension, Surge, TradeCoverage, classify
 
 from .conftest import IID, SEC, START, bar, params, trade
 
 
 def state(*, start_ns=START - 3600 * SEC, **overrides) -> EntryState:
     return EntryState(IID, params(**overrides), "fixture-segment", start_ns=start_ns)
+
+
+def extension(s, price):
+    return classify(price, s.vwap, s.last_atr, s.params["entry_max_vwap_extension_atr"])
 
 
 def arm(s: EntryState) -> None:
@@ -59,7 +63,7 @@ def test_missing_atr_is_unknown_until_own_completed_bars_initialize() -> None:
     s = state()
     feed(s, 0, "10.00")
     assert s.extension is Extension.UNKNOWN
-    assert s._extension(D("10")) is Extension.UNKNOWN
+    assert extension(s, D("10")) is Extension.UNKNOWN
     for offset in (-180, -120):
         assert s.on_bar(bar(offset), now=START)
     assert not s.on_bar(bar(-60, iid=InstrumentId.from_str("OTHER.SIM")), now=START)
@@ -70,8 +74,8 @@ def test_missing_atr_is_unknown_until_own_completed_bars_initialize() -> None:
     assert s.on_bar(bar(-60), now=START + SEC)
     feed(s, 2, "10.10")
     assert s.extension is Extension.NOT_EXTENDED
-    assert s._extension(D("10.40")) is Extension.NOT_EXTENDED
-    assert s._extension(D("11.00")) is Extension.EXTENDED
+    assert extension(s, D("10.40")) is Extension.NOT_EXTENDED
+    assert extension(s, D("11.00")) is Extension.EXTENDED
 
 
 def test_exact_atr_extension_boundary_is_inclusive_without_float_roundoff() -> None:
@@ -81,8 +85,8 @@ def test_exact_atr_extension_boundary_is_inclusive_without_float_roundoff() -> N
     feed(s, 0, "10.00", size=200)
     feed(s, 1, "10.60", size=100)  # VWAP 10.20; last - VWAP == 2 * ATR(0.20).
     assert s.extension is Extension.NOT_EXTENDED
-    assert s._extension(D("10.60")) is Extension.NOT_EXTENDED
-    assert s._extension(D("10.61")) is Extension.EXTENDED
+    assert extension(s, D("10.60")) is Extension.NOT_EXTENDED
+    assert extension(s, D("10.61")) is Extension.EXTENDED
 
 
 def test_segment_reset_clears_vwap_and_first_leg() -> None:

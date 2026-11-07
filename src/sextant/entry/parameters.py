@@ -54,18 +54,15 @@ class EntryParameters:
         values: dict[str, Any] = {}
         for row in rows:
             name = row["name"]
-            for metadata in ("source", "unit", "last_change"):
-                if not row.get(metadata):
-                    raise ValueError(f"{name}: missing {metadata}")
-            if row.get("value") is None or row.get("scope") == "UNAVAILABLE":
-                raise ValueError(f"{name}: unavailable")
-            if row.get("scope") == "FIXTURE_ONLY" and not fixture:
+            scope, value = row.get("scope"), row.get("value")
+            if not all(row.get(k) for k in ("source", "unit", "last_change")):
+                raise ValueError(f"{name}: missing source/unit/last_change")
+            if value is None or scope not in {"FIXTURE_ONLY", "REVIEWED"}:
+                raise ValueError(f"{name}: unavailable or unreviewed authority")
+            if scope == "FIXTURE_ONLY" and not fixture:
                 raise ValueError(f"{name}: fixture is not deployment authority")
-            if row.get("scope") not in {"FIXTURE_ONLY", "REVIEWED"}:
-                raise ValueError(f"{name}: unreviewed authority")
             if row.get("calibration") not in {"UNCALIBRATED", "CALIBRATED"}:
                 raise ValueError(f"{name}: missing calibration state")
-            value = row["value"]
             if name in COUNTS:
                 if type(value) is not int or value <= 0:
                     raise ValueError(f"{name}: positive integer required")

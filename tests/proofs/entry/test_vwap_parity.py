@@ -11,8 +11,8 @@ from importlib.metadata import version
 import pytest
 from nautilus_trader.indicators import VolumeWeightedAveragePrice
 
-import sextant.entry.replay as engine_replay
-from sextant.entry.signals import EntryState
+import sextant.entry.signals as signal_module
+from sextant.entry.signals import _Fold, classify
 
 from .conftest import SEC, START, bar, trade
 from .test_replay import replay
@@ -34,28 +34,21 @@ def test_native_vwap_paired_replay_requires_a_decimal_exception(
     decimal_arm = replay(instrument, tmp_path / "decimal", data, surge=None)
     observed = []
 
-    class NativeVWAPState(EntryState):
+    class NativeVWAPFold(_Fold):
         def __init__(self, *args, **kwargs):
-            self.native_vwap = VolumeWeightedAveragePrice()
             super().__init__(*args, **kwargs)
+            self.native_vwap = VolumeWeightedAveragePrice()
 
-        def reset_segment(self, segment, *, start_ns):
-            super().reset_segment(segment, start_ns=start_ns)
-            self.native_vwap.reset()
-            self.native_last = None
-
-        def _extension(self, price):
-            assert self.last is not None
-            if self.last is not self.native_last:
-                self.native_vwap.update_raw(
-                    float(self.last.price.as_decimal()), float(self.last.size.as_decimal())
-                )
-                self.native_last = self.last
-                observed.append(D(str(self.native_vwap.value)))
+        def _advance(self, tick, eligible, atr):
+            super()._advance(tick, eligible, atr)
+            self.native_vwap.update_raw(
+                float(tick.price.as_decimal()), float(tick.size.as_decimal())
+            )
             self.vwap = D(str(self.native_vwap.value))
-            return super()._extension(price)
+            observed.append(self.vwap)
+            self.extension = classify(tick.price.as_decimal(), self.vwap, atr, D("2"))
 
-    monkeypatch.setattr(engine_replay, "EntryState", NativeVWAPState)
+    monkeypatch.setattr(signal_module, "_Fold", NativeVWAPFold)
     native_arm = replay(instrument, tmp_path / "native", data, surge=None)
     decimal_rows = [(e["ts"], e["extension"]) for e in decimal_arm.events if e["action"] == "TRADE"]
     native_rows = [(e["ts"], e["extension"]) for e in native_arm.events if e["action"] == "TRADE"]

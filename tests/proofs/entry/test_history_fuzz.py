@@ -79,3 +79,50 @@ def test_arrival_reclaim_events_match_a_known_event_ordered_prefix(seed, max_lag
     record_property("arrival_events", events)
     record_property("cases", 1500)
     assert events > 0  # A reducer which refuses every reclaim cannot pass this proof.
+
+
+def test_bar_in_arrival_delay_matches_event_time_control(record_property):
+    from nautilus_trader.model import Bar
+
+    from .test_asof_atr import grid_bar
+
+    rng = Random(31)  # noqa: S311 - deterministic independent prefix control.
+    events = checks = 0
+    for case in range(1500):
+        rows = [
+            (at + 53000, price, size, lag, identity, tie)
+            for at, price, size, lag, identity, tie in random_tape(rng, 9000)
+        ]
+        data = [tick(row) for row in rows]
+        data += [grid_bar(60, rng.choice(["10.10", "11.00"]), "9.99", "10.00", 50)]
+        arrived, known = initialized(), []
+        for item in sorted(data, key=lambda t: t.ts_init):
+            known.append(item)
+            if isinstance(item, Bar):
+                arrived.on_bar(item, now=item.ts_init)
+                continue
+            accepted = arrived.on_trade(item, now=item.ts_init)
+            if not accepted:
+                continue
+            ordered = initialized()
+            for prior in sorted(
+                known, key=lambda t: t.ts_init if isinstance(t, Bar) else t.ts_event
+            ):
+                if isinstance(prior, Bar):
+                    ordered.on_bar(prior, now=prior.ts_init)
+                else:
+                    on_time = trade(
+                        str(D(prior.ts_event - bar(0).ts_event) / 1_000_000_000),
+                        str(prior.price),
+                        size=int(prior.size.as_decimal()),
+                        identity=str(prior.trade_id),
+                    )
+                    ordered.on_trade(on_time, now=on_time.ts_init)
+            checks += 1
+            assert arrived.extension == ordered.extension, (case, item)
+            if arrived.reclaim_event_ns == item.ts_event:
+                events += 1
+                assert ordered.reclaim_event_ns == item.ts_event, (case, known)
+    record_property("arrival_events", events)
+    record_property("classification_checks", checks)
+    assert events > 0

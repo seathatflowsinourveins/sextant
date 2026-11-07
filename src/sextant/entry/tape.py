@@ -1,52 +1,50 @@
-"""Exact private temporary SQLite history; SDK sources and lifecycle in docs/manifest.md."""
+"""Parameter-horizon native tape with predecessor checkpoints; ADR-0004 records authority."""
 
-import json
-import sqlite3
-from decimal import Decimal
-from weakref import finalize
-
-from nautilus_trader.model import TradeTick
+from bisect import bisect_left, bisect_right
 
 
 class Tape:
-    def __init__(self):
-        self.db = sqlite3.connect("", isolation_level=None)
-        finalize(self, self.db.close)
-        self.db.execute(
-            "CREATE TABLE prints (identity TEXT UNIQUE, at INTEGER, "
-            "payload TEXT, eligible INTEGER, atr TEXT)"
-        )
-        self.db.execute("CREATE INDEX event_order ON prints (at)")
-        self.db.execute("CREATE TABLE atrs (known INTEGER PRIMARY KEY, atr TEXT)")
+    def __init__(self, fold):
+        self.times, self.data, self.seen = [-1], [(None, False, None, fold.checkpoint())], set()
+        self.floor = 0
 
-    def add(self, tick: TradeTick, eligible: bool, atr: Decimal | None) -> bool:
-        identity = (str(tick.trade_id), tick.ts_event, tick.price.raw, tick.size.raw)
-        # Reuse event (?2), eligibility (?4) and current ATR (?5) bindings.
-        return bool(
-            self.db.execute(
-                "INSERT OR IGNORE INTO prints VALUES (?, ?, ?, ?, CASE WHEN ?4 THEN ?5 "
-                "ELSE (SELECT atr FROM atrs WHERE known <= ?2 ORDER BY known DESC LIMIT 1) END)",
-                (
-                    json.dumps(identity),
-                    tick.ts_event,
-                    json.dumps(TradeTick.to_dict(tick)),
-                    eligible,
-                    None if atr is None else str(atr),
-                ),
-            ).rowcount
-        )
+    @staticmethod
+    def identity(tick):
+        return str(tick.trade_id), tick.ts_event, tick.price.raw, tick.size.raw
 
-    def rows(self, after: int = 0):
-        for payload, eligible, atr in self.db.execute(
-            "SELECT payload, eligible, atr FROM prints WHERE at >= ? ORDER BY at, rowid", (after,)
-        ):
-            yield (
-                TradeTick.from_dict(json.loads(payload)),
-                bool(eligible),
-                None if atr is None else Decimal(atr),
-            )
+    def add(self, tick, eligible, atr, surge):
+        if (identity := self.identity(tick)) in self.seen:
+            return None
+        if tick.ts_event < self.floor:
+            raise ValueError("print precedes retained history")
+        index = bisect_right(self.times, tick.ts_event)
+        self.times.insert(index, tick.ts_event)
+        self.data.insert(index, (tick, eligible, atr, None))
+        fold = self.rebuild(surge, index)
+        self.seen.add(identity)
+        return fold
 
-    def count(self, after: int, end: int) -> int:
-        return self.db.execute(
-            "SELECT count(*) FROM prints WHERE at > ? AND at <= ?", (after, end)
-        ).fetchone()[0]
+    def rebuild(self, surge, index=1):
+        fold = self.data[index - 1][3].checkpoint()
+        fold.surge = surge
+        for i in range(index, len(self.data)):
+            tick, eligible, atr = self.data[i][:3]
+            fold._advance(tick, eligible, atr)
+            self.data[i] = (tick, eligible, atr, fold.checkpoint())
+        return fold
+
+    def prune(self, cutoff):
+        index = max(0, bisect_left(self.times, cutoff) - 1)
+        self.seen.difference_update(self.identity(row[0]) for row in self.data[1 : index + 1])
+        del self.times[:index], self.data[:index]
+        self.floor = max(self.floor, cutoff)
+
+    def rows(self, after=0):
+        return (row[:3] for row in self.data[bisect_left(self.times, after) :])
+
+    def count(self, after, end):
+        return bisect_right(self.times, end) - bisect_right(self.times, after)
+
+    def dollar_volume(self, after, end):
+        a, b = bisect_right(self.times, after), bisect_right(self.times, end)
+        return self.data[b - 1][3].dollars - self.data[a - 1][3].dollars
