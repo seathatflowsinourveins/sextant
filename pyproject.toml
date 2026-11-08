@@ -41,6 +41,14 @@ extend-exclude = [".devcontainer/post_install.py", "src/sextant/strategies/ema_c
 select = ["E", "F", "I", "B", "UP", "S", "RUF"]
 ignore = ["S101", "S603", "S607"]
 
+# Preserve the import/path-only carry (plus the lead's two exact method guards).
+[tool.ruff.lint.per-file-ignores]
+"src/sextant/tradingview/display_lists.py" = ["E501"]
+"tests/proofs/test_display_lists.py" = ["E501"]
+
+[tool.ruff.format]
+exclude = ["src/sextant/tradingview/display_lists.py", "tests/proofs/test_display_lists.py"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests/repo", "tests/proofs"]
 # Proofs that need the devcontainer itself (its firewall, sudo rule and pinned runtimes) and the ones that need the maintainer's own tools

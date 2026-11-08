@@ -69,8 +69,9 @@ Boundary sources read 2026-11-07:
   hash the packaged and title-normalized bytes for the local receipt. Receipt
   failures have a fixed, nonzero local diagnostic, not a session/write warning.
 
-This implements the source's `ns-display-lists/1` consumer, not a second
-ranking/focus producer. Legacy generations without `display-lists.json` refuse.
+The sync implements the source's `ns-display-lists/1` consumer. The offline
+producer below adapts an existing Sextant ranking; it does not run another
+ranker. Legacy generations without `display-lists.json` refuse.
 The deployment-manifest/search mode, position notifications, rendering and
 Desktop controllers are outside #52's membership/preset slice.
 
@@ -119,6 +120,114 @@ quota error, ambiguous mutation or unknown envelope stops. Earlier writes may
 have succeeded: re-inventory before another plan; there is no automatic
 mutation replay or rollback. A refused/dry run records no successful-sync time.
 
+## Offline ranking-to-display producer
+
+`src/sextant/tradingview/producer.py` is a file-only adapter, not a feed,
+scheduler, strategy or ticket writer. It carries
+`scanner/display_lists.py` and the applicable pure projection tests from
+northstar-trading@`8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa`.
+The contract is separately pinned at
+`d957d8e9a791f470b6085861a10726dd939bdea1`:
+`docs/research/2026-11-02-ns-display-lists-contract.md:19-55`. It is **not an
+ancestor** of the carry pin; that file is absent at the carry pin. The
+`-implementation.md` evidence is at the carry pin, not the contract pin.
+The lead authorized these two distinct source pins (2026-11-08,
+`msg_e200b1ba2777`).
+
+The module is unchanged except imports and the lead's exact method-guard
+ruling (`msg_dca669a359c1`): only `potential/2` and
+`MOVER-v2@00203275944a22655b3e14b221cfde9a265d549a` pass both guards.
+The ruling called them lines 65/174; the actual upstream predicates are at
+62/168. No wildcard, prefix, score rewrite or method relabeling is allowed.
+`display_support.py` extracts only the needed flags, Decimal parser,
+exchange mapping/qualification, phase and timestamp helpers; it does not
+import the 4.4k-line upstream `top100.py`. Qualification retains upstream
+`tradingview/inputs.py:ticker` semantics: strip only a known engine venue
+suffix, preserve share-class dots, never trim/case-correct a symbol.
+Timestamp parsing reuses the existing exact rc8 bridge described above.
+
+```sh
+UV_OFFLINE=1 uv run --frozen python -m sextant.tradingview.producer \
+  --ranking /path/to/full-ranking-generation.json \
+  --symbol-map /path/to/verified-symbol-map.json \
+  --out /path/to/research
+```
+
+`--ranking` is the full canonical `RankingGeneration` JSON (schema version
+2), not a top-N file, receipt summary, catalog of bars or legacy snapshot.
+`--symbol-map` is an explicit verified object such as
+`{"AAPL":"NASDAQ:AAPL"}`; no broker/routing venue supplies listing identity.
+Without enough mappings, the consumer refuses publication rather than
+inventing exchanges. `--generated-at` is an optional aware replay clock;
+ordinary use records current UTC. Success prints each list's count,
+`as_of` and `generated_at`; unavailable input prints a reason and exits 2.
+The CLI never searches catalogs, reads keys, connects to a broker/TradingView,
+or discovers journals. The Python API alone accepts explicitly captured
+`ArmedSet` journal text under the carried validation rules.
+
+### Field provenance
+
+Paths in the northstar column are relative to `src/northstar_trading/` at
+the carry pin above, except the separately pinned contract. Sextant paths
+are relative to `src/sextant/` at this branch's base
+`b65b41e36fe2c5b83e0a0c8b7347d91be74fed9a`.
+
+| Output fields | Sextant source and mapping | Northstar definition |
+|---|---|---|
+| `schema`, `snapshot_status`, `status`, `empty_top100`, `boundary`, `sizing` | Candidate/focus/display schema names; only a verified complete fresh generation is `observed/fresh`; nonempty ranking required; `risk_usd` remains `OWNER INPUT`; display-only boundary | `scanner/top100.py:4057-4082,4110-4121`, `validate_candidate_contract`; `top100_focus.py:650-674`; `display_lists.py:231-252`; `docs/tradingview/README.md:146-170` |
+| `session_date`, `as_of_snapshot`, `as_of`, `generated_at` | `ranking/generation.py:RankingGeneration.session_date/input_cutoff`; cutoff retains integer nanoseconds; both publication clocks use the explicit producer clock. Snapshot `generated_at` retains `ts_init` | `scanner/top100.py:4057-4062`; `top100_focus.py:651-657`; `display_lists.py:165-176,231-241` |
+| `generation`, `sources.snapshot`, frozen inputs | SHA-256 of canonical `inputs/display-snapshot.json` plus exact cutoff. Snapshot's `ranking_generation_sha256` binds **all** canonical `inputs/ranking.json` rows, including unranked ones, via `ranking/generation.py:canonical_bytes/generation_digest` | `display_lists.py:165-176,240-249`; contract's one-generation rule; `scanner/top100_schedule.py:848-910` freezes/hashes complete input |
+| `symbol`, `rank`, `score`, `adjusted_rank`, `adjusted_score`, `ranking_policy` | Preserve `RankingRow` identity, order, Decimal score and rank without new adjustments; retain actual method/profile/ranker versions. `potential2_rank/score` are null for MOVER, never relabeled | `scanner/top100.py:3853-3873,4086-4109`; `display_lists.py:_rows`; Sextant `ranking/publisher.py:256-284` |
+| `tradingview_symbol`, `tradingview_symbol_source`, snapshot `exchange` | Only caller's explicit verified map qualifies a symbol (`symbol_map`); snapshot exchange stays null. No `instrument_id`/ALPACA suffix supplies a primary listing exchange | `scanner/top100.py:112-127,2517-2543,3862-3863`; Sextant publisher does not populate `RankingRow.instrument_id` |
+| Snapshot `coverage.security_type` | Clocked, unexpired `ASSET` reason from `ranking/publisher.py:AssetState,181-185`; `common` maps to `common_stock`, ADR remains ADR, missing subtype remains null | `display_lists.py:70-73`; `scanner/potential2.py:1092` string subtype; contract also permits nested `.type` |
+| Snapshot `inputs.price/previous_close/rvol`, `ranking_features`; candidate `price/price_status`, `signals` | Exact named, completed, clocked `RankingFeature` values as Decimal text. Publisher's `price` exists; `previous_close` and share `rvol` do not. Only explicit features of those names fill them; `dvol_ratio` is **not** share RVOL. Gap signal stays null | `scanner/top100.py:3876-3898`; `display_lists.py:190-204` requires price, previous close and RVOL; Sextant `ranking/publisher.py:240-255` |
+| `sell_pressure_flags`, `adjustment_terms`, `daily_metrics`, `catalyst_refs`, `score_breakdown`, `b_account_notes`, `ticket` | All six pressure flags and adjustment terms `UNVERIFIED`; points/ATR22/high60/breakdown/ticket null; refs/notes empty, not negative evidence. No sizing, allocation, account read or new score | `scanner/top100.py:92-99,3853-3928`, `validate_candidate_contract`; unknown-evidence policy at 4102-4108 |
+| Focus `rule`, `candidates`, `excluded`, `tradingview_watchlist` | Conservative strict projection: all top candidates excluded as `unverified_sell_pressure`; empty focus and empty watchlist. `focus_eligible` proves no absence of pressure | `scanner/top100_focus.py:338-362,650-734` |
+| `ranking_context`, `research_inputs`, `ranking_source` | Preserve single identical per-row `SOURCE` reason from `ranking/publisher.py:161-175`, cutoff, full-generation hash and explicit map. Intraday feed is SIP or BOATS by phase; daily SIP history is labeled `UNVERIFIED`, not supplied | `display_lists.py:234-238`; `scanner/top100_inputs.py:68-76` (`overnight_context`); `scanner/sessions.py:scanner_session`; `docs/tradingview/README.md:166-174` |
+| `ns_movers`, `ns_focus`, labels/counts/bounds/armed sources | Carried projection: first 50 eligible common/ADR rows plus up to 50 full-snapshot extremes, deduplicated; focus unions valid captured armed sets and focus candidates. Unknown pressure remains labeled; unknown extreme inputs counted, not zero-filled | `display_lists.py:107-149,152-252`; separately pinned display contract |
+
+A full-universe hash, complete READY coverage/counts, exact method, single
+source identity, sourced segment/session and nonfuture input/feature clocks
+are checked before mapping. An empty ranking or empty mapped movers cannot
+replace `latest`; a valid empty focus can. This is not the ranking entry
+gate: no heartbeat, execution qualification, rescoring or broker authority
+is fabricated. The source ranking remains the authority for its scores.
+
+### Publication and test applicability
+
+Following `scanner/top100_focus.py:794-909`, publication writes fresh exclusive
+files in `.generations/<session>-<unique>/`, fsyncs the files/directories,
+and calls the existing complete-unit consumer before atomically replacing
+`latest` with a relative symlink. Older cutoffs refuse; previous units are
+never modified. A failed attempt may leave an unadvertised directory for
+audit, but cannot expose a partial unit through `latest`. No `last_valid`
+fallback or multi-writer locking is added; one writer per output root is
+required. The consumer resolves `latest` once. Its datetime-only validation
+clock is ceiled to microseconds, never floored; all wire clocks and exact
+source/freshness comparisons retain nanoseconds. At the expiry boundary
+this may conservatively refuse less than 1 microsecond early, never admit
+future evidence.
+
+The carry retains 18 byte-identical test/helper function bodies, yielding
+24 upstream pure-projection cases. Eight scanner tests are inapplicable
+without the uncarried scheduler/compression stack:
+`test_schedule_writes_atomically_from_the_frozen_snapshot_and_not_current_source`,
+`test_display_failure_preserves_top100_unit`,
+`test_stale_schedule_unit_includes_stale_display_without_last_valid_reuse`,
+`test_schedule_cli_passes_explicit_registered_bounds_and_arm_paths`,
+`test_schedule_composed_handover_hashes_the_same_complete_rows`,
+`test_schedule_display_hashes_logical_bytes_after_frozen_input_compression`,
+`test_overnight_display_compresses_composed_bytes_and_keeps_readers_compatible`,
+and `test_overnight_display_compression_failure_preserves_ranking`.
+The upstream `tests/tradingview/test_display_lists.py` targets a different
+two-path reader signature, legacy fallback, mapping injection and full
+scheduler contract. It is not import/path-only compatible with Sextant's
+preexisting complete-unit/no-fallback reader and is not carried. Existing
+`test_tradingview.py` covers that reader's generation, clocks, omissions,
+refusals and outside-movers focus; new `test_tradingview_producer.py` tests
+the real Sextant publisher through file publication and the existing reader,
+including all five write-failure boundaries and full-universe binding.
+
 ## Display parameter registry
 
 These are sourced starting values, not calibrated trading parameters or
@@ -129,6 +238,10 @@ All source paths below are at the northstar-trading pin above and in ADR-0021/26
 |---|---|---|
 | Research freshness | 1,200s; override 1–3,600s; age equal to limit refuses | `research.py:read_research_inputs/_envelope` |
 | Snapshot lag | ≤600s | `research.py:_envelope` |
+| Producer snapshot freshness | <600s at publication; equality refuses | `scanner/top100.py:4076-4080`; existing consumer's strict age boundary |
+| Display early/extreme slots | first 50 eligible ranks + up to 50 extremes, deduplicated, ≤100 movers | `scanner/display_lists.py:183-216` |
+| Extreme bounds | move ≥0.05 (5%); explicit share RVOL ≥2; no producer override | `scanner/display_lists.py:GAP_BOUND/RVOL_BOUND`; contract §NS movers |
+| Captured armed-set age | ≤600s, nonfuture; last current matching refresh only | `scanner/display_lists.py:107-149,MAX_AGE_S`; contract §NS focus |
 | Unmapped / rejected names | ≤5 distinct in each budget across the pair | `research.py:MAX_UNCONFIRMED_RESEARCH/verify_readback_sync` |
 | Parent / movers size | ≤100; mapped movers nonempty; focus has no subset veto | `research.py:_candidates/_display_inputs` |
 | Tool spacing / discovery | 0.75s, below documented ~100/min; ≤100 discovery pages | `sync.py:OfficialTools` |
