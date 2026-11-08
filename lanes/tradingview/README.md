@@ -17,7 +17,18 @@ Acceptance is bounded: the initial four pine_check replies were not Desktop inst
 **Rules.**
 - No `strategy()`, `alert()` or `alertcondition()` path may reach an order; only the owner's hands do.
 - Writes are non-destructive: new immutable scripts, never overwrite, rename or bulk-delete; the owner's layout is restored by numeric id; ambiguity or unsaved owner work stops acceptance.
-- OAuth is RAM-only by default; persistence is an owner-consented, Keychain-only exception for the sync process, and no broker credential ever lives there.
+- OAuth is RAM-only in this slice, with no persistence option or Keychain/file fallback; ADR-0021's optional Keychain exception is not implemented. Every session needs owner browser consent.
 - The Desktop controller and local CDP exposure are host-specific owner acceptances, not portable authority; a Linux move needs a new exception ([ADR-0021](../../docs/adr/0021-tradingview-display.md)).
 
 **Sources.** Harvested northstar-trading TradingView ADR-0014/0012 and its acceptance records at `8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa`; official MCP and Pine documentation read 2026-11-05.
+
+**Clean-distro implementation (#52).** `src/sextant/tradingview/` consumes the
+producer's complete display unit and uses only official MCP membership tools.
+The SDK's in-memory server proves diff/readback and refusal behavior. Four
+dated Pine sources and their original/packaged hashes live in `presets/`.
+Run `uv run --frozen python -m sextant.tradingview --presets lanes/tradingview/presets`
+for local receipts; it makes no session or installation claim. The
+[operating notes](../../docs/tradingview.md) hold the parameter registry, exact
+sources, owner commands and outstanding acceptance. Linux auth has no
+persistence option; every owner session needs browser consent. No unattended
+service or Desktop controller is installed.
