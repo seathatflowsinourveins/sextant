@@ -28,11 +28,14 @@ def test_at_most_thirty_research_notes() -> None:
 
 
 def test_src_stays_under_budget() -> None:
-    # Raised from 15,000 by the owner on 2026-11-06 (#58, 6701393837), for the focus path to
-    # B's ready: #163, #93, #68, the ledger (#96, #110) and B's Alpaca client (#139). Every PR
-    # still shows its native replacements; the other queued PRs wait for native trims or a later
-    # reasoned raise.
-    assert sum(_lines(path) for path in (ROOT / "src").rglob("*.py")) < 17500
+    # Raised by the owner from 15,000 to 17,500 on 2026-11-06 (#58, 6701393837), to 17,650 and
+    # 17,720 on 2026-11-07 (#58, 6709238862, 6709939678), then to 20,800 the same day (#58,
+    # 6711818587): B's path to ready, live ranking (#66's fix, the registry loader, #133, #137,
+    # #134) and the TradingView watchlist (#64). Growth is paired with consolidation: each PR
+    # shows its native replacements, a weekly report from maintained tools proposes deletions,
+    # and a later raise must cite that report. One-off study code stays on tagged research
+    # branches. The owner: "it can be grow but with sota sustainable consolidation".
+    assert sum(_lines(path) for path in (ROOT / "src").rglob("*.py")) < 20800
 
 
 def test_design_stays_short() -> None:
