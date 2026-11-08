@@ -122,6 +122,33 @@ def test_every_action_is_pinned() -> None:
     assert '"$checksum" "$tool_archive" | sha256sum -c -' in setup
 
 
+def test_lint_covers_every_non_lock_workflow_with_shellcheck() -> None:
+    """Both lint surfaces discover the non-lock workflows and run the pinned shellcheck."""
+    found = (
+        "find .github/workflows -maxdepth 1 -type f "
+        "\\( -name '*.yml' -o -name '*.yaml' \\) ! -name '*.lock.yml' | sort"
+    )
+    ci = (WORKFLOWS / "ci.yml").read_text()
+    just = _read("justfile")
+    dockerfile = _read(".devcontainer/Dockerfile")
+    for surface in (ci, just):
+        assert f"mapfile -t workflows < <({found})" in surface
+    ci_lint = next(line for line in ci.splitlines() if "-shellcheck" in line)
+    just_lint = next(line for line in just.splitlines() if "actionlint" in line)
+    assert ci_lint.endswith('-shellcheck "$RUNNER_TEMP/shellcheck" "${workflows[@]}"')
+    assert just_lint.endswith('-shellcheck shellcheck "${workflows[@]}"')
+    version = re.search(r"SHELLCHECK_VERSION: (\S+)", ci)
+    digest = re.search(r"SHELLCHECK_SHA256: (\S+)", ci)
+    assert version is not None
+    assert digest is not None
+    assert f"ARG SHELLCHECK_VERSION={version.group(1)}" in dockerfile
+    assert f"sc_sha={digest.group(1)}" in dockerfile
+    assert "sc_arch=linux.aarch64; sc_sha=" in dockerfile
+    # shellcheck's release nests its binary under shellcheck-v<version>/; strip one level.
+    assert 'shellcheck-v${SHELLCHECK_VERSION}/shellcheck" 1' in dockerfile
+    assert '--strip-components="${4:-0}"' in dockerfile
+
+
 @pytest.mark.local
 def test_gitleaks_is_wired() -> None:
     assert _run("gitleaks", "version").returncode == 0

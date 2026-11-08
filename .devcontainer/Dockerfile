@@ -118,20 +118,24 @@ COPY --chown=vscode:vscode post_install.py /opt/post_install.py
 ARG JUST_VERSION=1.59.0
 ARG GITLEAKS_VERSION=8.30.1
 ARG ACTIONLINT_VERSION=1.7.12
+ARG SHELLCHECK_VERSION=0.11.0
 USER root
 RUN case "$(dpkg --print-architecture)" in \
     amd64) just_arch=x86_64-unknown-linux-musl; just_sha=409044617b6f06517c1035e55ca38c8c856ff8b650e41bc2aa1ef82d5903a23e; \
       gl_arch=linux_x64; gl_sha=551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb; \
-      al_arch=linux_amd64; al_sha=8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8 ;; \
+      al_arch=linux_amd64; al_sha=8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8; \
+      sc_arch=linux.x86_64; sc_sha=b7af85e41cc99489dcc21d66c6d5f3685138f06d34651e6d34b42ec6d54fe6f6 ;; \
     arm64) just_arch=aarch64-unknown-linux-musl; just_sha=23871b1702bfd550fb5f901778fd4290ecf2ee034a45a889fbe96d89b188086d; \
       gl_arch=linux_arm64; gl_sha=e4a487ee7ccd7d3a7f7ec08657610aa3606637dab924210b3aee62570fb4b080; \
-      al_arch=linux_arm64; al_sha=325e971b6ba9bfa504672e29be93c24981eeb1c07576d730e9f7c8805afff0c6 ;; \
+      al_arch=linux_arm64; al_sha=325e971b6ba9bfa504672e29be93c24981eeb1c07576d730e9f7c8805afff0c6; \
+      sc_arch=linux.aarch64; sc_sha=68a8133197a50beb8803f8d42f9908d1af1c5540d4bb05fdfca8c1fa47decefc ;; \
     *) echo "unsupported architecture" >&2; exit 1 ;; \
   esac \
-  && fetch() { curl -fsSL "$1" -o /tmp/tool.tgz && echo "$2  /tmp/tool.tgz" | sha256sum -c - && tar -xzf /tmp/tool.tgz -C /usr/local/bin "$3" && rm /tmp/tool.tgz; } \
+  && fetch() { curl -fsSL "$1" -o /tmp/tool.tgz && echo "$2  /tmp/tool.tgz" | sha256sum -c - && tar -xzf /tmp/tool.tgz -C /usr/local/bin --strip-components="${4:-0}" "$3" && rm /tmp/tool.tgz; } \
   && fetch "https://github.com/casey/just/releases/download/${JUST_VERSION}/just-${JUST_VERSION}-${just_arch}.tar.gz" "$just_sha" just \
   && fetch "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_${gl_arch}.tar.gz" "$gl_sha" gitleaks \
-  && fetch "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_${al_arch}.tar.gz" "$al_sha" actionlint
+  && fetch "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_${al_arch}.tar.gz" "$al_sha" actionlint \
+  && fetch "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/shellcheck-v${SHELLCHECK_VERSION}.${sc_arch}.tar.gz" "$sc_sha" "shellcheck-v${SHELLCHECK_VERSION}/shellcheck" 1
 # Sudo only for the firewall, as in anthropics/claude-code@v2.1.318:.devcontainer/Dockerfile.
 COPY init-firewall.sh /usr/local/bin/init-firewall.sh
 RUN chmod 0755 /usr/local/bin/init-firewall.sh \
