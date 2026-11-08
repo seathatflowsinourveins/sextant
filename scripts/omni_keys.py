@@ -37,6 +37,7 @@ RUNTIMES = {
     "opencode": "OMNIROUTE_KEY_OPENCODE",
     "hermes": "OMNIROUTE_KEY_HERMES",
     "openhands": "OMNIROUTE_KEY_OPENHANDS",
+    "codex": "OMNIROUTE_KEY_CODEX",
 }
 COMBO = "sextant-gpt"  # #62's GPT combo, the only model the runtimes name
 LIFETIME = timedelta(days=30)  # #94: a bounded 30-day lifetime
@@ -73,13 +74,15 @@ def _cli(*args: str) -> object:
     out = subprocess.run(
         command, env=env, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=False
     )
-    # The CLI prints a dotenv banner line before its JSON; the JSON starts at the first "{" line.
-    text = out.stdout.decode(errors="replace")
-    start = next((i for i, line in enumerate(text.splitlines()) if line.startswith("{")), None)
+    # The CLI prints a dotenv banner line, itself starting "[dotenv@", before its JSON, which
+    # `JSON.stringify(data, null, 2)` starts with a "{" line, or a "[" or "[]" line for a list.
+    lines = out.stdout.decode(errors="replace").splitlines()
+    first = ("[", "[]")
+    start = next((i for i, line in enumerate(lines) if line[:1] == "{" or line in first), None)
     if out.returncode != 0 or start is None:
         raise KeyError_(f"omniroute api {args[0]} {args[1]} failed (exit {out.returncode})")
     try:
-        return json.loads("\n".join(text.splitlines()[start:]))
+        return json.loads("\n".join(lines[start:]))
     except json.JSONDecodeError as error:
         raise KeyError_(f"omniroute api {args[0]} {args[1]}: no JSON reply") from error
 

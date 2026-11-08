@@ -146,6 +146,31 @@ def test_a_claude_combo_or_a_failed_seal_mints_nothing_that_survives(
     assert router.minted == 1 and router.keys == [], "the unsealed key is revoked by its ID"
 
 
+def test_codex_gets_its_own_restricted_router_key(router: Router) -> None:
+    assert ok.main(["renew", "codex"]) == 0
+    sealed = (router.sealed / "OMNIROUTE_KEY_CODEX").read_text()  # type: ignore[attr-defined]
+    assert sealed == f"{PLANTED}\nNS_SEALED_TRANSFER_COMPLETE\n"
+    (key,) = router.keys
+    assert key["name"].startswith("sextant-codex-")
+    assert key["modelAccessMode"] == "restricted"
+    assert key["allowedModels"] == ["sextant-gpt"] == key["allowedCombos"]
+
+
+def test_a_router_list_reply_is_read_after_the_cli_banner(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The CLI prints `JSON.stringify(data, null, 2)` (bin/cli/output.mjs:162) after a dotenv
+    # banner that itself starts with "[", so a list reply must be found by its own first line.
+    banner = "[dotenv@17.2.1] injecting env (0) from .env -- tip: set override\n"
+    replies = {"list": [{"id": "call-1", "status": 200}], "empty": []}
+
+    def run(command: list[str], **_: object) -> SimpleNamespace:
+        reply = replies[command[command.index("--limit") + 1]]
+        return SimpleNamespace(returncode=0, stdout=(banner + json.dumps(reply, indent=2)).encode())
+
+    monkeypatch.setattr(ok.subprocess, "run", run)
+    for name, reply in replies.items():
+        assert ok._cli("usage", "get-api-usage-call-logs", "--limit", name) == reply
+
+
 def test_names_are_registered_and_renewal_is_a_lifecycle_step() -> None:
     known = (ROOT / "scripts" / "keys.sh").read_text().split("KNOWN=(", 1)[1].split(")", 1)[0]
     assert all(name in known for name in ok.RUNTIMES.values())

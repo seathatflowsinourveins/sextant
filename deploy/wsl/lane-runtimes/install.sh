@@ -59,6 +59,7 @@ if env_file.exists():
 PY
 install -m 755 "$here/api-launch.sh" "$prefix/api-launch.sh"
 install -m 755 "$here/antigravity-launch.sh" "$prefix/antigravity-launch.sh"
+install -m 755 "$here/codex-launch.sh" "$prefix/codex-launch.sh"
 install -m 755 "$here/router-start.sh" "$prefix/router-start.sh"
 cp "$here/configure.py" "$here/routing.json" "$here/model-policy.json" "$here/openhands-lane.py" "$prefix/"
 python3 "$prefix/configure.py" "$prefix"
@@ -74,6 +75,9 @@ for runtime in pi omp opencode opencode2 hermes openhands-sdk; do
   ln -sfn "$prefix/api-launch.sh" "$HOME/.local/bin/$runtime"
 done
 ln -sfn "$prefix/antigravity-launch.sh" "$HOME/.local/bin/agy"
+# Codex on the router: one launcher, a writer's and a reviewer's default sandbox (README, Codex).
+ln -sfn "$prefix/codex-launch.sh" "$HOME/.local/bin/sextant-codex"
+ln -sfn "$prefix/codex-launch.sh" "$HOME/.local/bin/sextant-codex-review"
 echo 'Installed; use just omniroute for the durable server, then its combo create command from routing.json.'
 echo 'Provider/Google browser sign-ins are owner-only; OpenHands has no native Orca agent ID.'
 bash "$here/service.sh" install
