@@ -299,3 +299,32 @@ def test_invalid_quantities_never_enter_custody(tmp_path, qty):
     book = custody(tmp_path)
     with pytest.raises((ValueError, CustodyError)):
         book.register("house", IID, "SELL", qty, source="TEST")
+
+
+def test_a_cancel_count_is_durable_and_the_loader_refuses_a_bad_one(tmp_path):
+    """#187 and #195: the per-order CANCEL count and the unanswered mark live in custody, as row
+    8's bridge keeps cancel_sends and its UNKNOWN record."""
+    import json
+
+    book = custody(tmp_path)
+    book.register("entry", IID, "BUY", D("1"), source="TEST")
+    assert book.cancel_sends("entry") == 0 and book.cancel_sends("absent") == 0
+    book.record_cancel("entry")
+    book.record_cancel("entry")
+    book.record_unanswered("entry")
+    book.record_unanswered("entry")  # once is enough; a repeat changes nothing
+    reloaded = Custody(SCOPE, book.path)
+    assert reloaded.cancel_sends("entry") == 2
+    assert reloaded.registrations["entry"]["cancel_unanswered"] is True
+    for record in (book.record_cancel, book.record_unanswered):
+        with pytest.raises(CustodyError):
+            record("absent")
+    state = json.loads(book.path.read_text())
+    for field, bad in [("cancel_sends", b) for b in (-1, "2", None)] + [
+        ("cancel_unanswered", b) for b in (1, "true", None)
+    ]:
+        good = state["house"]["entry"][field]
+        state["house"]["entry"][field] = bad
+        book.path.write_text(json.dumps(state))
+        assert not Custody(SCOPE, book.path).loaded
+        state["house"]["entry"][field] = good

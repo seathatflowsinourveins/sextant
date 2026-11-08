@@ -24,6 +24,7 @@ from nautilus_trader.model import (
     ClientOrderId,
     Equity,
     InstrumentId,
+    OrderPendingCancel,
     OrderSide,
     Price,
     Quantity,
@@ -35,7 +36,13 @@ from nautilus_trader.model import (
 from nautilus_trader.trading import Strategy
 
 from sextant.paper.config import PaperAccount, PaperBudget
-from sextant.paper.runtime import NativeRefusal, PaperIntent, PaperRuntime, PaperServices
+from sextant.paper.runtime import (
+    NativeRefusal,
+    PaperIntent,
+    PaperRuntime,
+    PaperServices,
+    PendingCancel,
+)
 from sextant.paper.sessions import Session, session_at
 
 
@@ -116,6 +123,15 @@ class PaperStrategy(Strategy):
             if order is None or order.instrument_id != iid:
                 raise NativeRefusal("native order identity is unavailable or mismatched")
             if intent.action == "CANCEL":
+                # rc8's Strategy.cancel_order logs and drops these (crates/trading/src/strategy/
+                # mod.rs:629-631, 822-827): refuse before the token (#187). The stamp is rc8's
+                # latest OrderPendingCancel, the clock as the cancel left (:891-911). A partial fill
+                # keeps the order pending but moves ts_last (model/src/orders/mod.rs:1380-1402).
+                if order.is_closed:
+                    raise NativeRefusal("native order is already closed")
+                if order.is_pending_cancel:
+                    left = [e.ts_event for e in order.events() if isinstance(e, OrderPendingCancel)]
+                    raise PendingCancel(left[-1])
                 return lambda: self.cancel_order(cid, client_id=client)
             if outside and order.order_type.name != "LIMIT":
                 raise NativeRefusal("outside RTH cannot amend a non-LIMIT native order")
@@ -135,6 +151,12 @@ class PaperStrategy(Strategy):
                 + ("true" if overnight else "false")
                 + "}"
             ]
+        bounds = instrument.min_quantity, instrument.max_quantity
+        if (bounds[0] is not None and kwargs["quantity"] < bounds[0]) or (
+            bounds[1] is not None and kwargs["quantity"] > bounds[1]
+        ):  # rc8's RiskEngine denies these after the token (risk/src/engine/mod.rs:1782-1799);
+            # node_config sets no full_position_exit_venues, so rc8 applies them to every order
+            raise NativeRefusal("quantity outside the instrument's minimum and maximum (#187)")
         if intent.order_type in {"LIMIT", "STOP_LIMIT"}:
             kwargs["price"] = _exact(intent.price, instrument.price_precision, Price.from_str)
         if intent.order_type in {"STOP_MARKET", "STOP_LIMIT"}:

@@ -244,6 +244,10 @@ class Custody:
                         raise ValueError("invalid house registration")
                     if not isinstance(row["lineage"], list) or not row["source"]:
                         raise ValueError("invalid house lineage")
+                    sends = row.get("cancel_sends", 0)
+                    unanswered = row.get("cancel_unanswered", False)
+                    if type(sends) is not int or sends < 0 or type(unanswered) is not bool:
+                        raise ValueError("invalid house cancel count")
                     unsent = row.get("unsent")
                     if unsent is not None and (
                         type(unsent) is not str or not unsent or row["lineage"]
@@ -358,6 +362,29 @@ class Custody:
             if cid not in present and not row.get("unsent"):
                 self.frozen[row["instrument"]] = "registered order has no authoritative report"
         return True
+
+    def cancel_sends(self, cid: str) -> int:
+        row = self.registrations.get(cid)
+        return 0 if row is None else row.get("cancel_sends", 0)
+
+    def record_cancel(self, cid: str) -> None:
+        """Count a CANCEL leaving for the wire, durably, as row 8's bridge keeps its cancel_sends
+        in custody (alpaca.py:141-152, 355-375), so the cap survives a reopen or a restart."""
+        row = self.registrations.get(cid)
+        if not self.loaded or row is None:
+            raise CustodyError("a loaded house registration is required")
+        row["cancel_sends"] = row.get("cancel_sends", 0) + 1
+        self._save()
+
+    def record_unanswered(self, cid: str) -> None:
+        """Mark durably that this order's CANCEL went unanswered past cancel_timeout_s, as row 8's
+        bridge marks the order UNKNOWN in its records at its cap (alpaca.py:355-360) (#195)."""
+        row = self.registrations.get(cid)
+        if not self.loaded or row is None:
+            raise CustodyError("a loaded house registration is required")
+        if not row.get("cancel_unanswered"):
+            row["cancel_unanswered"] = True
+            self._save()
 
     def release_unsent(self, cid: str, *, reason: str) -> None:
         """Close a house registration known never to have reached the wire (#151).

@@ -308,12 +308,21 @@ denial does. The kill EXIT is also validated before any bookkeeping.
   venue. The row-8 drills cover kill-to-flat with a stub command, and the native drills cover
   `_prepare` with contract stubs.
 
+**The cancel storm (#187).** The #88 gate review of `bf10c7f` measured a pre-existing starvation. During a halt the guard re-emits CANCEL_ENTRY every `cancel_retry_s` for every resting house entry, and CANCEL outranks REDUCE in row 8's pacer. With 18 or more entries that never acknowledge, no kill EXIT went out in 300 s. The fix follows row 8's bridge:
+- For every caller, one CANCEL per order waits in the queue.
+- `_prepare` refuses, before the token, a CANCEL rc8 would drop because the order is already pending cancel or closed.
+- Each CANCEL that leaves is counted in custody, so the cap of `max_cancel_retries + 1` survives a reopen or a restart.
+- rc8 sends no second cancel while one is pending, so a lost cancel recorded nothing (#195). The bridge re-cancels on each read that still shows the order open. Here, when the CANCEL is asked for again and a read taken `cancel_timeout_s` after rc8's latest OrderPendingCancel still shows it open, the runtime records the outcome as the bridge does at its cap and marks the order in custody. The stamp is the event's: a partial fill keeps the order pending but moves `ts_last`.
+
+At the cap, or at that read, the runtime records the unknown outcome once through its existing halt. Unlike the bridge, it freezes no symbol, so the other positions keep flattening. The cost is bounded rather than removed: on a fixture carrying rc8's cancel state, 24 unanswered entries cost a token each, the first kill EXIT goes out at 10 s and the record comes at 12 s. Rejected cancels spend four tokens each, and the first kill EXIT goes out within 40 s. rc8's RiskEngine quantity denials, which came after the token and repeated on every retry, are refused in `_prepare` before the token.
+
 **Residuals, open.**
 - An rc8 denial other than precision, such as notional, is retried once per observation on
   the kill path, and pages nobody.
 - A resting kill EXIT is never re-priced while the price falls. This predates the work and is
   tracked as #176.
 - The gate's pacer and B's bridge both pace B's orders; #139 records it.
+- Outside a halt nothing asks for a lost CANCEL again, so it is recorded only at the next request or halt (#196). After a restart rc8 keeps no unclaimed house order (#197).
 
 **Revert.** Code from before this change refuses a version-2 custody file ("custody
 account/version mismatch") and fails closed. To recover, delete the rows marked `unsent`,

@@ -31,6 +31,14 @@ class NativeRefusal(ValueError):
     """The native layer's refusal while preparing a command: nothing was registered or sent."""
 
 
+class PendingCancel(NativeRefusal):
+    """rc8 holds the order PENDING_CANCEL from `since_ns`, when its cancel left (#195)."""
+
+    def __init__(self, since_ns: int):
+        super().__init__("native order is already pending cancel")
+        self.since_ns = since_ns
+
+
 class NotSent(ValueError):
     """A registered submission refused before the wire: custody releases it (#151)."""
 
@@ -118,6 +126,7 @@ class PaperRuntime:
         self._kill_queued: dict[str, str] = {}  # instrument -> its newest queued kill EXIT
         self._kill_cids: set[str] = set()  # every kill EXIT this writer queued, until pruned
         self._denied_epochs: dict[str, int] = {}  # instrument -> epoch of a denied kill EXIT
+        self._cancel_queued: dict[str, object] = {}  # house order -> its one queued CANCEL
 
     def open(self) -> None:
         s = self.services
@@ -143,6 +152,7 @@ class PaperRuntime:
         self._kill_prices.clear()
         self._kill_queued.clear()
         self._kill_cids.clear()
+        self._cancel_queued.clear()
         self._denied_epochs.clear()
 
     def _refuse(self, reason: str) -> bool:
@@ -174,6 +184,9 @@ class PaperRuntime:
             ):
                 return self._refuse("no current house lineage for this action")
             if intent.action == "CANCEL":
+                cap = s.pacer.controls["max_cancel_retries"]
+                if book.cancel_sends(intent.client_order_id) > cap:
+                    return self._cancel_exhausted(intent.client_order_id)
                 return True
             entry = row["side"] == "BUY"
         else:
@@ -226,6 +239,19 @@ class PaperRuntime:
         registers = intent.action in {"ENTRY", "EXIT", "PROTECT"}
         registered_here = False
         lease_token = s.writer.token
+        queued_id: object | None = None
+        if intent.action == "CANCEL":
+            # One CANCEL per house order waits in the queue, whoever asks, as row 8's bridge
+            # admits one cancel generation per order (alpaca.py:305,408). The marker belongs
+            # to this item, so a stale item from an earlier lease cannot clear it (#187).
+            if cid in self._cancel_queued:
+                return self._refuse("a CANCEL for this order is already queued")
+            queued_id = self._cancel_queued[cid] = object()
+
+        def forget_cancel() -> None:
+            if queued_id is not None and self._cancel_queued.get(cid) is queued_id:
+                del self._cancel_queued[cid]
+
         prepared: list[Callable[[], Any]] = []  # the native command, built before the token
 
         def gates() -> bool:
@@ -244,6 +270,7 @@ class PaperRuntime:
                     allowed = self._halt_on(error, "admission error halts")
             if not allowed:
                 self._forget_kill(intent)  # a refused command never comes back
+                forget_cancel()
             return allowed
 
         def admission() -> bool:
@@ -260,6 +287,7 @@ class PaperRuntime:
                     allowed = self._halt_on(error, "admission error halts")
                 if not allowed:
                     self._forget_kill(intent)
+                    forget_cancel()
             return allowed
 
         def register() -> None:
@@ -278,6 +306,7 @@ class PaperRuntime:
             if not (gates() if prepared else admission()):
                 return
             self._forget_kill(intent)  # past the drain head: it no longer waits in the queue
+            forget_cancel()
             command = prepared[0]  # prepared by the admission just above (#163 gate P0)
             try:
                 # The runtime's own hook, then the command, in upstream RestCaller.call's order:
@@ -289,6 +318,8 @@ class PaperRuntime:
                     if not gates():
                         raise NotSent(self.last_refusal or "refused after registration")
                 before_wire()  # row 8's pacer re-admits and raises only before it counts
+                if intent.action == "CANCEL":
+                    s.custody.record_cancel(cid)  # durable, as the bridge's cancel_sends
             except Exception as error:
                 if registered_here:
                     self._release(cid, error)  # the command never ran: never sent (#151)
@@ -343,11 +374,39 @@ class PaperRuntime:
         The refusal is deterministic, so re-queuing it every tick would spend the budget other
         symbols need, as P1-A did. It is treated like an rc8 denial (#163 #88 review of 512660b).
         """
+        s = self.services
+        if isinstance(error, PendingCancel) and (
+            s.custody.snapshot.known_at - error.since_ns >= s.pacer.controls.ns("cancel_timeout_s")
+        ):
+            # rc8 sends no second cancel while one is pending, so a lost cancel left the order
+            # live with nothing recorded (#195). Row 8's bridge re-cancels on each read that
+            # still shows the order open and marks it UNKNOWN at its cap (alpaca.py:355-360,
+            # 630-631). Here a read taken cancel_timeout_s after rc8's stamp that still shows it
+            # open (_admit's may_cancel) reaches that outcome, marked durably per order.
+            try:
+                s.custody.record_unanswered(intent.client_order_id)
+                return self._cancel_exhausted(intent.client_order_id, "cancel unanswered")
+            except Exception as failure:  # admission must stay total (#163 P1-2)
+                return self._halt_on(failure, "admission error halts")
         self._refuse(f"native validation refused: {error}")
-        epoch = getattr(self.services.custody.snapshot, "epoch", None)
+        epoch = getattr(s.custody.snapshot, "epoch", None)
         if epoch is not None and intent.client_order_id in self._kill_cids:
             self._denied_epochs[intent.instrument] = epoch
         return False
+
+    def _cancel_exhausted(self, cid: str, why: str = "cancel retries exhausted") -> bool:
+        """After max_cancel_retries + 1 CANCELs, row 8's bridge stops and marks that order's
+        outcome UNKNOWN (alpaca.py:357-360); an unanswered cancel reaches the same outcome
+        (#195). The runtime stops too and records the unknown outcome once through its existing
+        halt, keeping an earlier halting cause. Unlike the bridge it freezes no symbol, so every
+        other position keeps flattening. Custody names the order durably: cancel_sends above
+        the cap, or its cancel_unanswered mark; `last_error` names the first (#187, #195)."""
+        s = self.services
+        if self.last_error is None:
+            self.last_error = f"{why} for {cid}"
+        if "unknown_execution_outcome" not in getattr(s.guard, "reasons", ()):
+            s.guard.kill("unknown_execution_outcome", now=self.now_ns())
+        return self._refuse(f"{why} for {cid}")
 
     def _release(self, cid: str, cause: object) -> None:
         reason = f"{type(cause).__name__}: {cause}"
@@ -432,6 +491,8 @@ class PaperRuntime:
     def _kill_intent(self, intent: Any, now: int) -> None:
         s = self.services
         if intent.kind == "CANCEL_ENTRY":
+            # request() dedupes and caps every CANCEL per order; the guard re-emits these every
+            # cancel_retry_s, and an uncapped CANCEL outranked the kill EXITs (#187).
             self.request(PaperIntent("CANCEL", intent.client_order_id, intent.instrument))
         elif intent.kind == "FLATTEN":
             epoch = getattr(s.custody.snapshot, "epoch", None)

@@ -13,6 +13,7 @@ from sextant.paper.runtime import (
     PaperIntent,
     PaperRuntime,
     PaperServices,
+    PendingCancel,
 )
 
 
@@ -51,9 +52,22 @@ def boundary():
     book.release_unsent = release_unsent
 
     book.refresh = lambda: False  # this contract stub has no file to reload
+    book.cancel_sends = lambda cid: book.registrations.get(cid, {}).get("cancel_sends", 0)
+
+    def record_cancel(cid):
+        book.registrations[cid]["cancel_sends"] = book.cancel_sends(cid) + 1
+
+    book.record_cancel = record_cancel
+    book.record_unanswered = lambda cid: book.registrations[cid].update(cancel_unanswered=True)
     queued, sent = [], []
     budget = load_budget(ROOT / "lanes/limits.yaml", cfg.lane)
-    values = dict(request_budget=180, broker_limit=200, window_s=D("60"))
+
+    class Values(dict):  # row 8's Controls: seconds stored, nanoseconds read
+        def ns(self, name):
+            return int(self[name] * 1_000_000_000)
+
+    values = Values(request_budget=180, broker_limit=200, window_s=D("60"), max_cancel_retries=3)
+    values.update(cancel_timeout_s=D("10"))
     pacer = NS(controls=values)
     pacer.request = lambda kind, send, **kwargs: queued.append((kind, send, kwargs))
     pacer.drain = lambda: None
@@ -330,6 +344,43 @@ def test_native_validation_before_wire_refuses_without_halting(boundary):
     assert boundary.runtime.last_refusal is not None
     assert boundary.sent == []
     assert boundary.book.registrations == {}  # native validation precedes durable registration
+
+
+def test_only_a_read_cancel_timeout_s_after_the_pending_stamp_records_the_cancel(boundary):
+    """#195: the age is the read's, not the clock's. A pending cancel stays a quiet refusal
+    until a read taken cancel_timeout_s (10 s) after rc8's stamp still shows the order open."""
+    stamp = boundary.clock[0]
+    boundary.book.registrations["A001-1"] = dict(
+        instrument="AAPL.XNAS", side="BUY", quantity="1", source="FIXTURE resting entry"
+    )
+
+    def prepare(_value):
+        raise PendingCancel(stamp)
+
+    def cancel(read_after_stamp):
+        boundary.clock[0] = stamp + 600 * 1_000_000_000  # the clock is long past the stamp
+        boundary.book.snapshot.known_at = stamp + read_after_stamp
+        assert boundary.runtime.request(intent("CANCEL"))
+        flush(boundary)
+        return boundary.runtime.last_refusal, boundary.guard.active
+
+    boundary.runtime.prepare = prepare
+    pending = "native validation refused: native order is already pending cancel"
+    assert cancel(10 * 1_000_000_000 - 1) == (pending, True)
+    assert "cancel_unanswered" not in boundary.book.registrations["A001-1"]
+    assert cancel(10 * 1_000_000_000) == ("cancel unanswered for A001-1", False)
+    assert boundary.book.registrations["A001-1"]["cancel_unanswered"] is True  # durable mark
+    assert boundary.sent == [] and "cancel_sends" not in boundary.book.registrations["A001-1"]
+
+    def unwritable(_cid):
+        raise OSError("custody disk full")
+
+    boundary.book.record_unanswered = unwritable  # admission stays total: it halts, never raises
+    boundary.guard.active = True
+    assert cancel(10 * 1_000_000_000) == (
+        "admission error halts: OSError: custody disk full",
+        False,
+    )
 
 
 @pytest.mark.parametrize("error", [TimeoutError("t"), RuntimeError("r"), ValueError("v")])

@@ -5,6 +5,7 @@ extending sextant.__path__ in the invoking Python process. Nothing is vendored.
 """
 
 import importlib
+from dataclasses import replace
 from decimal import Decimal as D
 from types import SimpleNamespace as NS
 
@@ -17,6 +18,7 @@ from sextant.paper.runtime import (
     PaperIntent,
     PaperRuntime,
     PaperServices,
+    PendingCancel,
 )
 
 
@@ -689,5 +691,166 @@ def test_an_invalid_kill_exit_price_grows_no_bookkeeping_and_never_raises(row8):
             row8.runtime.pulse()
         assert row8.runtime._kill_prices == {} and row8.runtime._kill_cids == set()
         assert row8.sent == [] and "kill exit invalid" in (row8.runtime.last_error or "")
+    finally:
+        row8.runtime.close()
+
+
+def read(row8, longs, entries):
+    """A complete read of the longs and these entry facts, in which every house EXIT still
+    rests, so custody freezes nothing."""
+    module, book = row8.custody_module, row8.book
+    exits = tuple(
+        module.OrderFact(cid, row["instrument"], "SELL", D(row["quantity"]), D("0"), "NEW", None)
+        for cid, row in book.registrations.items()
+        if row["side"] == "SELL" and not row.get("unsent")
+    )
+    authority = {
+        iid: module.PositionAuthority(q, "FIXTURE reconciled long") for iid, q in longs.items()
+    }
+    epoch, now = book.snapshot.epoch + 1, row8.clock[0]
+    orders = (*entries, *exits)
+    snapshot = module.AccountSnapshot(row8.scope, epoch, longs, authority, orders, True, now, "R")
+    assert book.observe(snapshot, now=now)
+
+
+def resting_entries(row8, k, longs):
+    module, entries = row8.custody_module, []
+    for n in range(k):
+        cid, iid = f"A001-entry{n:02d}", f"E{n:02d}.XNAS"
+        row8.book.register(cid, iid, "BUY", D("1"), source="FIXTURE resting house entry")
+        row8.book.link(cid, f"v{n}")
+        entries.append(module.OrderFact(cid, iid, "BUY", D("1"), D("0"), "NEW", f"v{n}"))
+    read(row8, longs, entries)
+    return entries
+
+
+def lost_cancels(row8):
+    """rc8's cancel state as the shipped _prepare reads it (test_paper_native proves it in
+    rc8): a CANCEL that leaves marks the order PENDING_CANCEL at that time, and a later CANCEL
+    raises PendingCancel before the token. Nothing ever answers, as when a cancel is lost."""
+    stamps: dict[str, int] = {}
+    prepare = row8.runtime.prepare
+
+    def native(intent):
+        cid = intent.client_order_id
+        if intent.action == "CANCEL" and cid in stamps:
+            raise PendingCancel(stamps[cid])
+        command = prepare(intent)
+
+        def run():
+            if intent.action == "CANCEL":
+                stamps[cid] = row8.clock[0]
+            command()
+
+        return run
+
+    row8.runtime.prepare = native
+    return stamps
+
+
+@pytest.mark.parametrize("answer", ["lost", "rejected"])
+def test_unacknowledged_entry_cancels_cannot_starve_the_kill_exits(row8, answer):
+    """#187 and #195: during a halt the guard re-emits CANCEL_ENTRY every cancel_retry_s, and
+    CANCEL outranks REDUCE; every read still shows the entries open. A lost cancel leaves rc8's
+    order pending, so each entry sends one CANCEL and every re-emission is refused before the
+    token; the first read taken cancel_timeout_s after an entry's stamp records the unknown
+    outcome and marks that entry. A rejected cancel returns the order to its prior state, so
+    every CANCEL leaves until the cap of max_cancel_retries + 1. With 24 entries every long
+    flattens, and the first kill EXIT goes out within 20 s (lost) or 40 s (rejected)."""
+    k, longs = 24, {"AAPL.XNAS": D("10"), "MSFT.XNAS": D("10")}
+    entries = resting_entries(row8, k, longs)
+    stamps = lost_cancels(row8) if answer == "lost" else {}
+    row8.services.exit_price = lambda *_args: D("10.00")
+    kills: list[tuple[str, int]] = []
+    kill = row8.guard.kill
+    row8.guard.kill = lambda reason, **kw: (
+        kills.append((reason, row8.clock[0])) or kill(reason, **kw)
+    )
+    row8.runtime.open()
+    try:
+        row8.pacer.bucket.tokens = 0  # the burst is already spent
+        start, first_exit, peak = row8.clock[0], None, 0
+        row8.runtime.halt("owner")
+        for _tick in range(150):  # 300 s of 2 s pulses; every read still shows all orders open
+            row8.clock[0] += row8.params.ns("flatten_tick_s")
+            read(row8, longs, entries)
+            row8.runtime.pulse()
+            peak = max(peak, len(row8.pacer.queue))
+            if first_exit is None and any(i.action == "EXIT" for i in row8.sent):
+                first_exit = row8.clock[0] - start
+        exits = sorted((i.instrument, i.quantity) for i in row8.sent if i.action == "EXIT")
+        assert exits == [("AAPL.XNAS", D("10")), ("MSFT.XNAS", D("10"))]
+        bound = 20 if answer == "lost" else 40
+        assert first_exit is not None and first_exit <= bound * 1_000_000_000
+        sends = 1 if answer == "lost" else row8.pacer.controls["max_cancel_retries"] + 1
+        cancels = [i.client_order_id for i in row8.sent if i.action == "CANCEL"]
+        assert all(cancels.count(e.client_order_id) == sends for e in entries)
+        assert all(row8.book.cancel_sends(e.client_order_id) == sends for e in entries)  # durable
+        assert row8.pacer.wire_requests == len(row8.sent)  # no refusal spent a token
+        assert peak <= k + 2  # one CANCEL per order queued, plus the kill EXITs
+        (recorded,) = [at for reason, at in kills if reason == "unknown_execution_outcome"]
+        if answer == "rejected":
+            assert row8.runtime.last_error.startswith("cancel retries exhausted for")
+            return
+        timeout, retry = (row8.params.ns(n) for n in ("cancel_timeout_s", "cancel_retry_s"))
+        first = min(stamps.values())
+        assert first + timeout <= recorded <= first + timeout + retry + 2 * 1_000_000_000
+        assert row8.runtime.last_error.startswith("cancel unanswered for A001-entry")
+        marked = [
+            cid for cid, row in row8.book.registrations.items() if row.get("cancel_unanswered")
+        ]
+        assert sorted(marked) == sorted(e.client_order_id for e in entries)  # each one, durably
+    finally:
+        row8.runtime.close()
+
+
+def test_a_read_showing_the_order_closed_never_records_its_cancel(row8):
+    """#195 author review: the venue took the cancel and the read says so, while rc8 still
+    holds PENDING_CANCEL. That read refuses the CANCEL before the native layer, so nothing is
+    recorded and the active account keeps trading."""
+    longs = {"AAPL.XNAS": D("10")}
+    (entry,) = resting_entries(row8, 1, longs)
+    lost_cancels(row8)
+    cid, iid = entry.client_order_id, entry.instrument
+    row8.runtime.open()
+    try:
+        assert row8.runtime.request(PaperIntent("CANCEL", cid, iid))
+        row8.runtime.pulse()  # the CANCEL leaves; rc8 stamps PENDING_CANCEL
+        assert row8.book.cancel_sends(cid) == 1
+        row8.clock[0] += 12 * 1_000_000_000  # past cancel_timeout_s
+        read(row8, longs, [replace(entry, status="CANCELED")])
+        assert not row8.runtime.request(PaperIntent("CANCEL", cid, iid))
+        assert row8.runtime.last_refusal == "no current house lineage for this action"
+        assert row8.guard.entry_allowed() and row8.runtime.last_error is None
+        assert not row8.book.registrations[cid].get("cancel_unanswered")
+    finally:
+        row8.runtime.close()
+
+
+def test_every_cancel_caller_shares_one_queued_cancel_and_the_durable_cap(row8):
+    """#190 reviews: the dedupe and the cap hold per order for every caller, and the count
+    lives in custody, so a reopen or a restart cannot buy an order more CANCELs. Every CANCEL
+    here leaves, as when each is rejected and rc8 returns the order to its prior state, so the
+    cap counts real sends."""
+    (entry,) = resting_entries(row8, 1, {"AAPL.XNAS": D("10")})
+    cid, iid = entry.client_order_id, entry.instrument
+    row8.runtime.open()
+    try:
+        row8.pacer.bucket.tokens = 0  # nothing drains: the first CANCEL stays queued
+        assert row8.runtime.request(PaperIntent("CANCEL", cid, iid))
+        assert not row8.runtime.request(PaperIntent("CANCEL", cid, iid))  # already queued
+        cap = row8.pacer.controls["max_cancel_retries"] + 1
+        for _attempt in range(cap + 2):
+            row8.clock[0] += 60_000_000_000  # a full refill each time
+            row8.runtime.pulse()
+            row8.runtime.request(PaperIntent("CANCEL", cid, iid))
+        assert row8.book.cancel_sends(cid) == cap
+        row8.runtime.close()
+        row8.runtime.open()  # the reopened writer reloads custody: the count survives
+        row8.runtime.last_error = "admission error halts: an earlier cause"
+        assert not row8.runtime.request(PaperIntent("CANCEL", cid, iid))
+        assert row8.runtime.last_error == "admission error halts: an earlier cause"  # kept
+        assert row8.runtime.last_refusal == f"cancel retries exhausted for {cid}"
+        assert [i.client_order_id for i in row8.sent].count(cid) == cap
     finally:
         row8.runtime.close()
