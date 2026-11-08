@@ -1,0 +1,2173 @@
+{
+  "cohort": 1025,
+  "controls": {
+    "C5-n22-k3-R-OFF-study": {
+      "3": {
+        "mean_bps": "54.77910426075420867241713708",
+        "median_bps": "-7.684130727762803234501348000",
+        "n": 1025,
+        "pnl_units": "5.614858186727306388922756551",
+        "win_rate": "0.4214634146341463414634146341"
+      },
+      "6": {
+        "mean_bps": "48.76086505771507066841421122",
+        "median_bps": "-13.68362533692722371967655000",
+        "n": 1025,
+        "pnl_units": "4.997988668415794743512456650",
+        "win_rate": "0.3931707317073170731707317073"
+      }
+    },
+    "C5-n22-k3-R-OFF-tape": {
+      "3": {
+        "mean_bps": "35.42920815644583838177492899",
+        "median_bps": "-9.589062156819679332308368000",
+        "n": 1025,
+        "pnl_units": "3.631493836035698434131930221",
+        "win_rate": "0.4068292682926829268292682927"
+      },
+      "6": {
+        "mean_bps": "29.61908139231021617295749555",
+        "median_bps": "-15.53519632118853908737177200",
+        "n": 1025,
+        "pnl_units": "3.035955842711797157728143294",
+        "win_rate": "0.3804878048780487804878048780"
+      }
+    },
+    "hold_flat": {
+      "3": {
+        "mean_bps": "76.44154155886256837408115509",
+        "median_bps": "10.49175164967006598680264000",
+        "n": 1025,
+        "pnl_units": "7.835258009783413258343318397",
+        "win_rate": "0.5707317073170731707317073171"
+      },
+      "6": {
+        "mean_bps": "70.41680167442957970696879719",
+        "median_bps": "4.486802639472105578884230000",
+        "n": 1025,
+        "pnl_units": "7.217722171629031919964301712",
+        "win_rate": "0.52"
+      }
+    }
+  },
+  "execution_model": "minute-bar-approximate",
+  "implementation": "a8282a4f11d69b2bd595d3035439f5edd64276be",
+  "inputs": {
+    "b-owner-first-orders.json": "5e95de9eaefd9e24cfbd96850ab499fdfa6505e83dcf205ca485584ad5d9e6d3",
+    "fills-2026-10-26_29.jsonl": "55eee2b64506c19e23d4c421c803be687daf06ebb39a2b84f621ea2a90618c0f",
+    "minute-bars-2026-10-26_29.jsonl": "105caeee0645455aa0e1de23a1720639347062061944ea3d49eedb6d99a86a69"
+  },
+  "issue": 141,
+  "registration_sha256": "8302f7c34738260a56822205a617699f947d27409c8332c55be26398522285c6",
+  "selected": null,
+  "surface": {
+    "b0.005-m0.5-g0": {
+      "3": {
+        "mean_bps": "-53.03790656228332775843621712",
+        "median_bps": "-31.49679411066255046307290400",
+        "n": 1025,
+        "pnl_units": "-5.436385422634041095239712255",
+        "win_rate": "0.3063414634146341463414634146"
+      },
+      "6": {
+        "mean_bps": "-61.24087861362344236906880624",
+        "median_bps": "-44.14973772055317119694802100",
+        "n": 1025,
+        "pnl_units": "-6.277190057896402842829552640",
+        "win_rate": "0.2351219512195121951219512195"
+      },
+      "attribution": {
+        "3": {
+          "flat_1555": {
+            "gap_contribution_bps": "0E-28",
+            "hold_mean_bps": "-5.969259982531610288238601208",
+            "managed_mean_bps": "-5.969259982531610288238601208",
+            "n": 159,
+            "tp_touched": 0
+          },
+          "gain_lock": {
+            "gap_contribution_bps": "-5.187210816828836466119812140",
+            "hold_mean_bps": "46.11642825108600133531330099",
+            "managed_mean_bps": "27.26220453743508864817568604",
+            "n": 282,
+            "tp_touched": 0
+          },
+          "prearm": {
+            "gap_contribution_bps": "-124.2922373043170596663975595",
+            "hold_mean_bps": "113.5220199798808326073711827",
+            "managed_mean_bps": "-104.6278828230729108139601515",
+            "n": 584,
+            "tp_touched": 0
+          }
+        },
+        "6": {
+          "flat_1555": {
+            "gap_contribution_bps": "0E-28",
+            "hold_mean_bps": "-13.58331591601859836620066894",
+            "managed_mean_bps": "-13.58331591601859836620066894",
+            "n": 122,
+            "tp_touched": 0
+          },
+          "gain_lock": {
+            "gap_contribution_bps": "-4.906521882883067035778494612",
+            "hold_mean_bps": "54.61412560363906483001644311",
+            "managed_mean_bps": "30.89155517932234920891758957",
+            "n": 212,
+            "tp_touched": 0
+          },
+          "prearm": {
+            "gap_contribution_bps": "-126.7511584051699550402591090",
+            "hold_mean_bps": "90.09579107101752019733142220",
+            "managed_mean_bps": "-97.92148442145600211274902148",
+            "n": 691,
+            "tp_touched": 0
+          }
+        }
+      },
+      "params": {
+        "backstop_min_separation_fraction": "0.05",
+        "breach_persist_count": "3",
+        "breach_persist_span_s": "1",
+        "chase_cap_fraction": null,
+        "chase_min_interval_s": null,
+        "gain_lock_giveback_fraction": "0",
+        "prearm_buffer_fraction": "0.005",
+        "prearm_range_multiple": "0.5",
+        "prearm_range_window_s": "10",
+        "quote_max_age_s": "1",
+        "take_profit_above_h_fraction": "0.10",
+        "take_profit_step_fraction": "0.02"
+      }
+    },
+    "b0.005-m0.5-g0.1": {
+      "3": {
+        "mean_bps": "-54.05705901988823600942596945",
+        "median_bps": "-31.49679411066255046307290400",
+        "n": 1025,
+        "pnl_units": "-5.540848549538544190966161869",
+        "win_rate": "0.3063414634146341463414634146"
+      },
+      "6": {
+        "mean_bps": "-62.14559556870505148126350123",
+        "median_bps": "-44.14973772055317119694802100",
+        "n": 1025,
+        "pnl_units": "-6.369923545792267776829508876",
+        "win_rate": "0.2351219512195121951219512195"
+      },
+      "attribution": {
+        "3": {
+          "flat_1555": {
+            "gap_contribution_bps": "0E-28",
+            "hold_mean_bps": "-5.969259982531610288238601208",
+            "managed_mean_bps": "-5.969259982531610288238601208",
+            "n": 159,
+            "tp_touched": 0
+          },
+          "gain_lock": {
+            "gap_contribution_bps": "-14.36758482828047592081593126",
+            "hold_mean_bps": "93.56704111247520002195619520",
+            "managed_mean_bps": "45.12370410922688482841563766",
+            "n": 304,
+            "tp_touched": 0
+          },
+          "prearm": {
+            "gap_contribution_bps": "-116.1310157504703284626911931",
+            "hold_mean_bps": "90.49343761007864379464134909",
+            "managed_mean_bps": "-121.3113509027898378321530871",
+            "n": 562,
+            "tp_touched": 0
+          }
+        },
+        "6": {
+          "flat_1555": {
+            "gap_contribution_bps": "0E-28",
+            "hold_mean_bps": "-13.58331591601859836620066894",
+            "managed_mean_bps": "-13.58331591601859836620066894",
+            "n": 122,
+            "tp_touched": 0
+          },
+          "gain_lock": {
+            "gap_contribution_bps": "-13.41621783551456753290128269",
+            "hold_mean_bps": "112.8557640446937317343863504",
+            "managed_mean_bps": "53.58152576278669845324921793",
+            "n": 232,
+            "tp_touched": 0
+          },
+          "prearm": {
+            "gap_contribution_bps": "-119.1461794076200636553310159",
+            "hold_mean_bps": "71.01616840488173239633661004",
+            "managed_mean_bps": "-110.9880549823173216226116628",
+            "n": 671,
+            "tp_touched": 0
+          }
+        }
+      },
+      "params": {
+        "backstop_min_separation_fraction": "0.05",
+        "breach_persist_count": "3",
+        "breach_persist_span_s": "1",
+        "chase_cap_fraction": null,
+        "chase_min_interval_s": null,
+        "gain_lock_giveback_fraction": "0.1",
+        "prearm_buffer_fraction": "0.005",
+        "prearm_range_multiple": "0.5",
+        "prearm_range_window_s": "10",
+        "quote_max_age_s": "1",
+        "take_profit_above_h_fraction": "0.10",
+        "take_profit_step_fraction": "0.02"
+      }
+    },
+    "b0.005-m0.5-g0.25": {
+      "3": {
+        "mean_bps": "-53.73860318128239891276244971",
+        "median_bps": "-31.49679411066255046307290400",
+        "n": 1025,
+        "pnl_units": "-5.508206826081445888558151095",
+        "win_rate": "0.3190243902439024390243902439"
+      },
+      "6": {
+        "mean_bps": "-60.85072051891022923942103294",
+        "median_bps": "-44.14973772055317119694802100",
+        "n": 1025,
+        "pnl_units": "-6.237198853188298497040655876",
+        "win_rate": "0.2390243902439024390243902439"
+      },
+      "attribution": {
+        "3": {
+          "flat_1555": {
+            "gap_contribution_bps": "0E-28",
+            "hold_mean_bps": "-8.934031158745750875138658233",
+            "managed_mean_bps": "-8.934031158745750875138658233",
+            "n": 146,
+            "tp_touched": 0
+          },
+          "gain_lock": {
+            "gap_contribution_bps": "-17.70791053489175221399299460",
+            "hold_mean_bps": "88.92974568745783071846817562",
+            "managed_mean_bps": "36.31928685190987124211217722",
+            "n": 345,
+            "tp_touched": 0
+          },
+          "prearm": {
+            "gap_contribution_bps": "-112.4722342052532150728506100",
+            "hold_mean_bps": "91.71570484052071275904851586",
+            "managed_mean_bps": "-124.1720106283642038133707266",
+            "n": 534,
+            "tp_touched": 0
+          }
+        },
+        "6": {
+          "flat_1555": {
+            "gap_contribution_bps": "0E-28",
+            "hold_mean_bps": "-13.58331591601859836620066894",
+            "managed_mean_bps": "-13.58331591601859836620066894",
+            "n": 122,
+            "tp_touched": 0
+          },
+          "gain_lock": {
+            "gap_contribution_bps": "-16.40536874540116748176151807",
+            "hold_mean_bps": "117.6250241814811412855647481",
+            "managed_mean_bps": "48.70902842723443362652558414",
+            "n": 244,
+            "tp_touched": 0
+          },
+          "prearm": {
+            "gap_contribution_bps": "-114.8621534479386414646283119",
+            "hold_mean_bps": "68.48843756868465815878861930",
+            "managed_mean_bps": "-110.1666569444217265168472227",
+            "n": 659,
+            "tp_touched": 0
+          }
+        }
+      },
+      "params": {
+        "backstop_min_separation_fraction": "0.05",
+        "breach_persist_count": "3",
+        "breach_persist_span_s": "1",
+        "chase_cap_fraction": null,
+        "chase_min_interval_s": null,
+        "gain_lock_giveback_fraction": "0.25",
+        "prearm_buffer_fraction": "0.005",
+        "prearm_range_multiple": "0.5",
+        "prearm_range_window_s": "10",
+        "quote_max_age_s": "1",
+        "take_profit_above_h_fraction": "0.10",
+        "take_profit_step_fraction": "0.02"
+      }
+    },
+    "b0.005-m1-g0": {
+      "3": {
+        "mean_bps": "-53.03790656228332775843621712",
+        "median_bps": "-31.49679411066255046307290400",
+        "n": 1025,
+        "pnl_units": "-5.436385422634041095239712255",
+        "win_rate": "0.3063414634146341463414634146"
+      },
+      "6": {
+        "mean_bps": "-61.24087861362344236906880624",
+        "median_bps": "-44.14973772055317119694802100",
+        "n": 1025,
+        "pnl_units": "-6.277190057896402842829552640",
+        "win_rate": "0.2351219512195121951219512195"
+      },
+      "attribution": {
+        "3": {
+          "flat_1555": {
+            "gap_contribution_bps": "0E-28",
+            "hold_mean_bps": "-5.969259982531610288238601208",
+            "managed_mean_bps": "-5.969259982531610288238601208",
+            "n": 159,
+            "tp_touched": 0
+          },
+          "gain_lock": {
+            "gap_contribution_bps": "-5.187210816828836466119812140",
+            "hold_mean_bps": "46.11642825108600133531330099",
+            "managed_mean_bps": "27.26220453743508864817568604",
+            "n": 282,
+            "tp_touched": 0
+          },
+          "prearm": {
+            "gap_contribution_bps": "-124.2922373043170596663975595",
+            "hold_mean_bps": "113.5220199798808326073711827",
+            "managed_mean_bps": "-104.6278828230729108139601515",
+            "n": 584,
+            "tp_touched": 0
+          }
+        },
+        "6": {
+          "flat_1555": {
+            "gap_contribution_bps": "0E-28",
+            "hold_mean_bps": "-13.58331591601859836620066894",
+            "managed_mean_bps": "-13.58331591601859836620066894",
+            "n": 122,
+            "tp_touched": 0
+          },
+          "gain_lock": {
+            "gap_contribution_bps": "-4.906521882883067035778494612",
+            "hold_mean_bps": "54.61412560363906483001644311",
+            "managed_mean_bps": "30.89155517932234920891758957",
+            "n": 212,
+            "tp_touched": 0
+          },
+          "prearm": {
+            "gap_contribution_bps": "-126.7511584051699550402591090",
+            "hold_mean_bps": "90.09579107101752019733142220",
+            "managed_mean_bps": "-97.92148442145600211274902148",
+            "n": 691,
+            "tp_touched": 0
+          }
+        }
+      },
+      "params": {
+        "backstop_min_separation_fraction": "0.05",
+        "breach_persist_count": "3",
+        "breach_persist_span_s": "1",
+        "chase_cap_fraction": null,
+        "chase_min_interval_s": null,
+        "gain_lock_giveback_fraction": "0",
+        "prearm_buffer_fraction": "0.005",
+        "prearm_range_multiple": "1",
+        "prearm_range_window_s": "10",
+        "quote_max_age_s": "1",
+        "take_profit_above_h_fraction": "0.10",
+        "take_profit_step_fraction": "0.02"
+      }
+    },
+    "b0.005-m1-g0.1": {
+      "3": {
+        "mean_bps": "-54.05705901988823600942596945",
+        "median_bps": "-31.49679411066255046307290400",
+        "n": 1025,
+        "pnl_units": "-5.540848549538544190966161869",
+        "win_rate": "0.3063414634146341463414634146"
+      },
+      "6": {
+        "mean_bps": "-62.14559556870505148126350123",
+        "median_bps": "-44.14973772055317119694802100",
+        "n": 1025,
+        "pnl_units": "-6.369923545792267776829508876",
+        "win_rate": "0.2351219512195121951219512195"
+      },
+      "attribution": {
+        "3": {
+          "flat_1555": {
+            "gap_contribution_bps": "0E-28",
+            "hold_mean_bps": "-5.969259982531610288238601208",
+            "managed_mean_bps": "-5.969259982531610288238601208",
+            "n": 159,
+            "tp_touched": 0
+          },
+          "gain_lock": {
+            "gap_contribution_bps": "-14.36758482828047592081593126",
+            "hold_mean_bps": "93.56704111247520002195619520",
+            "managed_mean_bps": "45.12370410922688482841563766",
+            "n": 304,
+            "tp_touched": 0
+          },
+          "prearm": {
+            "gap_contribution_bps": "-116.1310157504703284626911931",
+            "hold_mean_bps": "90.49343761007864379464134909",
+            "managed_mean_bps": "-121.3113509027898378321530871",
+            "n": 562,
+            "tp_touched": 0
+          }
+        },
+        "6": {
+          "flat_1555": {
+            "gap_contribution_bps": "0E-28",
+            "hold_mean_bps": "-13.58331591601859836620066894",
+            "managed_mean_bps": "-13.58331591601859836620066894",
+            "n": 122,
+            "tp_touched": 0
+          },
+          "gain_lock": {
+            "gap_contribution_bps": "-13.41621783551456753290128269",
+            "hold_mean_bps": "112.8557640446937317343863504",
+            "managed_mean_bps": "53.58152576278669845324921793",
+            "n": 232,
+            "tp_touched": 0
+          },
+          "prearm": {
+            "gap_contribution_bps": "-119.1461794076200636553310159",
+            "hold_mean_bps": "71.01616840488173239633661004",
+            "managed_mean_bps": "-110.9880549823173216226116628",
+            "n": 671,
+            "tp_touched": 0
+          }
+        }
+      },
+      "params": {
+        "backstop_min_separation_fraction": "0.05",
+        "breach_persist_count": "3",
+        "breach_persist_span_s": "1",
+        "chase_cap_fraction": null,
+        "chase_min_interval_s": null,
+        "gain_lock_giveback_fraction": "0.1",
+        "prearm_buffer_fraction": "0.005",
+        "prearm_range_multiple": "1",
+        "prearm_range_window_s": "10",
+        "quote_max_age_s": "1",
+        "take_profit_above_h_fraction": "0.10",
+        "take_profit_step_fraction": "0.02"
+      }
+    },
+    "b0.005-m1-g0.25": {
+      "3": {
+        "mean_bps": "-53.73860318128239891276244971",
+        "median_bps": "-31.49679411066255046307290400",
+        "n": 1025,
+        "pnl_units": "-5.508206826081445888558151095",
+        "win_rate": "0.3190243902439024390243902439"
+      },
+      "6": {
+        "mean_bps": "-60.85072051891022923942103294",
+        "median_bps": "-44.14973772055317119694802100",
+        "n": 1025,
+        "pnl_units": "-6.237198853188298497040655876",
+        "win_rate": "0.2390243902439024390243902439"
+      },
+      "attribution": {
+        "3": {
+          "flat_1555": {
+            "gap_contribution_bps": "0E-28",
+            "hold_mean_bps": "-8.934031158745750875138658233",
+            "managed_mean_bps": "-8.934031158745750875138658233",
+            "n": 146,
+            "tp_touched": 0
+          },
+          "gain_lock": {
+            "gap_contribution_bps": "-17.70791053489175221399299460",
+            "hold_mean_bps": "88.92974568745783071846817562",
+            "managed_mean_bps": "36.31928685190987124211217722",
+            "n": 345,
+            "tp_touched": 0
+          },
+          "prearm": {
+            "gap_contribution_bps": "-112.4722342052532150728506100",
+            "hold_mean_bps": "91.71570484052071275904851586",
+            "managed_mean_bps": "-124.1720106283642038133707266",
+            "n": 534,
+            "tp_touched": 0
+          }
+        },
+        "6": {
+          "flat_1555": {
+            "gap_contribution_bps": "0E-28",
+            "hold_mean_bps": "-13.58331591601859836620066894",
+            "managed_mean_bps": "-13.58331591601859836620066894",
+            "n": 122,
+            "tp_touched": 0
+          },
+          "gain_lock": {
+            "gap_contribution_bps": "-16.40536874540116748176151807",
+            "hold_mean_bps": "117.6250241814811412855647481",
+            "managed_mean_bps": "48.70902842723443362652558414",
+            "n": 244,
+            "tp_touched": 0
+          },
+          "prearm": {
+            "gap_contribution_bps": "-114.8621534479386414646283119",
+            "hold_mean_bps": "68.48843756868465815878861930",
+            "managed_mean_bps": "-110.1666569444217265168472227",
+            "n": 659,
+            "tp_touched": 0
+          }
+        }
+      },
+      "params": {
+        "backstop_min_separation_fraction": "0.05",
+        "breach_persist_count": "3",
+        "breach_persist_span_s": "1",
+        "chase_cap_fraction": null,
+        "chase_min_interval_s": null,
+        "gain_lock_giveback_fraction": "0.25",
+        "prearm_buffer_fraction": "0.005",
+        "prearm_range_multiple": "1",
+        "prearm_range_window_s": "10",
+        "quote_max_age_s": "1",
+        "take_profit_above_h_fraction": "0.10",
+        "take_profit_step_fraction": "0.02"
+      }
+    },
+    "b0.005-m2-g0": {
+      "3": {
+        "mean_bps": "-53.03790656228332775843621712",
+        "median_bps": "-31.49679411066255046307290400",
+        "n": 1025,
+        "pnl_units": "-5.436385422634041095239712255",
+        "win_rate": "0.3063414634146341463414634146"
+      },
+      "6": {
+        "mean_bps": "-61.24087861362344236906880624",
+        "median_bps": "-44.14973772055317119694802100",
+        "n": 1025,
+        "pnl_units": "-6.277190057896402842829552640",
+        "win_rate": "0.2351219512195121951219512195"
+      },
+      "attribution": {
+        "3": {
+          "flat_1555": {
+            "gap_contribution_bps": "0E-28",
+            "hold_mean_bps": "-5.969259982531610288238601208",
+            "managed_mean_bps": "-5.969259982531610288238601208",
+            "n": 159,
+            "tp_touched": 0
+          },
+          "gain_lock": {
+            "gap_contribution_bps": "-5.187210816828836466119812140",
+            "hold_mean_bps": "46.11642825108600133531330099",
+            "managed_mean_bps": "27.26220453743508864817568604",
+            "n": 282,
+            "tp_touched": 0
+          },
+          "prearm": {
+            "gap_contribution_bps": "-124.2922373043170596663975595",
+            "hold_mean_bps": "113.5220199798808326073711827",
+            "managed_mean_bps": "-104.6278828230729108139601515",
+            "n": 584,
+            "tp_touched": 0
+          }
+        },
+        "6": {
+          "flat_1555": {
+            "gap_contribution_bps": "0E-28",
+            "hold_mean_bps": "-13.58331591601859836620066894",
+            "managed_mean_bps": "-13.58331591601859836620066894",
+            "n": 122,
+            "tp_touched": 0
+          },
+          "gain_lock": {
+            "gap_contribution_bps": "-4.906521882883067035778494612",
+            "hold_mean_bps": "54.61412560363906483001644311",
+            "managed_mean_bps": "30.89155517932234920891758957",
+            "n": 212,
+            "tp_touched": 0
+          },
+          "prearm": {
+            "gap_contribution_bps": "-126.7511584051699550402591090",
+            "hold_mean_bps": "90.09579107101752019733142220",
+            "managed_mean_bps": "-97.92148442145600211274902148",
+            "n": 691,
+            "tp_touched": 0
+          }
+        }
+      },
+      "params": {
+        "backstop_min_separation_fraction": "0.05",
+        "breach_persist_count": "3",
+        "breach_persist_span_s": "1",
+        "chase_cap_fraction": null,
+        "chase_min_interval_s": null,
+        "gain_lock_giveback_fraction": "0",
+        "prearm_buffer_fraction": "0.005",
+        "prearm_range_multiple": "2",
+        "prearm_range_window_s": "10",
+        "quote_max_age_s": "1",
+        "take_profit_above_h_fraction": "0.10",
+        "take_profit_step_fraction": "0.02"
+      }
+    },
+    "b0.005-m2-g0.1": {
+      "3": {
+        "mean_bps": "-54.05705901988823600942596945",
+        "median_bps": "-31.49679411066255046307290400",
+        "n": 1025,
+        "pnl_units": "-5.540848549538544190966161869",
+        "win_rate": "0.3063414634146341463414634146"
+      },
+      "6": {
+        "mean_bps": "-62.14559556870505148126350123",
+        "median_bps": "-44.14973772055317119694802100",
+        "n": 1025,
+        "pnl_units": "-6.369923545792267776829508876",
+        "win_rate": "0.2351219512195121951219512195"
+      },
+      "attribution": {
+        "3": {
+          "flat_1555": {
+            "gap_contribution_bps": "0E-28",
+            "hold_mean_bps": "-5.969259982531610288238601208",
+            "managed_mean_bps": "-5.969259982531610288238601208",
+            "n": 159,
+            "tp_touched": 0
+          },
+          "gain_lock": {
+            "gap_contribution_bps": "-14.36758482828047592081593126",
+            "hold_mean_bps": "93.56704111247520002195619520",
+            "managed_mean_bps": "45.12370410922688482841563766",
+            "n": 304,
+            "tp_touched": 0
+          },
+          "prearm": {
+            "gap_contribution_bps": "-116.1310157504703284626911931",
+            "hold_mean_bps": "90.49343761007864379464134909",
+            "managed_mean_bps": "-121.3113509027898378321530871",
+            "n": 562,
+            "tp_touched": 0
+          }
+        },
+        "6": {
+          "flat_1555": {
+            "gap_contribution_bps": "0E-28",
+            "hold_mean_bps": "-13.58331591601859836620066894",
+            "managed_mean_bps": "-13.58331591601859836620066894",
+            "n": 122,
+            "tp_touched": 0
+          },
+          "gain_lock": {
+            "gap_contribution_bps": "-13.41621783551456753290128269",
+            "hold_mean_bps": "112.8557640446937317343863504",
+            "managed_mean_bps": "53.58152576278669845324921793",
+            "n": 232,
+            "tp_touched": 0
+          },
+          "prearm": {
+            "gap_contribution_bps": "-119.1461794076200636553310159",
+            "hold_mean_bps": "71.01616840488173239633661004",
+            "managed_mean_bps": "-110.9880549823173216226116628",
+            "n": 671,
+            "tp_touched": 0
+          }
+        }
+      },
+      "params": {
+        "backstop_min_separation_fraction": "0.05",
+        "breach_persist_count": "3",
+        "breach_persist_span_s": "1",
+        "chase_cap_fraction": null,
+        "chase_min_interval_s": null,
+        "gain_lock_giveback_fraction": "0.1",
+        "prearm_buffer_fraction": "0.005",
+        "prearm_range_multiple": "2",
+        "prearm_range_window_s": "10",
+        "quote_max_age_s": "1",
+        "take_profit_above_h_fraction": "0.10",
+        "take_profit_step_fraction": "0.02"
+      }
+    },
+    "b0.005-m2-g0.25": {
+      "3": {
+        "mean_bps": "-53.73860318128239891276244971",
+        "median_bps": "-31.49679411066255046307290400",
+        "n": 1025,
+        "pnl_units": "-5.508206826081445888558151095",
+        "win_rate": "0.3190243902439024390243902439"
+      },
+      "6": {
+        "mean_bps": "-60.85072051891022923942103294",
+        "median_bps": "-44.14973772055317119694802100",
+        "n": 1025,
+        "pnl_units": "-6.237198853188298497040655876",
+        "win_rate": "0.2390243902439024390243902439"
+      },
+      "attribution": {
+        "3": {
+          "flat_1555": {
+            "gap_contribution_bps": "0E-28",
+            "hold_mean_bps": "-8.934031158745750875138658233",
+            "managed_mean_bps": "-8.934031158745750875138658233",
+            "n": 146,
+            "tp_touched": 0
+          },
+          "gain_lock": {
+            "gap_contribution_bps": "-17.70791053489175221399299460",
+            "hold_mean_bps": "88.92974568745783071846817562",
+            "managed_mean_bps": "36.31928685190987124211217722",
+            "n": 345,
+            "tp_touched": 0
+          },
+          "prearm": {
+            "gap_contribution_bps": "-112.4722342052532150728506100",
+            "hold_mean_bps": "91.71570484052071275904851586",
+            "managed_mean_bps": "-124.1720106283642038133707266",
+            "n": 534,
+            "tp_touched": 0
+          }
+        },
+        "6": {
+          "flat_1555": {
+            "gap_contribution_bps": "0E-28",
+            "hold_mean_bps": "-13.58331591601859836620066894",
+            "managed_mean_bps": "-13.58331591601859836620066894",
+            "n": 122,
+            "tp_touched": 0
+          },
+          "gain_lock": {
+            "gap_contribution_bps": "-16.40536874540116748176151807",
+            "hold_mean_bps": "117.6250241814811412855647481",
+            "managed_mean_bps": "48.70902842723443362652558414",
+            "n": 244,
+            "tp_touched": 0
+          },
+          "prearm": {
+            "gap_contribution_bps": "-114.8621534479386414646283119",
+            "hold_mean_bps": "68.48843756868465815878861930",
+            "managed_mean_bps": "-110.1666569444217265168472227",
+            "n": 659,
+            "tp_touched": 0
+          }
+        }
+      },
+      "params": {
+        "backstop_min_separation_fraction": "0.05",
+        "breach_persist_count": "3",
+        "breach_persist_span_s": "1",
+        "chase_cap_fraction": null,
+        "chase_min_interval_s": null,
+        "gain_lock_giveback_fraction": "0.25",
+        "prearm_buffer_fraction": "0.005",
+        "prearm_range_multiple": "2",
+        "prearm_range_window_s": "10",
+        "quote_max_age_s": "1",
+        "take_profit_above_h_fraction": "0.10",
+        "take_profit_step_fraction": "0.02"
+      }
+    },
+    "b0.01-m0.5-g0": {
+      "3": {
+        "mean_bps": "-44.28540850025017567738418526",
+        "median_bps": "-6.985508675078864353312303000",
+        "n": 1025,
+        "pnl_units": "-4.539254371275643006931878989",
+        "win_rate": "0.4039024390243902439024390244"
+      },
+      "6": {
+        "mean_bps": "-48.73217112540993404516383450",
+        "median_bps": "-15.32542147293700088731144600",
+        "n": 1025,
+        "pnl_units": "-4.995047540354518239629293036",
+        "win_rate": "0.3795121951219512195121951220"
+      },
+      "attribution": {
+        "3": {
+          "flat_1555": {
+            "gap_contribution_bps": "0E-28",
+            "hold_mean_bps": "-10.07382384818298665033860093",
+            "managed_mean_bps": "-10.07382384818298665033860093",
+            "n": 273,
+            "tp_touched": 0
+          },
+          "gain_lock": {
+            "gap_contribution_bps": "-8.920914566850166809217565693",
+            "hold_mean_bps": "58.25459666893512505009738537",
+            "managed_mean_bps": "32.27750169444245181302918997",
+            "n": 352,
+            "tp_touched": 0
+          },
+          "prearm": {
+            "gap_contribution_bps": "-111.8060354922625772422477742",
+            "hold_mean_bps": "151.4927899523073098033533559",
+            "managed_mean_bps": "-135.0101759966155443799065669",
+            "n": 400,
+            "tp_touched": 0
+          }
+        },
+        "6": {
+          "flat_1555": {
+            "gap_contribution_bps": "0E-28",
+            "hold_mean_bps": "-19.20095850507856531130753805",
+            "managed_mean_bps": "-19.20095850507856531130753805",
+            "n": 311,
+            "tp_touched": 0
+          },
+          "gain_lock": {
+            "gap_contribution_bps": "-8.908549912977010623798868815",
+            "hold_mean_bps": "69.60465990544531972614870355",
+            "managed_mean_bps": "41.68030620268863504910331976",
+            "n": 327,
+            "tp_touched": 0
+          },
+          "prearm": {
+            "gap_contribution_bps": "-110.2404228868625031283337628",
+            "hold_mean_bps": "143.1214367501011200542869129",
+            "managed_mean_bps": "-148.8590114644571892649433378",
+            "n": 387,
+            "tp_touched": 0
+          }
+        }
+      },
+      "params": {
+        "backstop_min_separation_fraction": "0.05",
+        "breach_persist_count": "3",
+        "breach_persist_span_s": "1",
+        "chase_cap_fraction": null,
+        "chase_min_interval_s": null,
+        "gain_lock_giveback_fraction": "0",
+        "prearm_buffer_fraction": "0.01",
+        "prearm_range_multiple": "0.5",
+        "prearm_range_window_s": "10",
+        "quote_max_age_s": "1",
+        "take_profit_above_h_fraction": "0.10",
+        "take_profit_step_fraction": "0.02"
+      }
+    },
+    "b0.01-m0.5-g0.1": {
+      "3": {
+        "mean_bps": "-46.24690588211056476522507862",
+        "median_bps": "-6.985508675078864353312303000",
+        "n": 1025,
+        "pnl_units": "-4.740307852916332888435570559",
+        "win_rate": "0.4039024390243902439024390244"
+      },
+      "6": {
+        "mean_bps": "-49.98505863746262930465972060",
+        "median_bps": "-15.32542147293700088731144600",
+        "n": 1025,
+        "pnl_units": "-5.123468510339919503727621362",
+        "win_rate": "0.3795121951219512195121951220"
+      },
+      "attribution": {
+        "3": {
+          "flat_1555": {
+            "gap_contribution_bps": "0E-28",
+            "hold_mean_bps": "-10.07382384818298665033860093",
+            "managed_mean_bps": "-10.07382384818298665033860093",
+            "n": 273,
+            "tp_touched": 0
+          },
+          "gain_lock": {
+            "gap_contribution_bps": "-17.66409458354246690344099868",
+            "hold_mean_bps": "87.80232923050671514631061000",
+            "managed_mean_bps": "40.03004176841956850771688011",
+            "n": 379,
+            "tp_touched": 0
+          },
+          "prearm": {
+            "gap_contribution_bps": "-105.0243528574306662358652346",
+            "hold_mean_bps": "128.2189041019464957064983937",
+            "managed_mean_bps": "-160.3868912837543967647130432",
+            "n": 373,
+            "tp_touched": 0
+          }
+        },
+        "6": {
+          "flat_1555": {
+            "gap_contribution_bps": "0E-28",
+            "hold_mean_bps": "-19.20095850507856531130753805",
+            "managed_mean_bps": "-19.20095850507856531130753805",
+            "n": 311,
+            "tp_touched": 0
+          },
+          "gain_lock": {
+            "gap_contribution_bps": "-16.47065863617045055683189121",
+            "hold_mean_bps": "95.02352164915976705919340893",
+            "managed_mean_bps": "46.08895613589973279614213800",
+            "n": 345,
+            "tp_touched": 0
+          },
+          "prearm": {
+            "gap_contribution_bps": "-103.9312016757217584547966265",
+            "hold_mean_bps": "122.9420185431155376044388490",
+            "managed_mean_bps": "-165.7557638894449025477740027",
+            "n": 369,
+            "tp_touched": 0
+          }
+        }
+      },
+      "params": {
+        "backstop_min_separation_fraction": "0.05",
+        "breach_persist_count": "3",
+        "breach_persist_span_s": "1",
+        "chase_cap_fraction": null,
+        "chase_min_interval_s": null,
+        "gain_lock_giveback_fraction": "0.1",
+        "prearm_buffer_fraction": "0.01",
+        "prearm_range_multiple": "0.5",
+        "prearm_range_window_s": "10",
+        "quote_max_age_s": "1",
+        "take_profit_above_h_fraction": "0.10",
+        "take_profit_step_fraction": "0.02"
+      }
+    },
+    "b0.01-m0.5-g0.25": {
+      "3": {
+        "mean_bps": "-45.28764848842967883786092647",
+        "median_bps": "-3.949006706314057952676199000",
+        "n": 1025,
+        "pnl_units": "-4.641983970064042080880744963",
+        "win_rate": "0.4302439024390243902439024390"
+      },
+      "6": {
+        "mean_bps": "-48.40655194484356292858763567",
+        "median_bps": "-14.60985376044568245125348100",
+        "n": 1025,
+        "pnl_units": "-4.961671574346465200180232656",
+        "win_rate": "0.3912195121951219512195121951"
+      },
+      "attribution": {
+        "3": {
+          "flat_1555": {
+            "gap_contribution_bps": "0E-28",
+            "hold_mean_bps": "-13.58679321644824483057902030",
+            "managed_mean_bps": "-13.58679321644824483057902030",
+            "n": 251,
+            "tp_touched": 0
+          },
+          "gain_lock": {
+            "gap_contribution_bps": "-30.21822257849365575988463117",
+            "hold_mean_bps": "105.7081213797564449259064115",
+            "managed_mean_bps": "38.22734111187845548389824830",
+            "n": 459,
+            "tp_touched": 0
+          },
+          "prearm": {
+            "gap_contribution_bps": "-91.51096746879859145205745032",
+            "hold_mean_bps": "105.5328174027124883013253179",
+            "managed_mean_bps": "-192.2409656306797537252108303",
+            "n": 315,
+            "tp_touched": 0
+          }
+        },
+        "6": {
+          "flat_1555": {
+            "gap_contribution_bps": "0E-28",
+            "hold_mean_bps": "-17.69073968810422287370776181",
+            "managed_mean_bps": "-17.69073968810422287370776181",
+            "n": 317,
+            "tp_touched": 0
+          },
+          "gain_lock": {
+            "gap_contribution_bps": "-27.71553324690673997657575938",
+            "hold_mean_bps": "124.2267391261243177059498418",
+            "managed_mean_bps": "48.67242641846631644001858285",
+            "n": 376,
+            "tp_touched": 0
+          },
+          "prearm": {
+            "gap_contribution_bps": "-91.10782037236640265898067337",
+            "hold_mean_bps": "93.60220568071269395533505102",
+            "managed_mean_bps": "-187.6794686616835793141082931",
+            "n": 332,
+            "tp_touched": 0
+          }
+        }
+      },
+      "params": {
+        "backstop_min_separation_fraction": "0.05",
+        "breach_persist_count": "3",
+        "breach_persist_span_s": "1",
+        "chase_cap_fraction": null,
+        "chase_min_interval_s": null,
+        "gain_lock_giveback_fraction": "0.25",
+        "prearm_buffer_fraction": "0.01",
+        "prearm_range_multiple": "0.5",
+        "prearm_range_window_s": "10",
+        "quote_max_age_s": "1",
+        "take_profit_above_h_fraction": "0.10",
+        "take_profit_step_fraction": "0.02"
+      }
+    },
+    "b0.01-m1-g0": {
+      "3": {
+        "mean_bps": "-44.28540850025017567738418526",
+        "median_bps": "-6.985508675078864353312303000",
+        "n": 1025,
+        "pnl_units": "-4.539254371275643006931878989",
+        "win_rate": "0.4039024390243902439024390244"
+      },
+      "6": {
+        "mean_bps": "-48.73217112540993404516383450",
+        "median_bps": "-15.32542147293700088731144600",
+        "n": 1025,
+        "pnl_units": "-4.995047540354518239629293036",
+        "win_rate": "0.3795121951219512195121951220"
+      },
+      "attribution": {
+        "3": {
+          "flat_1555": {
+            "gap_contribution_bps": "0E-28",
+            "hold_mean_bps": "-10.07382384818298665033860093",
+            "managed_mean_bps": "-10.07382384818298665033860093",
+            "n": 273,
+            "tp_touched": 0
+          },
+          "gain_lock": {
+            "gap_contribution_bps": "-8.920914566850166809217565693",
+            "hold_mean_bps": "58.25459666893512505009738537",
+            "managed_mean_bps": "32.27750169444245181302918997",
+            "n": 352,
+            "tp_touched": 0
+          },
+          "prearm": {
+            "gap_contribution_bps": "-111.8060354922625772422477742",
+            "hold_mean_bps": "151.4927899523073098033533559",
+            "managed_mean_bps": "-135.0101759966155443799065669",
+            "n": 400,
+            "tp_touched": 0
+          }
+        },
+        "6": {
+          "flat_1555": {
+            "gap_contribution_bps": "0E-28",
+            "hold_mean_bps": "-19.20095850507856531130753805",
+            "managed_mean_bps": "-19.20095850507856531130753805",
+            "n": 311,
+            "tp_touched": 0
+          },
+          "gain_lock": {
+            "gap_contribution_bps": "-8.908549912977010623798868815",
+            "hold_mean_bps": "69.60465990544531972614870355",
+            "managed_mean_bps": "41.68030620268863504910331976",
+            "n": 327,
+            "tp_touched": 0
+          },
+          "prearm": {
+            "gap_contribution_bps": "-110.2404228868625031283337628",
+            "hold_mean_bps": "143.1214367501011200542869129",
+            "managed_mean_bps": "-148.8590114644571892649433378",
+            "n": 387,
+            "tp_touched": 0
+          }
+        }
+      },
+      "params": {
+        "backstop_min_separation_fraction": "0.05",
+        "breach_persist_count": "3",
+        "breach_persist_span_s": "1",
+        "chase_cap_fraction": null,
+        "chase_min_interval_s": null,
+        "gain_lock_giveback_fraction": "0",
+        "prearm_buffer_fraction": "0.01",
+        "prearm_range_multiple": "1",
+        "prearm_range_window_s": "10",
+        "quote_max_age_s": "1",
+        "take_profit_above_h_fraction": "0.10",
+        "take_profit_step_fraction": "0.02"
+      }
+    },
+    "b0.01-m1-g0.1": {
+      "3": {
+        "mean_bps": "-46.24690588211056476522507862",
+        "median_bps": "-6.985508675078864353312303000",
+        "n": 1025,
+        "pnl_units": "-4.740307852916332888435570559",
+        "win_rate": "0.4039024390243902439024390244"
+      },
+      "6": {
+        "mean_bps": "-49.98505863746262930465972060",
+        "median_bps": "-15.32542147293700088731144600",
+        "n": 1025,
+        "pnl_units": "-5.123468510339919503727621362",
+        "win_rate": "0.3795121951219512195121951220"
+      },
+      "attribution": {
+        "3": {
+          "flat_1555": {
+            "gap_contribution_bps": "0E-28",
+            "hold_mean_bps": "-10.07382384818298665033860093",
+            "managed_mean_bps": "-10.07382384818298665033860093",
+            "n": 273,
+            "tp_touched": 0
+          },
+          "gain_lock": {
+            "gap_contribution_bps": "-17.66409458354246690344099868",
+            "hold_mean_bps": "87.80232923050671514631061000",
+            "managed_mean_bps": "40.03004176841956850771688011",
+            "n": 379,
+            "tp_touched": 0
+          },
+          "prearm": {
+            "gap_contribution_bps": "-105.0243528574306662358652346",
+            "hold_mean_bps": "128.2189041019464957064983937",
+            "managed_mean_bps": "-160.3868912837543967647130432",
+            "n": 373,
+            "tp_touched": 0
+          }
+        },
+        "6": {
+          "flat_1555": {
+            "gap_contribution_bps": "0E-28",
+            "hold_mean_bps": "-19.20095850507856531130753805",
+            "managed_mean_bps": "-19.20095850507856531130753805",
+            "n": 311,
+            "tp_touched": 0
+          },
+          "gain_lock": {
+            "gap_contribution_bps": "-16.47065863617045055683189121",
+            "hold_mean_bps": "95.02352164915976705919340893",
+            "managed_mean_bps": "46.08895613589973279614213800",
+            "n": 345,
+            "tp_touched": 0
+          },
+          "prearm": {
+            "gap_contribution_bps": "-103.9312016757217584547966265",
+            "hold_mean_bps": "122.9420185431155376044388490",
+            "managed_mean_bps": "-165.7557638894449025477740027",
+            "n": 369,
+            "tp_touched": 0
+          }
+        }
+      },
+      "params": {
+        "backstop_min_separation_fraction": "0.05",
+        "breach_persist_count": "3",
+        "breach_persist_span_s": "1",
+        "chase_cap_fraction": null,
+        "chase_min_interval_s": null,
+        "gain_lock_giveback_fraction": "0.1",
+        "prearm_buffer_fraction": "0.01",
+        "prearm_range_multiple": "1",
+        "prearm_range_window_s": "10",
+        "quote_max_age_s": "1",
+        "take_profit_above_h_fraction": "0.10",
+        "take_profit_step_fraction": "0.02"
+      }
+    },
+    "b0.01-m1-g0.25": {
+      "3": {
+        "mean_bps": "-45.28764848842967883786092647",
+        "median_bps": "-3.949006706314057952676199000",
+        "n": 1025,
+        "pnl_units": "-4.641983970064042080880744963",
+        "win_rate": "0.4302439024390243902439024390"
+      },
+      "6": {
+        "mean_bps": "-48.40655194484356292858763567",
+        "median_bps": "-14.60985376044568245125348100",
+        "n": 1025,
+        "pnl_units": "-4.961671574346465200180232656",
+        "win_rate": "0.3912195121951219512195121951"
+      },
+      "attribution": {
+        "3": {
+          "flat_1555": {
+            "gap_contribution_bps": "0E-28",
+            "hold_mean_bps": "-13.58679321644824483057902030",
+            "managed_mean_bps": "-13.58679321644824483057902030",
+            "n": 251,
+            "tp_touched": 0
+          },
+          "gain_lock": {
+            "gap_contribution_bps": "-30.21822257849365575988463117",
+            "hold_mean_bps": "105.7081213797564449259064115",
+            "managed_mean_bps": "38.22734111187845548389824830",
+            "n": 459,
+            "tp_touched": 0
+          },
+          "prearm": {
+            "gap_contribution_bps": "-91.51096746879859145205745032",
+            "hold_mean_bps": "105.5328174027124883013253179",
+            "managed_mean_bps": "-192.2409656306797537252108303",
+            "n": 315,
+            "tp_touched": 0
+          }
+        },
+        "6": {
+          "flat_1555": {
+            "gap_contribution_bps": "0E-28",
+            "hold_mean_bps": "-17.69073968810422287370776181",
+            "managed_mean_bps": "-17.69073968810422287370776181",
+            "n": 317,
+            "tp_touched": 0
+          },
+          "gain_lock": {
+            "gap_contribution_bps": "-27.71553324690673997657575938",
+            "hold_mean_bps": "124.2267391261243177059498418",
+            "managed_mean_bps": "48.67242641846631644001858285",
+            "n": 376,
+            "tp_touched": 0
+          },
+          "prearm": {
+            "gap_contribution_bps": "-91.10782037236640265898067337",
+            "hold_mean_bps": "93.60220568071269395533505102",
+            "managed_mean_bps": "-187.6794686616835793141082931",
+            "n": 332,
+            "tp_touched": 0
+          }
+        }
+      },
+      "params": {
+        "backstop_min_separation_fraction": "0.05",
+        "breach_persist_count": "3",
+        "breach_persist_span_s": "1",
+        "chase_cap_fraction": null,
+        "chase_min_interval_s": null,
+        "gain_lock_giveback_fraction": "0.25",
+        "prearm_buffer_fraction": "0.01",
+        "prearm_range_multiple": "1",
+        "prearm_range_window_s": "10",
+        "quote_max_age_s": "1",
+        "take_profit_above_h_fraction": "0.10",
+        "take_profit_step_fraction": "0.02"
+      }
+    },
+    "b0.01-m2-g0": {
+      "3": {
+        "mean_bps": "-44.28540850025017567738418526",
+        "median_bps": "-6.985508675078864353312303000",
+        "n": 1025,
+        "pnl_units": "-4.539254371275643006931878989",
+        "win_rate": "0.4039024390243902439024390244"
+      },
+      "6": {
+        "mean_bps": "-48.73217112540993404516383450",
+        "median_bps": "-15.32542147293700088731144600",
+        "n": 1025,
+        "pnl_units": "-4.995047540354518239629293036",
+        "win_rate": "0.3795121951219512195121951220"
+      },
+      "attribution": {
+        "3": {
+          "flat_1555": {
+            "gap_contribution_bps": "0E-28",
+            "hold_mean_bps": "-10.07382384818298665033860093",
+            "managed_mean_bps": "-10.07382384818298665033860093",
+            "n": 273,
+            "tp_touched": 0
+          },
+          "gain_lock": {
+            "gap_contribution_bps": "-8.920914566850166809217565693",
+            "hold_mean_bps": "58.25459666893512505009738537",
+            "managed_mean_bps": "32.27750169444245181302918997",
+            "n": 352,
+            "tp_touched": 0
+          },
+          "prearm": {
+            "gap_contribution_bps": "-111.8060354922625772422477742",
+            "hold_mean_bps": "151.4927899523073098033533559",
+            "managed_mean_bps": "-135.0101759966155443799065669",
+            "n": 400,
+            "tp_touched": 0
+          }
+        },
+        "6": {
+          "flat_1555": {
+            "gap_contribution_bps": "0E-28",
+            "hold_mean_bps": "-19.20095850507856531130753805",
+            "managed_mean_bps": "-19.20095850507856531130753805",
+            "n": 311,
+            "tp_touched": 0
+          },
+          "gain_lock": {
+            "gap_contribution_bps": "-8.908549912977010623798868815",
+            "hold_mean_bps": "69.60465990544531972614870355",
+            "managed_mean_bps": "41.68030620268863504910331976",
+            "n": 327,
+            "tp_touched": 0
+          },
+          "prearm": {
+            "gap_contribution_bps": "-110.2404228868625031283337628",
+            "hold_mean_bps": "143.1214367501011200542869129",
+            "managed_mean_bps": "-148.8590114644571892649433378",
+            "n": 387,
+            "tp_touched": 0
+          }
+        }
+      },
+      "params": {
+        "backstop_min_separation_fraction": "0.05",
+        "breach_persist_count": "3",
+        "breach_persist_span_s": "1",
+        "chase_cap_fraction": null,
+        "chase_min_interval_s": null,
+        "gain_lock_giveback_fraction": "0",
+        "prearm_buffer_fraction": "0.01",
+        "prearm_range_multiple": "2",
+        "prearm_range_window_s": "10",
+        "quote_max_age_s": "1",
+        "take_profit_above_h_fraction": "0.10",
+        "take_profit_step_fraction": "0.02"
+      }
+    },
+    "b0.01-m2-g0.1": {
+      "3": {
+        "mean_bps": "-46.24690588211056476522507862",
+        "median_bps": "-6.985508675078864353312303000",
+        "n": 1025,
+        "pnl_units": "-4.740307852916332888435570559",
+        "win_rate": "0.4039024390243902439024390244"
+      },
+      "6": {
+        "mean_bps": "-49.98505863746262930465972060",
+        "median_bps": "-15.32542147293700088731144600",
+        "n": 1025,
+        "pnl_units": "-5.123468510339919503727621362",
+        "win_rate": "0.3795121951219512195121951220"
+      },
+      "attribution": {
+        "3": {
+          "flat_1555": {
+            "gap_contribution_bps": "0E-28",
+            "hold_mean_bps": "-10.07382384818298665033860093",
+            "managed_mean_bps": "-10.07382384818298665033860093",
+            "n": 273,
+            "tp_touched": 0
+          },
+          "gain_lock": {
+            "gap_contribution_bps": "-17.66409458354246690344099868",
+            "hold_mean_bps": "87.80232923050671514631061000",
+            "managed_mean_bps": "40.03004176841956850771688011",
+            "n": 379,
+            "tp_touched": 0
+          },
+          "prearm": {
+            "gap_contribution_bps": "-105.0243528574306662358652346",
+            "hold_mean_bps": "128.2189041019464957064983937",
+            "managed_mean_bps": "-160.3868912837543967647130432",
+            "n": 373,
+            "tp_touched": 0
+          }
+        },
+        "6": {
+          "flat_1555": {
+            "gap_contribution_bps": "0E-28",
+            "hold_mean_bps": "-19.20095850507856531130753805",
+            "managed_mean_bps": "-19.20095850507856531130753805",
+            "n": 311,
+            "tp_touched": 0
+          },
+          "gain_lock": {
+            "gap_contribution_bps": "-16.47065863617045055683189121",
+            "hold_mean_bps": "95.02352164915976705919340893",
+            "managed_mean_bps": "46.08895613589973279614213800",
+            "n": 345,
+            "tp_touched": 0
+          },
+          "prearm": {
+            "gap_contribution_bps": "-103.9312016757217584547966265",
+            "hold_mean_bps": "122.9420185431155376044388490",
+            "managed_mean_bps": "-165.7557638894449025477740027",
+            "n": 369,
+            "tp_touched": 0
+          }
+        }
+      },
+      "params": {
+        "backstop_min_separation_fraction": "0.05",
+        "breach_persist_count": "3",
+        "breach_persist_span_s": "1",
+        "chase_cap_fraction": null,
+        "chase_min_interval_s": null,
+        "gain_lock_giveback_fraction": "0.1",
+        "prearm_buffer_fraction": "0.01",
+        "prearm_range_multiple": "2",
+        "prearm_range_window_s": "10",
+        "quote_max_age_s": "1",
+        "take_profit_above_h_fraction": "0.10",
+        "take_profit_step_fraction": "0.02"
+      }
+    },
+    "b0.01-m2-g0.25": {
+      "3": {
+        "mean_bps": "-45.28764848842967883786092647",
+        "median_bps": "-3.949006706314057952676199000",
+        "n": 1025,
+        "pnl_units": "-4.641983970064042080880744963",
+        "win_rate": "0.4302439024390243902439024390"
+      },
+      "6": {
+        "mean_bps": "-48.40655194484356292858763567",
+        "median_bps": "-14.60985376044568245125348100",
+        "n": 1025,
+        "pnl_units": "-4.961671574346465200180232656",
+        "win_rate": "0.3912195121951219512195121951"
+      },
+      "attribution": {
+        "3": {
+          "flat_1555": {
+            "gap_contribution_bps": "0E-28",
+            "hold_mean_bps": "-13.58679321644824483057902030",
+            "managed_mean_bps": "-13.58679321644824483057902030",
+            "n": 251,
+            "tp_touched": 0
+          },
+          "gain_lock": {
+            "gap_contribution_bps": "-30.21822257849365575988463117",
+            "hold_mean_bps": "105.7081213797564449259064115",
+            "managed_mean_bps": "38.22734111187845548389824830",
+            "n": 459,
+            "tp_touched": 0
+          },
+          "prearm": {
+            "gap_contribution_bps": "-91.51096746879859145205745032",
+            "hold_mean_bps": "105.5328174027124883013253179",
+            "managed_mean_bps": "-192.2409656306797537252108303",
+            "n": 315,
+            "tp_touched": 0
+          }
+        },
+        "6": {
+          "flat_1555": {
+            "gap_contribution_bps": "0E-28",
+            "hold_mean_bps": "-17.69073968810422287370776181",
+            "managed_mean_bps": "-17.69073968810422287370776181",
+            "n": 317,
+            "tp_touched": 0
+          },
+          "gain_lock": {
+            "gap_contribution_bps": "-27.71553324690673997657575938",
+            "hold_mean_bps": "124.2267391261243177059498418",
+            "managed_mean_bps": "48.67242641846631644001858285",
+            "n": 376,
+            "tp_touched": 0
+          },
+          "prearm": {
+            "gap_contribution_bps": "-91.10782037236640265898067337",
+            "hold_mean_bps": "93.60220568071269395533505102",
+            "managed_mean_bps": "-187.6794686616835793141082931",
+            "n": 332,
+            "tp_touched": 0
+          }
+        }
+      },
+      "params": {
+        "backstop_min_separation_fraction": "0.05",
+        "breach_persist_count": "3",
+        "breach_persist_span_s": "1",
+        "chase_cap_fraction": null,
+        "chase_min_interval_s": null,
+        "gain_lock_giveback_fraction": "0.25",
+        "prearm_buffer_fraction": "0.01",
+        "prearm_range_multiple": "2",
+        "prearm_range_window_s": "10",
+        "quote_max_age_s": "1",
+        "take_profit_above_h_fraction": "0.10",
+        "take_profit_step_fraction": "0.02"
+      }
+    },
+    "b0.02-m0.5-g0": {
+      "3": {
+        "mean_bps": "-42.90615694979936733051537617",
+        "median_bps": "-0.650060427017590976232040000",
+        "n": 1025,
+        "pnl_units": "-4.397881087354435151377826057",
+        "win_rate": "0.4868292682926829268292682927"
+      },
+      "6": {
+        "mean_bps": "-53.82159012175329828587624133",
+        "median_bps": "-6.776200017423120480878123000",
+        "n": 1025,
+        "pnl_units": "-5.516712987479713074302314736",
+        "win_rate": "0.4409756097560975609756097561"
+      },
+      "attribution": {
+        "3": {
+          "flat_1555": {
+            "gap_contribution_bps": "0E-28",
+            "hold_mean_bps": "-2.208621239965294485700133666",
+            "managed_mean_bps": "-2.208621239965294485700133666",
+            "n": 371,
+            "tp_touched": 0
+          },
+          "gain_lock": {
+            "gap_contribution_bps": "-11.28817667491477078326160557",
+            "hold_mean_bps": "70.52972746746040633027559136",
+            "managed_mean_bps": "41.38519071232781173873114395",
+            "n": 397,
+            "tp_touched": 0
+          },
+          "prearm": {
+            "gap_contribution_bps": "-108.0595218337471649213349254",
+            "hold_mean_bps": "199.1115827754065195506168242",
+            "managed_mean_bps": "-231.8651093630792549410886191",
+            "n": 257,
+            "tp_touched": 0
+          }
+        },
+        "6": {
+          "flat_1555": {
+            "gap_contribution_bps": "0E-28",
+            "hold_mean_bps": "-23.41771565599925735701692396",
+            "managed_mean_bps": "-23.41771565599925735701692396",
+            "n": 382,
+            "tp_touched": 0
+          },
+          "gain_lock": {
+            "gap_contribution_bps": "-16.59078815702162701888347231",
+            "hold_mean_bps": "82.39905932469377706315514543",
+            "managed_mean_bps": "37.99812496190743843559493885",
+            "n": 383,
+            "tp_touched": 0
+          },
+          "prearm": {
+            "gap_contribution_bps": "-107.6476036391612509739615660",
+            "hold_mean_bps": "190.6305745212473803647502357",
+            "managed_mean_bps": "-233.7494013639075513595213234",
+            "n": 260,
+            "tp_touched": 0
+          }
+        }
+      },
+      "params": {
+        "backstop_min_separation_fraction": "0.05",
+        "breach_persist_count": "3",
+        "breach_persist_span_s": "1",
+        "chase_cap_fraction": null,
+        "chase_min_interval_s": null,
+        "gain_lock_giveback_fraction": "0",
+        "prearm_buffer_fraction": "0.02",
+        "prearm_range_multiple": "0.5",
+        "prearm_range_window_s": "10",
+        "quote_max_age_s": "1",
+        "take_profit_above_h_fraction": "0.10",
+        "take_profit_step_fraction": "0.02"
+      }
+    },
+    "b0.02-m0.5-g0.1": {
+      "3": {
+        "mean_bps": "-47.21098419815274507949528011",
+        "median_bps": "-0.650060427017590976232040000",
+        "n": 1025,
+        "pnl_units": "-4.839125880310656370648266211",
+        "win_rate": "0.4868292682926829268292682927"
+      },
+      "6": {
+        "mean_bps": "-53.51783083501051257341331141",
+        "median_bps": "-6.776200017423120480878123000",
+        "n": 1025,
+        "pnl_units": "-5.485577660588577538774864420",
+        "win_rate": "0.4409756097560975609756097561"
+      },
+      "attribution": {
+        "3": {
+          "flat_1555": {
+            "gap_contribution_bps": "0E-28",
+            "hold_mean_bps": "-15.53856447875528215300830797",
+            "managed_mean_bps": "-15.53856447875528215300830797",
+            "n": 345,
+            "tp_touched": 0
+          },
+          "gain_lock": {
+            "gap_contribution_bps": "-22.65232761881097206424389230",
+            "hold_mean_bps": "96.70957344356894786436070116",
+            "managed_mean_bps": "43.93994660429338794197436123",
+            "n": 440,
+            "tp_touched": 0
+          },
+          "prearm": {
+            "gap_contribution_bps": "-101.0001981382043413893325427",
+            "hold_mean_bps": "171.5048855326431994412597570",
+            "managed_mean_bps": "-259.8501273492711752423479782",
+            "n": 240,
+            "tp_touched": 0
+          }
+        },
+        "6": {
+          "flat_1555": {
+            "gap_contribution_bps": "0E-28",
+            "hold_mean_bps": "-25.11531037157757013624653749",
+            "managed_mean_bps": "-25.11531037157757013624653749",
+            "n": 377,
+            "tp_touched": 0
+          },
+          "gain_lock": {
+            "gap_contribution_bps": "-23.29363582272689881613079191",
+            "hold_mean_bps": "103.6721331719104116837769032",
+            "managed_mean_bps": "44.71910423784850727258168909",
+            "n": 405,
+            "tp_touched": 0
+          },
+          "prearm": {
+            "gap_contribution_bps": "-100.6409966867131934642513166",
+            "hold_mean_bps": "163.2036205421866107369478018",
+            "managed_mean_bps": "-261.3108716548546374147295628",
+            "n": 243,
+            "tp_touched": 0
+          }
+        }
+      },
+      "params": {
+        "backstop_min_separation_fraction": "0.05",
+        "breach_persist_count": "3",
+        "breach_persist_span_s": "1",
+        "chase_cap_fraction": null,
+        "chase_min_interval_s": null,
+        "gain_lock_giveback_fraction": "0.1",
+        "prearm_buffer_fraction": "0.02",
+        "prearm_range_multiple": "0.5",
+        "prearm_range_window_s": "10",
+        "quote_max_age_s": "1",
+        "take_profit_above_h_fraction": "0.10",
+        "take_profit_step_fraction": "0.02"
+      }
+    },
+    "b0.02-m0.5-g0.25": {
+      "3": {
+        "mean_bps": "-44.61753376617561058643073521",
+        "median_bps": "0.789194480406706874230320000",
+        "n": 1025,
+        "pnl_units": "-4.573297211033000085109150359",
+        "win_rate": "0.5004878048780487804878048780"
+      },
+      "6": {
+        "mean_bps": "-47.69877398972960115110312189",
+        "median_bps": "-5.756351520199916701374430000",
+        "n": 1025,
+        "pnl_units": "-4.889124333947284117988069994",
+        "win_rate": "0.4604878048780487804878048780"
+      },
+      "attribution": {
+        "3": {
+          "flat_1555": {
+            "gap_contribution_bps": "0E-28",
+            "hold_mean_bps": "-20.06897857680328651703964281",
+            "managed_mean_bps": "-20.06897857680328651703964281",
+            "n": 301,
+            "tp_touched": 0
+          },
+          "gain_lock": {
+            "gap_contribution_bps": "-30.47214301756000352220645242",
+            "hold_mean_bps": "101.8807420818557021520570085",
+            "managed_mean_bps": "41.58354788687693070367551486",
+            "n": 518,
+            "tp_touched": 0
+          },
+          "prearm": {
+            "gap_contribution_bps": "-90.58693230747817543830543785",
+            "hold_mean_bps": "153.4908652963624665548377964",
+            "managed_mean_bps": "-297.2450842918177753105169312",
+            "n": 206,
+            "tp_touched": 0
+          }
+        },
+        "6": {
+          "flat_1555": {
+            "gap_contribution_bps": "0E-28",
+            "hold_mean_bps": "-23.30238403205171353609907832",
+            "managed_mean_bps": "-23.30238403205171353609907832",
+            "n": 380,
+            "tp_touched": 0
+          },
+          "gain_lock": {
+            "gap_contribution_bps": "-27.93660712285210276966032875",
+            "hold_mean_bps": "116.3389450621303208308762033",
+            "managed_mean_bps": "50.81257824079529717206193101",
+            "n": 437,
+            "tp_touched": 0
+          },
+          "prearm": {
+            "gap_contribution_bps": "-90.17896854130707808841159020",
+            "hold_mean_bps": "145.1538877707645199051334901",
+            "managed_mean_bps": "-299.2376639351958408670870873",
+            "n": 208,
+            "tp_touched": 0
+          }
+        }
+      },
+      "params": {
+        "backstop_min_separation_fraction": "0.05",
+        "breach_persist_count": "3",
+        "breach_persist_span_s": "1",
+        "chase_cap_fraction": null,
+        "chase_min_interval_s": null,
+        "gain_lock_giveback_fraction": "0.25",
+        "prearm_buffer_fraction": "0.02",
+        "prearm_range_multiple": "0.5",
+        "prearm_range_window_s": "10",
+        "quote_max_age_s": "1",
+        "take_profit_above_h_fraction": "0.10",
+        "take_profit_step_fraction": "0.02"
+      }
+    },
+    "b0.02-m1-g0": {
+      "3": {
+        "mean_bps": "-42.90615694979936733051537617",
+        "median_bps": "-0.650060427017590976232040000",
+        "n": 1025,
+        "pnl_units": "-4.397881087354435151377826057",
+        "win_rate": "0.4868292682926829268292682927"
+      },
+      "6": {
+        "mean_bps": "-53.82159012175329828587624133",
+        "median_bps": "-6.776200017423120480878123000",
+        "n": 1025,
+        "pnl_units": "-5.516712987479713074302314736",
+        "win_rate": "0.4409756097560975609756097561"
+      },
+      "attribution": {
+        "3": {
+          "flat_1555": {
+            "gap_contribution_bps": "0E-28",
+            "hold_mean_bps": "-2.208621239965294485700133666",
+            "managed_mean_bps": "-2.208621239965294485700133666",
+            "n": 371,
+            "tp_touched": 0
+          },
+          "gain_lock": {
+            "gap_contribution_bps": "-11.28817667491477078326160557",
+            "hold_mean_bps": "70.52972746746040633027559136",
+            "managed_mean_bps": "41.38519071232781173873114395",
+            "n": 397,
+            "tp_touched": 0
+          },
+          "prearm": {
+            "gap_contribution_bps": "-108.0595218337471649213349254",
+            "hold_mean_bps": "199.1115827754065195506168242",
+            "managed_mean_bps": "-231.8651093630792549410886191",
+            "n": 257,
+            "tp_touched": 0
+          }
+        },
+        "6": {
+          "flat_1555": {
+            "gap_contribution_bps": "0E-28",
+            "hold_mean_bps": "-23.41771565599925735701692396",
+            "managed_mean_bps": "-23.41771565599925735701692396",
+            "n": 382,
+            "tp_touched": 0
+          },
+          "gain_lock": {
+            "gap_contribution_bps": "-16.59078815702162701888347231",
+            "hold_mean_bps": "82.39905932469377706315514543",
+            "managed_mean_bps": "37.99812496190743843559493885",
+            "n": 383,
+            "tp_touched": 0
+          },
+          "prearm": {
+            "gap_contribution_bps": "-107.6476036391612509739615660",
+            "hold_mean_bps": "190.6305745212473803647502357",
+            "managed_mean_bps": "-233.7494013639075513595213234",
+            "n": 260,
+            "tp_touched": 0
+          }
+        }
+      },
+      "params": {
+        "backstop_min_separation_fraction": "0.05",
+        "breach_persist_count": "3",
+        "breach_persist_span_s": "1",
+        "chase_cap_fraction": null,
+        "chase_min_interval_s": null,
+        "gain_lock_giveback_fraction": "0",
+        "prearm_buffer_fraction": "0.02",
+        "prearm_range_multiple": "1",
+        "prearm_range_window_s": "10",
+        "quote_max_age_s": "1",
+        "take_profit_above_h_fraction": "0.10",
+        "take_profit_step_fraction": "0.02"
+      }
+    },
+    "b0.02-m1-g0.1": {
+      "3": {
+        "mean_bps": "-47.21098419815274507949528011",
+        "median_bps": "-0.650060427017590976232040000",
+        "n": 1025,
+        "pnl_units": "-4.839125880310656370648266211",
+        "win_rate": "0.4868292682926829268292682927"
+      },
+      "6": {
+        "mean_bps": "-53.51783083501051257341331141",
+        "median_bps": "-6.776200017423120480878123000",
+        "n": 1025,
+        "pnl_units": "-5.485577660588577538774864420",
+        "win_rate": "0.4409756097560975609756097561"
+      },
+      "attribution": {
+        "3": {
+          "flat_1555": {
+            "gap_contribution_bps": "0E-28",
+            "hold_mean_bps": "-15.53856447875528215300830797",
+            "managed_mean_bps": "-15.53856447875528215300830797",
+            "n": 345,
+            "tp_touched": 0
+          },
+          "gain_lock": {
+            "gap_contribution_bps": "-22.65232761881097206424389230",
+            "hold_mean_bps": "96.70957344356894786436070116",
+            "managed_mean_bps": "43.93994660429338794197436123",
+            "n": 440,
+            "tp_touched": 0
+          },
+          "prearm": {
+            "gap_contribution_bps": "-101.0001981382043413893325427",
+            "hold_mean_bps": "171.5048855326431994412597570",
+            "managed_mean_bps": "-259.8501273492711752423479782",
+            "n": 240,
+            "tp_touched": 0
+          }
+        },
+        "6": {
+          "flat_1555": {
+            "gap_contribution_bps": "0E-28",
+            "hold_mean_bps": "-25.11531037157757013624653749",
+            "managed_mean_bps": "-25.11531037157757013624653749",
+            "n": 377,
+            "tp_touched": 0
+          },
+          "gain_lock": {
+            "gap_contribution_bps": "-23.29363582272689881613079191",
+            "hold_mean_bps": "103.6721331719104116837769032",
+            "managed_mean_bps": "44.71910423784850727258168909",
+            "n": 405,
+            "tp_touched": 0
+          },
+          "prearm": {
+            "gap_contribution_bps": "-100.6409966867131934642513166",
+            "hold_mean_bps": "163.2036205421866107369478018",
+            "managed_mean_bps": "-261.3108716548546374147295628",
+            "n": 243,
+            "tp_touched": 0
+          }
+        }
+      },
+      "params": {
+        "backstop_min_separation_fraction": "0.05",
+        "breach_persist_count": "3",
+        "breach_persist_span_s": "1",
+        "chase_cap_fraction": null,
+        "chase_min_interval_s": null,
+        "gain_lock_giveback_fraction": "0.1",
+        "prearm_buffer_fraction": "0.02",
+        "prearm_range_multiple": "1",
+        "prearm_range_window_s": "10",
+        "quote_max_age_s": "1",
+        "take_profit_above_h_fraction": "0.10",
+        "take_profit_step_fraction": "0.02"
+      }
+    },
+    "b0.02-m1-g0.25": {
+      "3": {
+        "mean_bps": "-44.61753376617561058643073521",
+        "median_bps": "0.789194480406706874230320000",
+        "n": 1025,
+        "pnl_units": "-4.573297211033000085109150359",
+        "win_rate": "0.5004878048780487804878048780"
+      },
+      "6": {
+        "mean_bps": "-47.69877398972960115110312189",
+        "median_bps": "-5.756351520199916701374430000",
+        "n": 1025,
+        "pnl_units": "-4.889124333947284117988069994",
+        "win_rate": "0.4604878048780487804878048780"
+      },
+      "attribution": {
+        "3": {
+          "flat_1555": {
+            "gap_contribution_bps": "0E-28",
+            "hold_mean_bps": "-20.06897857680328651703964281",
+            "managed_mean_bps": "-20.06897857680328651703964281",
+            "n": 301,
+            "tp_touched": 0
+          },
+          "gain_lock": {
+            "gap_contribution_bps": "-30.47214301756000352220645242",
+            "hold_mean_bps": "101.8807420818557021520570085",
+            "managed_mean_bps": "41.58354788687693070367551486",
+            "n": 518,
+            "tp_touched": 0
+          },
+          "prearm": {
+            "gap_contribution_bps": "-90.58693230747817543830543785",
+            "hold_mean_bps": "153.4908652963624665548377964",
+            "managed_mean_bps": "-297.2450842918177753105169312",
+            "n": 206,
+            "tp_touched": 0
+          }
+        },
+        "6": {
+          "flat_1555": {
+            "gap_contribution_bps": "0E-28",
+            "hold_mean_bps": "-23.30238403205171353609907832",
+            "managed_mean_bps": "-23.30238403205171353609907832",
+            "n": 380,
+            "tp_touched": 0
+          },
+          "gain_lock": {
+            "gap_contribution_bps": "-27.93660712285210276966032875",
+            "hold_mean_bps": "116.3389450621303208308762033",
+            "managed_mean_bps": "50.81257824079529717206193101",
+            "n": 437,
+            "tp_touched": 0
+          },
+          "prearm": {
+            "gap_contribution_bps": "-90.17896854130707808841159020",
+            "hold_mean_bps": "145.1538877707645199051334901",
+            "managed_mean_bps": "-299.2376639351958408670870873",
+            "n": 208,
+            "tp_touched": 0
+          }
+        }
+      },
+      "params": {
+        "backstop_min_separation_fraction": "0.05",
+        "breach_persist_count": "3",
+        "breach_persist_span_s": "1",
+        "chase_cap_fraction": null,
+        "chase_min_interval_s": null,
+        "gain_lock_giveback_fraction": "0.25",
+        "prearm_buffer_fraction": "0.02",
+        "prearm_range_multiple": "1",
+        "prearm_range_window_s": "10",
+        "quote_max_age_s": "1",
+        "take_profit_above_h_fraction": "0.10",
+        "take_profit_step_fraction": "0.02"
+      }
+    },
+    "b0.02-m2-g0": {
+      "3": {
+        "mean_bps": "-42.90615694979936733051537617",
+        "median_bps": "-0.650060427017590976232040000",
+        "n": 1025,
+        "pnl_units": "-4.397881087354435151377826057",
+        "win_rate": "0.4868292682926829268292682927"
+      },
+      "6": {
+        "mean_bps": "-53.82159012175329828587624133",
+        "median_bps": "-6.776200017423120480878123000",
+        "n": 1025,
+        "pnl_units": "-5.516712987479713074302314736",
+        "win_rate": "0.4409756097560975609756097561"
+      },
+      "attribution": {
+        "3": {
+          "flat_1555": {
+            "gap_contribution_bps": "0E-28",
+            "hold_mean_bps": "-2.208621239965294485700133666",
+            "managed_mean_bps": "-2.208621239965294485700133666",
+            "n": 371,
+            "tp_touched": 0
+          },
+          "gain_lock": {
+            "gap_contribution_bps": "-11.28817667491477078326160557",
+            "hold_mean_bps": "70.52972746746040633027559136",
+            "managed_mean_bps": "41.38519071232781173873114395",
+            "n": 397,
+            "tp_touched": 0
+          },
+          "prearm": {
+            "gap_contribution_bps": "-108.0595218337471649213349254",
+            "hold_mean_bps": "199.1115827754065195506168242",
+            "managed_mean_bps": "-231.8651093630792549410886191",
+            "n": 257,
+            "tp_touched": 0
+          }
+        },
+        "6": {
+          "flat_1555": {
+            "gap_contribution_bps": "0E-28",
+            "hold_mean_bps": "-23.41771565599925735701692396",
+            "managed_mean_bps": "-23.41771565599925735701692396",
+            "n": 382,
+            "tp_touched": 0
+          },
+          "gain_lock": {
+            "gap_contribution_bps": "-16.59078815702162701888347231",
+            "hold_mean_bps": "82.39905932469377706315514543",
+            "managed_mean_bps": "37.99812496190743843559493885",
+            "n": 383,
+            "tp_touched": 0
+          },
+          "prearm": {
+            "gap_contribution_bps": "-107.6476036391612509739615660",
+            "hold_mean_bps": "190.6305745212473803647502357",
+            "managed_mean_bps": "-233.7494013639075513595213234",
+            "n": 260,
+            "tp_touched": 0
+          }
+        }
+      },
+      "params": {
+        "backstop_min_separation_fraction": "0.05",
+        "breach_persist_count": "3",
+        "breach_persist_span_s": "1",
+        "chase_cap_fraction": null,
+        "chase_min_interval_s": null,
+        "gain_lock_giveback_fraction": "0",
+        "prearm_buffer_fraction": "0.02",
+        "prearm_range_multiple": "2",
+        "prearm_range_window_s": "10",
+        "quote_max_age_s": "1",
+        "take_profit_above_h_fraction": "0.10",
+        "take_profit_step_fraction": "0.02"
+      }
+    },
+    "b0.02-m2-g0.1": {
+      "3": {
+        "mean_bps": "-47.21098419815274507949528011",
+        "median_bps": "-0.650060427017590976232040000",
+        "n": 1025,
+        "pnl_units": "-4.839125880310656370648266211",
+        "win_rate": "0.4868292682926829268292682927"
+      },
+      "6": {
+        "mean_bps": "-53.51783083501051257341331141",
+        "median_bps": "-6.776200017423120480878123000",
+        "n": 1025,
+        "pnl_units": "-5.485577660588577538774864420",
+        "win_rate": "0.4409756097560975609756097561"
+      },
+      "attribution": {
+        "3": {
+          "flat_1555": {
+            "gap_contribution_bps": "0E-28",
+            "hold_mean_bps": "-15.53856447875528215300830797",
+            "managed_mean_bps": "-15.53856447875528215300830797",
+            "n": 345,
+            "tp_touched": 0
+          },
+          "gain_lock": {
+            "gap_contribution_bps": "-22.65232761881097206424389230",
+            "hold_mean_bps": "96.70957344356894786436070116",
+            "managed_mean_bps": "43.93994660429338794197436123",
+            "n": 440,
+            "tp_touched": 0
+          },
+          "prearm": {
+            "gap_contribution_bps": "-101.0001981382043413893325427",
+            "hold_mean_bps": "171.5048855326431994412597570",
+            "managed_mean_bps": "-259.8501273492711752423479782",
+            "n": 240,
+            "tp_touched": 0
+          }
+        },
+        "6": {
+          "flat_1555": {
+            "gap_contribution_bps": "0E-28",
+            "hold_mean_bps": "-25.11531037157757013624653749",
+            "managed_mean_bps": "-25.11531037157757013624653749",
+            "n": 377,
+            "tp_touched": 0
+          },
+          "gain_lock": {
+            "gap_contribution_bps": "-23.29363582272689881613079191",
+            "hold_mean_bps": "103.6721331719104116837769032",
+            "managed_mean_bps": "44.71910423784850727258168909",
+            "n": 405,
+            "tp_touched": 0
+          },
+          "prearm": {
+            "gap_contribution_bps": "-100.6409966867131934642513166",
+            "hold_mean_bps": "163.2036205421866107369478018",
+            "managed_mean_bps": "-261.3108716548546374147295628",
+            "n": 243,
+            "tp_touched": 0
+          }
+        }
+      },
+      "params": {
+        "backstop_min_separation_fraction": "0.05",
+        "breach_persist_count": "3",
+        "breach_persist_span_s": "1",
+        "chase_cap_fraction": null,
+        "chase_min_interval_s": null,
+        "gain_lock_giveback_fraction": "0.1",
+        "prearm_buffer_fraction": "0.02",
+        "prearm_range_multiple": "2",
+        "prearm_range_window_s": "10",
+        "quote_max_age_s": "1",
+        "take_profit_above_h_fraction": "0.10",
+        "take_profit_step_fraction": "0.02"
+      }
+    },
+    "b0.02-m2-g0.25": {
+      "3": {
+        "mean_bps": "-44.61753376617561058643073521",
+        "median_bps": "0.789194480406706874230320000",
+        "n": 1025,
+        "pnl_units": "-4.573297211033000085109150359",
+        "win_rate": "0.5004878048780487804878048780"
+      },
+      "6": {
+        "mean_bps": "-47.69877398972960115110312189",
+        "median_bps": "-5.756351520199916701374430000",
+        "n": 1025,
+        "pnl_units": "-4.889124333947284117988069994",
+        "win_rate": "0.4604878048780487804878048780"
+      },
+      "attribution": {
+        "3": {
+          "flat_1555": {
+            "gap_contribution_bps": "0E-28",
+            "hold_mean_bps": "-20.06897857680328651703964281",
+            "managed_mean_bps": "-20.06897857680328651703964281",
+            "n": 301,
+            "tp_touched": 0
+          },
+          "gain_lock": {
+            "gap_contribution_bps": "-30.47214301756000352220645242",
+            "hold_mean_bps": "101.8807420818557021520570085",
+            "managed_mean_bps": "41.58354788687693070367551486",
+            "n": 518,
+            "tp_touched": 0
+          },
+          "prearm": {
+            "gap_contribution_bps": "-90.58693230747817543830543785",
+            "hold_mean_bps": "153.4908652963624665548377964",
+            "managed_mean_bps": "-297.2450842918177753105169312",
+            "n": 206,
+            "tp_touched": 0
+          }
+        },
+        "6": {
+          "flat_1555": {
+            "gap_contribution_bps": "0E-28",
+            "hold_mean_bps": "-23.30238403205171353609907832",
+            "managed_mean_bps": "-23.30238403205171353609907832",
+            "n": 380,
+            "tp_touched": 0
+          },
+          "gain_lock": {
+            "gap_contribution_bps": "-27.93660712285210276966032875",
+            "hold_mean_bps": "116.3389450621303208308762033",
+            "managed_mean_bps": "50.81257824079529717206193101",
+            "n": 437,
+            "tp_touched": 0
+          },
+          "prearm": {
+            "gap_contribution_bps": "-90.17896854130707808841159020",
+            "hold_mean_bps": "145.1538877707645199051334901",
+            "managed_mean_bps": "-299.2376639351958408670870873",
+            "n": 208,
+            "tp_touched": 0
+          }
+        }
+      },
+      "params": {
+        "backstop_min_separation_fraction": "0.05",
+        "breach_persist_count": "3",
+        "breach_persist_span_s": "1",
+        "chase_cap_fraction": null,
+        "chase_min_interval_s": null,
+        "gain_lock_giveback_fraction": "0.25",
+        "prearm_buffer_fraction": "0.02",
+        "prearm_range_multiple": "2",
+        "prearm_range_window_s": "10",
+        "quote_max_age_s": "1",
+        "take_profit_above_h_fraction": "0.10",
+        "take_profit_step_fraction": "0.02"
+      }
+    }
+  },
+  "tier": "MODELED",
+  "version": "exit-grid-141/1"
+}

@@ -45,6 +45,64 @@ STARTS = "b0.01-m1-g0.1"
 RUN = EVIDENCE / "run-a8282a4"
 COSTS = ("3", "6")
 
+# PR 2's run (lead ruling (a)): attempt pr2-a8282a4-r3, reserved and closed via #102 as trials
+# 252-278. Its reservation rows carry the r3 hand-off's own config terms, so they are rebuilt here.
+R3 = Path("/home/sextant/sextant-data/exit-141/pr2-a8282a4-r3")
+R3_SHA = "a8282a4f11d69b2bd595d3035439f5edd64276be"
+R3_RESERVE = {
+    "rows_sha256": "f9443ef4e16c383414ff2b8465db09e5dc34c54ccb0dbbbb9462cce0da11ada3",
+    "manifest_sha256": "598e0855d83bbd4079f90f6aea04e6ffe4c337a3c21f1c37df0cd24190dce9eb",
+}
+R3_OUTCOME = {
+    "rows_sha256": "9688b74bb76acee81482b3e2144d1d51cd378d7b56d89a468275541f2d3905d5",
+    "manifest_sha256": "7ad7df28cfc2a9aab3216fe92b863dd248e9d5983b9e1313dd655a56896f6a93",
+}
+R3_NAUTILUS = (
+    "v2.0.0rc8 d53849b216e20f2c122ca01b4dd0da377638b186 (the installed wheel; the module constant "
+    "still says rc7)"
+)
+R3_RESERVATION = (
+    "re-run of attempt pr2-a8282a4-r2 (trials 225-251), killed by the 17:36 EST restart with no "
+    "result; reserved before this run"
+)
+R3_RULING = (
+    "lead ruling (a), 2026-11-07: minute-bar proxies over-refuse raises. The minute-bar proxy's "
+    "bid sits below the bar high it was made from, so the raise rule over-refuses in proxy "
+    "replays; neither table is venue-realistic evidence; real-quote replays (C1's trades and "
+    "quotes, then #137's ticks) are the proper evaluation. The committed #98/#141 rows stay as "
+    "history."
+)
+
+
+def test_the_pr2_run_sits_beside_the_history_and_closes_its_own_attempt(tmp_path: Path) -> None:
+    """Ruling (a): run-a8282a4 keeps the registered grid, inputs and controls, its outcome rows are
+    the r3 hand-off's, and its reservation is the r3 hand-off's, so the run is its own attempt."""
+    report, committed = json.loads((RUN / "report.json").read_text()), _report()
+    raw = (RUN / "outcome.jsonl").read_bytes()
+    rows = [json.loads(x) for x in raw.decode().splitlines()]
+    assert report["implementation"] == R3_SHA
+    assert report["registration_sha256"] == committed["registration_sha256"]
+    assert report["inputs"] == committed["inputs"] and report["controls"] == committed["controls"]
+    assert set(report["surface"]) == set(committed["surface"])
+    assert hashlib.sha256(raw).hexdigest() == R3_OUTCOME["rows_sha256"]
+    assert grid.write_batch(tmp_path / "outcome", "outcome", rows) == R3_OUTCOME
+    reserved = grid.reserve_rows(R3 / "reserve", R3_SHA)
+    for r in reserved:
+        box = {**grid.SANDBOX, "nautilus": R3_NAUTILUS}
+        r["config"]["sandbox_config"], r["config"]["sandbox_config_hash"] = (
+            box,
+            grid.snapshot_hash(box),
+        )
+        r["config"]["reservation"], r["config"]["ruling"] = R3_RESERVATION, R3_RULING
+    assert grid.write_batch(tmp_path / "reserve", "reserve", reserved) == R3_RESERVE
+    assert [r["arm_run_id"] for r in rows] == [r["config"]["arm_run_id"] for r in reserved]
+    for row in rows:
+        result, cell = row["result"], report["surface"][_cell(row["arm_run_id"])]
+        assert row["state"] == "COMPLETE" and result["selected"] is False
+        assert result["params_hash"] == grid.snapshot_hash(cell["params"])
+        for c in COSTS:
+            assert all(result[f"{k}_{c}"] == cell[c][k] for k in x98.METRICS)
+
 
 def _report() -> dict[str, Any]:
     return json.loads((EVIDENCE / "report.json").read_text())
