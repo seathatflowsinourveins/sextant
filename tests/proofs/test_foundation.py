@@ -216,6 +216,16 @@ def test_scoreboard_uses_upstream_actions() -> None:
     assert "peter-evans/create-issue-from-file@" in scoreboard
 
 
+def test_scoreboard_runs_only_daily_or_on_dispatch() -> None:
+    import yaml
+
+    workflow = yaml.safe_load((WORKFLOWS / "scoreboard.yml").read_text())
+    triggers = workflow.get("on", workflow.get(True))
+    assert "push" not in triggers
+    assert set(triggers) == {"schedule", "workflow_dispatch"}
+    assert triggers["schedule"] == [{"cron": "17 6 * * *"}]
+
+
 def test_lessons_keep_their_seed_and_stay_append_only() -> None:
     lines = _read("docs/handbook/lessons.jsonl").splitlines(True)
     assert _sha("".join(lines[:130])) == (

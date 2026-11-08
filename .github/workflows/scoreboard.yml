@@ -3,9 +3,6 @@
 # pytest counts, github/issue-metrics measures, peter-evans/create-issue-from-file updates the issue.
 name: scoreboard
 on:
-  push:
-    branches: [main]
-    paths: ["docs/manifest.md", "tests/proofs/**", ".devcontainer/**"]
   schedule:
     - cron: "17 6 * * *"
   workflow_dispatch:
