@@ -242,7 +242,7 @@ if (!crossModel) cross = { skipped: 'off by default; pass args.cross_model=true 
 else if (halted || !integrated.size) cross = { skipped: halted ? 'integration did not complete' : 'nothing was integrated' }
 else {
   const c = await agent(
-    `Read the cross-family review of the single integrated branch ${INTEG} at exact commit ${integrationHead} from the existing GitHub PR and its required review check (.github/workflows/review.md and review-claude.md). ` +
+    `Read the cross-family review of the single integrated branch ${INTEG} at exact commit ${integrationHead} from the existing GitHub PR and its required review check (.github/workflows/review.md, review-claude.md and review-codex.md). ` +
     'Resolve the branch before and after review. If either head differs from that exact commit, return ran=false with skip_reason; never review a replacement head as if it were the accepted one. ' +
     'Verify that the completed review check belongs to that exact head SHA and the reviewer family differs from the author. Do not open a PR, trigger a workflow, merge or change any check. ' +
     'If the PR, head identity, reviewer family or completed check is unavailable, return ran=false with skip_reason; never substitute your own review. ' +

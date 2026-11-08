@@ -65,7 +65,7 @@ credential() {
 claim() {
   local pr=${1:?usage: ao.sh claim <pr-number>} view head sha
   [[ "$pr" =~ ^[0-9]+$ ]] || { echo "PR must be a number." >&2; exit 2; }
-  view=$(gh pr view "$pr" --repo "$repo_url" --json state,isDraft,baseRefName,headRefName,headRefOid,autoMergeRequest,statusCheckRollup)
+  view=$(gh pr view "$pr" --repo "$repo_url" --json state,isDraft,baseRefName,headRefName,headRefOid,autoMergeRequest,statusCheckRollup,body)
   # One writer per branch: AO takes a PR only once its worker has handed it off, open, landing by squash
   # auto-merge on main, and with `ci` settled green or red.
   jq -e '.state == "OPEN" and (.isDraft | not) and .baseRefName == "main"
@@ -74,9 +74,14 @@ claim() {
     echo "PR #$pr is not handed off: it must be open, not a draft, on main, set to squash auto-merge, with ci settled." >&2
     exit 1
   }
+  # Match the workflows' case-insensitive, whole-body contains, including comments.
+  jq -e '(.body // "" | ascii_downcase | contains("review-family codex")) | not' <<< "$view" > /dev/null || {
+    echo "PR #$pr requests a Codex reviewer; AO's Codex worker cannot claim it. Set another reviewer before hand-off." >&2
+    exit 1
+  }
   head=$(jq -r .headRefName <<< "$view")
   sha=$(jq -r .headRefOid <<< "$view")
-  ao spawn --project "$project" --branch "$head" --claim-pr "$pr" --no-takeover --name "PR #$pr fix-CI/review" \
+  ao spawn --project "$project" --agent codex --branch "$head" --claim-pr "$pr" --no-takeover --name "PR #$pr fix-CI/review" \
     --prompt "$(prompt "$pr" "$head" "$sha")"
 }
 
@@ -87,6 +92,7 @@ First make your worktree the PR head: git fetch origin $2 && git checkout -B $2 
 git rev-parse HEAD is $3. Then wait for AO's messages. For a failed check, reproduce it with just ci and push
 a fix to $2. For a review comment, fix it or answer it on the PR with your reason. Follow AGENTS.md: every
 change keeps the PR's Upstream references and manifest row true.
+Never alter the PR body's Agent-Family or Review-Family markers.
 Never merge (no ao pr merge, no gh pr merge), never disable auto-merge, never force-push, and never edit
 .github/ or dangerfile.js. A PR lands only by squash auto-merge once ci, source and review pass.
 If a fix needs a new source or the owner's decision, stop and say so with ao report --needs-input.

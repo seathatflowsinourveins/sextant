@@ -1,12 +1,12 @@
 ---
 name: Review with Claude
-description: Review a dsh-written pull request with Claude against the upstream rubric and pass or fail its required check.
+description: Review a pull request outside its author's family with Claude and pass or fail its required check.
 on:
   pull_request_target:
-    types: [opened, synchronize, reopened, ready_for_review]
+    types: [opened, synchronize]
     acknowledge-risk: true
   bots: ["dependabot[bot]", "sextant-lanes-seathatflows[bot]"]
-if: ${{ contains(github.event.pull_request.body, 'Agent-Family dsh') }}
+if: "(!contains(github.event.pull_request.body, 'Review-Family') || contains(github.event.pull_request.body, 'Review-Family codex') || contains(github.event.pull_request.body, 'Review-Family claude') || contains(github.event.pull_request.body, 'Review-Family dsh')) && !contains(github.event.pull_request.body, 'Agent-Family claude') && (contains(github.event.pull_request.body, 'Agent-Family codex') || contains(github.event.pull_request.body, 'Agent-Family dsh')) && !(contains(github.event.pull_request.body, 'Agent-Family dsh') && contains(github.event.pull_request.body, 'Agent-Family codex')) && !contains(github.event.pull_request.body, 'Review-Family dsh') && !contains(github.event.pull_request.body, 'Review-Family codex') && (contains(github.event.pull_request.body, 'Review-Family claude') || (contains(github.event.pull_request.body, 'Agent-Family dsh') && !contains(github.event.pull_request.body, 'Agent-Family codex')))"
 permissions:
   contents: read
   pull-requests: read
@@ -41,6 +41,8 @@ safe-outputs:
   create-issue:
     max: 1
     title-prefix: "Review follow-up: "
+# ADR-0030 #5; gh-aw v1.0.1 frontmatter.md documents -1 as intentionally uncapped daily usage.
+max-daily-ai-credits: -1
 timeout-minutes: 30
 ---
 

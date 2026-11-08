@@ -25,9 +25,15 @@ Everything here comes from a SOTA source: a maintained repo or framework at a pi
 
 ## Landing
 - Work on a branch. `just pr "title" body.md` opens the PR from the template and turns on auto-merge. A PR lands through squash auto-merge only when `ci`, `source` and `review` pass. Danger enforces the manifest/source rule in `source`; gh-aw supplies `review`. These run from the base branch, so the PR cannot change its own checks. [ADR-0001](docs/adr/0001-sextant-foundation.md)
-- Follow ADR-0001's gh-aw routing: one other-family reviewer, dsh by default and Claude for a dsh-authored PR marked `Agent-Family dsh`. Live promotion retains its separate two-family exact-SHA requirement.
+- Follow ADR-0001's gh-aw routing: one other-family reviewer among dsh, Claude and Codex. Use the literal marker format below; explicit reviewer selection needs a recognized author and another family. Either ASCII marker prefix without a recognized family and conflicting selections block review. Choose by fit, never usage. Live promotion retains its separate two-family exact-SHA requirement.
 - Never push to `main`. If `main` goes red, revert.
 - Tracking is GitHub Issues only.
+
+Fill the author placeholder with your actual family (`codex`, `claude` or `dsh`); fill the second with another family or delete that line for the ADR-0001 default. Unfilled placeholders block review. Use ASCII prefixes, one ASCII space and no colon. Matching scans the whole body, including comments and code blocks; a misspelled prefix is unrecognized. Choose before opening or the next new commit; reopening or draft toggles do not reroute. AO's Codex worker refuses a Codex reviewer and preserves both markers.
+```text
+Agent-Family <family>
+Review-Family <other-family-or-delete>
+```
 
 ## Hard lines
 - **Secrets:** never in a file, commit, log, command line or URL. Never print an environment variable's value. Jobs get keys from GitHub Environment secrets. On the clean distro, keys live in `scripts/keys.sh`'s encrypted store and reach one command at a time through `scripts/with-keys.sh`; holding a paper key is not permission to trade (`docs/adr/0028-local-keys.md`). Live keys never enter this store or the sandbox, and broker keys never enter the sandbox.

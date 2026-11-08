@@ -85,7 +85,11 @@ def test_source_rule_is_enforced() -> None:
 
 
 def test_review_is_compiled_by_gh_aw_and_sets_the_required_check() -> None:
-    for name, engine in (("review", "id: deepseek-harness"), ("review-claude", "  id: claude\n")):
+    for name, engine in (
+        ("review", "id: deepseek-harness"),
+        ("review-claude", "  id: claude\n"),
+        ("review-codex", "id: codex"),
+    ):
         source = (WORKFLOWS / f"{name}.md").read_text()
         assert engine in source
         assert "pull_request_target" in source

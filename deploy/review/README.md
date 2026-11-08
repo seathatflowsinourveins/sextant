@@ -1,12 +1,39 @@
-# Local ephemeral checks
+# Local ephemeral checks and three-family review
 
-Private Sextant keeps GitHub scheduling, logs, required checks and token permissions, and uses local ephemeral compute, because hosted jobs stopped for billing at 04:32Z on 2026-11-07. This supersedes the hosted-compute decision in ADR-0001.
+Private Sextant keeps GitHub scheduling, logs, required checks and token permissions, and uses local ephemeral compute, because hosted jobs stopped for billing at 04:32Z on 2026-11-07. This supersedes the earlier owner choice **"Hosted now, ephemeral local next (Recommended)"** ([#58, 2026-11-06](https://github.com/seathatflowsinourveins/sextant/issues/58#issuecomment-6698667083)), not its requirement for a fresh container per job or its rejection of persistent runners.
 
-The owner's answer is recorded on [#58](https://github.com/seathatflowsinourveins/sextant/issues/58#issuecomment-6707587169): "go local or go public", and on a follow-up, "you decide with highest quality convergence". Two risks are accepted:
+The owner's later answer is recorded on [#58](https://github.com/seathatflowsinourveins/sextant/issues/58#issuecomment-6707587169): "go local or go public", and on a follow-up, "you decide with highest quality convergence". Two risks are accepted:
 - The lead accepted, under that delegation, that passwordless-sudo agents on this host can forge a verdict.
 - The owner accepted that ci can read its own runner's one-job credentials ("Accept + add exit cleanup", [Credentials](#credentials)).
 
 Native job logs and summaries provide tamper evidence, not an independent attestation; local blind multi-family review is the mitigation. The upgrade is this same setup on an agent-free host. Public hosting was rejected because release assets contain vendor bars and owner fills, and the research history would be exposed.
+
+## Review selection and authority
+
+All three gh-aw reviewers select `[self-hosted, linux, x64, sextant-jit-docker]` on all three runner surfaces: `runs-on`, `runs-on-slim` and `safe-outputs.runs-on`, with `runner.topology: arc-dind`. Repository `aw.json` requires self-hosted runners. `ci` and `source` select the sealed profile. Compile with `gh aw compile --validate --no-check-update`; the compiler owns the locks, never hand patches.
+
+Review runs from the base branch, reads the PR head through GitHub tools, uses the `review` Environment's API keys, and creates the required `review` check through the Actions app (15368). Local subscription sign-ins do not replace those API keys. Tier 2 (Orca's signed-in panel, upkeep and reflection) remains separate work and cannot satisfy the required check.
+
+All reviewer sources allowlist `dependabot[bot]` and `sextant-lanes-seathatflows[bot]` under `on.bots`, following #156. Upstream installation, trusted-author and fork-provenance checks still apply; the allowance does not make an arbitrary App trusted. The App name comes from `deploy/wsl/github-app.json`.
+
+Declare the author's actual runtime family with `Agent-Family` followed by `codex`, `claude` or `dsh` on its own line. A valid selection starts exactly one workflow:
+
+| Author family | Default reviewer |
+|---|---|
+| Codex | dsh |
+| Claude | dsh |
+| dsh | Claude |
+| Unmarked human/bot, with neither ASCII marker prefix | dsh |
+
+Optionally add `Review-Family` followed by a different family on its own line to choose by fit; risk-critical review can select Claude. Self-review, conflicting author declarations or several reviewer selections start no reviewer and keep landing blocked. Use exactly one ASCII space and no colon in each marker. Either ASCII marker prefix without any recognized family, or an explicit reviewer choice without a recognized author, starts no reviewer. This includes unsupported runtime names, unfinished template placeholders, an unmarked human's reviewer request, and prose mentioning a prefix without a value. Set the selection before PR creation or a new head commit; only `opened` and `synchronize` select a reviewer. Body edits, reopen and draft toggles do not reroute the same SHA. The routing proof evaluates the actual GitHub `contains` expressions in source and both compiled gates, including every conflicting author pair with a matching or third-family choice and activation refused.
+
+The lead's 2026-11-07 ruling on [#189](https://github.com/seathatflowsinourveins/sextant/issues/189) keeps dsh as the Claude default. `just ao claim` explicitly selects a Codex worker, even for an existing project registration. Before spawning it reads the PR body and refuses an explicit Codex reviewer using the same case-insensitive, whole-body matching as the workflows. It leaves both markers unchanged and includes that restriction in the worker prompt. The standard Claude hand-off therefore still selects dsh, outside both contributing families. Codex remains available for other-family PRs without that Codex hand-off. The bot identity alone does not identify the runtime that wrote a commit. The [AO proof](../../tests/proofs/test_ao_review_routing.py) runs the actual script with offline stubs, a temporary HOME and pytest's interpreter, while `python3` is unavailable on PATH. It covers new and existing registrations and rejected claims.
+
+## When review stays Expected
+
+The conditions match substrings anywhere in the PR body, including prose, HTML comments and pasted code; they do not parse only standalone lines. Fill the template or AGENTS.md placeholders with the actual families and remove other marker examples from the body. An untouched or partly filled template starts no reviewer. Delete the optional reviewer line to use the default. Prefixes must be ASCII: a Unicode dash, soft hyphen or missing hyphen is not normalized or recognized. Such a typo can still look like an unmarked human/bot PR and take dsh; the conditions cannot infer an author's real runtime from prose or a bot identity. A valid recognized marker alongside a malformed marker with the same prefix also passes the substring guard. The unmarked default is retained, so these residuals require correctly declared markers.
+
+An invalid selection skips all three workflows, including their conclusion jobs. No check or diagnostic comment is emitted, so required `review` stays Expected and landing is blocked. Correct the body and push a new head commit; editing alone, reopening or toggling draft does not retrigger selection. A rerun of the original invalid event does not supply a corrected body. A separate invalid-selection publisher is not added while #182 establishes the dedicated review-check publisher; this PR adds no alternate check authority.
 
 ## Lifecycle and sources
 
@@ -18,7 +45,8 @@ Native job logs and summaries provide tamper evidence, not an independent attest
   - [ephemeral lifecycle](https://docs.github.com/en/actions/reference/runners/self-hosted-runners);
   - [hardening](https://docs.github.com/en/actions/reference/security/secure-use);
   - [job hooks](https://docs.github.com/en/actions/how-tos/manage-runners/self-hosted-runners/run-scripts);
-  - [label routing](https://docs.github.com/en/actions/how-tos/write-workflows/choose-where-workflows-run/choose-the-runner-for-a-job): "jobs will be queued on runners that have all the labels that you specify".
+  - [label routing](https://docs.github.com/en/actions/how-tos/write-workflows/choose-where-workflows-run/choose-the-runner-for-a-job): "jobs will be queued on runners that have all the labels that you specify";
+  - [PR event types](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#pull_request_target) and [rerun behavior](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/re-run-workflows-and-jobs).
 - actions/scaleset@v0.5.0 `af394d86c0d5024225238b0209043c70193bcfe6`, `examples/dockerscaleset/scaler.go::startRunner`: a fresh Docker container with the supported environment input.
   - It is a Public Preview, and its example warns it is not production-ready.
   - We adopt its container/JIT lifecycle, but use the documented repository REST endpoint and serial systemd slots rather than importing its independent scale-set listener and admin credential into the executor account.
@@ -29,6 +57,8 @@ Native job logs and summaries provide tamper evidence, not an independent attest
   - non-root runner users are supported (`:160`).
   - Locks are compiled, never patched.
   - Container pins come from v1.0.1's own table (`pkg/actionpins/data/action_pins.json`), including gh-aw-node `2c2ea524`. `build-tools:0.29.0`, which arc-dind needs and that table lacks, is pinned to ghcr.io's index digest `sha256:10a5c7107f4e8fb18029acbcda5005bcea5aa45007f8eac281688961928bc1dc` (anonymous registry read, 2026-11-07).
+  - `reference/engines/codex.md`, `reference/sandbox.md`: native Codex engine and fallback control; `actions/setup/js/check_membership.cjs` and `check_permissions_utils.cjs`: #156 App allowance.
+  - `reference/frontmatter.md`, `reference/glossary.md` and `actions/setup/md/daily_workflow_aic_exceeded.md`: explicit `max-daily-ai-credits: -1` sentinel (read 2026-11-07).
 - [Docker rootless mode](https://docs.docker.com/engine/security/rootless/) and the installed Docker 29.9.3 `dockerd-rootless.sh` (`DOCKERD_ROOTLESS_ROOTLESSKIT_DETACH_NETNS=false`, default `--disable-host-loopback`).
 - rootless-containers/rootlesskit@v3.3.0 `888c3189e9cdf34dcdb19011e1c7c34eb94b5393`: native `--port-driver=none`. With `--disable-host-loopback`, the gvisor-tap-vsock driver omits its `10.0.2.1` to host `127.0.0.1` NAT (`pkg/network/gvisortapvsock/gvisortapvsock.go:140-145`), although `cmd/rootlesskit/main.go:598` still warns the flag "is not yet supported"; from the daemon's namespace, a host loopback listener answers at none of `10.0.2.1`-`10.0.2.3` (measured 2026-11-07).
 - More Docker docs, read 2026-11-07:
@@ -141,13 +171,13 @@ If a slot is down, read `journalctl --user -u sextant-jit@<slot>`, fix the cause
 - From `main`, the same dispatch also runs `jit-smoke`, which checks the docker profile's daemon, tmpfs and a sibling bind, and `jit-cleanup-smoke`, which checks that both earlier roots, the sealed network and a named volume are gone.
 - Native hooks add the receipt. No protected review, provider or broker secret is required.
 
-The branch-dispatch receipt for the reviewed head is posted as a comment on #201; this file holds no run URL.
+The branch-dispatch receipt for the reviewed head is posted as a comment on #201; this file holds no run URL. #65's merge-only writer round does not reinstall slots, register runners or dispatch these workflows.
 
-**Routed checks.** The routed `ci`, `source` and `review` checks cannot run on their own PR, because `pull_request_target` takes the base branch's workflows. The first PR after landing is their end-to-end witness.
+**Routed checks.** The routed `ci`, `source` and `review` checks cannot run their own PR's changed workflow sources, because `pull_request_target` takes the base branch's workflows. The first PR after landing is the end-to-end witness for the added Codex route on JIT.
 
 If the machine or a slot is off, jobs queue, and eventually time out under GitHub's 24-hour routing rule. There is no automatic hosted fallback: restore the slot, or bring a sourced hosted-routing PR through the lead, and do not waive checks. Open a PR that changes this routing with `just pr "<title>" <body-file> false`, which leaves auto-merge off.
 
-## Model effort
+## Model effort and daily quota
 
 ADR-0030 bans V4 Pro, and `review.md` selects `anthropic/deepseek-flash`. [Artificial Analysis](https://artificialanalysis.ai/providers/deepseek), read 2026-11-07, ranks Flash max 33 versus Pro max 23.
 
@@ -162,3 +192,7 @@ ADR-0030 bans V4 Pro, and `review.md` selects `anthropic/deepseek-flash`. [Artif
 **Claude.** `review-claude.md` runs `model: opus` with `CLAUDE_CODE_EFFORT_LEVEL: max`, Claude Code's documented effort setting ([model configuration](https://code.claude.com/docs/en/model-config), read 2026-11-07).
 - gh-aw's `?effort=` suffix applies only in routed mode (`claude_harness.cjs:421-428`). Otherwise alias resolution keeps it in the model id (`resolve_model_alias.cjs:452-465`), which Anthropic does not know.
 - A request-sink probe of Claude Code 2.1.310, the lock's pin, and 2.1.318 recorded `claude-opus-5-5` at effort `max` with the variable, and `medium` without it.
+
+**Codex.** Native gh-aw pins CLI 0.167.0, `gpt-6.1-sol`, direct `max` API effort and no model fallback. At openai/codex@rust-v0.167.0 `086ccc833bc9cf01024ad2dd6af7dbd421b6bf9a`, `codex-rs/models-manager/models.json` labels `ultra` automatic delegation and resolves Sol's delegated effort through `multi_agent_reasoning_effort: xhigh`; `codex-rs/protocol/src/openai_models/reasoning_effort.rs` implements that resolution. `ultra` is not a higher direct API effort. [OpenAI's Sol reference](https://developers.openai.com/api/docs/models/gpt-6.1-sol), read 2026-11-07, lists `max` as highest API effort. [ADR-0030](../../docs/adr/0030-latest-sota-models.md) links this scope distinction; the research-leg ultra requirement still governs those harness sessions. Authentication comes only from `review`, not a subscription sign-in; API model access remains unverified until execution.
+
+**Daily quota.** ADR-0030 #5 quotes the owner's no-quota-hold direction. All three reviewers therefore explicitly set gh-aw's documented `max-daily-ai-credits: -1`, removing the inherited daily-5000 activation gate even if the repository default variable is finite. Recompilation removes the daily guard and its environment input; an offline proof checks that compiled behavior. This is intentionally uncapped daily API usage under that existing authority, not a measured cost claim. The 30-minute timeout, per-run AI-credit budget and context-cache-miss breaker remain; large-review completion and costs are unmeasured. Provider limits can still stop a run: report one immediately as an owner step rather than silently switch models or waive review.

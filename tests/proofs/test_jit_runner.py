@@ -565,6 +565,10 @@ def test_pr_code_and_docker_free_jobs_run_only_on_the_sealed_profile() -> None:
         "review-claude.lock.yml/conclusion",
         "review-claude.lock.yml/pre_activation",
         "review-claude.lock.yml/safe_outputs",
+        "review-codex.lock.yml/activation",
+        "review-codex.lock.yml/conclusion",
+        "review-codex.lock.yml/pre_activation",
+        "review-codex.lock.yml/safe_outputs",
     }
     assert {job for job, labels in routes.items() if labels != SEALED} == {
         job for job, labels in routes.items() if labels == DOCKER
@@ -626,9 +630,26 @@ def test_every_job_keeps_its_privileges_and_secret_names() -> None:
         assert set(re.findall(r"secrets\.(\w+)", text)) == set(
             re.findall(r"secrets\.(\w+)", base_text)
         )
+    # Codex is new in #65, so it has no origin/main file to compare. Bound its
+    # upstream engine inputs explicitly rather than skip the secret invariant.
+    codex_secrets = [
+        "CODEX_API_KEY",
+        "COPILOT_GITHUB_TOKEN",
+        "GH_AW_DEFAULT_OTLP_ENDPOINT",
+        "GH_AW_DEFAULT_OTLP_HEADERS",
+        "GH_AW_GITHUB_MCP_SERVER_TOKEN",
+        "GH_AW_GITHUB_TOKEN",
+        "GITHUB_TOKEN",
+        "OPENAI_API_KEY",
+    ]
     for path in WORKFLOWS.glob("review*.lock.yml"):
 
         def secrets(lock: str) -> list[str]:
             return json.loads(lock.splitlines()[1].split(": ", 1)[1])["secrets"]
 
-        assert secrets(path.read_text()) == secrets(_main(f".github/workflows/{path.name}"))
+        expected = (
+            codex_secrets
+            if path.name == "review-codex.lock.yml"
+            else secrets(_main(f".github/workflows/{path.name}"))
+        )
+        assert secrets(path.read_text()) == expected
