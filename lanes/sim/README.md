@@ -25,6 +25,8 @@
 
 **Sources.** NautilusTrader `v2.0.0rc8` (`d53849b216e20f2c122ca01b4dd0da377638b186`); skfolio 1.12.5 for allocator experiments; harvested northstar-lanes ADR-0009 and northstar-trading ADR-0013/0019 at the pins in `docs/manifest.md`; sim-lane build and enable gates from northstar-lanes ADR-0003's 2026-11-05 amendment and the trading checklist record.
 
+**Row 6 mechanism proofs.** `timeout 180 uv run --frozen pytest tests/proofs/entry` exercises the entry reducer and native LIMIT lifecycle on explicit synthetic inputs. [Carry and limitations](../../docs/adr/0004-entry.md#replay-evidence); [entry registry](entry-parameters.json) retains unavailable values, including the six missing starts. This enables no account or continuous lane.
+
 **Row 8 mechanism proofs.** `timeout 180 uv run --frozen pytest tests/proofs/custody` checks source-adapted custody, pacing and latched halt, with native MODELED house-order kill-to-flat and an untouched owner-labelled fixture. [Minimal bridge and limits](../../docs/research/2026-11-06-custody-replay.md); [controls](../custody-parameters.json). This is neither native external claiming nor a broker crash/reconciliation or B-ready receipt.
 
 **Row 9, focus step 5.** `sextant.reentry` consumes fixture ranking, custody,
