@@ -18,15 +18,6 @@ from typing import Any
 
 import pyarrow as pa
 import pyarrow.parquet as pq
-from nautilus_trader.backtest import (
-    BacktestDataConfig,
-    BacktestEngineConfig,
-    BacktestRunConfig,
-    BacktestVenueConfig,
-)
-from nautilus_trader.common import LoggerConfig
-from nautilus_trader.config import DataCatalogConfig
-from nautilus_trader.execution import MakerTakerFeeModel
 from nautilus_trader.model import (
     Bar,
     BarType,
@@ -172,7 +163,6 @@ class CatalogStore:
         self._interval_cache: dict[str, tuple[list[tuple[int, int]], bool]] | None = (
             {} if cache_intervals else None
         )
-        self._written_kinds: set[str] = set()
 
     def _intervals(self, kind: str) -> tuple[list[tuple[int, int]], bool]:
         if self._interval_cache is not None and kind in self._interval_cache:
@@ -367,101 +357,8 @@ class CatalogStore:
         # resume witness until the post-write catalog_verified upgrade below.
         self._publish_proof(proof_path, proof)
         self.catalog.write_bars(ordered)  # Leave rc7's disjoint-write guard enabled.
-        self._written_kinds.add(kind)
         if self._interval_cache is not None:
             insort(intervals, (start, end))
         proof["catalog_verified"] = True
         self._publish_proof(proof_path, proof)
         return "written"
-
-    def consolidate(self, symbol: str, bar: str) -> None:
-        kind = str(bar_type(symbol, bar))
-        intervals, disjoint = self._intervals(kind)
-        if not intervals:
-            return
-        proof = {"version": 1, "bar_type": kind, "intervals": intervals}
-        body = json.dumps(proof, sort_keys=True).encode()
-        digest = hashlib.sha256(body).hexdigest()
-        path = self.root / "consolidation" / bar / symbol / f"{digest}.json"
-        if (
-            os.environ.get("SEXTANT_CATALOG_FORCE_FULL_VERIFY") != "1"
-            and disjoint
-            and kind not in self._written_kinds
-            and path.exists()
-        ):
-            try:
-                if path.read_bytes() == body:
-                    return
-            except OSError:
-                pass
-        # Drop pre-mutation eligibility even if rc7 writes output and then raises.
-        if self._interval_cache is not None:
-            self._interval_cache.pop(kind, None)
-        self.catalog.consolidate_data_by_period(
-            NautilusDataType.Bar,
-            identifier=kind,
-            period_nanos=DAY_NANOS,
-            ensure_contiguous_files=False,  # Overnight/weekend/no-trade gaps are real.
-        )
-        self._written_kinds.discard(kind)
-        proof["intervals"] = self.catalog.get_intervals(NautilusDataType.Bar, kind)
-        body = json.dumps(proof, sort_keys=True).encode()
-        digest = hashlib.sha256(body).hexdigest()
-        path = self.root / "consolidation" / bar / symbol / f"{digest}.json"
-        publish_once(path, lambda target: target.write_bytes(body))
-
-
-def catalog_data_config(
-    root: Path,
-    symbol: str,
-    bar: str,
-    *,
-    start: int,
-    end: int,
-) -> BacktestDataConfig:
-    """Use this catalog input for strategy backtests as well as the fidelity probe."""
-    kind = bar_type(symbol, bar)
-    return BacktestDataConfig(
-        data_type=NautilusDataType.Bar,
-        catalog=DataCatalogConfig(path=str(root.resolve())),
-        instrument_id=kind.instrument_id,
-        bar_types=[str(kind)],
-        start_time=start,
-        end_time=end,
-    )
-
-
-def catalog_backtest_config(
-    root: Path,
-    symbol: str,
-    bar: str,
-    *,
-    start: int,
-    end: int,
-    chunk_size: int = 100_000,
-) -> BacktestRunConfig:
-    """No-order fidelity probe; real strategies must supply their own cost model."""
-    if chunk_size <= 0:
-        raise ValueError("chunk_size must be positive")
-    return BacktestRunConfig(
-        venues=[
-            BacktestVenueConfig(
-                name="ALPACA",
-                oms_type="NETTING",
-                account_type="CASH",
-                starting_balances=["100000 USD"],
-                fee_model=MakerTakerFeeModel(
-                    Decimal(0), Decimal(0)
-                ),  # No-order fidelity probe only.
-            )
-        ],
-        data=[catalog_data_config(root, symbol, bar, start=start, end=end)],
-        engine=BacktestEngineConfig(
-            bypass_logging=True,
-            logging=LoggerConfig(bypass_logging=True),
-            run_analysis=False,
-        ),
-        chunk_size=chunk_size,
-        raise_exception=True,
-        dispose_on_completion=False,
-    )

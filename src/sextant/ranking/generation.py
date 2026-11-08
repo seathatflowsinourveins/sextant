@@ -315,11 +315,6 @@ def generation_digest(record: RankingGeneration) -> str:
     return hashlib.sha256(canonical_bytes(record)).hexdigest()
 
 
-def change_token(record: RankingGeneration) -> str:
-    """Name for a future atomic latest swap; does not read or write any path."""
-    return f"{record.generation_id.sequence}-{generation_digest(record)}.json"
-
-
 def _reject_number(token: str) -> Any:
     raise ValueError(f"floating point/nonfinite JSON number forbidden: {token}")
 

@@ -12,7 +12,7 @@ from datetime import time as daytime
 from decimal import Decimal
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import Any, Protocol, cast
+from typing import Any
 from zoneinfo import ZoneInfo
 
 import pyarrow as pa
@@ -23,22 +23,11 @@ from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.models import BarSet
 from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
-from alpaca.trading.client import TradingClient
-from alpaca.trading.models import Calendar
-from alpaca.trading.requests import GetCalendarRequest
 from requests import Response
 
 NY = ZoneInfo("America/New_York")
 BARS = ("1min", "1day")
 RawBar = dict[str, Any]
-
-
-class HistorySource(Protocol):
-    def fetch(self, symbol: str, day: date, bar: str) -> tuple[str, ...]: ...
-
-
-class CalendarSource(Protocol):
-    def get_calendar(self, filters: GetCalendarRequest) -> Any: ...
 
 
 def symbol_name(symbol: str) -> str:
@@ -202,52 +191,6 @@ class AlpacaHistory(StockHistoricalDataClient):
         self.get_stock_bars(request)
         return tuple(self.pages)
 
-    def fetch_batch(
-        self,
-        symbols: Sequence[str],
-        start: datetime,
-        end: datetime,
-        bar: str,
-        *,
-        feed: str = "sip",
-    ) -> tuple[str, ...]:
-        """Additive multi-symbol/window request; upstream still drains every page.
-
-        Upstream: alpaca-py@v0.44.0:alpaca/data/requests.py:21-114;
-        historical/stock.py:75-97; common/rest.py:368-418. Inclusive bounds
-        follow the vendor API. Callers must partition/filter exact session times.
-        Captured HTTP texts, not float-valued BarSet models, are returned.
-        """
-        if bar not in (*BARS, "5min"):
-            raise ValueError(f"Unsupported bar interval: {bar}")
-        names = sorted({symbol_name(symbol) for symbol in symbols})
-        if not names or timestamp(start) > timestamp(end):
-            raise ValueError("Batch requires symbols and ordered timezone-aware bounds")
-        # One ticker mapping per source day. A multiday request with today's
-        # default (or a single first-day asof) misidentifies recycled symbols.
-        pages: list[str] = []
-        day, last = timestamp(start).astimezone(NY).date(), timestamp(end).astimezone(NY).date()
-        while day <= last:
-            request = StockBarsRequest(
-                symbol_or_symbols=names,
-                timeframe=TimeFrame(
-                    5 if bar == "5min" else 1, TimeFrameUnit("Day" if bar == "1day" else "Min")
-                ),
-                start=max(timestamp(start), day_start(day)),
-                end=min(
-                    timestamp(end), day_start(day + timedelta(days=1)) - timedelta(microseconds=1)
-                ),
-                feed=DataFeed(feed),
-                adjustment=Adjustment.RAW,
-                sort=Sort.ASC,
-                asof=day.isoformat(),
-            )
-            self.pages = []
-            self.get_stock_bars(request)
-            pages.extend(self.pages)
-            day += timedelta(days=1)
-        return tuple(pages)
-
     def close(self) -> None:
         self._session.close()
 
@@ -259,43 +202,3 @@ def environment_credentials() -> tuple[str, str]:
     if not key or not secret:
         raise ValueError("Set APCA_API_KEY_ID and APCA_API_SECRET_KEY through with-keys.sh")
     return key, secret
-
-
-def calendar_cache(
-    root: Path,
-    start: date,
-    end: date,
-    source: CalendarSource | None = None,
-) -> list[Calendar]:
-    """Cache paper calendar models so quality reports never need the network."""
-    path = root / "alpaca_calendar" / f"{start}_{end}.json"
-    if not path.exists():
-        if source is None:
-            raise ValueError(f"Missing calendar snapshot; run ingest first: {path}")
-        result = source.get_calendar(GetCalendarRequest(start=start, end=end))
-        sessions = cast(list[Calendar], result)
-        if not isinstance(sessions, list) or any(
-            not isinstance(item, Calendar) for item in sessions
-        ):
-            raise TypeError("Expected Alpaca Calendar response models")
-        records = [
-            {
-                "date": item.date.isoformat(),
-                "open": item.open.strftime("%H:%M"),
-                "close": item.close.strftime("%H:%M"),
-            }
-            for item in sessions
-        ]
-        body = json.dumps(records, indent=2).encode()
-        publish_once(path, lambda target: target.write_bytes(body))
-    sessions = [Calendar(**item) for item in json.loads(path.read_text())]
-    if len({item.date for item in sessions}) != len(sessions):
-        raise ValueError("Duplicate calendar sessions")
-    if any(not start <= item.date <= end for item in sessions):
-        raise ValueError("Calendar response escaped the requested date range")
-    return sorted(sessions, key=lambda item: item.date)
-
-
-def paper_calendar() -> TradingClient:
-    key, secret = environment_credentials()
-    return TradingClient(api_key=key, secret_key=secret, paper=True)

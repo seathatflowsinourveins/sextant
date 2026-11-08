@@ -17,7 +17,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, time
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any
 
 from .alpaca_history import NY, nanos, symbol_name
 
@@ -101,12 +101,6 @@ class UniverseSelection:
     @property
     def asof(self) -> dict[str, str]:
         return dict.fromkeys(self.symbols, self.day.isoformat())
-
-
-class UniverseProvider(Protocol):
-    def universe_for_date(
-        self, day: date, *, cutoff: datetime | None = None
-    ) -> UniverseSelection: ...
 
 
 def _session_cutoff(day: date, cutoff: datetime | None) -> int:
