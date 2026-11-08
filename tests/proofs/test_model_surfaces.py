@@ -23,6 +23,7 @@ NOT_MODELS = {
     "deepseek-harness-tui",
     "deepseek-harness.md",
     "deepseek-harness_harness.cjs",
+    "deepseek-official",  # dsh's provider id (the agent-default-model row), not a served model
 }
 
 

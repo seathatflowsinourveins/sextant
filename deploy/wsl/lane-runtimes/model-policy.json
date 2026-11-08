@@ -24,5 +24,17 @@
     "vendor_source": "https://antigravity.google/docs/models",
     "thinking_source": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/start/get-started-with-gemini-4",
     "carbon_source": "https://blog.google/innovation-and-ai/models-and-research/gemini-models/introducing-gemini-4-carbon/"
+  },
+  "meta": {
+    "read_date": "2026-11-08",
+    "runtime": "Muse Code 1.4.6-R6000.1",
+    "model": "muse-wonder-full-1.0",
+    "effort": "max",
+    "contributor_mode": "off",
+    "comparison_source": "https://artificialanalysis.ai/agents/coding-agents, Coding Agent Index v2.0: Muse Code with Muse Wonder Full at max, 58.88 (~/sextant-data/orch-convergence-legs/RECONCILE-runtimes.md sha256 7aee05e30e8fce40ce9da10022ef57c0dc969becb18ec1a487c3eef3c5253dda, line 96)",
+    "catalog_witness": "muse model-profile show muse-wonder-full-1.0 --effort max, 2026-11-08; the build's default is muse-wonder-1.0 at high",
+    "effort_source": "Muse Code 1.4.6-R6000.1 bundled manage-settings skill: max is the top Meta wire tier; ultra keeps max reasoning and adds proactive multi-agent workflows",
+    "privacy": "-contributor models and --contributor-mode on let Meta use session content, inter-session messages included, for product improvement; muse-launch.sh refuses both",
+    "reminders": "off per run: the reminder roster runs skill-reminder at low and goal- and verify-reminder at high, no documented setting pins them to max (run.reminder_roster refuses an agents list; an effort-only roster empties it), so muse-launch.sh turns each off through runtime_capabilities[\"plugin:tbh-reminders:reminder:<id>\"].enabled, the key path the bundled manage-settings skill names"
   }
 }

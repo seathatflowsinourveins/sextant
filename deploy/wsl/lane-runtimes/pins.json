@@ -95,5 +95,20 @@
     "published_at": "2026-11-06T10:53:35Z",
     "status": "adopted; provider sign-in owner-only",
     "authority": "Owner direction relayed on issue #62, 2026-11-06: install current release fresh in Sextant and route GPT lanes; supersedes the earlier 3.8.52 evaluation hold."
+  },
+  "muse": {
+    "product": "Muse Code",
+    "version": "1.4.6-R6000.1",
+    "manifest": "https://lookaside.facebook.com/lookaside/muse/download/?channel=muse&version=1.4.6-R6000.1&file=manifest.json",
+    "manifest_sha256": "1e43e88a62dc4194a8dbe7bb87987b4b4df04e6870489e6e138cb3fab44f3090",
+    "manifest_read": "2026-11-08",
+    "asset": "x86_linux",
+    "url": "https://lookaside.facebook.com/lookaside/muse/download/?channel=muse&version=1.4.6-R6000.1&file=muse-x86-linux",
+    "sha256": "82a495542965a5b6256f7acdb81693451c28640a419d5528ad8340ea93f36f6f",
+    "size": 360958168,
+    "msp_schema_fingerprint": "sha256:eae467ab60cb9a5d5af4de616830f065e59375c987fd59269c8cc33ed2a1137f",
+    "release_age": "Meta's manifest carries no date; the owner's Windows copy of this version dates from 2026-10-12, so it is past the 14-day rule (lead ruling, 2026-11-08)",
+    "orca_agent": "muse",
+    "orca_launch": "stablyai/orca@v1.4.251 a162e08b29b2883b02d8a0dfcc99e26c80b2cfe7:src/shared/agent-launch/catalog/tui-agent-config.ts:294-299, muse --trust-workspace"
   }
 }

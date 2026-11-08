@@ -25,6 +25,7 @@ PROMPT = "a fixture prompt that must never surface"
 BEARER = "sk-router-bearer-that-must-never-surface"
 EMAIL = "owner-fixture@example.com"
 RUN = "0b9e3c1a-5f2d-4c7e-9a41-2d6f8e0c1b37"
+MCP_KEYS = {"CONTEXT7_API_KEY": "context7-fixture-value", "EXA_API_KEY": "exa-fixture-value"}
 
 # Stand-ins for the external pieces only; the launcher under test is the real script.
 # with-keys.sh: injects each `-k NAME:ENV` from the fixture store, records its options, execs.
@@ -126,6 +127,8 @@ def lane(tmp_path: Path) -> Lane:
         shutil.copyfile(RUNTIMES / name, prefix / name)
     (prefix / "repository-path").write_text(f"{repo}\n")
     (store / "OMNIROUTE_KEY_CODEX").write_text(f"{KEY}\n")
+    for name, value in MCP_KEYS.items():  # the lane MCP set's Context7 and Exa (parity.py)
+        (store / name).write_text(f"{value}\n")
     fill = {"{record}": str(record), "{store}": str(store)}
     for path, body in (
         (repo / "scripts/with-keys.sh", FAKE_WITH_KEYS),
@@ -159,7 +162,7 @@ def test_the_codex_key_never_reaches_argv_a_file_or_a_log(lane: Lane, tmp_path: 
     assert result.returncode == 0, result.stderr
     # One injection, by the store name, renamed to the provider's env_key, and strict.
     calls = (lane.record / "with-keys.calls").read_text().splitlines()
-    assert calls == ["strict=1 OMNIROUTE_KEY_CODEX:OMNIROUTE_API_KEY"]
+    assert calls == ["strict=1 OMNIROUTE_KEY_CODEX:OMNIROUTE_API_KEY CONTEXT7_API_KEY EXA_API_KEY"]
     # Codex holds the store's value in its environment, not an inherited one ...
     assert lane.env()["key_sha256"] == hashlib.sha256(KEY.encode()).hexdigest()
     # ... and the receipt, which runs after it, holds no key at all.
@@ -167,7 +170,8 @@ def test_the_codex_key_never_reaches_argv_a_file_or_a_log(lane: Lane, tmp_path: 
     assert KEY not in result.stdout + result.stderr
     for path in tmp_path.rglob("*"):
         if path.is_file() and lane.store not in path.parents:
-            assert KEY.encode() not in path.read_bytes(), path
+            for secret in (KEY, *MCP_KEYS.values()):
+                assert secret.encode() not in path.read_bytes(), path
 
 
 def test_codex_routes_to_the_omniroute_pool_on_the_responses_wire(lane: Lane) -> None:

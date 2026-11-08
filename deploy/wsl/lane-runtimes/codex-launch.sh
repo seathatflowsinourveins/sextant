@@ -92,7 +92,10 @@ args=(
 trap ':' INT
 (
   trap - INT QUIT
-  exec "$repository/scripts/with-keys.sh" --strict -k OMNIROUTE_KEY_CODEX:OMNIROUTE_API_KEY -- \
+  # The same strict hop carries the lane MCP set's Context7 and Exa keys: the lane home's config.toml
+  # (parity.py) names them by bearer_token_env_var and env_http_headers, as antigravity-launch.sh does.
+  exec "$repository/scripts/with-keys.sh" --strict -k OMNIROUTE_KEY_CODEX:OMNIROUTE_API_KEY \
+    -k CONTEXT7_API_KEY -k EXA_API_KEY -- \
     "$codex" "${args[@]}" "$@"
 ) <&0 &
 child=$!

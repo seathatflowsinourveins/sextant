@@ -14,14 +14,15 @@
   "dsh": {
     "bundle": {
       "patch": [
-        "./context7.cordis.yml",
-        "./exa.cordis.yml",
-        "./deepwiki.cordis.yml",
-        "./paper-search.cordis.yml",
+        "./mcp/context7.cordis.yml",
+        "./mcp/exa.cordis.yml",
+        "./mcp/deepwiki.cordis.yml",
+        "./mcp/paper-search.cordis.yml",
         "./session-search.cordis.yml",
         "./native-auth.cordis.yml",
         "./bili-ports.cordis.yml",
-        "./source-tools.cordis.yml"
+        "./mcp/source-tools.cordis.yml",
+        "./mcp/max-effort.cordis.yml"
       ]
     }
   }

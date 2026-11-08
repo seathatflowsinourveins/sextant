@@ -42,6 +42,9 @@ cp .devcontainer/agents/package.json .devcontainer/agents/package-lock.json "$ag
 mkdir -p "$qmd"
 cp .devcontainer/qmd/package.json .devcontainer/qmd/package-lock.json "$qmd/"
 (cd "$qmd" && npm ci --no-audit --no-fund)
+# Every runtime's shell, not only this script's PATH, runs the lexical CLI the manifest names.
+mkdir -p "$HOME/.local/bin"
+ln -sfn "$qmd/node_modules/.bin/qmd" "$HOME/.local/bin/qmd"
 
 # pnpm for dsh's profile installs and the Dev Containers CLI, in their own lock.
 mkdir -p "$host_tools"
@@ -161,7 +164,7 @@ if [ ! -e "$paired" ]; then
   began=$SECONDS
   # The terminal host starts with this first server and outlives it, so it takes the limits now.
   mapfile -t limits < <(sed -n 's/^Environment=//p' deploy/wsl/orca-serve-limits.conf)
-  env "${limits[@]}" orca-ide serve --port "$port" --pairing-address "$address" || true
+  env "${limits[@]}" PATH="$HOME/.local/bin:$PATH" orca-ide serve --port "$port" --pairing-address "$address" || true
   trap - INT
   # Ctrl-C ends this step whatever the exit code. A server that stops at once never printed a link.
   if ((SECONDS - began < 10)); then

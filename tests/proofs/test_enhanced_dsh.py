@@ -18,7 +18,9 @@ def _json(path: str) -> dict[str, Any]:
 
 
 def _overlay(name: str) -> str:
-    return _read(f"config/dsh/{name}.cordis.yml")
+    # The lane MCP set is its own bundle, which dsh-tui's research bundle also lists.
+    mcp = ROOT / f"config/dsh/mcp/{name}.cordis.yml"
+    return mcp.read_text() if mcp.is_file() else _read(f"config/dsh/{name}.cordis.yml")
 
 
 def test_tui_uses_the_sandbox_dsh() -> None:
@@ -45,8 +47,8 @@ def test_research_uses_native_ordered_bundle_patches() -> None:
     patches = bundle["bundle"]["patch"]
     assert "profile" not in bundle  # The native CLI owns the profile manifest.
     assert patches[:5] == [
-        f"./{name}.cordis.yml"
-        for name in ("context7", "exa", "deepwiki", "paper-search", "session-search")
+        *(f"./mcp/{name}.cordis.yml" for name in ("context7", "exa", "deepwiki", "paper-search")),
+        "./session-search.cordis.yml",
     ]
     assert all((ROOT / "config/dsh" / path).is_file() for path in patches)
     assert "./openviking.cordis.yml" not in patches
@@ -83,7 +85,7 @@ def test_deepwiki_applies_native_restrictions_only_to_its_non_documentary_tools(
     # Exercise our adapter only; no downloaded dsh or MCP server code executes.
     probe = """
 import assert from 'node:assert/strict';
-import { apply } from './config/dsh/source-tools.mjs';
+import { apply } from './config/dsh/mcp/source-tools.mjs';
 const names = ['read', 'mcp__deepwiki__read_wiki_structure',
   'mcp__deepwiki__read_wiki_contents', 'mcp__deepwiki__ask_question',
   'mcp__deepwiki__ask_wiki_question', 'mcp__exa__web_search_exa'];

@@ -5,6 +5,7 @@ set -euo pipefail
 set +x
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 prefix="$HOME/.local/share/sextant-lane-runtimes"
+python3 -I "$here/parity.py" --check-roots
 [[ $(uname -sm) == 'Linux x86_64' ]] || { echo 'Linux x86_64 only' >&2; exit 2; }
 # Owner's issue #62 floor: 20 GB available, not total or merely free RAM.
 awk '/^MemAvailable:/ {exit ($2 * 1024 < 20000000000)}' /proc/meminfo || {
@@ -81,3 +82,5 @@ ln -sfn "$prefix/codex-launch.sh" "$HOME/.local/bin/sextant-codex-review"
 echo 'Installed; use just omniroute for the durable server, then its combo create command from routing.json.'
 echo 'Provider/Google browser sign-ins are owner-only; OpenHands has no native Orca agent ID.'
 bash "$here/service.sh" install
+# Runtime parity: Muse, the dsh and Antigravity launchers, the MCP bridge, the shelf and MCP set (parity.json).
+bash "$here/parity.sh"

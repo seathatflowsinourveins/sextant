@@ -24,7 +24,7 @@ write_files:
     default=sextant
 - path: /etc/profile.d/sextant-path.sh
   content: |
-    export PATH="$HOME/.local/share/sextant-agents/node_modules/.bin:$HOME/.local/share/sextant-qmd/node_modules/.bin:$HOME/.fnm/aliases/default/bin:$HOME/.local/bin:$PATH"
+    export PATH="$HOME/.local/bin:$HOME/.local/share/sextant-agents/node_modules/.bin:$HOME/.local/share/sextant-qmd/node_modules/.bin:$HOME/.fnm/aliases/default/bin:$PATH"
     export DSH_PERMISSION_MODE=danger-full-access DSH_TELEMETRY_DISABLED=1
     export ACP_HOST=127.0.0.1 ACP_PORT=21935 BILI_ZONE_PORT=21936 ACP_AUTO_UPDATE=0 ACP_AUTO_RESTART_ON_UPDATE=0
     export BILI_ADVISORY_CHECK=0 BILI_RELEASE_NOTES_CHECK=0

@@ -1,0 +1,5 @@
+{
+  "name": "sextant-native-mcp-header-bridge",
+  "private": true,
+  "dependencies": {"mcp-remote": "0.15.2"}
+}

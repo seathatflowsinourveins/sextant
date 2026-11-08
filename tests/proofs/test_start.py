@@ -24,7 +24,7 @@ case "$*" in
   "$install")
     echo install >> "$FAKE_ORCA_LOG"
     mkdir -p "${unit%/*}"
-    body /elsewhere > "$unit" ;;
+    body "$PATH" > "$unit" ;;  # Orca writes the caller's PATH into its unit
   *) echo "unexpected: $*" >&2; exit 9 ;;
 esac
 """
@@ -139,3 +139,69 @@ def test_orca_update_leaves_a_current_server_alone(tmp_path: Path) -> None:
     third = update()
     assert third.returncode == 0, third.stderr
     assert log.read_text().splitlines() == ["install"]
+
+
+def _two_dsh(home: Path) -> tuple[Path, Path]:
+    """sextant-agents' own dsh, and the keyed launcher parity.sh links in ~/.local/bin: as `dsh`,
+    the one name AO's deepseek-harness adapter resolves, and as `sextant-dsh`, for every other
+    launch."""
+    agents = home / ".local/share/sextant-agents/node_modules/.bin"
+    lane = home / ".local/bin"
+    for directory in (agents, lane):
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "dsh").write_text("#!/bin/sh\n")
+        (directory / "dsh").chmod(0o755)
+    (lane / "sextant-dsh").symlink_to(lane / "dsh")
+    return agents, lane
+
+
+def _resolve(path: str, name: str) -> str:
+    found = subprocess.run(
+        ["/bin/bash", "-c", f"command -v {name}"],
+        env={"PATH": path}, capture_output=True, text=True, check=False,
+    )  # fmt: skip
+    return found.stdout.strip()
+
+
+def test_orcas_unit_finds_the_keyed_lane_launchers_before_the_agents_own(tmp_path: Path) -> None:
+    """Every Orca tab inherits the unit's PATH, which Orca takes from its caller. Setup's own PATH
+    puts the agents' bin first, so the install call must put ~/.local/bin ahead of it."""
+    pin = re.search(r"releases/download/v(\d+\.\d+\.\d+)/", USER_DATA)
+    assert pin
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "orca-ide").write_text(FAKE_ORCA)
+    (bin_dir / "orca-ide").chmod(0o755)
+    agents, lane = _two_dsh(tmp_path)
+    env = {
+        **os.environ,
+        "HOME": str(tmp_path),
+        "PATH": f"{bin_dir}:{agents}:{lane}:{os.environ['PATH']}",  # setup.sh's order
+        "FAKE_ORCA_VERSION": pin[1],
+        "FAKE_ORCA_LOG": str(tmp_path / "installs"),
+    }
+    done = subprocess.run(
+        ["bash", str(UPDATE), "6771"], env=env, capture_output=True, text=True, check=False
+    )
+    assert done.returncode == 0, done.stderr
+    unit = (tmp_path / ".config/systemd/user/orca-serve.service").read_text()
+    path = re.search(r"^Environment=PATH=(.*)$", unit, re.M)
+    assert path
+    for name in ("dsh", "sextant-dsh"):
+        assert _resolve(path[1], name) == str(lane / name)
+    # The distinct name needs no PATH order: it resolves from setup.sh's own, agents first.
+    assert _resolve(f"{agents}:{lane}:/usr/bin:/bin", "sextant-dsh") == str(lane / "sextant-dsh")
+    # The first server, at pairing, starts the terminal host that outlives it.
+    assert 'env "${limits[@]}" PATH="$HOME/.local/bin:$PATH" orca-ide serve' in SETUP.read_text()
+
+
+def test_a_login_shell_finds_the_keyed_lane_launchers_before_the_agents_own(tmp_path: Path) -> None:
+    profile = USER_DATA.split("- path: /etc/profile.d/sextant-path.sh\n", 1)[1]
+    export = next(line.strip() for line in profile.splitlines() if "export PATH=" in line)
+    _, lane = _two_dsh(tmp_path)
+    found = subprocess.run(
+        ["/bin/bash", "-c", f"{export}; command -v dsh sextant-dsh"],
+        env={"HOME": str(tmp_path), "PATH": "/usr/bin:/bin"},
+        capture_output=True, text=True, check=False,
+    )  # fmt: skip
+    assert found.stdout.split() == [str(lane / "dsh"), str(lane / "sextant-dsh")]

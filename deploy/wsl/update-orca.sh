@@ -56,6 +56,8 @@ have_unit=""
 if [[ -f "$unit" ]]; then have_unit=$(without_path < "$unit"); fi
 verdict=$(orca-ide serve service status --json 2> /dev/null | jq -r '.result.verdict // empty' || true)
 if ((changed)) || [[ "$want_unit" != "$have_unit" || "$verdict" != live ]]; then
-  orca-ide serve service install --port "$port"
+  # Every Orca tab inherits the unit's PATH, so ~/.local/bin's keyed lane launchers (parity.sh)
+  # come ahead of setup's agent bins, whose own dsh carries no key.
+  PATH="$HOME/.local/bin:$PATH" orca-ide serve service install --port "$port"
 fi
 echo "Orca $have -> $(orca-ide --version), served on $port by Orca's own service."
