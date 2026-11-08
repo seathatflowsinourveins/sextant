@@ -323,6 +323,7 @@ At the cap, or at that read, the runtime records the unknown outcome once throug
   tracked as #176.
 - The gate's pacer and B's bridge both pace B's orders; #139 records it.
 - Outside a halt nothing asks for a lost CANCEL again, so it is recorded only at the next request or halt (#196). After a restart rc8 keeps no unclaimed house order (#197).
+- The record needs a read taken `cancel_timeout_s` after the stamp: if reads stop, it waits for the next one (#198). Each reader must stamp a read with the time it was taken; #139's reconcile stamps its pass's start.
 
 **Revert.** Code from before this change refuses a version-2 custody file ("custody
 account/version mismatch") and fails closed. To recover, delete the rows marked `unsent`,

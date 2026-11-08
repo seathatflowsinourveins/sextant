@@ -375,11 +375,11 @@ def test_only_a_read_cancel_timeout_s_after_the_pending_stamp_records_the_cancel
     def unwritable(_cid):
         raise OSError("custody disk full")
 
-    boundary.book.record_unanswered = unwritable  # admission stays total: it halts, never raises
-    boundary.guard.active = True
-    assert cancel(10 * 1_000_000_000) == (
-        "admission error halts: OSError: custody disk full",
-        False,
+    boundary.book.record_unanswered = unwritable  # an audit mark: the record still happens (#198)
+    boundary.guard.active, boundary.runtime.last_error = True, None
+    assert cancel(10 * 1_000_000_000) == ("cancel unanswered for A001-1", False)
+    assert (
+        boundary.runtime.last_error == "unanswered mark not written: OSError('custody disk full')"
     )
 
 

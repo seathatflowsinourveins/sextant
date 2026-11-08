@@ -374,7 +374,12 @@ class Custody:
         if not self.loaded or row is None:
             raise CustodyError("a loaded house registration is required")
         row["cancel_sends"] = row.get("cancel_sends", 0) + 1
-        self._save()
+        try:
+            self._save()
+        except OSError:  # nothing else changed: custody stays usable, the count unrecorded (#198)
+            row["cancel_sends"] -= 1
+            self.loaded = True
+            raise
 
     def record_unanswered(self, cid: str) -> None:
         """Mark durably that this order's CANCEL went unanswered past cancel_timeout_s, as row 8's
@@ -384,7 +389,11 @@ class Custody:
             raise CustodyError("a loaded house registration is required")
         if not row.get("cancel_unanswered"):
             row["cancel_unanswered"] = True
-            self._save()
+            try:
+                self._save()
+            except OSError:  # an audit mark: custody stays usable and keeps it in memory (#198)
+                self.loaded = True
+                raise
 
     def release_unsent(self, cid: str, *, reason: str) -> None:
         """Close a house registration known never to have reached the wire (#151).

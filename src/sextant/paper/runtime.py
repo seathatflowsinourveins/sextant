@@ -319,7 +319,11 @@ class PaperRuntime:
                         raise NotSent(self.last_refusal or "refused after registration")
                 before_wire()  # row 8's pacer re-admits and raises only before it counts
                 if intent.action == "CANCEL":
-                    s.custody.record_cancel(cid)  # durable, as the bridge's cancel_sends
+                    try:  # a CANCEL leaves only with a durable count, as the bridge's (#198)
+                        s.custody.record_cancel(cid)
+                    except OSError as failure:  # custody stays loaded; this CANCEL never leaves
+                        self._halt_on(failure, "cancel count not written")
+                        return
             except Exception as error:
                 if registered_here:
                     self._release(cid, error)  # the command never ran: never sent (#151)
@@ -385,6 +389,9 @@ class PaperRuntime:
             # open (_admit's may_cancel) reaches that outcome, marked durably per order.
             try:
                 s.custody.record_unanswered(intent.client_order_id)
+            except Exception as failure:  # an audit mark must not stop kill-to-flat (#198)
+                self.last_error = self.last_error or f"unanswered mark not written: {failure!r}"
+            try:
                 return self._cancel_exhausted(intent.client_order_id, "cancel unanswered")
             except Exception as failure:  # admission must stay total (#163 P1-2)
                 return self._halt_on(failure, "admission error halts")

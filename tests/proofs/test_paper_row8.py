@@ -854,3 +854,63 @@ def test_every_cancel_caller_shares_one_queued_cancel_and_the_durable_cap(row8):
         assert [i.client_order_id for i in row8.sent].count(cid) == cap
     finally:
         row8.runtime.close()
+
+
+def fail_one_write(row8, monkeypatch, field):
+    """Make custody's next file write that carries `field` raise, as a full disk would."""
+    write, failed = row8.custody_module.write_atomic, []
+
+    def once(path, state):
+        if not failed and any(row.get(field) for row in state["house"].values()):
+            failed.append(field)
+            raise OSError("custody disk full")
+        return write(path, state)
+
+    monkeypatch.setattr(row8.custody_module, "write_atomic", once)
+    return failed
+
+
+def halt_and_pulse(row8, longs, entries, ticks=30):
+    row8.services.exit_price = lambda *_args: D("10.00")
+    row8.runtime.halt("owner")
+    for _tick in range(ticks):
+        row8.clock[0] += row8.params.ns("flatten_tick_s")
+        read(row8, longs, entries)
+        row8.runtime.pulse()
+
+
+def test_a_failed_audit_mark_never_stops_kill_to_flat(row8, monkeypatch):
+    """#198 P2-1: a failed cancel_unanswered write keeps custody loaded; the unknown outcome is
+    still recorded with the write's cause named, and the long still flattens."""
+    longs = {"AAPL.XNAS": D("10")}
+    entries = resting_entries(row8, 1, longs)
+    lost_cancels(row8)
+    failed = fail_one_write(row8, monkeypatch, "cancel_unanswered")
+    row8.runtime.open()
+    try:
+        halt_and_pulse(row8, longs, entries)
+        assert failed and row8.book.loaded and "unknown_execution_outcome" in row8.guard.reasons
+        assert row8.runtime.last_error.startswith("unanswered mark not written: OSError")
+        exits = [(i.instrument, i.quantity) for i in row8.sent if i.action == "EXIT"]
+        assert exits == [("AAPL.XNAS", D("10"))]
+    finally:
+        row8.runtime.close()
+
+
+def test_a_failed_cancel_count_sends_nothing_halts_named_and_keeps_flattening(row8, monkeypatch):
+    """#198 P2-1: a CANCEL leaves only with a durable count. A failed count write keeps custody
+    loaded, sends that CANCEL nowhere, halts with the cause named, and the long still flattens."""
+    longs = {"AAPL.XNAS": D("10")}
+    entries = resting_entries(row8, 1, longs)
+    failed = fail_one_write(row8, monkeypatch, "cancel_sends")
+    row8.runtime.open()
+    try:
+        halt_and_pulse(row8, longs, entries)
+        assert failed and row8.book.loaded
+        cancels = [i for i in row8.sent if i.action == "CANCEL"]
+        assert row8.book.cancel_sends(entries[0].client_order_id) == len(cancels)  # all counted
+        assert row8.runtime.last_error.startswith("cancel count not written: OSError")
+        exits = [(i.instrument, i.quantity) for i in row8.sent if i.action == "EXIT"]
+        assert exits == [("AAPL.XNAS", D("10"))]
+    finally:
+        row8.runtime.close()

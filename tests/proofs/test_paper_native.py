@@ -3,6 +3,7 @@
 from dataclasses import replace
 from decimal import Decimal as D
 from types import SimpleNamespace as NS
+from typing import Any, cast
 
 import pytest
 from nautilus_trader.backtest import BacktestEngine
@@ -563,3 +564,77 @@ def test_a_cancel_of_a_pending_or_closed_native_order_is_refused_before_the_toke
         assert boundary.book.registrations["A001-1"]["cancel_sends"] == 1
     finally:
         engine.dispose()
+
+
+def test_a_rejected_then_lost_cancel_ages_from_the_lost_cancels_stamp(row8):
+    """#198 P2-3, adopted from #88's probe test_r1p_rejected_then_lost (review of #190 at
+    1b5835e): rc8 restores an order's prior status on OrderCancelRejected (model/src/orders/
+    mod.rs:943-951, 1067-1069), so the next CANCEL leaves and stamps a second OrderPendingCancel.
+    The record ages from that latest stamp, never the first; real rc8 order, shipped _prepare,
+    row 8's custody, pacer and guard."""
+    from nautilus_trader.core import UUID4
+    from nautilus_trader.model import (
+        AccountId,
+        LimitOrder,
+        OrderAccepted,
+        OrderCancelRejected,
+        OrderPendingCancel,
+        OrderSide,
+        OrderSubmitted,
+        StrategyId,
+        TimeInForce,
+        VenueOrderId,
+    )
+    from test_paper_row8 import read
+
+    cid, iid = ClientOrderId.from_str("A001-entry00"), InstrumentId.from_str("AAPL.XNAS")
+    tid, sid = TraderId.from_str("PAPERA001-001"), StrategyId.from_str("PAPER-A001")
+    aid, vid, t0 = AccountId.from_str("ALPACA-A"), VenueOrderId("v0"), row8.clock[0]
+    size, price = Quantity.from_str("20"), Price.from_str("9.50")
+    order = LimitOrder(tid, sid, iid, cid, OrderSide.BUY, size, price, TimeInForce.DAY, False,
+                       False, False, UUID4(), t0)  # fmt: skip
+    order.apply(OrderSubmitted(tid, sid, iid, cid, aid, UUID4(), t0, t0))
+    order.apply(OrderAccepted(tid, sid, iid, cid, vid, aid, UUID4(), t0, t0, False))
+    left: list[int] = []
+
+    def cancel_order(_cid, client_id=None):  # Strategy.cancel_order's marking (mod.rs:818-865)
+        if not (order.is_closed or order.is_pending_cancel):
+            now = row8.clock[0]
+            order.apply(OrderPendingCancel(tid, sid, iid, cid, aid, UUID4(), now, now, False, vid))
+            left.append(now)
+
+    instrument = equity()
+    native = NS(
+        cache=NS(order=lambda c: order if c == cid else None,
+                 instrument=lambda i: instrument if i == instrument.id else None),
+        clock=NS(timestamp_ns=lambda: row8.clock[0]), account=row8.cfg, cancel_order=cancel_order,
+    )  # fmt: skip
+    shipped = row8.runtime.prepare
+    row8.runtime.prepare = lambda i: (
+        PaperStrategy._prepare(cast(Any, native), i) if i.action == "CANCEL" else shipped(i)
+    )
+    row8.book.register(str(cid), str(iid), "BUY", D("20"), source="FIXTURE resting house entry")
+    row8.book.link(str(cid), "v0")
+    entry = row8.custody_module.OrderFact(str(cid), str(iid), "BUY", D("20"), D("0"), "NEW", "v0")
+    read(row8, {}, [entry])
+    kills: list[int] = []
+    kill = row8.guard.kill
+    row8.guard.kill = lambda reason, **kw: (
+        (kills.append(row8.clock[0]) if reason == "unknown_execution_outcome" else None)
+        or kill(reason, **kw)
+    )
+    row8.runtime.open()
+    try:
+        row8.runtime.halt("owner")  # the first CANCEL leaves at once
+        for _tick in range(20):  # 40 s of 2 s pulses; every read still shows the entry open
+            row8.clock[0] += 2 * 1_000_000_000
+            if len(left) == 1 and order.is_pending_cancel:  # the venue refuses it 0.5 s after
+                at = left[0] + 500_000_000
+                order.apply(OrderCancelRejected(tid, sid, iid, cid, "venue refused", UUID4(), at,
+                                                at, False, vid, aid))  # fmt: skip
+            read(row8, {}, [entry])
+            row8.runtime.pulse()
+        assert len(left) == 2 and row8.book.cancel_sends(str(cid)) == 2  # rejected, then lost
+        assert kills and kills[0] - left[-1] >= row8.params.ns("cancel_timeout_s")
+    finally:
+        row8.runtime.close()
