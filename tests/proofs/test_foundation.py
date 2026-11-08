@@ -154,6 +154,15 @@ def test_rulesets_are_active() -> None:
         assert {"pull_request", "deletion", "non_fast_forward"} <= rules(name).keys()
 
 
+def test_main_ruleset_turns_off_extra_approval_for_unattributed_changes() -> None:
+    """At zero required approvals the live ruleset kept this on and held unattributed PRs."""
+    ruleset = json.loads(_read(".github/rulesets/main.json"))
+    pull_request = next(rule for rule in ruleset["rules"] if rule["type"] == "pull_request")
+    parameters = pull_request["parameters"]
+    assert parameters["required_approving_review_count"] == 0
+    assert parameters["require_extra_approval_for_unattributed_changes"] is False
+
+
 @pytest.mark.local
 def test_environments_restrict_branches() -> None:
     for name, branch in (("review", "main"), ("paper", "main"), ("live", "live")):
