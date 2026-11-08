@@ -154,6 +154,8 @@ def test_the_in_hours_native_trail_is_broker_held_on_the_last_trade(tmp_path):
         assert all(a["emulation"] in {None, "NO_TRIGGER"} for a in trails)
         accepted = {e.get("order_id") for e in r["events"] if e["event"] == "accepted"}
         assert all(a["order_id"] in accepted for a in trails) and r["emulations"] == 0
+        types = {o["id"]: o["type"] for o in r["house_orders"]}  # Alpaca has no trailing stop-limit
+        assert all(types[a["order_id"]] == "TRAILING_STOP_MARKET" for a in trails)
 
 
 def test_on_quotes_only_b_waits_for_a_print_and_never_pauses(tmp_path):
@@ -178,6 +180,9 @@ def test_the_first_print_arms_the_in_hours_trail(tmp_path):
     assert r["paused"] is False and r["pages"] == ["awaiting_trade"]
     assert trails[0]["trigger"] == "LAST_PRICE" and trails[0]["emulation"] in {None, "NO_TRIGGER"}
     assert r["emulations"] == 0
+    from sextant.backtest.owner_b_witness import BASE, NS
+
+    assert trails[0]["ts"] == BASE + 6 * NS + 1  # on the print itself, not the next quote
 
 
 def test_rc8s_own_denial_of_an_unpriced_in_hours_trail_waits_and_the_print_re_arms(
@@ -222,6 +227,8 @@ def test_rc8s_own_denial_of_an_unpriced_in_hours_trail_waits_and_the_print_re_ar
     r = run_case(tmp_path, scenario="late_print")
     (denial,) = denials
     assert denial.startswith("MARKET_PRICE_UNAVAILABLE")
+    (waited,) = [e for e in r["events"] if e["event"] == "awaiting_trade"]
+    assert waited["order_id"] and waited["reason"] == denial  # the alert names its order
     assert r["paused"] is False and r["pages"] == ["awaiting_trade"]
     trails = [a for a in r["actions"] if a["action"] == "trail"]
     accepted = {e.get("order_id") for e in r["events"] if e["event"] == "accepted"}
@@ -360,7 +367,8 @@ def test_outside_rth_a_trail_adopted_before_any_quote_is_held_by_the_emulator_an
     adoption = next(e for e in manager.events if e["event"] == "adoption")
     (trail,) = [a for a in manager.actions if a["action"] == "trail"]
     assert trail["ts"] == int(adoption["ts"]) and trail["emulation"] == "BID_ASK"  # no quote yet
-    assert manager.paused is False and manager.pages == [] and "DENIED" not in orders.values()
+    assert manager.paused is False and manager.pages == ["awaiting_quote"]  # not silent (#194)
+    assert "DENIED" not in orders.values()
     assert manager.owned[trail["order_id"]] == "limit" and orders[trail["order_id"]] == "ACCEPTED"
 
 
@@ -382,5 +390,56 @@ def test_outside_rth_a_denial_fails_closed():
                 self.on_order_denied(cast(Any, event))
 
     manager, _orders = outside_before_any_quote(Denied)
-    assert manager.paused is True and manager.pages == ["protection_denied"]
+    assert manager.paused is True and manager.pages == ["awaiting_quote", "protection_denied"]
     assert manager.awaiting_trade is False
+
+
+@pytest.mark.parametrize(
+    "denied_kind, reason",
+    [
+        ("trail", "NOTIONAL_EXCEEDS_FREE_BALANCE: synthetic"),
+        ("limit", "MARKET_PRICE_UNAVAILABLE: x"),
+    ],
+)
+def test_in_hours_any_other_denial_pages_and_pauses(tmp_path, monkeypatch, denied_kind, reason):
+    """#194 (#88 P2-2): only rc8's MARKET_PRICE_UNAVAILABLE denial of the in-hours trail waits.
+    Another reason on the trail, or any denial of the LIMIT exit, pages and pauses. The denials
+    are synthetic: the witness's orders are not denied by rc8."""
+    from types import SimpleNamespace
+
+    from sextant.backtest import owner_b_witness
+
+    class Denied(owner_b_witness.WitnessManager):
+        def _submit(self, kind, quantity):
+            super()._submit(kind, quantity)
+            if kind == denied_kind and not getattr(self, "denied", False) and self.actions:
+                self.denied = True
+                event = SimpleNamespace(
+                    client_order_id=self.actions[-1]["order_id"], reason=reason, ts_event=0
+                )
+                self.on_order_denied(cast(Any, event))
+
+    monkeypatch.setattr(owner_b_witness, "WitnessManager", Denied)
+    r = run_case(tmp_path, scenario="normal")
+    assert r["paused"] is True and "protection_denied" in r["pages"]
+    assert "awaiting_trade" not in r["pages"]
+
+
+def test_the_limit_handover_ends_the_wait_for_a_print(tmp_path, monkeypatch):
+    """#194 (dsh P2-1): once the LIMIT exit replaces the trail B waited to arm, a later print
+    drives nothing: no audit row at the print and no new trail."""
+    from nautilus_trader.model import AggressorSide, Price, Quantity, TradeId, TradeTick
+
+    from sextant.backtest import owner_b_witness as witness
+
+    at, base = witness.BASE + 12 * witness.NS + 1, witness._data
+
+    def with_a_late_print(scenario):
+        late = TradeTick(witness.EQUITY.id, Price.from_str("90.00"), Quantity.from_str("1"),
+                         AggressorSide.BUY, TradeId("late"), at, at)  # fmt: skip
+        return [*base(scenario), late]
+
+    monkeypatch.setattr(witness, "_data", with_a_late_print)
+    r = run_case(tmp_path, scenario="quotes_only")
+    assert [a["action"] for a in r["actions"]] == ["limit"]
+    assert not [a for a in r["audits"] if a["ts"] == at]

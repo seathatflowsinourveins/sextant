@@ -182,7 +182,7 @@ class BManager(ExitEngine):
                 price=self._price(policy.chase_limit(self.bid, self.last, self.p)),
             )
             self.sell_id, self.amended_ns = order.client_order_id, ts
-            self.limit_started_ns = ts
+            self.limit_started_ns, self.awaiting_trade = ts, False  # the LIMIT exit replaces it
         else:
             if self.rth:
                 if self.cache.trade(self.instrument_id) is None:
@@ -204,6 +204,8 @@ class BManager(ExitEngine):
                     trigger_type=TriggerType.LAST_PRICE,
                 )
             else:
+                if self.cache.quote(self.instrument_id) is None:  # held unactivated until one
+                    self._alert("awaiting_quote")  # ADR-0007: alert, not block (#194)
                 order = self.order_factory.trailing_stop_limit(
                     instrument_id=self.instrument_id,
                     order_side=OrderSide.SELL,
@@ -227,11 +229,11 @@ class BManager(ExitEngine):
         self.submit_order(order)
         self._snapshot()
 
-    def _wait(self, ts: int) -> None:
+    def _wait(self, ts: int, **why) -> None:
         """The broker trail is unarmed: alert once without pausing, so X2-X5 keeps running."""
         if not self.awaiting_trade:
             self.awaiting_trade = True
-            self._record(ts, "awaiting_trade")
+            self._record(ts, "awaiting_trade", **why)
             self._alert("awaiting_trade")
 
     def _step(self, ts: int, observed: Decimal | None) -> None:
@@ -285,7 +287,7 @@ class BManager(ExitEngine):
         trail = self.rth and self.owned.get(cid) == "trail"  # only the in-hours trail waits
         if trail and reason.startswith("MARKET_PRICE_UNAVAILABLE"):
             self.owned.pop(cid)
-            self._wait(event.ts_event)
+            self._wait(event.ts_event, order_id=cid, reason=reason)
             return
         self._page("protection_denied")  # anything else fails closed (#191 dsh leg P1)
 
