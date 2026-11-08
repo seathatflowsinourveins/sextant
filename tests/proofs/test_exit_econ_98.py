@@ -21,6 +21,9 @@ from sextant.research.exit_study_41 import DEFAULT_INPUTS, INPUTS
 
 ROOT = Path(__file__).parents[2]
 EVIDENCE = ROOT / "docs" / "research" / "2026-11-06-exit-econ-98"
+# Lead ruling (a), 2026-11-07: PR 2's raise rule moves the rows, so its engine's run is recorded
+# beside the committed rows, which stay as history (ADR-0018). The full rerun reproduces this run.
+RUN = EVIDENCE / "run-a8282a4"
 STUDY_41 = ROOT / "docs" / "research" / "2026-11-06-exit-study-41" / "trials.jsonl"
 INPUT_DIR = Path(os.environ.get("SEXTANT_EXIT_STUDY_41", str(DEFAULT_INPUTS)))
 
@@ -96,6 +99,14 @@ def test_rows_are_modeled_bound_to_their_inputs_and_none_is_selected() -> None:
     assert list(rows.values()) == trial_rows(_report())
 
 
+def test_the_pr2_run_sits_beside_the_history_with_its_own_trial_rows() -> None:
+    """Ruling (a): the a8282a4 run keeps #98's shape and inputs, and its trial rows are its own."""
+    report = json.loads((RUN / "report.json").read_text())
+    assert report["implementation"] == "a8282a4f11d69b2bd595d3035439f5edd64276be"
+    assert report["inputs"] == _report()["inputs"] and set(report["arms"]) == set(_report()["arms"])
+    assert list(_rows(RUN / "trials.jsonl").values()) == trial_rows(report)
+
+
 @pytest.mark.skipif(
     os.environ.get("SEXTANT_RERUN_98") != "1"
     or not all((INPUT_DIR / name).exists() for name in INPUTS),
@@ -103,6 +114,6 @@ def test_rows_are_modeled_bound_to_their_inputs_and_none_is_selected() -> None:
 )
 def test_full_rerun_regenerates_the_committed_rows(tmp_path: Path) -> None:
     report = rerun(INPUT_DIR, tmp_path)
-    kept = _report()
+    kept = json.loads((RUN / "report.json").read_text())
     assert report["arms"] == kept["arms"]
     assert report["attribution"] == kept["attribution"]

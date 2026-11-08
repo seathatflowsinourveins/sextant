@@ -75,7 +75,11 @@ class BManager(ExitEngine):
             self._alert(a.reason)
         self.last_quantity = total_quantity
         self.exit_reason = a.reason
-        self.protection = Protection(a.entry, a.quantity, a.high, a.trigger, a.entry - a.trigger)
+        # H's bid, as a fill records it (engine.py:260-261): fresh only, else None (#231, #264)
+        bid = self._fresh_bid()
+        self.protection = Protection(
+            a.entry, a.quantity, a.high, a.trigger, a.entry - a.trigger, high_bid=bid
+        )
         self._record(
             self.clock.timestamp_ns(),
             "adoption",
@@ -92,6 +96,7 @@ class BManager(ExitEngine):
     def _alert(self, reason: str) -> None:
         if reason not in self.pages:
             self.pages.append(reason)
+            self.notified.add(reason)  # the base's once-per-cycle dedupe, shared with #231's paths
             self._record(self.clock.timestamp_ns(), "pause_and_page" if self.paused else "page")
 
     def _snapshot(self) -> tuple[Decimal, Decimal, tuple[OwnedExit, ...]]:

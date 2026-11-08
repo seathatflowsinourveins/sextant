@@ -40,6 +40,9 @@ OUTCOME = {
     "manifest_sha256": "45ff64af778590dbed30f08311ac3e7587461a4518cab80416e38ac42a748d6f",
 }
 STARTS = "b0.01-m1-g0.1"
+# Lead ruling (a), 2026-11-07: PR 2's engine run (attempt pr2-a8282a4, a late reservation on #102)
+# sits beside the committed surface, which stays as history; the per-cell rerun reproduces it.
+RUN = EVIDENCE / "run-a8282a4"
 COSTS = ("3", "6")
 
 
@@ -290,6 +293,6 @@ def ctx(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Any]:
 @pytest.mark.parametrize("cid", [c for c, _ in grid.cells()])
 def test_each_cell_reruns_to_its_committed_surface(cid: str, ctx: dict[str, Any]) -> None:
     result = x98.evaluate(ctx, dict(grid.cells())[cid], range_estimable=False, arm=cid)
-    report = _report()
+    report = json.loads((RUN / "report.json").read_text())
     assert {k: v for k, v in report["surface"][cid].items() if k != "params"} == result["arm"]
     assert result["controls"] == report["controls"]

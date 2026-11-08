@@ -16,9 +16,10 @@ position event follows its `OrderFilled` (docs/concepts/events/index.md:123-160)
   `submit_order` sent (ADR-0007:16), and any other opener pauses the symbol and pages (#209).
 - A house order's further fills grow the protection, so a partly filled entry is protected in full.
   H moves only on eligible trades, never on an `OrderFilled` (X2, #210).
-- A BUY the house didn't send is an add, which pauses the symbol and pages (ADR-0007:17). No open
-  position and no unfinished order is a verified flat: it resets the protection and clears a pause,
-  re-checked on each quote while paused (#171).
+- A BUY the house didn't send is an add, which pauses the symbol, pages and cancels the house's
+  resting sell, which the venue would resize over it (ADR-0007:17, #170). No open position and no
+  unfinished order is a verified flat: it resets the protection and clears a pause, re-checked on
+  each quote while paused (#171).
 - It assumes NETTING (one position per symbol) and an in-process house set; a restart or HEDGING
   needs durable order lineage first (ADR-0007:16).
 - The basis is rc8's Decimal `Position.avg_px_open`, this cycle's own fills (v2.0.0rc8
@@ -30,7 +31,14 @@ position event follows its `OrderFilled` (docs/concepts/events/index.md:123-160)
   :1728-1754, :2186-2189; alpaca.py:639-640, :977-978), up to ADR-0007:27's K+1 per order, then
   pages. A clock alert pages a wait past ADR-0005:36's 60-second deadline (alpaca.py:981-995;
   v2.0.0rc8 docs/concepts/strategies.md:960-967, managed GTD expiry; northstar-trading@8256c16c
-  docs/adr/0002-alpaca-native-brackets.md:354-366).
+  docs/adr/0002-alpaca-native-brackets.md:354-366). A working order the house didn't send freezes
+  and pages instead (ADR-0007:19; #212, A2), as does a refused sell; a stale or one-sided quote
+  never prices it, and an unavailable chase pages (#211).
+- A level at the bid is refused, a raise into the bid (now or when H was made) keeps the previous
+  level, and an unknown bid sets none (rc8 matching_engine/mod.rs:4311-4330, :6774-6812;
+  investor.gov "Types of Orders", read 2026-11-07); a crossed level sells per ADR-0005:26 (#210).
+- An equity crossing an XNYS RTH boundary (sextant.paper.sessions) switches the breach input and
+  hands the exit over by a terminal cancel (ADR-0005, venue limits).
 
 Scope of this slice: the take-profit and backstop are computed as desired levels and reported. They
 are venue orders (Alpaca OCO/bracket, ADR-0005 X6), placed later by the custody row, not here.
@@ -48,6 +56,7 @@ from nautilus_trader.model import (
     Bar,
     BarType,
     ClientOrderId,
+    Equity,
     InstrumentId,
     OrderCanceled,
     OrderCancelRejected,
@@ -70,6 +79,7 @@ from nautilus_trader.trading import Strategy
 
 from sextant.exits import policy
 from sextant.exits.policy import Bar1mArming, BreachRun, ExitParams, Row
+from sextant.paper.sessions import Session, session_at
 
 NS = 1_000_000_000
 CANCEL_DEADLINE_NS = 60 * NS  # ADR-0005:36: the first cancellation wait's escalation deadline
@@ -84,6 +94,7 @@ REGISTRY: tuple[Row, ...] = (
 _RETRY_S = REGISTRY[0].start
 assert _RETRY_S is not None
 CANCEL_RETRY_NS = int(_RETRY_S * NS)  # northstar's `CANCEL_RETRY_NS = 5 * SEC`
+MINUTE_NS = 60 * NS  # XNYS boundaries fall on whole minutes (sextant.paper.sessions.session_at)
 
 
 class ExitEngineConfig(StrategyConfig):
@@ -126,6 +137,8 @@ class Protection:
     take_profit: Decimal | None = None
     tp_anchor: Decimal | None = None
     backstop: Decimal | None = None
+    high_bid: Decimal | None = None  # the bid when H was made, judging a raise; None: unknown
+    entry_bid: Decimal | None = None  # the bid at the entry, judging the first level (PR 2 F2)
 
 
 class ExitEngine(Strategy):
@@ -156,8 +169,11 @@ class ExitEngine(Strategy):
         self.house: set[ClientOrderId] = set()
         self.canceled: set[ClientOrderId] = set()
         self.cancel_sent: dict[ClientOrderId, int] = {}  # each reservation's last cancel request
+        self.exits: set[ClientOrderId] = set()  # the house's own exits: each a later close
         self.rejects: Counter[ClientOrderId] = Counter()
         self.crossed: int | None = None  # when the persisted breach became exit intent
+        self.xnys: Session | None = None
+        self.minute: int | None = None  # the clock minute whose session is known
 
     def submit_order(self, order, *args, **kwargs) -> None:
         self.house.add(order.client_order_id)
@@ -168,6 +184,7 @@ class ExitEngine(Strategy):
         instrument = self.cache.instrument(instrument_id)
         assert instrument is not None
         self.one_tick = self.cfg.one_tick or instrument.price_increment.as_decimal()
+        self.equity = isinstance(instrument, Equity)
         self.subscribe_quotes(instrument_id)
         self.subscribe_trades(instrument_id)
         bar_type = self.cfg.arm_bar_type or f"{instrument_id}-1-MINUTE-LAST-INTERNAL"
@@ -178,23 +195,30 @@ class ExitEngine(Strategy):
         self.bid, self.ask = quote.bid_price.as_decimal(), quote.ask_price.as_decimal()
         self.quote_ns = quote.ts_event
         self._flat(quote.ts_event)
-        if self.rth:
-            self._step(quote.ts_event, self.bid if self._quote_ok(quote.ts_event) else None)
+        self._session(quote.ts_event)
+        eligible = self.rth and self._quote_ok()  # bids breach in RTH only
+        self._step(quote.ts_event, self.bid if eligible else None)
 
     def on_trade(self, trade: TradeTick) -> None:
         price = trade.price.as_decimal()
         self.last = price
         self.trades.append((trade.ts_event, price))
-        if self.protection is not None:
-            self.protection.high = max(self.protection.high, price)
+        if self.protection is not None and price > self.protection.high:  # H's bid: fresh only
+            self.protection.high, self.protection.high_bid = price, self._fresh_bid(trade.ts_event)
+        self._session(trade.ts_event)
         if not self.rth:
             self._step(trade.ts_event, price)
 
     def on_bar(self, bar: Bar) -> None:
-        if self.protection is not None and self.bid is not None and self.ask is not None:
-            floor = policy.noise_floor(self.one_tick, self.ask - self.bid)
-            level = self.protection.entry + self.c_rt + floor
-            self.arming.on_bar_close(bar.close.as_decimal(), level)
+        if self.protection is None:
+            return
+        bid = self._fresh_bid(bar.ts_event)  # X3: an unavailable quote stays unarmed (#264)
+        if bid is None or self.ask is None:  # and a minute it cannot judge ends a confirmation:
+            self.arming.confirmed = False  # it holds only until a later close below (ADR-0005:29)
+            return
+        floor = policy.noise_floor(self.one_tick, self.ask - bid)
+        level = self.protection.entry + self.c_rt + floor
+        self.arming.on_bar_close(bar.close.as_decimal(), level)
 
     # Fills classify; the position events that follow each fill carry the quantity.
     def on_order_filled(self, event: OrderFilled) -> None:
@@ -233,10 +257,10 @@ class ExitEngine(Strategy):
             BreachRun(),
             set(),
         )
-        self.protection = Protection(entry=entry, qty=qty, high=event.last_px.as_decimal())
+        high, known = event.last_px.as_decimal(), self._fresh_bid(ts)  # anchors: fresh only
+        self.protection = Protection(entry, qty, high, high_bid=known, entry_bid=known)
         self._record(ts, "protected_from_fill", entry=entry, qty=qty)
-        ok = self.bid is not None and self._quote_ok(ts)
-        self._step(ts, (self.bid if ok else None) if self.rth else self.last)
+        self._step(ts, known if self.rth else self.last)
 
     def on_position_changed(self, event: PositionChanged) -> None:
         p = self.protection
@@ -274,7 +298,7 @@ class ExitEngine(Strategy):
         if event.client_order_id in self.canceled and crossing and p is not None:
             self._sell(event.ts_event, p)
 
-    on_order_expired = on_order_rejected = on_order_denied = on_order_canceled
+    on_order_expired = on_order_canceled
 
     def on_order_cancel_rejected(self, event: OrderCancelRejected) -> None:
         """A rejection cannot clear the intent (ADR-0005:36). As northstar's cancel-first wait does,
@@ -286,7 +310,7 @@ class ExitEngine(Strategy):
         crossing's reservations, whatever its cancel attempts do."""
         cid, order = event.client_order_id, self.cache.order(event.client_order_id)
         if cid not in self.canceled or order is None or order.is_closed:
-            return
+            return  # a late fill: the retained crossing sells it at the next step
         self.rejects[cid] += 1
         if self.rejects[cid] > CANCEL_RETRIES:
             return self._notify(event.ts_event, "cancel_rejected")
@@ -314,16 +338,49 @@ class ExitEngine(Strategy):
     def _deadline(self, event: TimeEvent) -> None:
         """ADR-0005:36's escalation on the clock, never on market data: rc8 expires a GTD order by
         a time alert (docs/concepts/strategies.md:960-967; crates/trading/src/strategy/mod.rs:
-        2194-2232). It pages if this crossing's exit is still owed and unsent (F1)."""
+        2194-2232). It pages while any original reservation still works, or while this crossing's
+        exit is owed with nothing working (F1). Only a later close is exempt: the house's own
+        exit, resting or handed over (northstar ADR-0002:366-372; #231 gates N1, N2). Order side
+        is no lineage, since a house SELL resting before the crossing is an original reservation.
+        The exit goes out only once every house order has ended (`_cancel_house`), so while an
+        original reservation works, no exit does."""
         late = self.crossed is not None and event.ts_event - self.crossed >= CANCEL_DEADLINE_NS
-        if late and self.sell_id is None and not self.paused:
+        sent = any(o.client_order_id in self.exits for o in self._working())
+        if late and not self.paused and not sent:
             self._notify(event.ts_event, "partial_entry_cancel_timeout")
 
-    # One step of X2-X5 on an eligible observation (bid in RTH, trade outside).
+    def on_order_denied(self, event: OrderDenied | OrderRejected) -> None:
+        if event.client_order_id == self.sell_id:  # the exit cannot go out (#211)
+            return self._pause_and_page(event.ts_event, "sell_refused")
+        self.on_order_canceled(event)  # any other order's end is terminal (F1, F3)
+
+    on_order_rejected = on_order_denied
+
+    # One step of X2-X5: levels and the breach run on an eligible observation (bid in RTH, trade
+    # outside); any quote can send or reprice a retained exit, priced from the bid (#211).
     def _step(self, ts: int, observed: Decimal | None) -> None:
         p = self.protection
-        if p is None or self.paused or observed is None or self.bid is None or self.ask is None:
+        if p is None or self.paused or self.bid is None or self.ask is None:
             return
+        resting = self.sell_id is not None and self.position_id is not None
+        if resting and self._foreign(ts):  # while the house sell rests too, not at the sell (C1)
+            return
+        fresh = self._quote_ok()  # the bid judges every level; a stale or one-sided one can't
+        if observed is not None and fresh and self.crossed is None:
+            self._levels(ts, p)
+        if p.trigger is None:
+            if not fresh:  # in both sessions (M5)
+                self._notify(ts, "quote_unavailable")
+            return
+        if self.sell_id is None:
+            breach = observed is not None and self.breach.observe(observed, p.trigger, ts, self.p)
+            if self.crossed is not None or breach:
+                self._sell(ts, p)
+        else:
+            self._chase(ts)
+
+    def _levels(self, ts: int, p: Protection) -> None:
+        assert self.bid is not None and self.ask is not None
         spread = self.ask - self.bid
         buf = policy.buffer(
             self.one_tick,
@@ -333,9 +390,18 @@ class ExitEngine(Strategy):
             self.p,
             range_estimable=self.cfg.range_estimable,
         )
-        if buf is not None and self.crossed is None:
+        if buf is not None:
             if p.trigger is None:
-                p.trigger, p.setup_gap = p.entry - buf, buf
+                # Never a level in the market (rc8 reject_stop_orders): one at or above the bid is
+                # refused and pages unless the bid fell through it. That needs the entry bid above
+                # it, so the trigger started below the market (ADR-0002:14; matching.rs:426-437
+                # matches a SELL stop at market <= stop), and the bid now at or below it, as
+                # northstar counts a stop crossed (exit_manager/strategy.py:1731; dsh, #231).
+                level = p.entry - buf
+                fell = p.entry_bid is not None and p.entry_bid > level
+                if level >= self.bid and not fell:  # (#210, M1)
+                    return self._notify(ts, "trigger_in_market")
+                p.trigger, p.setup_gap = level, buf
                 self._record(ts, "initial_trigger", trigger=p.trigger, buffer=buf)
             assert p.setup_gap is not None
             floor = policy.noise_floor(self.one_tick, spread)
@@ -346,20 +412,18 @@ class ExitEngine(Strategy):
                 if executable is not None and self.arming.try_arm(executable, armed_trigger):
                     self._record(ts, "armed", gain_lock=lock)
             trail = buf if self.arming.armed else max(buf, p.setup_gap)
-            p.trigger = policy.next_trigger(
-                p.trigger, p.high, trail, lock if self.arming.armed else None
-            )
+            # X2's legs, each judged alone: a leg into the bid, now or when H was made, is
+            # dropped (rc8's modify rule, #210), so a lock below the bid still raises (M3). With
+            # no bid known at H (a fill or a B adoption before the first quote), a leg is judged
+            # against the current bid, as rc8 keeps the old stop when a modify would put it in
+            # the market (crates/execution/src/matching_engine/mod.rs:6774-6812; dsh, #231).
+            cap = self.bid if p.high_bid is None else max(self.bid, p.high_bid)
+            legs = [p.high - trail] + ([lock] if self.arming.armed else [])
+            p.trigger = max([p.trigger] + [leg for leg in legs if leg < cap])
             p.take_profit, p.tp_anchor = policy.take_profit(
                 p.take_profit, p.tp_anchor, p.high, self.p
             )
             p.backstop = policy.backstop(p.backstop, p.trigger, self.bid, self.p)
-        if p.trigger is None:
-            return
-        if self.sell_id is None:
-            if self.crossed is not None or self.breach.observe(observed, p.trigger, ts, self.p):
-                self._sell(ts, p)
-        else:
-            self._chase(ts)
 
     def _sell(self, ts: int, p: Protection) -> None:
         """One managed LIMIT for the whole native position: one exit per quantity (ADR-0007:19)."""
@@ -374,11 +438,10 @@ class ExitEngine(Strategy):
             self.clock.set_time_alert_ns(
                 f"deadline-{now}", now + CANCEL_DEADLINE_NS, self._deadline
             )
-        working = [o for o in self._working() if o.client_order_id in self.house]
-        for order in (o for o in working if o.client_order_id not in self.canceled):
-            self.canceled.add(order.client_order_id)
-            self._cancel(order.client_order_id)
-        if working:
+        if self._foreign(ts) or self._cancel_house():  # cancel the house's own orders first
+            return
+        if not self._quote_ok():  # never price the exit from a stale or one-sided quote (#211)
+            self._notify(ts, "awaiting_quote")
             return
         position = self.cache.position(self.position_id)
         assert position is not None and position.is_open
@@ -393,11 +456,14 @@ class ExitEngine(Strategy):
             reduce_only=True,
         )
         self.sell_id = order.client_order_id
+        self.exits.add(order.client_order_id)
         self.amended_ns = ts
         self.submit_order(order)
         kind = "breach_sell_gain_lock" if self.arming.armed else "breach_sell_prearm"
         qty = position.quantity.as_decimal()
         self._record(ts, kind, trigger=p.trigger, limit=order.price.as_decimal(), qty=qty)
+        if not self.p.chase_on:  # the sell rests at the breach bid and never follows it (#211)
+            self._notify(ts, "chase_unavailable")
 
     def _chase(self, ts: int) -> None:
         if self.sell_id is None or not self.p.chase_on:
@@ -409,16 +475,37 @@ class ExitEngine(Strategy):
             return
         if ts - self.amended_ns < interval:
             return
+        if not self._quote_ok():  # never reprice from a stale or one-sided quote (#211)
+            self._notify(ts, "awaiting_quote")
+            return
         price = self._price(policy.chase_limit(self.bid, self.last, self.p))
         if price != order.price:
             self.amended_ns = ts
             self.modify_order(order.client_order_id, price=price)
             self._record(ts, "chase", limit=price.as_decimal())
 
-    def _quote_ok(self, ts: int) -> bool:
+    def _quote_ok(self) -> bool:
+        """ADR-0005:27 at its pin, northstar `quote_fresh` (exit_manager/strategy.py:2165-2173):
+        0 < bid <= ask, so a locked quote is valid and a crossed one is not (:2171), and the age
+        on the engine clock, 0 <= now - ts_event <= `quote_max_age_s` (`_now()`, :2166-2169),
+        never on the quote's own stamp, which made every age 0 (#231 r4 R2)."""
         assert self.bid is not None and self.ask is not None
-        age_ok = ts - self.quote_ns <= int(self.p.quote_max_age_s * NS)
-        return self.bid > 0 and self.ask > self.bid and age_ok
+        age = self.clock.timestamp_ns() - self.quote_ns
+        fresh = 0 <= age <= int(self.p.quote_max_age_s * NS)
+        return self.bid > 0 and self.bid <= self.ask and fresh
+
+    def _fresh_bid(self, at: int | None = None) -> Decimal | None:
+        """The bid for an anchor or a judgment, only when its quote passes `_quote_ok`, and for an
+        anchor made at an observation stamped `at`, only from a quote that existed then,
+        quote_ns <= at (#266): a later quote's bid did not exist when H was made. Else None,
+        unknown, which each path already handles (#264). northstar reads no quote it has not
+        checked fresh (exit_manager/strategy.py:2165-2173, :1820-1822), and orders quote and
+        observation stamps before it judges (:1826-1827)."""
+        if self.bid is None or self.ask is None or not self._quote_ok():
+            return None
+        if at is not None and self.quote_ns > at:
+            return None
+        return self.bid
 
     def _range(self, ts: int) -> Decimal | None:
         start = ts - int(self.p.prearm_range_window_s * NS)
@@ -436,10 +523,53 @@ class ExitEngine(Strategy):
         assert position is not None and isinstance(position.avg_px_open, Decimal)
         return position.quantity.as_decimal(), position.avg_px_open
 
+    def _session(self, ts: int) -> None:
+        """An equity crossing an XNYS boundary between RTH and the extended sessions switches the
+        breach input (bids in RTH, trades outside it) and hands the exit over. The session is read
+        from the engine's clock, never a late event's stamp (O6), once per minute, since every
+        XNYS boundary falls on a whole minute (sextant.paper.sessions.session_at, O7)."""
+        now = self.clock.timestamp_ns()
+        if not self.equity or now // MINUTE_NS == self.minute:
+            return
+        self.minute = now // MINUTE_NS
+        before, self.xnys = self.xnys, session_at(now)
+        if before not in (None, self.xnys) and (self.xnys is Session.RTH) != self.rth:
+            self.rth, self.breach = self.xnys is Session.RTH, BreachRun()
+            self._handover(ts)
+
+    def _handover(self, ts: int) -> None:
+        """Terminal cancel precedes handover (ADR-0005, venue limits): the sell, in flight or
+        resting, is canceled (C3), and its terminal cancel re-sends the retained crossing in the
+        new session at once (on_order_canceled, O1). A sell the house already canceled, as a
+        freeze does, keeps that one intent: no second request, so its request time and its K+1
+        budget stand (#231 GPT delta gate D1). Northstar's throttle refuses a repeat before it
+        records one (strategies/base.py:1728-1754), and rc8 sends nothing for an order already
+        pending cancel (crates/trading/src/strategy/mod.rs:818-828)."""
+        order = None if self.sell_id is None else self.cache.order(self.sell_id)
+        cid = None if order is None or order.is_closed else order.client_order_id
+        if cid is not None and cid not in self.canceled:
+            self.canceled.add(cid)
+            self._cancel(cid)
+        self.sell_id = None
+
     def _working(self) -> list:
         """Every order on the symbol not yet finished, held locally or at the venue: rc8 "test for a
         finished order with `is_closed`" (v2.0.0rc8 docs/concepts/orders/index.md:55-59)."""
         return [o for o in self.cache.orders(instrument_id=self.instrument_id) if not o.is_closed]
+
+    def _foreign(self, ts: int) -> bool:
+        """ADR-0007:19 (#212, A2): a working order the house didn't send freezes and pages."""
+        if any(o.client_order_id not in self.house for o in self._working()):
+            self._pause_and_page(ts, "foreign_order")
+        return self.paused
+
+    def _cancel_house(self) -> list:
+        """Cancel each unfinished house order once (ADR-0005:36); return those still working."""
+        working = [o for o in self._working() if o.client_order_id in self.house]
+        for order in (o for o in working if o.client_order_id not in self.canceled):
+            self.canceled.add(order.client_order_id)
+            self._cancel(order.client_order_id)
+        return working
 
     def _flat(self, ts: int, opener: ClientOrderId | None = None) -> None:
         """ADR-0007:21: no open position on the symbol and every order terminal is a verified flat.
@@ -461,8 +591,11 @@ class ExitEngine(Strategy):
                     self._record(ts, "pause_cleared")
 
     def _pause_and_page(self, ts: int, reason: str, **values: Decimal) -> None:
-        """ADR-0007:17-19: stop managing the symbol and page a person. Each pause is recorded."""
+        """ADR-0007:17-19: stop managing the symbol, cancel the house's own unfinished orders (a
+        resting sell the venue would resize over an owner add, #170; an entry's remainder, O2),
+        and page a person. Each pause is recorded."""
         self.paused = True
+        self._cancel_house()
         kind = "add_paused" if reason == "owner_add" else "pause_and_page"
         if reason in self.notified:  # paged already in this episode
             self._record(ts, kind, reason=reason, **values)
