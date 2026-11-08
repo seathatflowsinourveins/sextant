@@ -61,7 +61,7 @@ retain synthetic marked P&L with zero fees, which cannot establish merit.
 Real external owner-fill claiming and claim latency remain owed to Sandbox on a live
 feed; no mock reconciliation substitute was built. Process death, durable lineage,
 broker reconciliation, custody/pacer/halt and paper installation remain #51/#78 work.
-The simulator's BID_ASK native trail is not proof of Alpaca's stop-election basis.
+The in-hours native trail now triggers on LAST_PRICE, because Alpaca elects stops on the consolidated print (docs read 2026-11-06). rc8 accepts that trail only once a trade is cached, so B waits for the first print and never pauses, and B's node must cache SIP trades (#139). The simulator still elects on any print, with no NBBO or session filter, so it is not proof of Alpaca's stop-election basis.
 Outside RTH protection, chase and recovery remain dependent on node/feed availability.
 The canonical TrialLog writer is still row 10; these arm rows are retained for it and
 are never pooled with MODELED research or BROKER-PAPER outcomes.

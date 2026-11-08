@@ -2,8 +2,8 @@
 
 The owner fixture supplies plain LIMIT fills and one untouched reserved owner LIMIT. It is
 not an external live-node claimant. Native factories/cache, StaticLatencyModel and streaming
-execution are the installed rc7 runtime at 55c0e82053142bce3a5cba4de4221d3929c2d3bc;
-stop/start uses Strategy.stop/resume in one BacktestEngine and cache, never broker recovery.
+execution as read at rc7 55c0e82053142bce3a5cba4de4221d3929c2d3bc and run on the installed rc8
+d53849b2; stop/start uses Strategy.stop/resume in one BacktestEngine, never broker recovery.
 House policy/kill points: northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa,
 docs/adr/0015-owner-entry-paper-exit-manager.md:94-124. The run ledger follows #45's witness
 and ADR-0018. Every number below is a fixture, with no parameter authority or calibration.
@@ -82,6 +82,8 @@ def _data(scenario: str) -> list:
         bids[3:] = ["102"] * 11
     if scenario == "adopted_below":
         bids[2:] = ["98"] * 12
+    if scenario == "quotes_only":  # #88's #191 probe: no prints while the bid falls to 90.00
+        bids[4:] = ["90"] * 10
     if scenario == "outside":
         bids[4:7] = ["99"] * 3
         bids[7:] = ["100"] * 7
@@ -100,7 +102,10 @@ def _data(scenario: str) -> list:
                 ts,
             )
         )
-        if i in {0, 2, 3} or (scenario == "outside" and i == 6):
+        prints = (
+            {6} if scenario == "late_print" else set() if scenario == "quotes_only" else {0, 2, 3}
+        )
+        if i in prints or (scenario == "outside" and i == 6):
             data.append(
                 TradeTick(
                     EQUITY.id,
@@ -239,6 +244,8 @@ def _order_row(order) -> dict:
         "quantity": str(order.quantity.as_decimal()),
         "leaves": str(order.leaves_qty.as_decimal()),
         "reduce_only": order.is_reduce_only,
+        "trigger": getattr(getattr(order, "trigger_type", None), "name", None),
+        "emulation": getattr(getattr(order, "emulation_trigger", None), "name", None),
     }
 
 
@@ -403,6 +410,8 @@ def run_case(
             "adopted_below",
             "outside",
             "owner_reserved",
+            "quotes_only",
+            "late_print",
         }:
             raise ValueError("unknown scenario")
         if arm not in {"option-b", "native-trail-o0", "hold"}:

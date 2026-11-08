@@ -2,9 +2,11 @@
 
 Not a live adapter or owner-fill claimer. The caller supplies an admitted position; real
 external claiming is owed to Sandbox (#49). Custody/recovery intents: owner_b.py and its
-ADR-0015 source. Native lifecycle: nautechsystems/nautilus_trader@v2.0.0rc7
-55c0e82053142bce3a5cba4de4221d3929c2d3bc, Strategy cancel/modify, OrderFactory
-trailing_stop_market/trailing_stop_limit, BID_ASK OrderEmulator and native cache.
+ADR-0015 source. Native lifecycle as read at nautechsystems/nautilus_trader@v2.0.0rc7
+55c0e82053142bce3a5cba4de4221d3929c2d3bc (Strategy cancel/modify, OrderFactory trailing stops,
+BID_ASK OrderEmulator, native cache); trail pricing as read at the installed rc8 d53849b2. The RTH
+native trail triggers on LAST_PRICE: Alpaca elects stop and trailing-stop orders on the
+consolidated print (docs.alpaca.markets/docs/orders-at-alpaca, read 2026-11-06).
 Alpaca has no reduce-only: this witness deliberately uses no reduce-only flag.
 """
 
@@ -50,6 +52,7 @@ class BManager(ExitEngine):
         self.limit_started_ns: int | None = None
         self.last_quantity: Decimal | None = None
         self.exit_reason = ""
+        self.awaiting_trade = False  # the in-hours trail waits for a cached print
         self.pages: list[str] = []
         self.audits: list[dict] = []
         self.actions: list[dict] = []
@@ -182,6 +185,15 @@ class BManager(ExitEngine):
             self.limit_started_ns = ts
         else:
             if self.rth:
+                if self.cache.trade(self.instrument_id) is None:
+                    # rc8's RiskEngine prices an untriggered LAST_PRICE trail from the cached
+                    # trade and denies it without one (crates/risk/src/engine/mod.rs:2364-2417,
+                    # :2137-2146). Wait for the first print, which re-drives, instead of pausing.
+                    # Outside RTH the emulated trail goes to the OrderEmulator, which arms it on
+                    # the first quote.
+                    self._wait(ts)
+                    return
+                self.awaiting_trade = False
                 order = self.order_factory.trailing_stop_market(
                     instrument_id=self.instrument_id,
                     order_side=OrderSide.SELL,
@@ -189,7 +201,7 @@ class BManager(ExitEngine):
                     time_in_force=TimeInForce.DAY,
                     trailing_offset=self.b.native_trail_fraction * 10_000,
                     trailing_offset_type=TrailingOffsetType.BASIS_POINTS,
-                    trigger_type=TriggerType.BID_ASK,
+                    trigger_type=TriggerType.LAST_PRICE,
                 )
             else:
                 order = self.order_factory.trailing_stop_limit(
@@ -206,9 +218,21 @@ class BManager(ExitEngine):
                 )
         cid = str(order.client_order_id)
         self.owned[cid] = kind
-        self.actions.append({"action": kind, "order_id": cid, "ts": ts})
+        trigger = getattr(order, "trigger_type", None)
+        emulation = getattr(order, "emulation_trigger", None)
+        self.actions.append(
+            {"action": kind, "order_id": cid, "ts": ts, "trigger": getattr(trigger, "name", None),
+             "emulation": getattr(emulation, "name", None)}
+        )  # fmt: skip
         self.submit_order(order)
         self._snapshot()
+
+    def _wait(self, ts: int) -> None:
+        """The broker trail is unarmed: alert once without pausing, so X2-X5 keeps running."""
+        if not self.awaiting_trade:
+            self.awaiting_trade = True
+            self._record(ts, "awaiting_trade")
+            self._alert("awaiting_trade")
 
     def _step(self, ts: int, observed: Decimal | None) -> None:
         if not self.is_running():
@@ -238,8 +262,13 @@ class BManager(ExitEngine):
         super()._chase(ts)
 
     def on_order_accepted(self, event) -> None:
-        self._record(event.ts_event, "accepted")
+        self._record(event.ts_event, "accepted", order_id=str(event.client_order_id))
         self._drive()
+
+    def on_trade(self, trade) -> None:
+        super().on_trade(trade)
+        if self.awaiting_trade:
+            self._drive()  # the first cached print arms the in-hours trail
 
     def on_order_canceled(self, event) -> None:
         self._record(event.ts_event, "canceled")
@@ -252,7 +281,13 @@ class BManager(ExitEngine):
         self._page("protection_rejected")
 
     def on_order_denied(self, event) -> None:
-        self._page("protection_denied")
+        cid, reason = str(event.client_order_id), str(event.reason)
+        trail = self.rth and self.owned.get(cid) == "trail"  # only the in-hours trail waits
+        if trail and reason.startswith("MARKET_PRICE_UNAVAILABLE"):
+            self.owned.pop(cid)
+            self._wait(event.ts_event)
+            return
+        self._page("protection_denied")  # anything else fails closed (#191 dsh leg P1)
 
     def on_order_released(self, event) -> None:
         cid = str(event.client_order_id)
