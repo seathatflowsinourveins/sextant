@@ -47,22 +47,23 @@ Native job logs and summaries provide tamper evidence, not an independent attest
   - `systemd.exec(5)` (`PrivateTmp=`: in a user manager it implies `PrivateUsers=`);
   - `loginctl(1)` lingering: "a user manager is spawned for the user at boot";
   - util-linux `setpriv(1)`.
-  - Values and authorities are in `limits.json`; the per-slot limit and concurrency are uncalibrated starts, and the whole-account cap is measured from both slots plus the rootless daemon.
+  - Values and authorities are in `limits.json`; the per-slot limit and slot counts are uncalibrated starts, and the whole-account cap is measured from every slot plus the rootless daemon.
 
-## Two profiles
+## Two profiles, three slots
 
-GitHub routes each job by label, and each profile is its own serial slot: one instance of `sextant-jit@.service`. In both profiles:
+GitHub routes each job by label to an online idle runner that matches its `runs-on` labels. Each slot is one instance of `sextant-jit@.service`: `sealed` has one, and the docker profile is counted for two (`docker-1`, `docker-2`). In both profiles:
 - **Jobs run as the image's non-root `runner`,** as on GitHub-hosted runners. The entrypoint prepares the job root as container root, then drops to `runner` with `setpriv`.
 - **The job root is private** (0700), and job files inside it use umask 022.
 
-### sealed (`sextant-jit-sealed`)
+### sealed (`sextant-jit@sealed`)
 This profile runs `ci`, which runs PR code, plus `source` and `dependabot-automerge`, which need no daemon. The container gets no Docker socket, no `DOCKER_HOST` and no daemon address.
 - **Network:** each job runs on its own user-defined bridge, `sealed_subnet` in `limits.json`, created and removed per job. Neither the default bridge, where gh-aw's MCP gateway runs, nor RootlessKit's namespace, where the TCP API listens, is reachable from it.
 - **Egress:** goes through a `DOCKER-USER` chain that drops private, shared and link-local destinations except the namespace's DNS forwarder. The sealed job therefore reaches the internet but not the LAN, the tailnet or a host listener; #201 measured the difference before and after.
 - **Linting:** ci uses the actionlint and shellcheck release binaries instead of a Docker action.
 
-### docker (`sextant-jit-docker`)
-This profile runs the gh-aw reviewers, whose AWF sandbox needs the daemon, and the scoreboard with its smokes.
+### docker (`sextant-jit@docker-1`, held: `sextant-jit@docker-2`)
+This profile runs the gh-aw reviewers, whose AWF sandbox needs the daemon, and the scoreboard with its smokes. `limits.json` counts two docker slots for the cap and the admission floor; the install enables `docker-1` and holds `docker-2`.
+- **One docker agent job at a time:** gh-aw's setup removes and recreates the fixed `/tmp/gh-aw` on every job (`actions/setup/setup.sh:105-130`), and every docker slot shares this daemon's host `/tmp`. Two concurrent docker agent jobs would delete each other's `/tmp/gh-aw`. So `docker-2` stays disabled until gh-aw documents per-runner tmp isolation; the counter and the cap already reserve its memory.
 - **Shared paths:** the runner and the daemon share the job root and the host's `/tmp`. The job's `$HOME` is its root, as the official image's home is the runner directory and ARC's work directory sits under it; AWF's agent writes its Claude settings to `/host$HOME` (`containers/agent/entrypoint.sh:241`), which exists only as the parent of the job's own mounts. gh-aw expects a runner and its daemon to share one `/tmp`: its setup removes and recreates `/tmp/gh-aw` (`actions/setup/setup.sh:105-130`), the daemon mounts literal `/tmp/gh-aw` sources such as the DIFC proxy's TLS directory (`start_cli_proxy.sh:107-164`), and its MCP gateway mounts `/tmp` itself (`-v /tmp:/tmp:rw`). This daemon's `/tmp` is the host's. RootlessKit refuses to copy up `/tmp`, and systemd's `PrivateTmp=` on the daemon's user unit implies `PrivateUsers=`, under which RootlessKit cannot map UID 1501's subordinate range ("newuidmap: write to uid_map failed: Operation not permitted", measured 2026-11-07). So docker jobs share the host's `/tmp`. AWF also mounts that `/tmp` into its agent sandbox, read-write (`src/services/agent-volumes/system-mounts.ts:29`). Around every job the slot removes `/tmp/gh-aw` and every `/tmp` entry, at any depth, owned by UID 1501's subordinate range, which only this daemon's containers use. Someone else's `/tmp/gh-aw` stops the slot.
 - **Socket group:** gh-aw detects the socket's group itself (`resolve_docker_socket_gid.sh`); inside the daemon's namespace it is the `docker` group, not 0, so the non-root MCP gateway gets `--group-add` with that group.
 - **The agent never sees the socket:**
@@ -78,8 +79,8 @@ This profile runs the gh-aw reviewers, whose AWF sandbox needs the daemon, and t
   - So a new branch workflow can still request this label.
 - **Collaborators:** the repository has no collaborator (lead, 2026-11-07), and none is added first. Before any collaborator joins, the docker profile moves to an organization runner group limited to selected workflows, or to an agent-free host.
 
-### Shared by both slots
-- **Daemon:** both slots share the daemon and the whole-UID memory cap. A daemon lock serializes cleanup, seed load and container creation. The docker slot's network prune spares the sealed slot's live network.
+### Shared by the slots
+- **Daemon:** the slots share the daemon and the whole-UID memory cap. A daemon lock serializes cleanup, seed load and container creation. A docker slot's network prune spares the sealed slot's live network, and no docker slot prunes daemon-wide resources while a peer docker slot is live.
 - **Published ports:** ports published without a host address bind to loopback on every bridge (`dockerd --ip` and `default-network-opts` `host_binding_ipv4`). Without that, AWF's squid, published as `3128:3128`, answered a sealed bridge's gateway, as measured on #201.
 - **Fail-closed check:** before each start, a slot checks the live RootlessKit and dockerd arguments against the drop-in: no detached namespace, no port driver, no host loopback, loopback publishing. It refuses to start on any difference, so a job that rewrites UID 1501's drop-in cannot weaken the network unnoticed.
 - **Host-side Docker CLI:** the slot's own CLI reads a root-owned, empty `DOCKER_CONFIG`, so no plugin or credential helper in UID 1501's `~/.docker` runs on the host. Buildx would keep its state under that directory, so the build-cache prune gets its own fresh, empty `BUILDX_CONFIG`, removed afterwards.
@@ -115,13 +116,13 @@ The owner accepted this residual on 2026-11-07 (#201): "Accept + add exit cleanu
 
 1. Build `Dockerfile` with the dedicated rootless daemon. Save the image to root-owned `/var/lib/sextant-jit/runner.tar`, and record `docker image inspect --format '{{.Id}}'` in root-owned `/usr/local/lib/sextant-jit/runner-image`.
 2. Under `/usr/local/lib/sextant-jit/`, install `jit.sh` and `limits.json`, and create the root-owned empty `docker-config` directory.
-3. Install `user-1501-limits.conf` as `/etc/systemd/system/user-1501.slice.d/sextant-jit.conf` and apply the 13 GiB/zero-swap cap.
+3. Install `user-1501-limits.conf` as `/etc/systemd/system/user-1501.slice.d/sextant-jit.conf` and apply the 19 GiB/zero-swap cap.
 4. Install `docker-jit.conf` as the dedicated user's Docker drop-in, and restart that daemon only.
-5. Install `sextant-jit@.service` under the producer's user manager, never as the old runner unit, and enable both instances: `systemctl --user enable --now sextant-jit@sealed sextant-jit@docker`.
+5. Install `sextant-jit@.service` under the producer's user manager, never as the old runner unit, and enable the installed slots: `systemctl --user enable --now sextant-jit@sealed sextant-jit@docker-1`. `limits.json` counts `sealed: 1` and `docker: 2`; `docker-2` is prepared and held until gh-aw isolates its fixed `/tmp/gh-aw`, so do not enable it yet.
 
-Lingering is on for both accounts, so both managers, the daemon and both slots start at boot. Each slot waits up to `boot_wait_seconds` (`limits.json`) for the daemon and for GitHub.
+Lingering is on for both accounts, so both managers, the daemon and the enabled slots start at boot. Each slot waits up to `boot_wait_seconds` (`limits.json`) for the daemon and for GitHub.
 
-Admission needs 33 GiB `MemAvailable`: the 20 GiB floor plus the 13 GiB cap.
+Admission needs 26 GiB `MemAvailable`: the 20 GiB floor plus one 6 GiB slot.
 
 Restarts follow `Restart=always`: a slot restarts after each job and after a failure, at most `start_limit` times (`limits.json`), so a transient failure recovers and a persistent one leaves the slot down for operator attention.
 
@@ -129,11 +130,11 @@ Restarts follow `Restart=always`: a slot restarts after each job and after a fai
 
 **After a WSL restart, verify:**
 - `loginctl show-user sextant -p Linger` and the same for `sextant-review` both print `Linger=yes`.
-- `systemctl --user is-enabled sextant-jit@sealed sextant-jit@docker` prints `enabled` twice, and `is-active` prints `active` twice.
+- `systemctl --user is-enabled sextant-jit@sealed sextant-jit@docker-1` prints `enabled` twice, and `is-active` prints `active` twice.
 - `sudo -u sextant-review XDG_RUNTIME_DIR=/run/user/1501 systemctl --user is-active docker` prints `active`.
-- `gh api repos/seathatflowsinourveins/sextant/actions/runners --jq '.runners[] | [.name, .status] | @tsv'` lists one online `sextant-jit-sealed.*` and one online `sextant-jit-docker.*` runner.
+- `gh api repos/seathatflowsinourveins/sextant/actions/runners --jq '.runners[] | [.name, .status] | @tsv'` lists one online `sextant-jit-sealed.*` and one online `sextant-jit-docker-1.*` runner. `docker-2` is counted in `limits.json` but held.
 
-If a slot is down, read `journalctl --user -u sextant-jit@<profile>`, fix the cause, then run `systemctl --user restart sextant-jit@<profile>`.
+If a slot is down, read `journalctl --user -u sextant-jit@<slot>`, fix the cause, then run `systemctl --user restart sextant-jit@<slot>`.
 
 **Branch proof.** Use the existing dispatchable scoreboard workflow: `gh workflow run scoreboard.yml --ref <PR-branch> -f jit_smoke=true`.
 - GitHub uses that branch's workflow file, so only `jit-sealed-smoke` runs. It checks that the sealed profile has no socket, no `DOCKER_HOST` and no API on 127.0.0.1, its gateway or 10.0.2.2, then runs ci's heaviest steps.

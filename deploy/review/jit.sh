@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # One REST JIT configuration + one disposable Docker runner, following actions/scaleset's
 # dockerscaleset/startRunner. systemd replaces this process; there is no GitHub polling loop.
-# GitHub routes jobs by runner label, and each profile is its own serial slot (one instance of
+# GitHub routes jobs by runner label, and each instance is its own serial slot (one instance of
 # sextant-jit@.service): `sealed` jobs, including ci's PR code, never reach the daemon and get a
 # user-defined bridge of their own; `docker` jobs are trusted base-branch code that needs it
-# (gh-aw's AWF in its arc-dind topology, devcontainers/ci).
+# (gh-aw's AWF in its arc-dind topology, devcontainers/ci). The docker profile's slots share the
+# one `sextant-jit-docker` label; `limits.json` bounds how many may exist.
 set +x
 set -Eeuo pipefail
 ulimit -c 0
@@ -44,6 +45,19 @@ runner_labels() {
   esac
 }
 
+# The systemd instance name is the slot. `sealed` keeps its original name; `docker` is the
+# original single docker slot and aliases `docker-1`. `limits.json` bounds the highest slot.
+slot_identity() {
+  local instance=${1:-}
+  if [[ $instance == sealed ]]; then
+    profile=sealed slot=1 slot_name=sealed
+  elif [[ $instance =~ ^docker(-([1-9][0-9]*))?$ ]]; then
+    profile=docker slot=${BASH_REMATCH[2]:-1} slot_name="docker-${BASH_REMATCH[2]:-1}"
+  else
+    return 2
+  fi
+}
+
 # Only `docker` sees the daemon: its socket, the loopback TCP API that gh-aw's arc-dind probe
 # requires (a tcp:// DOCKER_HOST), and RootlessKit's namespace network where that API listens.
 # The runner and the daemon also share the host's /tmp (sweep_host_tmp). $HOME is the job root,
@@ -51,9 +65,10 @@ runner_labels() {
 # agent writes its Claude config to /host$HOME (containers/agent/entrypoint.sh:241), which exists
 # only as the parent of the job's mounts under /host$root.
 runner_options() {
-  local profile=$1 root=$2 name=$3
+  local profile=$1 root=$2 name=$3 slot_name=${4:-$1}
   runner_labels "$profile" >/dev/null || return 2
   printf '%s\n' --label "sextant-jit.profile=$profile" \
+    --label "sextant-jit.slot=$slot_name" \
     --mount "type=bind,src=$root,dst=$root" --env "SEXTANT_JIT_ROOT=$root"
   if [[ $profile == sealed ]]; then
     printf '%s\n' --network "$name" --env HOME=/home/runner
@@ -127,27 +142,61 @@ sweep_host_tmp() {
 # SIGKILL matches the docker profile's root sweep in cleanup.
 builder_prune() {
   local state status=0
-  state=$(sudo -n -u sextant-review mktemp -d "$review_runtime/sextant-jit-docker.buildx.XXXXXXXX") ||
+  state=$(sudo -n -u sextant-review mktemp -d \
+    "$review_runtime/sextant-jit-${slot_name:-docker}.buildx.XXXXXXXX") ||
     return 1
   buildx_state=$state docker builder prune --all --force >/dev/null || status=1
   sudo -n rm -rf -- "$state" || status=1
   return "$status"
 }
 
-# The daemon is shared: `sealed` removes only its own runner containers, `docker` all the rest.
+# The daemon is shared: each slot removes only its own runner containers. The original single
+# docker slot left containers without a slot label, so docker-1 also removes those leftovers;
+# docker-2 never touches another slot's containers.
 owned_containers() {
-  docker ps --all --no-trunc --format '{{.ID}} {{.Label "sextant-jit.profile"}}' |
-    awk -v profile="$1" '(profile == "sealed") == ($2 == "sealed") {print $1}'
+  local slot=$1 profile legacy=0
+  case $slot in
+    sealed) profile=sealed legacy=1 ;;
+    docker) slot=docker-1 profile=docker legacy=1 ;;
+    docker-[1-9]*) profile=docker ;;
+    *) return 2 ;;
+  esac
+  [[ $slot == docker-1 ]] && legacy=1
+  docker ps --all --no-trunc --format \
+    '{{.ID}} {{.Label "sextant-jit.profile"}} {{.Label "sextant-jit.slot"}}' |
+    awk -v slot="$slot" -v profile="$profile" -v legacy="$legacy" \
+      '$3 == slot || (legacy && $3 == "" && $2 == profile) {print $1}'
+}
+
+# True when another docker slot still has a runner on the shared daemon. Two concurrent docker
+# agent jobs are unsupported while gh-aw's setup removes and recreates the fixed /tmp/gh-aw, so
+# cleanup must not prune a peer's networks, volumes, images or tmp entries.
+docker_peer_active() {
+  [[ ${profile:-} == docker ]] || return 1
+  docker ps --filter label=sextant-jit.profile=docker \
+    --format '{{.Label "sextant-jit.slot"}}' |
+    awk -v self="${slot_name:-docker}" '$0 != self {found=1} END {exit found ? 0 : 1}'
+}
+
+# A docker job may leave sibling containers without either sextant-jit label. Only a slot that
+# finds no live peer may remove them: a peer's job may still own them.
+remove_unlabeled_siblings() {
+  local ids=()
+  mapfile -t ids < <(docker ps --all --no-trunc \
+    --format '{{.ID}} {{.Label "sextant-jit.profile"}}' |
+    awk '$2 == "" {print $1}') && wait "$!" || return 1
+  (( ${#ids[@]} )) || return 0
+  docker rm --force --volumes "${ids[@]}" >/dev/null 2>&1 || true
 }
 
 cleanup() {
   local ids=() attached=() net
-  mapfile -t ids < <(owned_containers "$profile") && wait "$!" || return 1
+  mapfile -t ids < <(owned_containers "$slot_name") && wait "$!" || return 1
   if (( ${#ids[@]} )); then
     # A --rm container may already be removing itself (409), so wait, bounded, until all are gone.
     docker rm --force --volumes "${ids[@]}" >/dev/null 2>&1 || true
     for _ in {1..30}; do
-      mapfile -t ids < <(owned_containers "$profile") && wait "$!" || return 1
+      mapfile -t ids < <(owned_containers "$slot_name") && wait "$!" || return 1
       (( ${#ids[@]} )) || break
       sleep 1
     done
@@ -167,15 +216,24 @@ cleanup() {
   else
     # Leave no job networks, volumes, images or build caches; the seed archive is reloaded. Only the
     # sealed slot's live network is spared; nothing else of the sealed profile lives on the daemon.
-    docker network prune --force --filter label!=sextant-jit.profile=sealed >/dev/null || return 1
-    docker volume prune --all --force >/dev/null || return 1
-    docker image prune --all --force >/dev/null || return 1
-    builder_prune || return 1
-    sweep_host_tmp || return 1
+    # A live peer docker slot owns these daemon-wide resources and the fixed /tmp/gh-aw, so wait.
+    if ! docker_peer_active; then
+      remove_unlabeled_siblings || return 1
+      docker network prune --force --filter label!=sextant-jit.profile=sealed >/dev/null || return 1
+      docker volume prune --all --force >/dev/null || return 1
+      docker image prune --all --force >/dev/null || return 1
+      builder_prune || return 1
+      sweep_host_tmp || return 1
+    fi
   fi
-  # Also erase this profile's earlier tmpfs roots after SIGKILL or a host crash.
+  # Also erase this slot's earlier tmpfs roots after SIGKILL or a host crash. docker-1 also clears
+  # the original single docker slot's `sextant-jit-docker.*` roots.
   sudo -n find "$review_runtime" -mindepth 1 -maxdepth 1 -type d \
-    -name "sextant-jit-$profile.*" -exec rm -rf -- {} +
+    -name "sextant-jit-$slot_name.*" -exec rm -rf -- {} +
+  if [[ $slot_name == docker-1 ]]; then
+    sudo -n find "$review_runtime" -mindepth 1 -maxdepth 1 -type d \
+      -name "sextant-jit-$profile.*" -exec rm -rf -- {} +
+  fi
 }
 
 # The REST response's runner id is not secret; the encoded configuration streams on to the
@@ -249,16 +307,17 @@ arm_exit() {
 
 # The whole-account cap must hold every slot's hard limit plus the daemon's measured RSS.
 cap_covers_slots() {
-  (( cap * 1024 >= runner_count * slot_gib * 1024 + overhead_mib ))
+  (( cap * 1024 >= slot_count * slot_gib * 1024 + overhead_mib ))
 }
 
 main() {
-  profile=${1:-}
-  runner_labels "$profile" >/dev/null || { echo 'usage: jit.sh sealed|docker' >&2; exit 2; }
-  exec 9>"${XDG_RUNTIME_DIR:?}/sextant-jit-$profile.lock"
+  local instance=${1:-}
+  slot_identity "$instance" || { echo 'usage: jit.sh sealed|docker[-N]' >&2; exit 2; }
+  runner_labels "$profile" >/dev/null || exit 2
+  exec 9>"${XDG_RUNTIME_DIR:?}/sextant-jit-$slot_name.lock"
   flock -n 9 || exit 1
-  runner_id_file=$XDG_RUNTIME_DIR/sextant-jit-$profile.runner
-  pending_file=$XDG_RUNTIME_DIR/sextant-jit-$profile.pending
+  runner_id_file=$XDG_RUNTIME_DIR/sextant-jit-$slot_name.runner
+  pending_file=$XDG_RUNTIME_DIR/sextant-jit-$slot_name.pending
   # At boot, UID 1501's lingering manager and the network come up independently of this manager.
   boot_wait=$(jq -r .boot_wait_seconds.value "$installed/limits.json")
   for (( waited = 0; waited < boot_wait; waited += 5 )); do
@@ -271,15 +330,22 @@ main() {
   floor=$(jq -r .memory_floor_gib.value "$installed/limits.json")
   cap=$(jq -r .memory_max_gib.value "$installed/limits.json")
   slot_gib=$(jq -r .slot_memory_gib.value "$installed/limits.json")
-  runner_count=$(jq -r .runners.value "$installed/limits.json")
+  slot_count=$(jq -r '[.slots.value[]] | add' "$installed/limits.json")
+  slot_limit=$(jq -r --arg profile "$profile" '.slots.value[$profile] // empty' "$installed/limits.json")
   overhead_mib=$(jq -r .memory_overhead_mib.value "$installed/limits.json")
   sealed_subnet=$(jq -r .sealed_subnet.value "$installed/limits.json")
+  [[ $slot_count =~ ^[1-9][0-9]*$ && $slot_limit =~ ^[1-9][0-9]*$ ]] || {
+    echo "limits.json has no slot count for $profile" >&2; exit 1;
+  }
+  (( slot <= slot_limit )) || {
+    echo "JIT admission refused: $instance exceeds the $profile slot count" >&2; exit 1;
+  }
   cap_covers_slots || {
-    echo 'JIT admission refused: the whole-account cap does not hold both slots and the daemon' >&2; exit 1;
+    echo 'JIT admission refused: the whole-account cap does not hold every slot and the daemon' >&2; exit 1;
   }
   available_kib=$(awk '$1 == "MemAvailable:" {print $2}' /proc/meminfo)
-  (( available_kib >= (floor + cap) * 1024 * 1024 )) || {
-    echo 'JIT admission refused: insufficient MemAvailable for the floor plus cap' >&2; exit 1;
+  (( available_kib >= (floor + slot_gib) * 1024 * 1024 )) || {
+    echo 'JIT admission refused: insufficient MemAvailable for the floor plus one slot' >&2; exit 1;
   }
   [[ $(systemctl show user-1501.slice -p MemoryMax --value) == "$((cap * 1024 * 1024 * 1024))" ]]
   docker info --format '{{json .SecurityOptions}}' | jq -e 'index("name=rootless") != null' >/dev/null
@@ -299,15 +365,15 @@ main() {
   deregister  # leftovers: a refused removal, or the id of a runner whose slot was SIGKILLed
   docker load --input /var/lib/sextant-jit/runner.tar >/dev/null
   [[ $(docker image inspect "$image" --format '{{.Id}}') == "$image" ]]
-  root=$(sudo -n -u sextant-review mktemp -d "$review_runtime/sextant-jit-$profile.XXXXXXXX")
+  root=$(sudo -n -u sextant-review mktemp -d "$review_runtime/sextant-jit-$slot_name.XXXXXXXX")
   name=${root##*/}
   if [[ $profile == sealed ]]; then
     sealed_egress "$sealed_subnet"
     docker network create --subnet "$sealed_subnet" --label sextant-jit.profile=sealed \
-      "$name" >/dev/null
+      --label "sextant-jit.slot=$slot_name" "$name" >/dev/null
   fi
   local options labels args=() label
-  mapfile -t options < <(runner_options "$profile" "$root" "$name")
+  mapfile -t options < <(runner_options "$profile" "$root" "$name" "$slot_name")
   container=$(docker create --rm --interactive --name "$name" --user 0 \
     --memory "${slot_gib}g" --memory-swap "${slot_gib}g" --ulimit core=0 "${options[@]}" \
     --env "SEXTANT_RUNNER_IMAGE=$image" "$image")

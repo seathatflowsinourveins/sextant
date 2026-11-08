@@ -13,7 +13,7 @@ permissions:
 environment: review
 checkout: {}
 runs-on: [self-hosted, linux, x64, sextant-jit-docker]
-runs-on-slim: [self-hosted, linux, x64, sextant-jit-docker]
+runs-on-slim: [self-hosted, linux, x64, sextant-jit-sealed]
 runner:
   topology: arc-dind
 strict: false
@@ -42,7 +42,7 @@ tools:
     mode: gh-proxy
     toolsets: [repos, pull_requests]
 safe-outputs:
-  runs-on: [self-hosted, linux, x64, sextant-jit-docker]
+  runs-on: [self-hosted, linux, x64, sextant-jit-sealed]
   threat-detection: false
   create-check-run:
     name: review

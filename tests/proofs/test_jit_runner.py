@@ -38,7 +38,8 @@ def test_only_the_docker_profile_reaches_the_daemon() -> None:
     assert not [o for o in sealed if "docker.sock" in o or "DOCKER_HOST" in o or "GH_AW_" in o]
     assert sealed[sealed.index("--network") + 1] == "sextant-jit-sealed.fixture"
     assert sealed.count("--network") == 1 and f"type=bind,src={root},dst={root}" in sealed
-    assert "sextant-jit.profile=sealed" in sealed and "HOME=/home/runner" in sealed
+    assert "sextant-jit.profile=sealed" in sealed and "sextant-jit.slot=sealed" in sealed
+    assert "HOME=/home/runner" in sealed
     assert not [o for o in sealed if "gh-aw" in o or "dst=/tmp" in o]
     docker = _jit(
         "runner_options docker /run/user/1501/sextant-jit-docker.f sextant-jit-docker.f"
@@ -53,6 +54,12 @@ def test_only_the_docker_profile_reaches_the_daemon() -> None:
     # gh-aw detects the socket's group itself; a forced group 0 locks out the non-root gateway.
     assert "GH_AW_DOCKER_SOCK_PATH=/run/user/1501/docker.sock" in docker
     assert not [o for o in docker if "GH_AW_DOCKER_SOCK_GID" in o]
+    # Each docker slot carries its own label, so cleanup can tell the slots apart.
+    docker2 = _jit(
+        "runner_options docker /run/user/1501/x sextant-jit-docker-2.f docker-2"
+    ).splitlines()
+    assert "sextant-jit.profile=docker" in docker2
+    assert "sextant-jit.slot=docker-2" in docker2
     # The producer's own Docker CLI never loads UID 1501's ~/.docker plugins or helpers.
     assert 'DOCKER_CONFIG="$installed/docker-config"' in (REVIEW / "jit.sh").read_text()
     assert _jit("runner_labels sealed").split() == SEALED
@@ -61,10 +68,83 @@ def test_only_the_docker_profile_reaches_the_daemon() -> None:
     _jit("runner_labels everything", expect_ok=False)
 
 
-def test_each_profile_removes_only_its_own_containers() -> None:
-    fake = "docker() { printf '%s\\n' 'c1 sealed' 'c2 docker' 'c3 '; }"
+def test_slot_identities_are_bounded_and_distinct() -> None:
+    assert _jit(
+        'slot_identity sealed; printf \'%s %s %s\\n\' "$profile" "$slot" "$slot_name"'
+    ).split() == ["sealed", "1", "sealed"]
+    assert _jit(
+        'slot_identity docker; printf \'%s %s %s\\n\' "$profile" "$slot" "$slot_name"'
+    ).split() == ["docker", "1", "docker-1"]
+    assert _jit(
+        'slot_identity docker-2; printf \'%s %s %s\\n\' "$profile" "$slot" "$slot_name"'
+    ).split() == ["docker", "2", "docker-2"]
+    _jit("slot_identity docker-0", expect_ok=False)
+    _jit("slot_identity sealed-1", expect_ok=False)
+
+
+def test_each_slot_removes_only_its_own_containers() -> None:
+    fake = (
+        "docker() { printf '%s\\n' 'c1 sealed sealed' 'c2 docker docker-1' "
+        "'c3 docker ' 'c4 docker docker-2' 'c5  '; }"
+    )
     assert _jit(f"{fake}; owned_containers sealed").split() == ["c1"]
+    assert _jit(f"{fake}; owned_containers docker-1").split() == ["c2", "c3"]
+    assert _jit(f"{fake}; owned_containers docker-2").split() == ["c4"]
     assert _jit(f"{fake}; owned_containers docker").split() == ["c2", "c3"]
+    # c5 has no profile or slot label: no runner owns it, but a docker cleanup must still remove it.
+
+
+def test_unlabeled_siblings_are_removed_only_when_no_docker_peer_is_active(
+    tmp_path: Path,
+) -> None:
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+
+    def cleanup_log(name: str, peer: int) -> Path:
+        log = tmp_path / name
+        _jit(
+            f"""
+            review_runtime={runtime}
+            profile=docker
+            slot_name=docker-2
+            sudo() {{ :; }}
+            builder_prune() {{ :; }}
+            sweep_host_tmp() {{ :; }}
+            docker_peer_active() {{ return {peer}; }}
+            docker() {{
+              printf '%s\\n' "$*" >> "{log}"
+              case "$1" in
+                ps) printf '%s\\n' 'c1 sealed sealed' 'c2 docker docker-1' 'c9  ' ;;
+                *) : ;;
+              esac
+            }}
+            cleanup
+            """
+        )
+        return log
+
+    no_peer = cleanup_log("no-peer.log", 1).read_text().splitlines()
+    rm = no_peer.index("rm --force --volumes c9")
+    prune = next(
+        index
+        for index, line in enumerate(no_peer)
+        if line.startswith("network prune --force --filter label!=sextant-jit.profile=sealed")
+    )
+    assert rm < prune, "the unlabeled sibling must go before the daemon-wide prunes"
+
+    peer = cleanup_log("peer.log", 0).read_text().splitlines()
+    assert not [line for line in peer if line == "rm --force --volumes c9"]
+
+
+def test_docker_slots_detect_a_live_peer_before_pruning_the_shared_daemon() -> None:
+    peers = "docker() { printf '%s\\n' 'docker-2' 'docker-1'; }"
+    _jit(f"profile=docker; slot_name=docker-1; {peers}; docker_peer_active")
+    _jit(
+        "profile=docker; slot_name=docker-2; "
+        "docker() { printf '%s\\n' 'docker-2'; }; docker_peer_active",
+        expect_ok=False,
+    )
+    _jit("profile=sealed; docker_peer_active", expect_ok=False)
 
 
 def test_each_slot_is_a_boot_enabled_template_instance_that_stops_cleanly() -> None:
@@ -84,36 +164,37 @@ def test_each_slot_is_a_boot_enabled_template_instance_that_stops_cleanly() -> N
     assert "flock --wait 60 8 && cleanup" in (REVIEW / "jit.sh").read_text()
     limits = json.loads((REVIEW / "limits.json").read_text())
     assert limits["start_limit"]["value"] == "20 starts per 300 s"
-    assert limits["runners"]["value"] == 2 and limits["boot_wait_seconds"]["value"] == 300
+    assert limits["slots"]["value"] == {"sealed": 1, "docker": 2}
+    assert limits["boot_wait_seconds"]["value"] == 300
 
 
-def test_the_whole_account_cap_holds_both_slot_limits_plus_the_measured_daemon() -> None:
+def test_the_whole_account_cap_holds_every_slot_limit_plus_the_measured_daemon() -> None:
     limits = json.loads((REVIEW / "limits.json").read_text())
     floor = limits["memory_floor_gib"]["value"]
     cap = limits["memory_max_gib"]["value"]
     slot = limits["slot_memory_gib"]["value"]
     overhead = limits["memory_overhead_mib"]["value"]
-    runners = limits["runners"]["value"]
-    # Two 6 GiB slots plus the 320 MiB measured non-container RSS; 13 GiB is the smallest whole GiB.
-    assert runners == 2 and slot == 6
+    slot_count = sum(limits["slots"]["value"].values())
+    # Three 6 GiB slots plus the 320 MiB measured RSS; 19 GiB is the smallest whole GiB.
+    assert slot_count == 3 and slot == 6
     assert overhead >= 320
-    needed_mib = runners * slot * 1024 + overhead
+    needed_mib = slot_count * slot * 1024 + overhead
     smallest_cap = (needed_mib + 1023) // 1024
     assert cap >= smallest_cap
     conf = (REVIEW / "user-1501-limits.conf").read_text()
     assert "[Slice]" in conf
     assert f"MemoryMax={cap}G" in conf and "MemorySwapMax=0" in conf
     readme = (REVIEW / "README.md").read_text()
-    assert f"Admission needs {floor + cap} GiB `MemAvailable`" in readme
+    assert f"Admission needs {floor + slot} GiB `MemAvailable`" in readme
     jit = (REVIEW / "jit.sh").read_text()
     assert '--memory "${slot_gib}g"' in jit and '--memory-swap "${slot_gib}g"' in jit
     assert '--memory "${cap}g"' not in jit
     _jit(
-        f"cap={cap}; slot_gib={slot}; runner_count={runners}; "
+        f"cap={cap}; slot_gib={slot}; slot_count={slot_count}; "
         f"overhead_mib={overhead}; cap_covers_slots"
     )
     _jit(
-        f"cap={smallest_cap - 1}; slot_gib={slot}; runner_count={runners}; "
+        f"cap={smallest_cap - 1}; slot_gib={slot}; slot_count={slot_count}; "
         f"overhead_mib={overhead}; cap_covers_slots",
         expect_ok=False,
     )
@@ -476,6 +557,14 @@ def test_pr_code_and_docker_free_jobs_run_only_on_the_sealed_profile() -> None:
         "source.yml/source",
         "dependabot-automerge.yml/automerge",
         "scoreboard.yml/jit-sealed-smoke",
+        "review.lock.yml/activation",
+        "review.lock.yml/conclusion",
+        "review.lock.yml/pre_activation",
+        "review.lock.yml/safe_outputs",
+        "review-claude.lock.yml/activation",
+        "review-claude.lock.yml/conclusion",
+        "review-claude.lock.yml/pre_activation",
+        "review-claude.lock.yml/safe_outputs",
     }
     assert {job for job, labels in routes.items() if labels != SEALED} == {
         job for job, labels in routes.items() if labels == DOCKER
