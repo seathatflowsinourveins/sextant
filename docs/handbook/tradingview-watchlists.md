@@ -1,0 +1,22 @@
+# Watchlist controller lesson, 2026-11-08
+
+The [first J5 review](https://github.com/seathatflowsinourveins/sextant/pull/278#pullrequestreview-5818766915), submitted 2026-11-08T17:00:22Z, and [inline 4507021307](https://github.com/seathatflowsinourveins/sextant/pull/278#discussion_r4507021307) identify why checking only before an import and reading the intended list by ID afterwards misses an active-list switch. Whole-file `importFrom` can continue onto another list because each symbol operation captures the active ID anew. Do not use it for J5.
+
+FerroxLabs/tvcontrol@v2.5.3 `85200201f92967db9e4b63a9251d51fcdfe1f3a8` already supplies the bounded replacement: `src/tools/watchlist.js:48,62` limit each add/remove bulk call to 1–100 entries; core `src/core/watchlist.js:504,578` captures one active ID per call and passes that ID to the mutation (`:523,609`), then `_assertSameList` (`:462`) checks the ID afterwards. That internal guard does not check the name. Reads remain tools `:6,20,27`; named creation is tools `:11`, core `:911`. No pin changes.
+
+The owner's non-use is a precondition of every J5 run: "i am not using it , it is opened for you" (relayed by the lead, 2026-11-08). Record that it covers the entire run; no owner use, other tab or other controller may change lists. An old non-use statement is not evidence of a later run's conditions. Never write to a non-NS list: only the exact `NS Ranked` and `NS B-protected` names and their uniquely resolved numeric IDs qualify. Creation has duplicate-name creation disabled and its returned ID/name/membership is independently read back. If the intended target is inactive, stop for reviewed selection outside J5; selection stays outside the allowlist.
+
+Compute only missing additions and obsolete removals from Sextant's valid input and the last confirmed complete membership, including stored section entries. Skip empty deltas. Use at most 100 entries per batch, matching the pinned tool schema; send exact stored/exchange-prefixed entries so no bare-ticker resolution is needed. Each batch follows one of these sequences:
+
+```text
+watchlist_get -> watchlist_add_bulk -> watchlist_get
+watchlist_get -> watchlist_remove_bulk -> watchlist_get
+```
+
+Both reads must match the pinned numeric ID AND exact name. Always make the second active-list read, including when the bulk tool returns an error or a partial result. On the FIRST active-list ID or name mismatch, abort the entire run: no next batch, second list, retry or compensating write. A tool error, failed read or partial membership change also stops acceptance. After every write, independently read the pinned ID with `watchlist_get_by_id`, confirm the expected delta, and finally compare the exact name and complete membership with Sextant's input. Membership replacement is idempotent; it does not promise rank-order sorting.
+
+On a stop, report exactly what was written where: intended ID/name; each attempted tool and entries; confirmed additions/removals and the ID/name they reached; the first mismatching observed ID/name; and any unknown outcome. Retain the per-batch receipts and use only read tools to establish what changed. Do not turn an error into a zero-write claim or infer an untouched owner list from a matching target read-back.
+
+The checks are not an atomic compare-and-write. A switch before the bulk call's own initial snapshot can redirect that call, so the non-use precondition is essential; if breached, halt and report confirmed changes and unknown destinations without claiming every other list was untouched. The offline mid-run witness covers a switch after that internal snapshot: the pending mutation still uses the captured NS ID, the owner list receives nothing, and the outer post-check aborts before another batch even if by-ID target membership already matches. Name drift after a mutation also aborts. Initial ID/name mismatches and missing non-use confirmation produce no write.
+
+[ADR-0021's J5 amendment](../adr/0021-tradingview-display.md) owns the display-only scope and exact six-tool allowlist. `tests/proofs/test_tradingview_desktop.py` pins both active-list checks in the policy and this lesson and interprets the sequences over a source-shaped memory fixture. It is neither execution of upstream code nor an installed-controller/concurrency guarantee or Desktop receipt. A broader upstream capability is not broader job authority.
