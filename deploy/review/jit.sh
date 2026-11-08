@@ -305,9 +305,30 @@ arm_exit() {
   trap 'exit 130' INT TERM
 }
 
-# The whole-account cap must hold every slot's hard limit plus the daemon's measured RSS.
+# A counted slot above its enabled count is held: docker-2 stays off while gh-aw's setup
+# recreates the fixed /tmp/gh-aw this profile shares with the host (setup.sh:105-130).
+slot_enabled() {
+  (( slot <= enabled_limit ))
+}
+
+# The whole-account cap must hold every counted slot's hard limit, the daemon's measured
+# RSS, each enabled docker slot's sibling containers and each enabled slot's tmpfs root.
 cap_covers_slots() {
-  (( cap * 1024 >= slot_count * slot_gib * 1024 + overhead_mib ))
+  (( cap * 1024 >= slot_count * slot_gib * 1024 + overhead_mib +
+    enabled_docker * sibling_mib + enabled_count * tmpfs_mib ))
+}
+
+# The logind tmpfs mount (logind.conf(5) RuntimeDirectorySize) must fit the tmpfs budget.
+tmpfs_covers_budget() {
+  (( runtime_tmpfs_mib >= enabled_count * tmpfs_mib ))
+}
+
+# MemAvailable admission: the floor, this slot's hard limit, its tmpfs root and, for the
+# docker profile, the sibling containers its job spawns on the shared daemon.
+admission_mib() {
+  local extra=0
+  [[ $profile == docker ]] && extra=$sibling_mib
+  printf '%s\n' $(( (floor + slot_gib) * 1024 + tmpfs_mib + extra ))
 }
 
 main() {
@@ -333,19 +354,35 @@ main() {
   slot_count=$(jq -r '[.slots.value[]] | add' "$installed/limits.json")
   slot_limit=$(jq -r --arg profile "$profile" '.slots.value[$profile] // empty' "$installed/limits.json")
   overhead_mib=$(jq -r .memory_overhead_mib.value "$installed/limits.json")
+  sibling_mib=$(jq -r .sibling_memory_mib_per_docker_slot.value "$installed/limits.json")
+  tmpfs_mib=$(jq -r .runtime_tmpfs_mib_per_slot.value "$installed/limits.json")
+  enabled_limit=$(jq -r --arg profile "$profile" '.enabled_slots.value[$profile] // empty' "$installed/limits.json")
+  enabled_count=$(jq -r '[.enabled_slots.value[]] | add' "$installed/limits.json")
+  enabled_docker=$(jq -r '.enabled_slots.value.docker // empty' "$installed/limits.json")
   sealed_subnet=$(jq -r .sealed_subnet.value "$installed/limits.json")
-  [[ $slot_count =~ ^[1-9][0-9]*$ && $slot_limit =~ ^[1-9][0-9]*$ ]] || {
-    echo "limits.json has no slot count for $profile" >&2; exit 1;
+  [[ $slot_count =~ ^[1-9][0-9]*$ && $slot_limit =~ ^[1-9][0-9]*$ &&
+    $enabled_limit =~ ^[0-9]+$ && $enabled_count =~ ^[1-9][0-9]*$ &&
+    $enabled_docker =~ ^[0-9]+$ && $sibling_mib =~ ^[1-9][0-9]*$ &&
+    $tmpfs_mib =~ ^[1-9][0-9]*$ ]] || {
+    echo "limits.json has no usable slot budget for $profile" >&2; exit 1;
   }
   (( slot <= slot_limit )) || {
     echo "JIT admission refused: $instance exceeds the $profile slot count" >&2; exit 1;
   }
+  slot_enabled || {
+    echo "JIT admission refused: $instance exceeds the $profile enabled slot count" >&2; exit 1;
+  }
   cap_covers_slots || {
-    echo 'JIT admission refused: the whole-account cap does not hold every slot and the daemon' >&2; exit 1;
+    echo 'JIT admission refused: the whole-account cap does not hold every slot, the daemon, its siblings and tmpfs' >&2; exit 1;
+  }
+  read -r tmpfs_blocks tmpfs_block_size < <(stat -f -c '%b %S' "$review_runtime")
+  runtime_tmpfs_mib=$(( tmpfs_blocks * tmpfs_block_size / 1024 / 1024 ))
+  tmpfs_covers_budget || {
+    echo 'JIT admission refused: the /run/user/1501 tmpfs does not hold the enabled tmpfs budget' >&2; exit 1;
   }
   available_kib=$(awk '$1 == "MemAvailable:" {print $2}' /proc/meminfo)
-  (( available_kib >= (floor + slot_gib) * 1024 * 1024 )) || {
-    echo 'JIT admission refused: insufficient MemAvailable for the floor plus one slot' >&2; exit 1;
+  (( available_kib >= $(admission_mib) * 1024 )) || {
+    echo 'JIT admission refused: insufficient MemAvailable for the floor plus this slot budget' >&2; exit 1;
   }
   [[ $(systemctl show user-1501.slice -p MemoryMax --value) == "$((cap * 1024 * 1024 * 1024))" ]]
   docker info --format '{{json .SecurityOptions}}' | jq -e 'index("name=rootless") != null' >/dev/null

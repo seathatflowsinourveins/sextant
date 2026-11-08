@@ -1,7 +1,7 @@
 # Install under the credential producer's user manager, never as sextant-review.service.
 # One instance per slot, enabled at boot with lingering: sextant-jit@sealed, sextant-jit@docker-1.
-# The docker profile's second slot (docker-2) is counted in limits.json but held until gh-aw
-# isolates its fixed /tmp/gh-aw.
+# The docker profile's second slot (docker-2) is counted in limits.json but held by
+# enabled_slots until gh-aw isolates its fixed /tmp/gh-aw; jit.sh refuses it at admission.
 [Unit]
 Description=Sextant serial ephemeral JIT runner slot (%i)
 # Bounded retries (systemd.unit(5)): a transient failure restarts, a persistent one stops the slot.

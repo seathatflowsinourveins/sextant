@@ -77,7 +77,11 @@ An invalid selection skips all three workflows, including their conclusion jobs.
   - `systemd.exec(5)` (`PrivateTmp=`: in a user manager it implies `PrivateUsers=`);
   - `loginctl(1)` lingering: "a user manager is spawned for the user at boot";
   - util-linux `setpriv(1)`.
-  - Values and authorities are in `limits.json`; the per-slot limit and slot counts are uncalibrated starts, and the whole-account cap is measured from every slot plus the rootless daemon.
+- Installed manuals and kernel docs, read 2026-11-08 (systemd 259):
+  - `systemd.resource-control(5)` (`MemoryMax` on `user-1501.slice`: the absolute limit for every process and container scope in the slice);
+  - `logind.conf(5)` (`RuntimeDirectorySize=`, default 10% of RAM: the size limit on each `/run/user/<uid>` tmpfs);
+  - the kernel's [Control Group v2](https://www.kernel.org/doc/html/latest/admin-guide/cgroup-v2.html): tmpfs usage is accounted as `shmem` in the writing cgroup's `memory.stat`, under the slice's `MemoryMax`.
+  - Values and authorities are in `limits.json`; the per-slot limit and slot counts are uncalibrated starts, and the whole-account cap budgets every counted slot, the rootless daemon, the enabled docker slot's siblings and each enabled slot's runtime tmpfs.
 
 ## Two profiles, three slots
 
@@ -92,8 +96,8 @@ This profile runs `ci`, which runs PR code, plus `source` and `dependabot-autome
 - **Linting:** ci uses the actionlint and shellcheck release binaries instead of a Docker action.
 
 ### docker (`sextant-jit@docker-1`, held: `sextant-jit@docker-2`)
-This profile runs the gh-aw reviewers, whose AWF sandbox needs the daemon, and the scoreboard with its smokes. `limits.json` counts two docker slots for the cap and the admission floor; the install enables `docker-1` and holds `docker-2`.
-- **One docker agent job at a time:** gh-aw's setup removes and recreates the fixed `/tmp/gh-aw` on every job (`actions/setup/setup.sh:105-130`), and every docker slot shares this daemon's host `/tmp`. Two concurrent docker agent jobs would delete each other's `/tmp/gh-aw`. So `docker-2` stays disabled until gh-aw documents per-runner tmp isolation; the counter and the cap already reserve its memory.
+This profile runs the gh-aw reviewers, whose AWF sandbox needs the daemon, and the scoreboard with its smokes. `limits.json` counts two docker slots (`slots`) but enables one (`enabled_slots`); the install enables `docker-1`, and `jit.sh` admission refuses `docker-2` while the hold stands.
+- **One docker agent job at a time:** gh-aw's setup removes and recreates the fixed `/tmp/gh-aw` on every job (`actions/setup/setup.sh:105-130`), and every docker slot shares this daemon's host `/tmp`. Two concurrent docker agent jobs would delete each other's `/tmp/gh-aw`. So `docker-2` stays held until gh-aw isolates `/tmp/gh-aw` per job: `enabled_slots.docker` stays 1, and a slot refuses to start above its enabled count even if its unit is enabled by mistake. The counted slots still reserve its outer 6 GiB in the cap; lifting the hold takes a reviewed `enabled_slots` change, after which the cap check must also hold its siblings and tmpfs.
 - **Shared paths:** the runner and the daemon share the job root and the host's `/tmp`. The job's `$HOME` is its root, as the official image's home is the runner directory and ARC's work directory sits under it; AWF's agent writes its Claude settings to `/host$HOME` (`containers/agent/entrypoint.sh:241`), which exists only as the parent of the job's own mounts. gh-aw expects a runner and its daemon to share one `/tmp`: its setup removes and recreates `/tmp/gh-aw` (`actions/setup/setup.sh:105-130`), the daemon mounts literal `/tmp/gh-aw` sources such as the DIFC proxy's TLS directory (`start_cli_proxy.sh:107-164`), and its MCP gateway mounts `/tmp` itself (`-v /tmp:/tmp:rw`). This daemon's `/tmp` is the host's. RootlessKit refuses to copy up `/tmp`, and systemd's `PrivateTmp=` on the daemon's user unit implies `PrivateUsers=`, under which RootlessKit cannot map UID 1501's subordinate range ("newuidmap: write to uid_map failed: Operation not permitted", measured 2026-11-07). So docker jobs share the host's `/tmp`. AWF also mounts that `/tmp` into its agent sandbox, read-write (`src/services/agent-volumes/system-mounts.ts:29`). Around every job the slot removes `/tmp/gh-aw` and every `/tmp` entry, at any depth, owned by UID 1501's subordinate range, which only this daemon's containers use. Someone else's `/tmp/gh-aw` stops the slot.
 - **Socket group:** gh-aw detects the socket's group itself (`resolve_docker_socket_gid.sh`); inside the daemon's namespace it is the `docker` group, not 0, so the non-root MCP gateway gets `--group-add` with that group.
 - **The agent never sees the socket:**
@@ -111,6 +115,7 @@ This profile runs the gh-aw reviewers, whose AWF sandbox needs the daemon, and t
 
 ### Shared by the slots
 - **Daemon:** the slots share the daemon and the whole-UID memory cap. A daemon lock serializes cleanup, seed load and container creation. A docker slot's network prune spares the sealed slot's live network, and no docker slot prunes daemon-wide resources while a peer docker slot is live.
+- **Slice budget:** `user-1501.slice`'s `MemoryMax` (`limits.json`'s `memory_max_gib`, installed as `user-1501-limits.conf`) holds every counted slot's 6 GiB hard limit, the daemon's measured non-container RSS, each enabled docker slot's sibling containers and each enabled slot's `/run/user/1501` tmpfs root. The sibling budget is AWF's own default agent `mem_limit` plus its init container's, 6,272 MiB in all (`src/services/agent-service.ts:88,373` at the gh-aw-firewall v0.29.0 pin, read 2026-11-08); AWF's squid, api-proxy and cli-proxy siblings set no `mem_limit` at that pin, so this slice cap is their only bound. Tmpfs pages a container writes also count toward that container's own `--memory`, so budgeting them again at the slice is deliberate headroom for the pages charged outside the slot scopes, and admission also checks that the logind tmpfs mount itself can hold the enabled slots' tmpfs budget. Both budgets are uncalibrated starting values, not measured ceilings: the tmpfs budget rounds up the 1.64 GiB of `shmem` measured for two unpacked roots on 2026-11-07. Admission fails closed when the registry, the cap or the mount cannot hold the budget.
 - **Published ports:** ports published without a host address bind to loopback on every bridge (`dockerd --ip` and `default-network-opts` `host_binding_ipv4`). Without that, AWF's squid, published as `3128:3128`, answered a sealed bridge's gateway, as measured on #201.
 - **Fail-closed check:** before each start, a slot checks the live RootlessKit and dockerd arguments against the drop-in: no detached namespace, no port driver, no host loopback, loopback publishing. It refuses to start on any difference, so a job that rewrites UID 1501's drop-in cannot weaken the network unnoticed.
 - **Host-side Docker CLI:** the slot's own CLI reads a root-owned, empty `DOCKER_CONFIG`, so no plugin or credential helper in UID 1501's `~/.docker` runs on the host. Buildx would keep its state under that directory, so the build-cache prune gets its own fresh, empty `BUILDX_CONFIG`, removed afterwards.
@@ -146,13 +151,13 @@ The owner accepted this residual on 2026-11-07 (#201): "Accept + add exit cleanu
 
 1. Build `Dockerfile` with the dedicated rootless daemon. Save the image to root-owned `/var/lib/sextant-jit/runner.tar`, and record `docker image inspect --format '{{.Id}}'` in root-owned `/usr/local/lib/sextant-jit/runner-image`.
 2. Under `/usr/local/lib/sextant-jit/`, install `jit.sh` and `limits.json`, and create the root-owned empty `docker-config` directory.
-3. Install `user-1501-limits.conf` as `/etc/systemd/system/user-1501.slice.d/sextant-jit.conf` and apply the 19 GiB/zero-swap cap.
+3. Install `user-1501-limits.conf` as `/etc/systemd/system/user-1501.slice.d/sextant-jit.conf` and apply the 27 GiB/zero-swap cap.
 4. Install `docker-jit.conf` as the dedicated user's Docker drop-in, and restart that daemon only.
-5. Install `sextant-jit@.service` under the producer's user manager, never as the old runner unit, and enable the installed slots: `systemctl --user enable --now sextant-jit@sealed sextant-jit@docker-1`. `limits.json` counts `sealed: 1` and `docker: 2`; `docker-2` is prepared and held until gh-aw isolates its fixed `/tmp/gh-aw`, so do not enable it yet.
+5. Install `sextant-jit@.service` under the producer's user manager, never as the old runner unit, and enable the installed slots: `systemctl --user enable --now sextant-jit@sealed sextant-jit@docker-1`. `limits.json` counts `sealed: 1` and `docker: 2` but enables `sealed: 1` and `docker: 1`; `docker-2` is held until gh-aw isolates its fixed `/tmp/gh-aw`, so do not enable it yet. If it is enabled by mistake, its slot refuses admission above the enabled count.
 
 Lingering is on for both accounts, so both managers, the daemon and the enabled slots start at boot. Each slot waits up to `boot_wait_seconds` (`limits.json`) for the daemon and for GitHub.
 
-Admission needs 26 GiB `MemAvailable`: the 20 GiB floor plus one 6 GiB slot.
+Admission needs 27 GiB `MemAvailable` for a sealed slot and 33.125 GiB for a docker slot: the 20 GiB floor plus the slot's 6 GiB hard limit and its 1 GiB tmpfs budget, plus the docker slot's 6,272 MiB sibling budget.
 
 Restarts follow `Restart=always`: a slot restarts after each job and after a failure, at most `start_limit` times (`limits.json`), so a transient failure recovers and a persistent one leaves the slot down for operator attention.
 
@@ -162,7 +167,7 @@ Restarts follow `Restart=always`: a slot restarts after each job and after a fai
 - `loginctl show-user sextant -p Linger` and the same for `sextant-review` both print `Linger=yes`.
 - `systemctl --user is-enabled sextant-jit@sealed sextant-jit@docker-1` prints `enabled` twice, and `is-active` prints `active` twice.
 - `sudo -u sextant-review XDG_RUNTIME_DIR=/run/user/1501 systemctl --user is-active docker` prints `active`.
-- `gh api repos/seathatflowsinourveins/sextant/actions/runners --jq '.runners[] | [.name, .status] | @tsv'` lists one online `sextant-jit-sealed.*` and one online `sextant-jit-docker-1.*` runner. `docker-2` is counted in `limits.json` but held.
+- `gh api repos/seathatflowsinourveins/sextant/actions/runners --jq '.runners[] | [.name, .status] | @tsv'` lists one online `sextant-jit-sealed.*` and one online `sextant-jit-docker-1.*` runner. `docker-2` is counted in `limits.json` but held by `enabled_slots`.
 
 If a slot is down, read `journalctl --user -u sextant-jit@<slot>`, fix the cause, then run `systemctl --user restart sextant-jit@<slot>`.
 

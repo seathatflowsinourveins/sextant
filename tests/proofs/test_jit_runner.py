@@ -168,34 +168,67 @@ def test_each_slot_is_a_boot_enabled_template_instance_that_stops_cleanly() -> N
     assert limits["boot_wait_seconds"]["value"] == 300
 
 
+def test_docker_2_stays_held_until_gh_aw_isolates_its_fixed_tmp() -> None:
+    limits = json.loads((REVIEW / "limits.json").read_text())
+    # Counted for the cap, but only docker-1 is enabled: gh-aw recreates fixed /tmp/gh-aw.
+    assert limits["slots"]["value"] == {"sealed": 1, "docker": 2}
+    assert limits["enabled_slots"]["value"] == {"sealed": 1, "docker": 1}
+    _jit("slot_identity sealed; enabled_limit=1; slot_enabled")
+    _jit("slot_identity docker-1; enabled_limit=1; slot_enabled")
+    _jit("slot_identity docker-2; enabled_limit=1; slot_enabled", expect_ok=False)
+    # Raising the registry's enabled count is the only way to lift the hold.
+    _jit("slot_identity docker-2; enabled_limit=2; slot_enabled")
+    jit = (REVIEW / "jit.sh").read_text()
+    assert ".enabled_slots.value[$profile]" in jit
+    assert "exceeds the $profile enabled slot count" in jit
+
+
 def test_the_whole_account_cap_holds_every_slot_limit_plus_the_measured_daemon() -> None:
     limits = json.loads((REVIEW / "limits.json").read_text())
     floor = limits["memory_floor_gib"]["value"]
     cap = limits["memory_max_gib"]["value"]
     slot = limits["slot_memory_gib"]["value"]
     overhead = limits["memory_overhead_mib"]["value"]
+    sibling = limits["sibling_memory_mib_per_docker_slot"]["value"]
+    tmpfs = limits["runtime_tmpfs_mib_per_slot"]["value"]
+    enabled = limits["enabled_slots"]["value"]
+    enabled_count = sum(enabled.values())
     slot_count = sum(limits["slots"]["value"].values())
-    # Three 6 GiB slots plus the 320 MiB measured RSS; 19 GiB is the smallest whole GiB.
-    assert slot_count == 3 and slot == 6
-    assert overhead >= 320
-    needed_mib = slot_count * slot * 1024 + overhead
+    # Three counted 6 GiB slots, the measured daemon RSS, one enabled docker slot's
+    # AWF siblings (6 GiB agent plus 128 MiB init) and 1 GiB of runtime tmpfs a slot.
+    assert slot_count == 3 and slot == 6 and enabled_count == 2
+    assert overhead >= 320 and sibling == 6 * 1024 + 128 and tmpfs == 1024
+    needed_mib = (
+        slot_count * slot * 1024 + overhead + enabled["docker"] * sibling + enabled_count * tmpfs
+    )
     smallest_cap = (needed_mib + 1023) // 1024
     assert cap >= smallest_cap
     conf = (REVIEW / "user-1501-limits.conf").read_text()
     assert "[Slice]" in conf
     assert f"MemoryMax={cap}G" in conf and "MemorySwapMax=0" in conf
+    sealed_mib = (floor + slot) * 1024 + tmpfs
+    docker_mib = sealed_mib + sibling
     readme = (REVIEW / "README.md").read_text()
-    assert f"Admission needs {floor + slot} GiB `MemAvailable`" in readme
+    assert (
+        f"Admission needs {sealed_mib / 1024:g} GiB `MemAvailable` for a sealed slot "
+        f"and {docker_mib / 1024:g} GiB for a docker slot"
+    ) in readme
     jit = (REVIEW / "jit.sh").read_text()
     assert '--memory "${slot_gib}g"' in jit and '--memory-swap "${slot_gib}g"' in jit
     assert '--memory "${cap}g"' not in jit
-    _jit(
-        f"cap={cap}; slot_gib={slot}; slot_count={slot_count}; "
-        f"overhead_mib={overhead}; cap_covers_slots"
+    budget = (
+        f"slot_gib={slot}; slot_count={slot_count}; overhead_mib={overhead}; "
+        f"enabled_docker={enabled['docker']}; sibling_mib={sibling}; "
+        f"enabled_count={enabled_count}; tmpfs_mib={tmpfs}"
     )
+    _jit(f"cap={cap}; {budget}; cap_covers_slots")
+    _jit(f"cap={smallest_cap - 1}; {budget}; cap_covers_slots", expect_ok=False)
+    base = f"floor={floor}; slot_gib={slot}; tmpfs_mib={tmpfs}; sibling_mib={sibling}"
+    assert _jit(f"profile=sealed; {base}; admission_mib").strip() == str(sealed_mib)
+    assert _jit(f"profile=docker; {base}; admission_mib").strip() == str(docker_mib)
+    _jit(f"runtime_tmpfs_mib={enabled_count * tmpfs}; {budget}; tmpfs_covers_budget")
     _jit(
-        f"cap={smallest_cap - 1}; slot_gib={slot}; slot_count={slot_count}; "
-        f"overhead_mib={overhead}; cap_covers_slots",
+        f"runtime_tmpfs_mib={enabled_count * tmpfs - 1}; {budget}; tmpfs_covers_budget",
         expect_ok=False,
     )
 
