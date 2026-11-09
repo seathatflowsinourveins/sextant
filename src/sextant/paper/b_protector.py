@@ -4,10 +4,15 @@ The protector claims only positively reconciled owner fills, puts one native tra
 the reconcilable whole shares, and never cancels, replaces or resizes an owner order. Outside
 regular market hours it pages instead of submitting, because the native trailing stop does not
 trigger there; PR-2 owns the 24/5 path.
+
+The trade-update stream is event-driven, so the protector also reconciles on a fixed cadence
+and once when the regular session opens: a resting trail the broker lost, or a position that
+rested unprotected through the close, is re-armed without waiting for an unrelated event.
 """
 
 from __future__ import annotations
 
+import asyncio
 import calendar
 import json
 import re
@@ -30,7 +35,8 @@ from sextant.paper.sessions import Session, session_at
 B_LANE = "alpaca-paper-b"
 TRAIL_PERCENT_NAME = "native_trail_fraction"
 CLAIM_LATENCY_NAME = "claim_max_latency_s"
-PARAMETER_NAMES = frozenset({TRAIL_PERCENT_NAME, CLAIM_LATENCY_NAME})
+RECONCILE_INTERVAL_NAME = "reconcile_interval_s"
+PARAMETER_NAMES = frozenset({TRAIL_PERCENT_NAME, CLAIM_LATENCY_NAME, RECONCILE_INTERVAL_NAME})
 PARAMETER_KEYS = frozenset({"name", "unit", "value", "source", "calibration_state", "last_change"})
 MAX_TRAIL_FRACTION = Decimal("0.025")
 FILL_EVENTS = frozenset({"fill", "partial_fill"})
@@ -56,20 +62,25 @@ class Page:
 
 @dataclass(frozen=True)
 class BParameters:
-    """B's two reviewed starting parameters, both UNCALIBRATED."""
+    """B's three reviewed starting parameters, all UNCALIBRATED."""
 
     native_trail_fraction: Decimal
     claim_max_latency_s: Decimal
+    reconcile_interval_s: Decimal
 
     def __post_init__(self) -> None:
         fraction = _decimal(self.native_trail_fraction, TRAIL_PERCENT_NAME)
         latency = _decimal(self.claim_max_latency_s, CLAIM_LATENCY_NAME)
+        interval = _decimal(self.reconcile_interval_s, RECONCILE_INTERVAL_NAME)
         object.__setattr__(self, "native_trail_fraction", fraction)
         object.__setattr__(self, "claim_max_latency_s", latency)
+        object.__setattr__(self, "reconcile_interval_s", interval)
         if fraction <= 0 or fraction > MAX_TRAIL_FRACTION:
             raise ValueError("native_trail_fraction must be in (0, 0.025]")
         if latency <= 0:
             raise ValueError("claim_max_latency_s must be positive")
+        if interval <= 0:
+            raise ValueError("reconcile_interval_s must be positive")
 
 
 def _decimal(value: object, field: str) -> Decimal:
@@ -117,7 +128,11 @@ def load_b_parameters(path: Path) -> BParameters:
         values[name] = _decimal(row["value"], name)
     if set(values) != PARAMETER_NAMES:
         raise ValueError("B parameter registry is incomplete")
-    return BParameters(values[TRAIL_PERCENT_NAME], values[CLAIM_LATENCY_NAME])
+    return BParameters(
+        values[TRAIL_PERCENT_NAME],
+        values[CLAIM_LATENCY_NAME],
+        values[RECONCILE_INTERVAL_NAME],
+    )
 
 
 class TradingClientLike(Protocol):
@@ -180,6 +195,9 @@ class Protector:
         self._last_position: dict[str, Decimal] = {}
         self._last_reserved: dict[str, Decimal] = {}
         self._sequence = 0
+        opened_ns = self._now_ns()
+        self._last_reconcile_ns = opened_ns
+        self._last_session = session_at(opened_ns)
 
     def page(self, reason: str, symbol: str | None = None, detail: str = "") -> None:
         page = Page(reason=reason, symbol=symbol, detail=detail)
@@ -215,6 +233,24 @@ class Protector:
             if event in RESERVATION_END_EVENTS:
                 self.reconcile()
 
+    def reconcile_when_due(self) -> bool:
+        """Reconcile on B's cadence, and once when the regular session opens.
+
+        A trade update reconciles only because the owner or the broker acted; the cadence is
+        what notices a trail the broker lost while nothing happened. The open is its own
+        trigger so a position that rested unprotected through the close is re-armed at once,
+        without waiting for the interval. Returns whether a reconcile ran.
+        """
+
+        now = self._now_ns()
+        session = session_at(now)
+        opened = session is Session.RTH and self._last_session is not Session.RTH
+        interval_ns = int(self._parameters.reconcile_interval_s * NS_PER_SECOND)
+        if not opened and now - self._last_reconcile_ns < interval_ns:
+            return False
+        self.reconcile()
+        return True
+
     def reconcile(self, *, strict_custody: bool = False) -> dict[str, Position]:
         """Match the broker's open orders and positions, then protect the whole shares.
 
@@ -222,6 +258,9 @@ class Protector:
         already reconciled: newly discovered custody must be claimed by an owner fill first.
         """
 
+        now_ns = self._now_ns()
+        self._last_reconcile_ns = now_ns
+        self._last_session = session_at(now_ns)
         try:
             positions, house, owner_sells, unrecognized = self._snapshot()
         except ProtectorRefusal as exc:
@@ -545,7 +584,10 @@ class Protector:
 
 
 class ProtectorStream(TradingStream):
-    """The SDK's trade-update stream with a reconcile hook on every (re)connect."""
+    """The SDK's trade-update stream with reconcile hooks on (re)connect and on a cadence."""
+
+    # The registry interval is the policy; a one-second tick only bounds its jitter.
+    SCHEDULE_TICK_S = 1.0
 
     def __init__(
         self,
@@ -587,6 +629,25 @@ class ProtectorStream(TradingStream):
             self.protector.reconcile(strict_custody=strict_custody)
         except Exception as exc:
             self.protector.page("reconcile_failed", None, type(exc).__name__)
+
+    async def _scheduled_reconcile(self) -> None:
+        while True:
+            await asyncio.sleep(self.SCHEDULE_TICK_S)
+            try:
+                self.protector.reconcile_when_due()
+            except Exception as exc:
+                self.protector.page("reconcile_failed", None, type(exc).__name__)
+
+    async def _run_forever(self) -> None:
+        schedule = asyncio.create_task(self._scheduled_reconcile())
+        try:
+            await super()._run_forever()
+        finally:
+            schedule.cancel()
+            try:
+                await schedule
+            except asyncio.CancelledError:
+                pass
 
     def run(self) -> None:
         self.protector.bind()

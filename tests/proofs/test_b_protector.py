@@ -49,6 +49,7 @@ def b_params(**overrides: Decimal) -> BParameters:
     facts = {
         "native_trail_fraction": Decimal("0.025"),
         "claim_max_latency_s": Decimal("11"),
+        "reconcile_interval_s": Decimal("10"),
     }
     return BParameters(**(facts | overrides))
 
@@ -199,24 +200,22 @@ def protector(client, *, now=NOW_NS, account=None, params=None) -> Protector:
 def test_the_registry_carries_b_the_reviewed_trail_and_claim_latency(tmp_path):
     path = ROOT / "lanes/paper/b-parameters.json"
     params = load_b_parameters(path)
-    assert (
-        params.native_trail_fraction
-        == BParameters(Decimal("0.025"), Decimal("11")).native_trail_fraction
-    )
-    assert (
-        params.claim_max_latency_s
-        == BParameters(Decimal("0.025"), Decimal("11")).claim_max_latency_s
-    )
+    assert params.native_trail_fraction == b_params().native_trail_fraction
+    assert params.claim_max_latency_s == b_params().claim_max_latency_s
 
     rows = json.loads(path.read_text())
-    assert {row["name"] for row in rows} == {"native_trail_fraction", "claim_max_latency_s"}
+    assert {row["name"] for row in rows} == {
+        "native_trail_fraction",
+        "claim_max_latency_s",
+        "reconcile_interval_s",
+    }
     assert all(row["calibration_state"] == "UNCALIBRATED" for row in rows)
     assert all(row["source"] for row in rows)
 
     with pytest.raises(ValueError):
-        BParameters(Decimal("0.03"), Decimal("11"))
+        BParameters(Decimal("0.03"), Decimal("11"), Decimal("10"))
     with pytest.raises(ValueError):
-        BParameters(Decimal("0.025"), Decimal("0"))
+        BParameters(Decimal("0.025"), Decimal("0"), Decimal("10"))
 
     incomplete = tmp_path / "b-parameters.json"
     incomplete.write_text(json.dumps([rows[0]]))
