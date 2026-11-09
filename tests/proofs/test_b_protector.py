@@ -46,10 +46,7 @@ def b_account() -> PaperAccount:
 
 
 def b_params(**overrides: Decimal) -> BParameters:
-    facts = {
-        "native_trail_fraction": Decimal("0.025"),
-        "claim_max_latency_s": Decimal("11"),
-    }
+    facts = {"native_trail_fraction": Decimal("0.025")}
     return BParameters(**(facts | overrides))
 
 
@@ -215,30 +212,21 @@ def protector(client, *, now=NOW_NS, account=None, params=None) -> Protector:
     )
 
 
-def test_the_registry_carries_b_the_reviewed_trail_and_claim_latency(tmp_path):
+def test_the_registry_carries_b_the_reviewed_trail(tmp_path):
     path = ROOT / "lanes/paper/b-parameters.json"
     params = load_b_parameters(path)
-    assert (
-        params.native_trail_fraction
-        == BParameters(Decimal("0.025"), Decimal("11")).native_trail_fraction
-    )
-    assert (
-        params.claim_max_latency_s
-        == BParameters(Decimal("0.025"), Decimal("11")).claim_max_latency_s
-    )
+    assert params.native_trail_fraction == BParameters(Decimal("0.025")).native_trail_fraction
 
     rows = json.loads(path.read_text())
-    assert {row["name"] for row in rows} == {"native_trail_fraction", "claim_max_latency_s"}
+    assert {row["name"] for row in rows} == {"native_trail_fraction"}
     assert all(row["calibration_state"] == "UNCALIBRATED" for row in rows)
     assert all(row["source"] for row in rows)
 
     with pytest.raises(ValueError):
-        BParameters(Decimal("0.03"), Decimal("11"))
-    with pytest.raises(ValueError):
-        BParameters(Decimal("0.025"), Decimal("0"))
+        BParameters(Decimal("0.03"))
 
     incomplete = tmp_path / "b-parameters.json"
-    incomplete.write_text(json.dumps([rows[0]]))
+    incomplete.write_text(json.dumps([]))
     with pytest.raises(ValueError):
         load_b_parameters(incomplete)
     with pytest.raises(ValueError):
@@ -278,7 +266,7 @@ def test_owner_orders_are_never_cancelled_replaced_or_resized():
     assert str(owner.id) not in client.cancelled
 
     p.handle(api_update(owner, event="canceled", position_qty=10.0))
-    assert client.cancelled == []
+    assert str(owner.id) not in client.cancelled
     assert client.replaced == []
 
 
@@ -307,7 +295,6 @@ def test_an_owner_working_sell_reserves_those_shares_from_the_house_trail():
 
     assert client.cancelled == [str(house.id)]
     assert client.submitted == []
-    assert "quantity_mismatch" in [page.reason for page in p.pages]
 
     p.handle(api_update(house, event="canceled", position_qty=10.0))
     assert [request.qty for request in client.submitted] == [6]
@@ -318,6 +305,22 @@ def test_an_owner_working_sell_reserves_those_shares_from_the_house_trail():
     p.bind()
     p.reconcile()
 
+    assert client.submitted == []
+    assert "owner_reserved_unprotected" in [page.reason for page in p.pages]
+
+    house = api_order(
+        client_order_id="B001-trail-AAPL-all",
+        side="sell",
+        qty="10",
+        order_type="trailing_stop",
+        trail_percent="2.5",
+    )
+    client = FakeTradingClient(positions=[api_position("10")], orders=[full, house])
+    p = protector(client)
+    p.bind()
+    p.reconcile()
+
+    assert client.cancelled == [str(house.id)]
     assert client.submitted == []
     assert "owner_reserved_unprotected" in [page.reason for page in p.pages]
 
@@ -345,13 +348,18 @@ def test_an_owner_sell_cancel_arms_the_freed_shares_to_protective():
     # The old 6-share trail is cancelled first; the resize waits for its terminal event.
     assert client.submitted == []
     assert client.cancelled == [str(house.id)]
+    assert client.submitted == []
     assert str(owner.id) not in client.cancelled
     p.handle(api_update(house, event="canceled", position_qty=10.0))
     assert [request.qty for request in client.submitted] == [10]
     assert client.replaced == []
 
+    p.handle(api_update(house, event="canceled", position_qty=10.0))
 
-def test_an_owner_order_event_cancels_an_oversized_house_trail_before_freezing():
+    assert [request.qty for request in client.submitted] == [10]
+
+
+def test_an_owner_order_event_rearms_an_oversized_house_trail_without_freezing():
     house = api_order(
         client_order_id="B001-trail-AAPL-old",
         side="sell",
@@ -368,17 +376,16 @@ def test_an_owner_order_event_cancels_an_oversized_house_trail_before_freezing()
 
     assert client.cancelled == [str(house.id)]
     assert str(owner.id) not in client.cancelled
-    assert "AAPL" in p.frozen
-    assert "owner_event_fail_closed" in [page.reason for page in p.pages]
     assert client.submitted == []
+    assert "owner_event_fail_closed" not in [page.reason for page in p.pages]
+    assert "quantity_mismatch" not in [page.reason for page in p.pages]
 
     p.handle(api_update(house, event="canceled"))
 
     assert [request.qty for request in client.submitted] == [6]
-    assert "AAPL" not in p.frozen
 
 
-def test_a_refused_claim_clock_cancels_a_stale_house_trail_before_freezing():
+def test_a_late_owner_fill_rearms_a_stale_house_trail_instead_of_refusing():
     stale = api_order(
         client_order_id="B001-trail-AAPL-stale",
         side="sell",
@@ -400,17 +407,15 @@ def test_a_refused_claim_clock_cancels_a_stale_house_trail_before_freezing():
     )
 
     assert client.cancelled == [str(stale.id)]
-    assert "AAPL" in p.frozen
-    assert "claim_too_late" in [page.reason for page in p.pages]
     assert client.submitted == []
+    assert "claim_too_late" not in [page.reason for page in p.pages]
 
     p.handle(api_update(stale, event="canceled"))
 
     assert [request.qty for request in client.submitted] == [6]
-    assert "AAPL" not in p.frozen
 
 
-def test_more_than_one_house_exit_cancels_the_excess_before_freezing():
+def test_more_than_one_house_exit_cancels_the_excess_and_keeps_the_full_trail():
     keep = api_order(
         client_order_id="B001-trail-AAPL-a",
         side="sell",
@@ -432,24 +437,68 @@ def test_more_than_one_house_exit_cancels_the_excess_before_freezing():
     p.reconcile()
 
     assert client.cancelled == [str(excess.id)]
-    assert "AAPL" in p.frozen
-    assert "more_than_one_house_exit" in [page.reason for page in p.pages]
-    assert [order.client_order_id for order in client.orders] == ["B001-trail-AAPL-a"]
+    assert client.submitted == []
+    trails = [order for order in client.orders if order.client_order_id.startswith("B001-")]
+    assert [Decimal(order.qty) for order in trails] == [Decimal("10")]
 
     p.reconcile()
 
-    assert "AAPL" not in p.frozen
     assert client.submitted == []
 
 
-def test_an_unrecognized_foreign_order_freezes_the_symbol():
+class _StalledCancel(FakeTradingClient):
+    """Records every cancel request, but lets the first one fail before the rest."""
+
+    def __init__(self, *args, stalled_id, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.stalled_id = str(stalled_id)
+
+    def cancel_order_by_id(self, order_id) -> None:
+        self.calls.append("cancel_order_by_id")
+        self.cancelled.append(str(order_id))
+        if str(order_id) == self.stalled_id:
+            raise ConnectionError("cancel request stalled")
+        self.orders = [o for o in self.orders if str(o.id) != str(order_id)]
+
+
+def test_a_stalled_house_trail_cancel_still_attempts_the_other_cancel():
+    first = api_order(
+        client_order_id="B001-trail-AAPL-a",
+        side="sell",
+        qty="12",
+        order_type="trailing_stop",
+        trail_percent="2.5",
+    )
+    second = api_order(
+        client_order_id="B001-trail-AAPL-b",
+        side="sell",
+        qty="11",
+        order_type="trailing_stop",
+        trail_percent="2.5",
+    )
+    client = _StalledCancel(
+        positions=[api_position("10")], orders=[first, second], stalled_id=first.id
+    )
+    p = protector(client)
+    p.bind()
+
+    p.reconcile()
+
+    assert client.cancelled == [str(first.id), str(second.id)]
+    assert str(second.id) not in [str(order.id) for order in client.orders]
+    assert str(first.id) in [str(order.id) for order in client.orders]
+    assert client.submitted == []
+    assert "cancel_failed" in [page.reason for page in p.pages]
+
+
+def test_an_unrecognized_foreign_order_pages_but_still_protects():
     foreign = api_order(client_order_id="owner-unknown-1").model_copy(update={"side": None})
     client = FakeTradingClient(positions=[api_position("10")], orders=[foreign])
     p = protector(client)
     p.bind()
     p.reconcile()
 
-    assert client.submitted == []
+    assert [request.qty for request in client.submitted] == [10]
     assert "unrecognized_open_order" in [page.reason for page in p.pages]
 
 
@@ -525,7 +574,74 @@ def test_an_existing_house_trail_outside_rth_is_adopted():
     assert p.emulated_trigger("AAPL") == Decimal("97.50")
 
 
-def test_a_house_trail_that_would_oversell_is_cancelled_and_pages():
+def test_an_owner_add_outside_rth_resizes_after_the_terminal_cancel():
+    house = api_order(
+        client_order_id="B001-trail-AAPL-old",
+        side="sell",
+        qty="10",
+        order_type="trailing_stop",
+        trail_percent="2.5",
+    )
+    after_hours = datetime(2026, 11, 9, 20, 30, tzinfo=ET)
+    client = FakeTradingClient(positions=[api_position("12")], orders=[house])
+    p = protector(client, now=ns(after_hours))
+    p.bind()
+    p.reconcile()
+
+    assert client.cancelled == [str(house.id)]
+    assert client.submitted == []
+    assert [page.reason for page in p.pages] == []
+
+    p.handle(api_update(house, event="canceled", position_qty=12.0))
+
+    assert [request.qty for request in client.submitted] == [12]
+
+
+def test_an_oversized_house_trail_is_cancelled_outside_rth_before_the_rearm():
+    house = api_order(
+        client_order_id="B001-trail-AAPL-big",
+        side="sell",
+        qty="10",
+        order_type="trailing_stop",
+        trail_percent="2.5",
+    )
+    after_hours = datetime(2026, 11, 9, 20, 30, tzinfo=ET)
+    client = FakeTradingClient(positions=[api_position("9")], orders=[house])
+    p = protector(client, now=ns(after_hours))
+    p.bind()
+    p.reconcile()
+
+    assert client.cancelled == [str(house.id)]
+    assert client.submitted == []
+    assert [page.reason for page in p.pages] == []
+
+    p.handle(api_update(house, event="canceled", position_qty=9.0))
+
+    assert [request.qty for request in client.submitted] == [9]
+
+
+def test_the_rearm_submits_only_after_the_cancelled_house_trail_event():
+    house = api_order(
+        client_order_id="B001-trail-AAPL-small",
+        side="sell",
+        qty="6",
+        order_type="trailing_stop",
+        trail_percent="2.5",
+    )
+    client = FakeTradingClient(positions=[api_position("10")], orders=[house])
+    p = protector(client)
+    p.bind()
+    p.reconcile()
+
+    assert client.cancelled == [str(house.id)]
+    assert client.submitted == []
+
+    p.handle(api_update(house, event="canceled", position_qty=10.0))
+
+    assert [request.qty for request in client.submitted] == [10]
+
+
+def test_a_house_trail_that_would_oversell_is_replaced_with_the_net_quantity():
     house = api_order(
         client_order_id="B001-trail-AAPL-old",
         side="sell",
@@ -540,7 +656,11 @@ def test_a_house_trail_that_would_oversell_is_cancelled_and_pages():
 
     assert client.cancelled == [str(house.id)]
     assert client.submitted == []
-    assert "quantity_mismatch" in [page.reason for page in p.pages]
+    assert "quantity_mismatch" not in [page.reason for page in p.pages]
+
+    p.handle(api_update(house, event="canceled", position_qty=9.0))
+
+    assert [request.qty for request in client.submitted] == [9]
 
 
 def test_a_fractional_position_protects_whole_shares_and_pages_the_remainder():
@@ -553,7 +673,38 @@ def test_a_fractional_position_protects_whole_shares_and_pages_the_remainder():
     assert "fractional_custody_unverified" in [page.reason for page in p.pages]
 
 
-def test_an_owner_add_pages_and_leaves_the_house_trail_alone():
+def test_partial_fills_of_one_owner_limit_end_fully_protected():
+    owner = api_order(client_order_id="owner-buy-limit", qty="10")
+    client = FakeTradingClient(positions=[api_position("4")], orders=[owner])
+    p = protector(client)
+    p.bind()
+
+    p.handle(api_update(owner, event="partial_fill", position_qty=4.0))
+    first = client.orders[-1]
+    assert [request.qty for request in client.submitted] == [4]
+
+    client.positions = [api_position("7")]
+    p.handle(api_update(owner, event="partial_fill", position_qty=7.0))
+    assert client.cancelled == [str(first.id)]
+    assert [request.qty for request in client.submitted] == [4]
+
+    p.handle(api_update(first, event="canceled", position_qty=7.0))
+    second = client.orders[-1]
+    assert [request.qty for request in client.submitted] == [4, 7]
+
+    client.positions = [api_position("10")]
+    p.handle(api_update(owner, event="partial_fill", position_qty=10.0))
+    assert client.cancelled == [str(first.id), str(second.id)]
+    assert [request.qty for request in client.submitted] == [4, 7]
+
+    p.handle(api_update(second, event="canceled", position_qty=10.0))
+    assert [request.qty for request in client.submitted] == [4, 7, 10]
+    trails = [order for order in client.orders if order.client_order_id.startswith("B001-")]
+    assert [(Decimal(order.qty), order.filled_qty) for order in trails] == [(Decimal("10"), "0")]
+    assert client.replaced == []
+
+
+def test_an_owner_add_on_a_protected_symbol_rearms_the_house_trail_to_protective():
     house = api_order(
         client_order_id="B001-trail-AAPL-old",
         side="sell",
@@ -568,12 +719,17 @@ def test_an_owner_add_pages_and_leaves_the_house_trail_alone():
     client.positions = [api_position("12")]
     p.reconcile()
 
-    assert client.cancelled == []
+    assert client.cancelled == [str(house.id)]
     assert client.submitted == []
-    assert "owner_add_unprotected" in [page.reason for page in p.pages]
+    assert client.replaced == []
+    assert "owner_add_unprotected" not in [page.reason for page in p.pages]
+
+    p.handle(api_update(house, event="canceled", position_qty=12.0))
+
+    assert [request.qty for request in client.submitted] == [12]
 
 
-def test_a_late_or_invalid_claim_clock_never_claims():
+def test_a_late_or_skewed_owner_fill_clock_still_protects():
     client = FakeTradingClient(positions=[api_position("10")])
     p = protector(client)
     p.bind()
@@ -585,8 +741,8 @@ def test_a_late_or_invalid_claim_clock_never_claims():
             position_qty=10.0,
         )
     )
-    assert client.submitted == []
-    assert "claim_too_late" in [page.reason for page in p.pages]
+    assert [request.qty for request in client.submitted] == [10]
+    assert "claim_too_late" not in [page.reason for page in p.pages]
 
     p.handle(
         api_update(
@@ -596,8 +752,8 @@ def test_a_late_or_invalid_claim_clock_never_claims():
             position_qty=10.0,
         )
     )
-    assert client.submitted == []
-    assert "invalid_claim_clock" in [page.reason for page in p.pages]
+    assert [request.qty for request in client.submitted] == [10]
+    assert "invalid_claim_clock" not in [page.reason for page in p.pages]
 
 
 def test_a_lost_house_trail_pages_and_rearms():
@@ -647,7 +803,7 @@ class FakePacer:
         send(lambda: None)
 
 
-def test_a_fill_quantity_mismatch_freezes_before_any_submit():
+def test_a_fill_quantity_mismatch_protects_the_broker_position():
     client = FakeTradingClient(positions=[api_position("10")])
     p = protector(client)
     p.bind()
@@ -660,12 +816,11 @@ def test_a_fill_quantity_mismatch_freezes_before_any_submit():
         )
     )
 
-    assert client.submitted == []
-    assert "quantity_mismatch" in [page.reason for page in p.pages]
-    assert "AAPL" in p.frozen
+    assert [request.qty for request in client.submitted] == [10]
+    assert "quantity_mismatch" not in [page.reason for page in p.pages]
 
 
-def test_a_reconnect_refuses_new_custody_without_a_claim(monkeypatch):
+def test_a_reconnect_protects_new_custody_without_a_claim(monkeypatch):
     async def no_connect(self) -> None:
         return None
 
@@ -686,12 +841,11 @@ def test_a_reconnect_refuses_new_custody_without_a_claim(monkeypatch):
     client.positions = [api_position("10")]
     asyncio.run(stream._start_ws())
 
-    assert client.submitted == []
-    assert "custody_unclaimed" in [page.reason for page in stream.protector.pages]
-    assert "AAPL" in stream.protector.frozen
+    assert [request.qty for request in client.submitted] == [10]
+    assert "custody_unclaimed" not in [page.reason for page in stream.protector.pages]
 
 
-def test_the_fail_closed_path_keeps_an_unknown_reservation():
+def test_an_unknown_reservation_never_cancels_the_house_trail():
     house = api_order(
         client_order_id="B001-trail-AAPL-old",
         side="sell",
@@ -706,9 +860,8 @@ def test_the_fail_closed_path_keeps_an_unknown_reservation():
 
     p.handle(api_update(foreign, event="new"))
 
-    assert client.cancelled == [str(house.id)]
+    assert client.cancelled == []
     assert "unrecognized_open_order" in [page.reason for page in p.pages]
-    assert "AAPL" in p.frozen
     assert client.submitted == []
 
 

@@ -1,22 +1,21 @@
 """B's owner-fill protector on alpaca-py's TradingClient and TradingStream (clean B PR-1).
 
-The protector claims only positively reconciled owner fills, puts one native trailing stop on
-the reconcilable whole shares, and never cancels, replaces or resizes an owner order. Outside
-regular market hours the native trail rests but does not trigger, so the protector emulates
-its trigger from quotes through NautilusTrader's own calculator and, after a persistent run
-of eligible trades, cancels the trail and releases one marketable extended-hours LIMIT
-(``docs/design.md`` X4; Alpaca orders page read 2026-11-09).
+The protector covers every unreserved whole long share with exactly one native trailing stop
+of the full net quantity, re-arms it on every change, and never cancels, replaces or resizes
+an owner order. Outside regular market hours the native trail rests but does not trigger, so
+the protector adopts or emulates its trigger from quotes through NautilusTrader's own
+calculator and, after a persistent run of eligible trades, cancels the trail and releases one
+marketable extended-hours LIMIT (``docs/design.md`` X4; Alpaca orders page read 2026-11-09).
 """
 
 from __future__ import annotations
 
-import calendar
 import json
 import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import date
 from decimal import ROUND_FLOOR, Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Protocol
@@ -38,16 +37,13 @@ from sextant.paper.sessions import Session, session_at
 
 B_LANE = "alpaca-paper-b"
 TRAIL_PERCENT_NAME = "native_trail_fraction"
-CLAIM_LATENCY_NAME = "claim_max_latency_s"
-PARAMETER_NAMES = frozenset({TRAIL_PERCENT_NAME, CLAIM_LATENCY_NAME})
+PARAMETER_NAMES = frozenset({TRAIL_PERCENT_NAME})
 PARAMETER_KEYS = frozenset({"name", "unit", "value", "source", "calibration_state", "last_change"})
 MAX_TRAIL_FRACTION = Decimal("0.025")
 FILL_EVENTS = frozenset({"fill", "partial_fill"})
-RESERVATION_END_EVENTS = frozenset({"canceled", "expired", "done_for_day"})
 TERMINAL_EVENTS = frozenset({"canceled", "expired", "rejected", "stopped", "done_for_day"})
 OPEN_ORDER_LIMIT = 500
 MAX_CLIENT_ORDER_ID = 128
-NS_PER_SECOND = Decimal(1_000_000_000)
 
 
 class ProtectorRefusal(RuntimeError):
@@ -72,20 +68,15 @@ class _PendingRelease:
 
 @dataclass(frozen=True)
 class BParameters:
-    """B's two reviewed starting parameters, both UNCALIBRATED."""
+    """B's one reviewed starting parameter, UNCALIBRATED."""
 
     native_trail_fraction: Decimal
-    claim_max_latency_s: Decimal
 
     def __post_init__(self) -> None:
         fraction = _decimal(self.native_trail_fraction, TRAIL_PERCENT_NAME)
-        latency = _decimal(self.claim_max_latency_s, CLAIM_LATENCY_NAME)
         object.__setattr__(self, "native_trail_fraction", fraction)
-        object.__setattr__(self, "claim_max_latency_s", latency)
         if fraction <= 0 or fraction > MAX_TRAIL_FRACTION:
             raise ValueError("native_trail_fraction must be in (0, 0.025]")
-        if latency <= 0:
-            raise ValueError("claim_max_latency_s must be positive")
 
 
 def _decimal(value: object, field: str) -> Decimal:
@@ -133,7 +124,7 @@ def load_b_parameters(path: Path) -> BParameters:
         values[name] = _decimal(row["value"], name)
     if set(values) != PARAMETER_NAMES:
         raise ValueError("B parameter registry is incomplete")
-    return BParameters(values[TRAIL_PERCENT_NAME], values[CLAIM_LATENCY_NAME])
+    return BParameters(values[TRAIL_PERCENT_NAME])
 
 
 class TradingClientLike(Protocol):
@@ -150,15 +141,6 @@ class TradingClientLike(Protocol):
 
 def _event_name(event: object) -> str:
     return str(getattr(event, "value", event))
-
-
-def _timestamp_ns(value: datetime | None) -> int | None:
-    if value is None:
-        return None
-    if value.tzinfo is None:
-        value = value.replace(tzinfo=UTC)
-    seconds = calendar.timegm(value.utctimetuple())
-    return seconds * 1_000_000_000 + value.microsecond * 1_000
 
 
 def _leaves(order: Order) -> Decimal:
@@ -196,7 +178,6 @@ class Protector:
         self._now_ns = now_ns
         self._on_page = on_page
         self.pages: list[Page] = []
-        self.frozen: set[str] = set()
         self._cancelling: set[str] = set()
         self._last_position: dict[str, Decimal] = {}
         self._last_reserved: dict[str, Decimal] = {}
@@ -391,22 +372,16 @@ class Protector:
         event = _event_name(update.event)
         if self._is_ours(update.order):
             self._handle_house(update, symbol, event)
-        elif event in FILL_EVENTS:
-            self._handle_owner_fill(update, symbol)
-        else:
-            self._fail_closed(
-                symbol,
-                "owner_event_fail_closed",
-                f"owner order event {event}",
-            )
-            if event in RESERVATION_END_EVENTS:
-                self.reconcile()
+            return
+        # Any owner order event may change a reservation or the position: reconcile and
+        # re-arm. Non-fill events never freeze the symbol.
+        self.reconcile()
 
-    def reconcile(self, *, strict_custody: bool = False) -> dict[str, Position]:
-        """Match the broker's open orders and positions, then protect the whole shares.
+    def reconcile(self) -> dict[str, Position]:
+        """Match the broker's open orders and positions, then protect the whole net shares.
 
-        On a reconnect ``strict_custody`` refuses to trail a position the protector has not
-        already reconciled: newly discovered custody must be claimed by an owner fill first.
+        Every unreserved whole long share is covered by exactly one house trail of the full
+        net quantity; a change in that quantity re-arms it during regular market hours.
         """
 
         try:
@@ -415,34 +390,18 @@ class Protector:
             self.page("open_orders_truncated", None, str(exc))
             return {}
         self._house = {symbol: list(ours) for symbol, ours in house.items()}
+        self._last_position = {
+            symbol: _decimal(position.qty, "position.qty") for symbol, position in positions.items()
+        }
+        self._last_reserved = {symbol: owner_sells.get(symbol, Decimal(0)) for symbol in positions}
         for symbol, position in positions.items():
-            quantity = _decimal(position.qty, "position.qty")
-            previous_position = self._last_position.get(symbol)
-            if strict_custody and (previous_position is None or quantity > previous_position):
-                self._fail_closed(
-                    symbol,
-                    "custody_unclaimed",
-                    "reconnect found custody that no owner fill has claimed",
-                )
-                continue
-            reserved = owner_sells.get(symbol, Decimal(0))
-            previous = self._last_reserved.get(symbol)
-            freed = symbol not in self._last_position or (
-                previous is not None and reserved < previous
-            )
             self._reconcile_symbol(
                 symbol,
                 position,
                 house.pop(symbol, []),
-                reserved,
+                owner_sells.get(symbol, Decimal(0)),
                 symbol in unrecognized,
-                freed,
             )
-            self._last_position[symbol] = _decimal(position.qty, "position.qty")
-            self._last_reserved[symbol] = reserved
-        for symbol in set(self._last_position) - set(positions):
-            self._last_position.pop(symbol, None)
-            self._last_reserved.pop(symbol, None)
         for symbol, ours in house.items():
             if symbol not in positions:
                 for order in ours:
@@ -495,41 +454,12 @@ class Protector:
                 unrecognized.add(order.symbol)
         return positions, house, owner_sells, unrecognized
 
-    def _fail_closed(self, symbol: str, reason: str, detail: str) -> None:
-        """Broker-first read, cancel only the house's excess, freeze the symbol, page."""
+    def _cancel_all(self, ours: list[Order], reason: str) -> None:
+        for order in ours:
+            self._cancel(order, reason)
 
-        try:
-            positions, house, owner_sells, unrecognized = self._snapshot()
-        except Exception as exc:
-            self.frozen.add(symbol)
-            if isinstance(exc, ProtectorRefusal):
-                self.page("open_orders_truncated", symbol, str(exc))
-            self.page(reason, symbol, f"{detail}; reconcile_failed={type(exc).__name__}")
-            return
-        if symbol in unrecognized:
-            self._cancel_excess(house.get(symbol, []), 0, "unrecognized_open_order")
-            self.frozen.add(symbol)
-            self.page(
-                "unrecognized_open_order",
-                symbol,
-                "an open order has no buy/sell side, so its reservation is unknown",
-            )
-            self.page(reason, symbol, detail)
-            return
-        position = positions.get(symbol)
-        protective = 0
-        if position is not None:
-            quantity = _decimal(position.qty, "position.qty")
-            if quantity > 0:
-                available = quantity - owner_sells.get(symbol, Decimal(0))
-                if available > 0:
-                    protective = int(available.to_integral_value(rounding=ROUND_FLOOR))
-        self._cancel_excess(house.get(symbol, []), protective, reason)
-        self.frozen.add(symbol)
-        self.page(reason, symbol, detail)
-
-    def _cancel_excess(self, ours: list[Order], protective: int, reason: str) -> None:
-        """Leave at most one house exit, no larger than the unreserved whole shares."""
+    def _cancel_excess(self, ours: list[Order], protective: int, reason: str) -> list[Order]:
+        """Cancel house exits beyond one trail no larger than the protective quantity."""
 
         if len(ours) > 1:
             eligible = [order for order in ours if _leaves(order) <= protective]
@@ -537,66 +467,11 @@ class Protector:
             for order in ours:
                 if order is not keeper:
                     self._cancel(order, reason)
-            return
+            return [keeper] if keeper is not None else []
         if ours and _leaves(ours[0]) > protective:
             self._cancel(ours[0], reason)
-
-    @staticmethod
-    def _clean(ours: list[Order], protective: int) -> bool:
-        return len(ours) <= 1 and all(_leaves(order) <= protective for order in ours)
-
-    def _fail_claim(self, update: TradeUpdate, symbol: str, reason: str, detail: str) -> None:
-        """Fail closed, and after an owner sell partial fill arm the shares it frees."""
-
-        self._fail_closed(symbol, reason, detail)
-        if (
-            _event_name(update.event) == "partial_fill"
-            and _event_name(update.order.side).lower() == "sell"
-        ):
-            self.reconcile()
-
-    def _handle_owner_fill(self, update: TradeUpdate, symbol: str) -> None:
-        filled_ns = _timestamp_ns(update.timestamp)
-        if filled_ns is None:
-            self._fail_claim(update, symbol, "custody_unresolved", "owner fill has no timestamp")
-            return
-        now_ns = self._now_ns()
-        if filled_ns > now_ns:
-            self._fail_claim(
-                update, symbol, "invalid_claim_clock", "owner fill clock is in the future"
-            )
-            return
-        latency_ns = int(self._parameters.claim_max_latency_s * NS_PER_SECOND)
-        if now_ns - filled_ns > latency_ns:
-            self._fail_claim(
-                update, symbol, "claim_too_late", "owner fill is older than claim_max_latency_s"
-            )
-            return
-        if update.position_qty is None:
-            self._fail_claim(update, symbol, "custody_unresolved", "owner fill has no position_qty")
-            return
-        expected = _decimal(str(update.position_qty), "position_qty")
-        try:
-            positions, _, _, _ = self._snapshot()
-        except ProtectorRefusal as exc:
-            self._fail_claim(update, symbol, "custody_unresolved", f"snapshot refused: {exc}")
-            return
-        position = positions.get(symbol)
-        if position is None or _decimal(position.qty, "position.qty") != expected:
-            self._fail_closed(
-                symbol,
-                "quantity_mismatch",
-                "owner fill position_qty does not match the broker",
-            )
-            return
-        positions = self.reconcile()
-        position = positions.get(symbol)
-        if position is None or _decimal(position.qty, "position.qty") != expected:
-            self._fail_closed(
-                symbol,
-                "quantity_mismatch",
-                "owner fill position_qty does not match the broker after reconcile",
-            )
+            return []
+        return list(ours)
 
     def _handle_house(self, update: TradeUpdate, symbol: str, event: str) -> None:
         if event in FILL_EVENTS:
@@ -638,60 +513,36 @@ class Protector:
         ours: list[Order],
         owner_sell_reserved: Decimal,
         unrecognized_open_order: bool,
-        freed: bool,
     ) -> None:
         quantity = _decimal(position.qty, "position.qty")
         if quantity < 0:
             self.page("short_position_unprotected", symbol)
-            for order in ours:
-                self._cancel(order, "short_position")
+            self._cancel_all(ours, "short_position")
             return
         if quantity == 0:
-            for order in ours:
-                self._cancel(order, "flat_with_house_exit")
+            self._cancel_all(ours, "flat_with_house_exit")
             return
         if unrecognized_open_order:
             self.page(
                 "unrecognized_open_order",
                 symbol,
-                "an open order has no buy/sell side, so its reservation is unknown",
+                "an open order has no buy/sell side; only owner sells are netted out",
             )
-            for order in ours:
-                self._cancel(order, "unrecognized_open_order")
-            return
         available = quantity - owner_sell_reserved
-        if available < 0:
-            self.page(
-                "quantity_mismatch",
-                symbol,
-                "owner sell orders reserve more than the position",
-            )
-            self._cancel_excess(ours, 0, "quantity_mismatch")
-            self.frozen.add(symbol)
-            return
-        protective = int(available.to_integral_value(rounding=ROUND_FLOOR))
+        protective = 0
+        if available > 0:
+            protective = int(available.to_integral_value(rounding=ROUND_FLOOR))
         if quantity != quantity.to_integral_value() or available != protective:
             self.page("fractional_custody_unverified", symbol)
-        if symbol in self.frozen:
-            if not self._clean(ours, protective):
-                self._cancel_excess(ours, protective, "fail_closed_recheck")
-                return
-            self.frozen.discard(symbol)
         if protective == 0:
-            self._cancel_excess(ours, protective, "owner_reserved_unprotected")
-            self.frozen.add(symbol)
+            self._cancel_all(ours, "owner_reserved_unprotected")
             self.page("owner_reserved_unprotected", symbol)
-            return
-        if len(ours) > 1:
-            self._cancel_excess(ours, protective, "more_than_one_house_exit")
-            self.frozen.add(symbol)
-            self.page("more_than_one_house_exit", symbol)
             return
         session = session_at(self._now_ns())
         in_rth = session is Session.RTH
-        if session is Session.CLOSED:
-            self.page("market_closed", symbol, "B writes only in an open session")
-            return
+        # An oversized GTC trail is cancelled before the RTH guard, so it can never
+        # ride into the next open; only the replacement submit waits for RTH.
+        rest = self._cancel_excess(ours, protective, "rearm_full_protective_quantity")
         if symbol in self._pending_release:
             # The breach already decided the release; wait for the trail's terminal
             # cancellation instead of arming a second exit beside it.
@@ -699,31 +550,31 @@ class Protector:
         if symbol in self._pending_rearm:
             # A resize waits for the old exit's terminal event before it replaces it.
             return
-        if ours:
-            held = _leaves(ours[0])
-            limit = _is_limit(ours[0])
-            if held == protective:
-                if limit:
-                    self._released_symbols.discard(symbol)
-                elif not in_rth:
-                    self._adopt_outside(symbol, ours[0])
-                return
-            if held > protective:
-                self._cancel_excess(ours, protective, "quantity_mismatch")
-                self.frozen.add(symbol)
-                self.page("quantity_mismatch", symbol)
-                return
-            if limit or freed or not in_rth:
-                reason = "arm_freed_quantity" if freed and in_rth else "outside_rth_resize"
-                if self._cancel(ours[0], reason):
-                    self._pending_rearm[symbol] = str(ours[0].id)
-                return
-            self.page("owner_add_unprotected", symbol)
+        if session is Session.CLOSED:
+            self.page("market_closed", symbol, "B writes only in an open session")
+            return
+        if len(rest) == 1 and _leaves(rest[0]) == protective:
+            if _is_limit(rest[0]):
+                self._released_symbols.discard(symbol)
+            elif not in_rth:
+                self._adopt_outside(symbol, rest[0])
             return
         if not in_rth:
+            for order in rest:
+                if self._cancel(order, "outside_rth_resize"):
+                    self._pending_rearm[symbol] = str(order.id)
+            if ours:
+                return
             if symbol in self._released_symbols:
                 return
             self._submit_trail(symbol, protective)
+            return
+        for order in rest:
+            if self._cancel(order, "rearm_full_protective_quantity"):
+                self._pending_rearm[symbol] = str(order.id)
+        # The terminal canceled event of the house's own trail drives reconcile(),
+        # which submits the single replacement; never submit over a live exit.
+        if ours:
             return
         self._submit_trail(symbol, protective)
 
@@ -806,7 +657,6 @@ class ProtectorStream(TradingStream):
                 url_override=url_override,
             )
         self.protector = Protector(client, account, parameters, now_ns=now_ns, on_page=on_page)
-        self._connected = False
         self.subscribe_trade_updates(self._on_trade_update)
 
     async def _on_trade_update(self, update: TradeUpdate) -> None:
@@ -817,10 +667,8 @@ class ProtectorStream(TradingStream):
 
     async def _start_ws(self) -> None:
         await super()._start_ws()
-        strict_custody = self._connected
-        self._connected = True
         try:
-            self.protector.reconcile(strict_custody=strict_custody)
+            self.protector.reconcile()
         except Exception as exc:
             self.protector.page("reconcile_failed", None, type(exc).__name__)
 

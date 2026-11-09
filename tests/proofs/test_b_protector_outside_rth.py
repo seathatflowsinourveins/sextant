@@ -37,7 +37,7 @@ def b_account() -> PaperAccount:
 
 
 def b_params() -> BParameters:
-    return BParameters(native_trail_fraction=Decimal("0.025"), claim_max_latency_s=Decimal("11"))
+    return BParameters(native_trail_fraction=Decimal("0.025"))
 
 
 def api_account(number: str = "paper-fixture") -> TradeAccount:
