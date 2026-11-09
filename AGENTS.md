@@ -29,6 +29,7 @@ Everything here comes from a SOTA source: a maintained repo or framework at a pi
 - Follow the [landing verdict rule](.github/workflows/shared/review-rules.md#report): only Always P0 or a concrete exact-head failing witness blocks; other findings share one follow-up issue. From the third reviewed head, only P0 blocks.
 - Never push to `main`. If `main` goes red, revert.
 - Tracking is GitHub Issues only.
+- One Claude lead only: it orchestrates and does no lane work; Roster ops dispatches writers and Landing merges; dsh, Codex, Muse and agy do the work (the owner's orchestrator-only rule; the lead's lessons, 2026-11-09).
 
 Fill the author placeholder with your actual family (`codex`, `claude`, `dsh`, `muse` or `agy`); fill the second with another family allowed by the key policy, or delete that line. Unfilled placeholders block review. Use ASCII prefixes, one ASCII space and no colon. Matching scans the whole body, including comments and code blocks; a misspelled prefix is unrecognized. A new completed CI run selects the route for its exact head. AO's Codex worker refuses a Codex reviewer and preserves both markers.
 ```text
