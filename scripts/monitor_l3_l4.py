@@ -406,12 +406,14 @@ def router_snapshot(db: Path) -> dict[str, Any]:
     decode: dict[tuple[Any, ...], list[float]] = {}
     statuses: Counter[str] = Counter()
     providers: Counter[str] = Counter()
+    provider_statuses: Counter[tuple[str, str]] = Counter()
     for row in calls:
         provider = str(row["provider"] or "unknown")
         model = str(row["model"] or "unknown")
         key = (provider, model)
         statuses[str(row["status"])] += 1
         providers[provider] += 1
+        provider_statuses[(provider, str(row["status"]))] += 1
         ttft_ms = _number(row["ttft_ms"])
         duration_ms = _number(row["duration"])
         tokens_out = _number(row["tokens_out"])
@@ -460,6 +462,10 @@ def router_snapshot(db: Path) -> dict[str, Any]:
             "count": len(calls),
             "by_status": dict(sorted(statuses.items())),
             "by_provider": dict(sorted(providers.items())),
+            "by_provider_status": [
+                {"provider": provider, "status": status, "count": count}
+                for (provider, status), count in sorted(provider_statuses.items())
+            ],
         },
         "percentiles": {
             "ttft_ms": _summary(ttft, ("provider", "model")),
@@ -545,6 +551,12 @@ def _stream_bounds(stream: Sequence[Any]) -> tuple[float | None, float | None]:
     return first, last
 
 
+def _add_tokens(total: dict[str, int | None], usage: Mapping[str, int | None]) -> None:
+    for kind, count in usage.items():
+        previous = total.get(kind, 0)
+        total[kind] = previous + count if previous is not None and count is not None else None
+
+
 def read_dsh_session(path: Path) -> dict[str, Any]:
     """Return per-message stream timings and token totals from one v4 session."""
     payload = path.read_bytes()
@@ -552,7 +564,8 @@ def read_dsh_session(path: Path) -> dict[str, Any]:
         payload = decompress_zstd(payload)
     starts: dict[tuple[Any, Any], float] = {}
     calls: list[dict[str, Any]] = []
-    tokens: Counter[str] = Counter()
+    messages: list[dict[str, Any]] = []
+    tokens: dict[str, int | None] = {}
     provider = "unknown"
     model = "unknown"
     effort = "unknown"
@@ -578,18 +591,23 @@ def read_dsh_session(path: Path) -> dict[str, Any]:
                 starts[(data.get("turn"), data.get("step"))] = float(time)
         elif kind == "assistant/message":
             usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
-            input_tokens = int(usage.get("inputTokens") or 0)
-            output_tokens = int(usage.get("outputTokens") or 0)
+            input_tokens = (
+                int(usage["inputTokens"]) if usage.get("inputTokens") is not None else None
+            )
+            output_tokens = (
+                int(usage["outputTokens"]) if usage.get("outputTokens") is not None else None
+            )
             cache_read = int(usage.get("cacheReadTokens") or 0)
             cache_write = int(usage.get("cacheWriteTokens") or 0)
-            tokens.update(
-                {
-                    "input": input_tokens,
-                    "output": output_tokens,
-                    "cache_read": cache_read,
-                    "cache_write": cache_write,
-                }
-            )
+            usage_tokens = {
+                "input": input_tokens,
+                "output": output_tokens,
+                "cache_read": cache_read,
+                "cache_write": cache_write,
+            }
+            _add_tokens(tokens, usage_tokens)
+            attribution = {"provider": provider, "model": model, "effort": effort}
+            messages.append({**attribution, "tokens": usage_tokens})
             stream = data.get("stream")
             if not isinstance(stream, list) or not stream:
                 continue
@@ -600,11 +618,14 @@ def read_dsh_session(path: Path) -> dict[str, Any]:
             decode_ms = (last - first) if last is not None and last >= first else None
             calls.append(
                 {
+                    **attribution,
                     "ttft_ms": first - start,
                     "decode_ms": decode_ms,
                     "output_tokens": output_tokens,
                     "decode_tokens_per_second": (
-                        output_tokens / (decode_ms / 1000) if decode_ms else None
+                        output_tokens / (decode_ms / 1000)
+                        if decode_ms and output_tokens is not None
+                        else None
                     ),
                 }
             )
@@ -614,22 +635,26 @@ def read_dsh_session(path: Path) -> dict[str, Any]:
         "model": model,
         "effort": effort,
         "calls": calls,
-        "tokens": dict(tokens),
+        "messages": messages,
+        "tokens": tokens,
     }
 
 
 def deepseek_cost(
-    tokens: Mapping[str, int], params: Mapping[str, Mapping[str, Any]]
-) -> dict[str, Any]:
+    tokens: Mapping[str, int | None], params: Mapping[str, Mapping[str, Any]]
+) -> dict[str, Any] | None:
     """Published peak rates converted with the registry's dated CNY constant."""
+    input_tokens = tokens.get("input")
+    output_tokens = tokens.get("output")
+    cache_read = tokens.get("cache_read", 0)
+    if input_tokens is None or output_tokens is None or cache_read is None:
+        return None
     cny_per_usd = float(params["deepseek_cny_per_usd"]["value"])
     input_rate = float(params["deepseek_input_usd_per_mtok"]["value"])
     output_rate = float(params["deepseek_output_usd_per_mtok"]["value"])
     cache_rate = float(params["deepseek_cache_read_usd_per_mtok"]["value"])
     usd = (
-        tokens.get("input", 0) * input_rate
-        + tokens.get("output", 0) * output_rate
-        + tokens.get("cache_read", 0) * cache_rate
+        input_tokens * input_rate + output_tokens * output_rate + cache_read * cache_rate
     ) / 1_000_000
     return {
         "usd": usd,
@@ -654,7 +679,7 @@ def dsh_snapshot(root: Path, params: Mapping[str, Mapping[str, Any]]) -> dict[st
         }
     ttft: dict[tuple[Any, ...], list[float]] = {}
     decode: dict[tuple[Any, ...], list[float]] = {}
-    tokens_by_model: dict[tuple[str, str], Counter[str]] = {}
+    tokens_by_model: dict[tuple[str, str], dict[str, int | None]] = {}
     unreadable = 0
     parsed = 0
     calls = 0
@@ -665,9 +690,11 @@ def dsh_snapshot(root: Path, params: Mapping[str, Mapping[str, Any]]) -> dict[st
             unreadable += 1
             continue
         parsed += 1
-        key = (str(session["model"]), str(session["effort"]))
-        tokens_by_model.setdefault(key, Counter()).update(session["tokens"])
+        for message in session["messages"]:
+            key = (str(message["model"]), str(message["effort"]))
+            _add_tokens(tokens_by_model.setdefault(key, {}), message["tokens"])
         for call in session["calls"]:
+            key = (str(call["model"]), str(call["effort"]))
             calls += 1
             ttft.setdefault(key, []).append(float(call["ttft_ms"]))
             if call["decode_tokens_per_second"] is not None:
@@ -703,11 +730,11 @@ def dsh_snapshot(root: Path, params: Mapping[str, Mapping[str, Any]]) -> dict[st
                 "tokens": dict(tokens),
             }
         )
-    total_deepseek = Counter[str]()
+    total_deepseek: dict[str, int | None] = {}
     for key, tokens in tokens_by_model.items():
         if key[0].startswith("deepseek"):
-            total_deepseek.update(tokens)
-    cost = deepseek_cost(total_deepseek, params) if sum(total_deepseek.values()) else None
+            _add_tokens(total_deepseek, tokens)
+    cost = deepseek_cost(total_deepseek, params) if total_deepseek else None
     return {
         "root": str(root),
         "available": True,
@@ -1031,10 +1058,12 @@ def metric_rows(
 
     router = snap.get("router", {})
     if router.get("available"):
-        for status, count in router["calls"]["by_status"].items():
-            add("sextant.router.call.count", count, {"status": status})
-        for provider, count in router["calls"]["by_provider"].items():
-            add("sextant.router.call.count", count, {"provider": provider})
+        for row in router["calls"]["by_provider_status"]:
+            add(
+                "sextant.router.call.count",
+                row["count"],
+                {"provider": row["provider"], "status": row["status"]},
+            )
         units = {
             "ttft_ms": "ms",
             "duration_ms": "ms",

@@ -439,6 +439,25 @@ def test_selects_only_allowlisted_metadata_columns(tmp_path: Path) -> None:
             assert forbidden not in lowered
 
 
+def test_router_otlp_counts_each_call_once(tmp_path: Path) -> None:
+    router = mon.router_snapshot(_router_db(tmp_path / "storage.sqlite"))
+    rows = mon.metric_rows({"router": router}, _params(), NOW)
+    metrics = mon.otlp_payload(rows, NOW)["resourceMetrics"][0]["scopeMetrics"][0]["metrics"]
+    metric = next(metric for metric in metrics if metric["name"] == "sextant.router.call.count")
+    points = metric["gauge"]["dataPoints"]
+    assert sum(point["asDouble"] for point in points) == router["calls"]["count"] == 2
+    assert {
+        tuple(
+            (attribute["key"], attribute["value"]["stringValue"])
+            for attribute in point["attributes"]
+        ): point["asDouble"]
+        for point in points
+    } == {
+        (("provider", "agy"), ("status", "429")): 1.0,
+        (("provider", "codex"), ("status", "200")): 1.0,
+    }
+
+
 def test_quota_snapshots_keep_the_latest_row_per_window(tmp_path: Path) -> None:
     snapshot = mon.router_snapshot(_router_db(tmp_path / "storage.sqlite"))
     quotas = snapshot["quota"]
@@ -601,6 +620,119 @@ def test_dsh_v4_derives_ttft_and_decode_rate(tmp_path: Path) -> None:
     assert snapshot["deepseek"] is not None
     assert snapshot["deepseek"]["cny_per_usd"] == 6.7188
     assert snapshot["deepseek"]["cny"] == pytest.approx(snapshot["deepseek"]["usd"] * 6.7188)
+
+
+@pytest.mark.parametrize(
+    ("model", "effort"), [("gpt-6.1-sol", "xhigh"), ("deepseek-flash", "high")]
+)
+def test_dsh_selection_does_not_relabel_existing_usage(
+    tmp_path: Path, model: str, effort: str
+) -> None:
+    root = _dsh_root(tmp_path)
+    before = mon.dsh_snapshot(root, _params())
+    path = root / "sessions" / "work" / "uuid" / "session.v4.jsonl"
+    selection = {
+        "type": "model/selection",
+        "time": 4000,
+        "data": {"provider": "fixture", "model": model, "reasoningEffort": effort},
+    }
+    with path.open("a") as stream:
+        stream.write(json.dumps(selection) + "\n")
+    after = mon.dsh_snapshot(root, _params())
+    assert after["by_model"] == before["by_model"]
+    assert after["deepseek"] == before["deepseek"]
+    assert after["calls"] == before["calls"] == 1
+
+
+@pytest.mark.parametrize(
+    ("model", "effort"), [("gpt-6.1-sol", "xhigh"), ("deepseek-flash", "high")]
+)
+def test_dsh_messages_keep_their_model_and_effort(tmp_path: Path, model: str, effort: str) -> None:
+    root = _dsh_root(tmp_path)
+    before = mon.dsh_snapshot(root, _params())
+    path = root / "sessions" / "work" / "uuid" / "session.v4.jsonl"
+    events = [
+        {
+            "type": "model/selection",
+            "time": 4000,
+            "data": {"provider": "fixture", "model": model, "reasoningEffort": effort},
+        },
+        {"type": "step/start", "time": 5000, "data": {"turn": 2, "step": 1}},
+        {
+            "type": "assistant/message",
+            "time": 6200,
+            "data": {
+                "turn": 2,
+                "step": 1,
+                "usage": {
+                    "inputTokens": 3,
+                    "outputTokens": 7,
+                    "cacheReadTokens": 0,
+                    "cacheWriteTokens": 0,
+                },
+                "stream": [
+                    {"type": "chunk", "time": 5500},
+                    {"type": "chunk", "time": 6000},
+                ],
+            },
+        },
+    ]
+    with path.open("a") as stream:
+        stream.write("\n".join(json.dumps(event) for event in events) + "\n")
+    snapshot = mon.dsh_snapshot(root, _params())
+    by_model = {(row["model"], row["effort"]): row for row in snapshot["by_model"]}
+    assert by_model[("deepseek-flash", "max")] == before["by_model"][0]
+    added = by_model[(model, effort)]
+    assert added["tokens"] == {"input": 3, "output": 7, "cache_read": 0, "cache_write": 0}
+    assert added["ttft_ms"] == {"p50": 500.0, "p95": 500.0, "samples": 1}
+    assert added["decode_tokens_per_second"] == {"p50": 14.0, "p95": 14.0, "samples": 1}
+    assert snapshot["calls"] == 2
+    tokens = {"input": 110, "output": 25, "cache_read": 5}
+    if model.startswith("deepseek"):
+        tokens["input"] += 3
+        tokens["output"] += 7
+    assert snapshot["deepseek"] == mon.deepseek_cost(tokens, _params())
+
+
+@pytest.mark.parametrize("output_tokens", [None, 0])
+def test_dsh_missing_output_tokens_stay_unavailable(
+    tmp_path: Path, output_tokens: int | None
+) -> None:
+    root = _dsh_root(tmp_path)
+    path = root / "sessions" / "work" / "uuid" / "session.v4.jsonl"
+    events = [json.loads(line) for line in path.read_text().splitlines()]
+    usage = events[3]["data"]["usage"]
+    if output_tokens is None:
+        del usage["outputTokens"]
+    else:
+        usage["outputTokens"] = output_tokens
+    path.write_text("\n".join(json.dumps(event) for event in events) + "\n")
+    session = mon.read_dsh_session(path)
+    call = session["calls"][0]
+    assert call["output_tokens"] == output_tokens
+    assert call["decode_tokens_per_second"] == output_tokens
+    assert call["ttft_ms"] == 100.0
+    snapshot = mon.dsh_snapshot(root, _params())
+    row = snapshot["by_model"][0]
+    assert row["tokens"]["input"] == 110
+    assert row["tokens"]["output"] == (None if output_tokens is None else 5)
+    assert row["ttft_ms"]["samples"] == 1
+    metrics = mon.metric_rows({"dsh": snapshot}, _params(), NOW)
+    output_metrics = [
+        metric
+        for metric in metrics
+        if metric["name"] == "sextant.dsh.tokens" and metric["attributes"]["kind"] == "output"
+    ]
+    if output_tokens is None:
+        assert row["decode_tokens_per_second"] == {"p50": None, "p95": None, "samples": 0}
+        assert snapshot["deepseek"] is None
+        assert output_metrics == []
+        assert not any("decode_tokens_per_second" in metric["name"] for metric in metrics)
+        assert not any("cost" in metric["name"] for metric in metrics)
+    else:
+        assert row["decode_tokens_per_second"] == {"p50": 0.0, "p95": 0.0, "samples": 1}
+        assert snapshot["deepseek"] is not None
+        assert output_metrics[0]["value"] == 5
 
 
 def test_dsh_zstd_path_uses_the_injected_decompressor(

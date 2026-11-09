@@ -56,3 +56,23 @@ runtime pins from the ≥14-day rule for new supply-chain picks; no pin is chang
 `tests/proofs/test_monitor_runtime_feeds.py` runs via `just prove`. ADR-0018 keeps
 absent data unknown and existing ledgers authoritative; ADR-0030's model, effort
 and quota policy is unchanged. Revert the launch/config changes to disable feeds.
+
+## L3/L4 aggregation lesson
+
+PR #18's review at `109d1d2951c92f7d8f446622163ceb065dabadae` identified three
+deterministic aggregation defects. Bind each assistant message's model and effort
+before summing usage or timing samples: a later selection alone must change neither
+historical attribution nor DeepSeek cost. Missing output usage remains unavailable
+through session/model totals and cost estimation; retain independent TTFT samples
+and measured zero outputs. Export router counts with joint provider/status
+attributes, not overlapping marginal series under one metric name.
+
+The regression witnesses in `tests/proofs/test_monitor_l3_l4.py` append a selection
+without a call, mix models/efforts, remove output usage versus recording zero, and
+sum the actual OTLP count points (two fixture calls must sum to two, not four).
+Sources: `deepseek-ai/deepseek-harness@66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db`,
+`packages/core/agent/src/model-selection.ts:68-84`,
+`packages/core/session/src/types.ts:339-357` and
+`packages/llm/token-meter/src/turn-usage.ts:77-88`;
+[OpenTelemetry metrics data model](https://opentelemetry.io/docs/specs/otel/metrics/data-model/),
+spatial reaggregation, read 2026-11-09. This adds no deployment or new source reads.
