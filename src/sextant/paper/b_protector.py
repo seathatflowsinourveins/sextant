@@ -67,9 +67,7 @@ class Page:
 class _PendingRelease:
     """One broken trail waiting for its terminal cancellation before the LIMIT goes out."""
 
-    price: Decimal
     trail_order_id: str
-    whole: int
 
 
 @dataclass(frozen=True)
@@ -205,6 +203,7 @@ class Protector:
         self._exit_params = exit_params if exit_params is not None else ExitParams.starts()
         self._outside: dict[str, OutsideRthTrail] = {}
         self._pending_release: dict[str, _PendingRelease] = {}
+        self._pending_rearm: dict[str, str] = {}
         self._released_symbols: set[str] = set()
         self._house: dict[str, list[Order]] = {}
         self._sequence = 0
@@ -293,7 +292,7 @@ class Protector:
         """Cancel the trail and release one LIMIT after its terminal cancellation."""
 
         state = self._outside.get(symbol)
-        if state is None or state.released or symbol in self._released_symbols:
+        if state is None or state.released or state.pending or symbol in self._released_symbols:
             return
         trails = [order for order in self._house.get(symbol, []) if not _is_limit(order)]
         if len(trails) != 1:
@@ -304,7 +303,7 @@ class Protector:
             )
             return
         try:
-            price = state.release_price(ts_ns)
+            state.release_price(ts_ns)
         except OutsideRthError as exc:
             self.page("outside_rth_release_unpriced", symbol, str(exc))
             return
@@ -317,12 +316,45 @@ class Protector:
             return
         if not self._cancel(trails[0], "outside_rth_breach"):
             return
-        self._pending_release[symbol] = _PendingRelease(
-            price=price, trail_order_id=str(trails[0].id), whole=whole
-        )
-        state.mark_released(ts_ns)
+        self._pending_release[symbol] = _PendingRelease(trail_order_id=str(trails[0].id))
+        state.begin_release(ts_ns)
 
-    def _submit_outside_limit(self, symbol: str, pending: _PendingRelease) -> None:
+    def _complete_outside_release(self, symbol: str, ts_ns: int) -> None:
+        """Reprice and re-quantify from a fresh snapshot, then submit the one LIMIT."""
+
+        state = self._outside.get(symbol)
+        if state is None:
+            self._released_symbols.discard(symbol)
+            return
+        if session_at(ts_ns) is Session.CLOSED:
+            state.rearm()
+            self._released_symbols.discard(symbol)
+            self.page("market_closed", symbol, "B writes only in an open session")
+            return
+        positions = self.reconcile()
+        if symbol not in positions:
+            state.rearm()
+            self._released_symbols.discard(symbol)
+            return
+        try:
+            price = state.release_price(ts_ns)
+        except OutsideRthError as exc:
+            state.rearm()
+            self._released_symbols.discard(symbol)
+            self.page("outside_rth_release_unpriced", symbol, str(exc))
+            return
+        available = self._last_position.get(symbol, Decimal(0)) - self._last_reserved.get(
+            symbol, Decimal(0)
+        )
+        whole = int(available.to_integral_value(rounding=ROUND_FLOOR)) if available > 0 else 0
+        if whole <= 0:
+            state.rearm()
+            self._released_symbols.discard(symbol)
+            self.page("outside_rth_release_unquantified", symbol, "no unreserved whole share")
+            return
+        self._submit_outside_limit(symbol, whole, price)
+
+    def _submit_outside_limit(self, symbol: str, whole: int, price: Decimal) -> None:
         self._sequence += 1
         client_order_id = (
             f"{self._account.house_prefix}outside-{_safe_symbol(symbol)}-"
@@ -330,18 +362,27 @@ class Protector:
         )
         request = LimitOrderRequest(
             symbol=symbol,
-            qty=pending.whole,
+            qty=whole,
             side=OrderSide.SELL,
             time_in_force=TimeInForce.GTC,
-            limit_price=float(pending.price),
+            limit_price=str(price),
             extended_hours=True,
             client_order_id=client_order_id[:MAX_CLIENT_ORDER_ID],
         )
         try:
-            self._client.submit_order(request)
+            submitted = self._client.submit_order(request)
         except Exception as exc:
+            state = self._outside.get(symbol)
+            if state is not None:
+                state.rearm()
             self._released_symbols.discard(symbol)
             self.page("outside_limit_submit_failed", symbol, type(exc).__name__)
+            return
+        if isinstance(submitted, Order):
+            self._remember(submitted)
+        state = self._outside.get(symbol)
+        if state is not None:
+            state.mark_released(self._now_ns())
 
     def handle(self, update: TradeUpdate) -> None:
         symbol = update.order.symbol
@@ -410,6 +451,9 @@ class Protector:
         self._outside = {s: state for s, state in self._outside.items() if s in held}
         self._pending_release = {
             s: pending for s, pending in self._pending_release.items() if s in held
+        }
+        self._pending_rearm = {
+            s: order_id for s, order_id in self._pending_rearm.items() if s in held
         }
         self._released_symbols &= held
         return positions
@@ -566,11 +610,12 @@ class Protector:
         if event in TERMINAL_EVENTS:
             known = order_id in self._cancelling
             self._cancelling.discard(order_id)
-            pending = self._pending_release.pop(symbol, None)
+            pending = self._pending_release.get(symbol)
             if pending is not None and pending.trail_order_id == order_id:
+                self._pending_release.pop(symbol, None)
                 if event == "canceled":
                     self._released_symbols.add(symbol)
-                    self._submit_outside_limit(symbol, pending)
+                    self._complete_outside_release(symbol, self._now_ns())
                 else:
                     state = self._outside.get(symbol)
                     if state is not None:
@@ -580,6 +625,8 @@ class Protector:
                         symbol,
                         f"the resting trail ended {event} before the release",
                     )
+            elif self._pending_rearm.get(symbol) == order_id:
+                self._pending_rearm.pop(symbol, None)
             elif not known:
                 self.page("house_exit_lost", symbol, f"a house exit ended {event}")
             self.reconcile()
@@ -649,6 +696,9 @@ class Protector:
             # The breach already decided the release; wait for the trail's terminal
             # cancellation instead of arming a second exit beside it.
             return
+        if symbol in self._pending_rearm:
+            # A resize waits for the old exit's terminal event before it replaces it.
+            return
         if ours:
             held = _leaves(ours[0])
             limit = _is_limit(ours[0])
@@ -666,9 +716,7 @@ class Protector:
             if limit or freed or not in_rth:
                 reason = "arm_freed_quantity" if freed and in_rth else "outside_rth_resize"
                 if self._cancel(ours[0], reason):
-                    if limit:
-                        self._released_symbols.discard(symbol)
-                    self._submit_trail(symbol, protective)
+                    self._pending_rearm[symbol] = str(ours[0].id)
                 return
             self.page("owner_add_unprotected", symbol)
             return
@@ -694,9 +742,21 @@ class Protector:
             client_order_id=client_order_id[:MAX_CLIENT_ORDER_ID],
         )
         try:
-            self._client.submit_order(request)
+            submitted = self._client.submit_order(request)
         except Exception as exc:
             self.page("trail_submit_failed", symbol, type(exc).__name__)
+            return
+        if isinstance(submitted, Order):
+            self._remember(submitted)
+
+    def _remember(self, order: Order) -> None:
+        """Keep an order the broker just accepted so the next breach can find it."""
+
+        if not order.symbol:
+            return
+        ours = self._house.setdefault(order.symbol, [])
+        if all(str(existing.id) != str(order.id) for existing in ours):
+            ours.append(order)
 
     def _cancel(self, order: Order, reason: str) -> bool:
         if not self._is_ours(order):
@@ -709,6 +769,9 @@ class Protector:
             self._cancelling.discard(order_id)
             self.page("cancel_failed", order.symbol, f"{reason}: {type(exc).__name__}")
             return False
+        if _is_limit(order):
+            # A cancelled release no longer blocks re-arming protection.
+            self._released_symbols.discard(order.symbol)
         return True
 
     def _is_ours(self, order: Order) -> bool:

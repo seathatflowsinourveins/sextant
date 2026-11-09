@@ -342,9 +342,12 @@ def test_an_owner_sell_cancel_arms_the_freed_shares_to_protective():
     client.orders = [order for order in client.orders if str(order.id) != str(owner.id)]
     p.handle(api_update(owner, event="canceled", position_qty=10.0))
 
-    assert [request.qty for request in client.submitted] == [10]
+    # The old 6-share trail is cancelled first; the resize waits for its terminal event.
+    assert client.submitted == []
     assert client.cancelled == [str(house.id)]
     assert str(owner.id) not in client.cancelled
+    p.handle(api_update(house, event="canceled", position_qty=10.0))
+    assert [request.qty for request in client.submitted] == [10]
     assert client.replaced == []
 
 

@@ -65,6 +65,7 @@ class OutsideRthTrail:
         self._last: Decimal | None = None
         self._quote_ts_ns: int | None = None
         self._breached = False
+        self._pending = False
         self._released = False
 
     @property
@@ -78,6 +79,10 @@ class OutsideRthTrail:
     @property
     def breached(self) -> bool:
         return self._breached
+
+    @property
+    def pending(self) -> bool:
+        return self._pending
 
     @property
     def released(self) -> bool:
@@ -114,8 +119,15 @@ class OutsideRthTrail:
             return None
         if bid is None or ask is None or bid <= 0 or ask <= 0 or bid > ask:
             return None
+        self._bid = bid
+        self._last = last
+        self._quote_ts_ns = ts_ns
+        if self._pending:
+            # The handover reprices from the freshest quote; the trigger no longer moves.
+            return None
+        increment = SUB_DOLLAR_INCREMENT if bid < 1 else self._increment
         candidate, _ = trailing_stop_calculate(
-            self._increment,
+            increment,
             side=Side.SELL,
             offset=self._offset,
             offset_type=TrailingOffsetType.BASIS_POINTS,
@@ -124,9 +136,17 @@ class OutsideRthTrail:
             bid=bid,
             ask=ask,
         )
-        self._bid = bid
-        self._last = last
-        self._quote_ts_ns = ts_ns
+        if candidate is not None and candidate < 1 and increment != SUB_DOLLAR_INCREMENT:
+            candidate, _ = trailing_stop_calculate(
+                SUB_DOLLAR_INCREMENT,
+                side=Side.SELL,
+                offset=self._offset,
+                offset_type=TrailingOffsetType.BASIS_POINTS,
+                trigger_type=TriggerType.BID_ASK,
+                stored_trigger_px=self._trigger,
+                bid=bid,
+                ask=ask,
+            )
         if candidate is None:
             return None
         self._trigger = candidate
@@ -135,7 +155,7 @@ class OutsideRthTrail:
     def observe_trade(self, price: Decimal, ts_ns: int) -> bool:
         """Count one eligible print against the trigger; true on the completed breach."""
 
-        if self._released or self._trigger is None or price <= 0:
+        if self._released or self._pending or self._trigger is None or price <= 0:
             return False
         breached = self._breach.observe(price, self._trigger, ts_ns, self._params)
         if breached:
@@ -161,14 +181,27 @@ class OutsideRthTrail:
             raise OutsideRthError("the release price must be positive")
         return collared
 
-    def mark_released(self, ts_ns: int) -> None:
+    def begin_release(self, ts_ns: int) -> None:
+        """Mark the completed breach as waiting for its trail's terminal cancellation."""
+
+        if self._released:
+            raise OutsideRthError("a release is already outstanding")
+        if self._pending:
+            raise OutsideRthError("a release is already pending")
         if not self._breached:
             raise OutsideRthError("no persistent breach has completed")
+        self._pending = True
+
+    def mark_released(self, ts_ns: int) -> None:
+        if not self._pending:
+            raise OutsideRthError("no release is pending")
+        self._pending = False
         self._released = True
 
     def rearm(self) -> None:
         """Forget the release and restart the breach run, keeping the ratcheted trigger."""
 
+        self._pending = False
         self._released = False
         self._breached = False
         self._breach = BreachRun()

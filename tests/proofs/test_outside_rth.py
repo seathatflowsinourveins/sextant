@@ -106,6 +106,17 @@ def test_the_release_price_is_the_fresh_bid_collared_to_the_sub_penny_ladder() -
     assert state.release_price(T0 + SEC) == D("100.12")
 
 
+def test_a_sub_dollar_trigger_uses_the_sub_penny_increment() -> None:
+    state = trail()
+    state.adopt(D("0.1950"), T0)
+    # 2.5% of the $0.20 bid is $0.005, so the candidate is exactly $0.1950; the penny
+    # increment would round it up to $0.20 and make unchanged $0.20 prints a breach.
+    assert state.observe_quote(bid=D("0.20"), ask=D("0.2001"), last=None, ts_ns=T0) is None
+    assert state.trigger == D("0.1950")
+    for at in (T0, T0 + SEC // 2, T0 + SEC):
+        assert state.observe_trade(D("0.20"), at) is False
+
+
 def test_a_sub_dollar_bid_uses_four_decimals() -> None:
     state = trail()
     state.adopt(D("0.49"), T0)
@@ -132,6 +143,7 @@ def test_a_release_is_marked_once_and_rearm_restores_the_breach() -> None:
     state.observe_quote(bid=D("100.00"), ask=D("100.02"), last=D("100.01"), ts_ns=T0)
     for at in (T0, T0 + SEC // 2, T0 + SEC):
         state.observe_trade(D("99.40"), at)
+    state.begin_release(T0 + SEC)
     state.mark_released(T0 + SEC)
     assert state.released
     assert state.observe_trade(D("99.40"), T0 + 2 * SEC) is False

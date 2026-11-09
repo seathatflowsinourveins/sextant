@@ -12,6 +12,7 @@ from decimal import Decimal
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
+import pytest
 from alpaca.trading.models import Order, Position, TradeAccount, TradeUpdate
 from alpaca.trading.requests import LimitOrderRequest, TrailingStopOrderRequest
 
@@ -126,8 +127,10 @@ class FakeClient:
         self.positions: list[Position] = []
         self.orders: list[Order] = []
         self.submitted: list[TrailingStopOrderRequest | LimitOrderRequest] = []
+        self.echoes: list[Order] = []
         self.cancelled: list[str] = []
         self.calls: list[str] = []
+        self.fail_limits = False
 
     def get_account(self) -> TradeAccount:
         self.calls.append("get_account")
@@ -144,8 +147,26 @@ class FakeClient:
     def submit_order(self, order_data: object) -> object:
         self.calls.append("submit_order")
         assert isinstance(order_data, (TrailingStopOrderRequest, LimitOrderRequest))
+        if self.fail_limits and isinstance(order_data, LimitOrderRequest):
+            raise RuntimeError("the broker refused the limit")
         self.submitted.append(order_data)
-        return order_data
+        client_order_id = order_data.client_order_id or f"B001-echo-{len(self.echoes)}"
+        if isinstance(order_data, LimitOrderRequest):
+            echo = api_order(
+                client_order_id=client_order_id,
+                qty=str(int(order_data.qty or 0)),
+                order_type="limit",
+                limit_price=str(order_data.limit_price),
+                extended_hours=True,
+            )
+        else:
+            echo = api_order(
+                client_order_id=client_order_id,
+                qty=str(int(order_data.qty or 0)),
+                order_type="trailing_stop",
+            )
+        self.echoes.append(echo)
+        return echo
 
     def cancel_order_by_id(self, order_id: object) -> None:
         self.calls.append("cancel_order_by_id")
@@ -155,6 +176,21 @@ class FakeClient:
 
 def protector(client: FakeClient) -> Protector:
     return Protector(client, b_account(), b_params(), now_ns=lambda: NOW_NS)
+
+
+def drive_breach(p: Protector, *, bid: str = "99.505", trade: str = "99.40") -> None:
+    """Feed one quote and three eligible prints that complete the persistent breach."""
+
+    p.on_quote(
+        "AAPL",
+        bid=Decimal(bid),
+        ask=Decimal(bid) + Decimal("0.005"),
+        last=Decimal(bid) + Decimal("0.005"),
+        ts_ns=NOW_NS,
+    )
+    assert p.on_trade("AAPL", Decimal(trade), NOW_NS) is False
+    assert p.on_trade("AAPL", Decimal(trade), NOW_NS + SEC // 2) is False
+    assert p.on_trade("AAPL", Decimal(trade), NOW_NS + SEC) is True
 
 
 def test_outside_rth_arms_the_native_trail_instead_of_paging() -> None:
@@ -226,27 +262,37 @@ def test_a_breach_without_a_fresh_quote_pages_and_keeps_the_trail() -> None:
     assert client.submitted == []
 
 
-def test_a_breach_without_a_resting_trail_pages() -> None:
+def test_a_breach_after_the_protector_arms_its_own_trail_releases_a_limit() -> None:
     client = FakeClient()
     client.positions = [api_position("10")]
     p = protector(client)
-    p.reconcile()  # arms a trail, but the broker has not echoed it yet
-    p.on_quote(
-        "AAPL", bid=Decimal("99.50"), ask=Decimal("99.52"), last=Decimal("99.51"), ts_ns=NOW_NS
-    )
-    for at in (NOW_NS, NOW_NS + SEC // 2, NOW_NS + SEC):
-        p.on_trade("AAPL", Decimal("96.90"), at)
-    assert [page.reason for page in p.pages] == ["outside_rth_no_trail_at_breach"]
+    p.reconcile()
+    assert len(client.submitted) == 1
+    assert isinstance(client.submitted[0], TrailingStopOrderRequest)
+    trail = client.echoes[-1]
+    drive_breach(p, trade="96.90")
+    assert client.cancelled == [str(trail.id)]
+    assert client.submitted == [client.submitted[0]]  # the LIMIT waits for the terminal event
+    p.handle(api_update(trail, event="canceled"))
+    limits = [order for order in client.submitted if isinstance(order, LimitOrderRequest)]
+    assert len(limits) == 1
+    assert Decimal(str(limits[0].qty)) == Decimal("10")
+    assert Decimal(str(limits[0].limit_price)) == Decimal("99.50")
+    assert p.pages == []
 
 
-def test_an_owner_add_outside_rth_resizes_the_trail_instead_of_paging() -> None:
+def test_an_owner_add_outside_rth_resizes_after_the_terminal_cancel() -> None:
     client = FakeClient()
     client.positions = [api_position("12")]
-    client.orders = [api_order(qty="10", stop_price="97.50")]
+    trail = api_order(qty="10", stop_price="97.50")
+    client.orders = [trail]
     p = protector(client)
     p.reconcile()
-    assert len(client.cancelled) == 1
+    assert client.cancelled == [str(trail.id)]
+    assert client.submitted == []  # the old trail can still fill until its terminal event
+    p.handle(api_update(trail, event="canceled"))
     assert len(client.submitted) == 1
+    assert isinstance(client.submitted[0], TrailingStopOrderRequest)
     assert Decimal(str(client.submitted[0].qty)) == Decimal("12")
     assert p.pages == []
 
@@ -282,3 +328,111 @@ def test_a_reconcile_while_the_cancel_is_pending_does_not_rearm_the_trail() -> N
 
     assert client.submitted == []
     assert p.pages == []
+
+
+def test_the_released_limit_price_crosses_to_the_sdk_without_a_float(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+    real_request = LimitOrderRequest
+
+    def spy(**kwargs: object) -> LimitOrderRequest:
+        captured.update(kwargs)
+        return real_request(**kwargs)
+
+    monkeypatch.setattr("sextant.paper.b_protector.LimitOrderRequest", spy)
+    client = FakeClient()
+    client.positions = [api_position("10")]
+    trail = api_order(stop_price="99.45")
+    client.orders = [trail]
+    p = protector(client)
+    p.reconcile()
+    drive_breach(p)
+    p.handle(api_update(trail, event="canceled"))
+
+    assert isinstance(captured["limit_price"], str)
+    assert Decimal(captured["limit_price"]) == Decimal("99.50")
+
+
+def test_the_released_limit_uses_the_fresh_unreserved_residual() -> None:
+    client = FakeClient()
+    client.positions = [api_position("10")]
+    trail = api_order(stop_price="99.45")
+    client.orders = [trail]
+    p = protector(client)
+    p.reconcile()
+    drive_breach(p)
+    # The owner sells four shares while the cancellation is in flight; reconcile refreshes
+    # the position, so the release may sell only the six shares still unreserved.
+    client.positions = [api_position("6")]
+    p.reconcile()
+    p.handle(api_update(trail, event="canceled"))
+    limits = [order for order in client.submitted if isinstance(order, LimitOrderRequest)]
+    assert len(limits) == 1
+    assert Decimal(str(limits[0].qty)) == Decimal("6")
+    assert p.pages == []
+
+
+def test_a_failed_release_submit_rearms_the_emulation_state() -> None:
+    client = FakeClient()
+    client.positions = [api_position("10")]
+    trail = api_order(stop_price="99.45")
+    client.orders = [trail]
+    p = protector(client)
+    p.reconcile()
+    drive_breach(p)
+    client.fail_limits = True
+    p.handle(api_update(trail, event="canceled"))
+    assert [page.reason for page in p.pages] == ["outside_limit_submit_failed"]
+
+    # The failure re-armed the state, so the next quote can move the trigger again.
+    moved = p.on_quote(
+        "AAPL",
+        bid=Decimal("110.00"),
+        ask=Decimal("110.02"),
+        last=Decimal("110.01"),
+        ts_ns=NOW_NS + 2 * SEC,
+    )
+    assert moved == Decimal("107.25")
+
+
+def test_a_delayed_cancel_for_another_trail_keeps_the_pending_release() -> None:
+    client = FakeClient()
+    client.positions = [api_position("10")]
+    trail = api_order(stop_price="99.45")
+    earlier = api_order(client_order_id="B001-trail-earlier", stop_price="99.00")
+    client.orders = [trail]
+    p = protector(client)
+    p.reconcile()
+    drive_breach(p)
+    # A resize's trail cancels late; its terminal event must not drop the breach's pending
+    # release for the trail that is actually resting.
+    p.handle(api_update(earlier, event="canceled"))
+    assert client.submitted == []
+    p.handle(api_update(trail, event="canceled"))
+    limits = [order for order in client.submitted if isinstance(order, LimitOrderRequest)]
+    assert len(limits) == 1
+    assert Decimal(str(limits[0].qty)) == Decimal("10")
+
+
+def test_the_release_price_is_refreshed_when_the_cancellation_completes() -> None:
+    clock = {"ns": NOW_NS}
+    client = FakeClient()
+    client.positions = [api_position("10")]
+    trail = api_order(stop_price="99.45")
+    client.orders = [trail]
+    p = Protector(client, b_account(), b_params(), now_ns=lambda: clock["ns"])
+    p.reconcile()
+    drive_breach(p)
+    clock["ns"] = NOW_NS + SEC
+    p.on_quote(
+        "AAPL",
+        bid=Decimal("98.00"),
+        ask=Decimal("98.02"),
+        last=Decimal("98.01"),
+        ts_ns=clock["ns"],
+    )
+    p.handle(api_update(trail, event="canceled"))
+    limits = [order for order in client.submitted if isinstance(order, LimitOrderRequest)]
+    assert len(limits) == 1
+    assert Decimal(str(limits[0].limit_price)) == Decimal("98.00")
