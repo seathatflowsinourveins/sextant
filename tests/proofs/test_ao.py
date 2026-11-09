@@ -93,6 +93,7 @@ def test_ao_is_pinned_and_claims_only_a_handed_off_pr(tmp_path: Path) -> None:
     assert run.returncode == 0, run.stderr
     spawn = next(call for call in calls if call.startswith("spawn "))
     assert "--claim-pr 57 --no-takeover" in spawn and "--branch lane-x" in spawn
+    assert "--agent codex" in spawn and "--harness" not in spawn
     assert "Never merge" in spawn and "a" * 40 in spawn
     # The worker pushes the way .codex/rules/default.rules allows: plain git push, its upstream.
     assert "with plain git push" in spawn
@@ -115,6 +116,25 @@ def test_claim_names_codex_and_its_chat_interface_for_any_project_worker(
     # Nor is AO pointed at a Claude ACP runtime: its two overrides (claudeacp/driver.go:541-551).
     script = AO.read_text()
     assert "AO_CLAUDE_ACP_COMMAND" not in script and "AO_ACP_RUNTIME_DIR" not in script
+
+
+def test_deepseek_harness_is_documented_for_explicit_spawns_only() -> None:
+    readme = (ROOT / "deploy/wsl/lane-runtimes/README.md").read_text()
+    manifest_rows = [
+        line
+        for line in (ROOT / "docs/manifest.md").read_text().splitlines()
+        if line.startswith("| AO runs one job:")
+    ]
+    # The union driver keeps both sides' rows; name the one row this proof reads instead of
+    # silently testing whichever row a stale conflict resolution put first.
+    assert len(manifest_rows) == 1, "docs/manifest.md must hold exactly one AO row"
+    manifest_row = manifest_rows[0]
+    for surface in (readme, manifest_row):
+        assert "ao spawn --project sextant --harness deepseek-harness" in surface
+        assert "deepseekharness.go:59" in surface and "codex/codex.go:95" in surface
+        assert "spawn.go:224" in surface
+        assert "opencode-v2" not in surface and "[deepseek-harness" not in surface
+    assert "[harness]" not in AO.read_text()
 
 
 def test_claim_refuses_a_pr_its_worker_still_holds(tmp_path: Path) -> None:
