@@ -1,18 +1,12 @@
 """A/C recorded-session e2e: the node's own decisions, B's level, no broker.
 
-Template (Rule 1 rows in ``docs/manifest.md``): NautilusTrader's trailing-stop
-example at ``nautechsystems/nautilus_trader@v1.231.0`` (entry LIMIT at the
-trigger, ``trailing_stop_market`` at 2.5% for protection) and this repo's PR-3
-recorded run (``docs/research/2026-11-09-b-e2e-pr3.md``, branch
-``seathatflowsinourveins/b-clean-pr3`` commit ``2047d46``): the same level
-trail, the same PR-3 values for OMH, PARA and SPCX.
-
-The tape is today's recorded session (``tests/fixtures/ac-e2e-session.json``):
-the e2e-omh 1-minute K2 generations for ONDS, NWGL, TTD, MF, OMH and CKX, and
-SPCX's recorded 2026-10-21 catalyst print plus its new-high path. One-minute
-bar closes are not a 5-print run, so the rank-armed cases refuse on coverage or
-extension; SPCX's catalyst is the one recorded auto-entry. Every row is
-MODELED: no broker client, no order, no live endpoint is constructed here.
+The Rule 1 rows are in ``docs/manifest.md``: NautilusTrader's trailing-stop
+example at ``v1.231.0`` and this repo's PR-3 recorded run (``2047d46``), whose
+OMH/PARA/SPCX values this tape must reproduce. The tape is today's recorded
+session: the e2e-omh 1-minute K2 generations for ONDS, NWGL, TTD, MF, OMH and
+CKX plus SPCX's 2026-10-21 catalyst print and new-high path. One-minute closes
+are not a 5-print run, so rank-armed cases refuse; SPCX's catalyst is the one
+recorded auto-entry. Every row is MODELED: no broker client or live endpoint.
 """
 
 from __future__ import annotations
@@ -21,7 +15,7 @@ import argparse
 import hashlib
 import json
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
@@ -48,18 +42,6 @@ TAPE_PATH = REPOSITORY / "tests/fixtures/ac-e2e-session.json"
 EASTERN = ZoneInfo("America/New_York")
 NS = 1_000_000_000
 STARTING_CASH = "1000000 USD"
-
-__all__ = [
-    "CaseRun",
-    "Decision",
-    "Outcome",
-    "Point",
-    "TapeCase",
-    "load_tape",
-    "run",
-    "run_case",
-    "trail",
-]
 
 
 @dataclass(frozen=True)
@@ -306,18 +288,7 @@ def run_case(case: TapeCase, profile: Profile, params) -> CaseRun:
 def _outcome(case: TapeCase, plan: EntryPlan) -> Outcome:
     entry_price = plan.limit.as_decimal() if plan.limit is not None else case.prior_close
     points = case.path if case.path is not None else case.prints
-    result = trail(entry_price, points, entry_ts_ns=plan.ts_ns)
-    return Outcome(
-        case.symbol,
-        result.entry,
-        result.high,
-        result.level,
-        result.exit_ts_ns,
-        result.exit_price,
-        result.prints,
-        result.protected,
-        result.hold_flat,
-    )
+    return replace(trail(entry_price, points, entry_ts_ns=plan.ts_ns), symbol=case.symbol)
 
 
 def _witness(witness: dict[str, Any]) -> dict[str, Any]:

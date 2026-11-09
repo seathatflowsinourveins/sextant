@@ -1,31 +1,22 @@
 """A/C auto-entry node: slot 3 only, B's protection level, the registry's entry facts.
 
-Sources (Rule 1, rows in ``docs/manifest.md``): the paper-node shell and its
-offline order gate (``src/sextant/paper/{config,native,runtime}.py``), B's
-owner-fill protector (``src/sextant/paper/b_protector.py``, alpaca-py
-``v0.44.0``), the N1 first-leg parameters (``lanes/sim/entry-parameters.json``,
-northstar-trading ``8256c16c``), ADR-0002's account shape, ADR-0011's
-``FixedRiskSizer`` and ADR-0024's 2/5 and 8/20 mover slots.
-
-The node is a decision surface. It refuses slots 1 and 2 in code: slot 1 is
-the owner's external Peregrine account (2026-11-07 ruling) and slot 2 is B's
-writer. A has no paper account and therefore no writable slot: it runs replay
-and sim only. The only writable slot is C's slot 3, and it shares slot 3's
-single REST allocation with the TV-HOST writer through one ``AccountPacer``
-(``WriterLease.bind_pacer`` admits one), never a second pacer.
-
-The profile rows in ``lanes/paper/ac-parameters.json`` are the sizing
-authority. C's row carries the owner's 2026-11-09 ruling: 1.0% of current
-equity, re-read before each entry, with A's leverage row; it is UNCALIBRATED,
-and the optimizer proposes while adoption happens between sessions
-(ADR-0015/0018). A has no writable slot and runs replay and sim only.
+Sources are the Rule 1 rows in ``docs/manifest.md``: the paper-node shell and
+its offline order gate, B's owner-fill protector on alpaca-py ``v0.44.0``, the
+N1 first-leg rows (northstar-trading ``8256c16c``), ADR-0002's account shape,
+ADR-0011's ``FixedRiskSizer`` and ADR-0024's mover slots. The node refuses
+slots 1 and 2 in code (slot 1 is the owner's external Peregrine account; A has
+no paper account and runs replay/sim only), so the only writable slot is C's
+slot 3, sharing its one REST allocation with TV-HOST through a single pacer.
+C's registry row carries the owner's 2026-11-09 ruling: 1.0% of current equity,
+re-read before each entry, with A's leverage row, UNCALIBRATED, the optimizer
+proposing and adoption happening between sessions (ADR-0015/0018).
 """
 
 from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from decimal import ROUND_FLOOR, Decimal
 from pathlib import Path
 from typing import Protocol
@@ -278,22 +269,18 @@ def plan_entry(
     The node never sizes a market order; the exit and protection orders stay with
     B's protector, which the node wires rather than re-implements.
     """
-    if profile.risk_scope == "FIXTURE_ONLY" and not fixture:
+
+    def refuse(reason: str) -> EntryPlan:
         return refused_plan(
-            profile,
-            symbol=symbol,
-            ts_ns=ts_ns,
-            setup=setup,
-            rank=rank,
-            reason=(
-                f"{profile.key}_risk_per_trade: FIXTURE_ONLY authority cannot size a "
-                "non-fixture entry"
-            ),
+            profile, symbol=symbol, ts_ns=ts_ns, setup=setup, rank=rank, reason=reason
+        )
+
+    if profile.risk_scope == "FIXTURE_ONLY" and not fixture:
+        return refuse(
+            f"{profile.key}_risk_per_trade: FIXTURE_ONLY authority cannot size a non-fixture entry"
         )
     if not ask.is_finite() or ask <= 0:
-        return refused_plan(
-            profile, symbol=symbol, ts_ns=ts_ns, setup=setup, rank=rank, reason="invalid ask"
-        )
+        return refuse("invalid ask")
     # ADR-0002 sizes every trade at the profile's risk fraction; the rank ceiling is
     # an exposure cap on the position, never a multiplier of the planned loss.
     risk = profile.risk_per_trade
@@ -301,28 +288,18 @@ def plan_entry(
         risk *= HALF_RISK
     ceiling = rank_multiple(profile, rank)
     if risk <= 0 or ceiling <= 0:
-        return refused_plan(
-            profile, symbol=symbol, ts_ns=ts_ns, setup=setup, rank=rank, reason="invalid risk"
-        )
+        return refuse("invalid risk")
     tick = instrument.price_increment.as_decimal()
     stop_value = _floor(ask * (1 - TRAIL_FRACTION), tick)
     if not 0 < stop_value < ask:
-        return refused_plan(
-            profile, symbol=symbol, ts_ns=ts_ns, setup=setup, rank=rank, reason="invalid stop"
-        )
-    steps = "9" if instrument.price_precision >= 9 else "f"
+        return refuse("invalid stop")
     try:
         entry = Price.from_str(f"{ask:.{instrument.price_precision}f}")
         stop = Price.from_str(f"{stop_value:.{instrument.price_precision}f}")
     except (ValueError, ArithmeticError):
-        return refused_plan(
-            profile, symbol=symbol, ts_ns=ts_ns, setup=setup, rank=rank, reason="price precision"
-        )
+        return refuse("price precision")
     if entry.as_decimal() != ask or stop.as_decimal() != stop_value:
-        return refused_plan(
-            profile, symbol=symbol, ts_ns=ts_ns, setup=setup, rank=rank, reason="price_increment"
-        )
-    del steps
+        return refuse("price_increment")
     exposure = equity.as_decimal() * ceiling
     cap = _floor(exposure / ask, instrument.size_increment.as_decimal())
     planned = equity.as_decimal() * risk
@@ -344,14 +321,7 @@ def plan_entry(
         if whole < minimum.as_decimal():
             raise ValueError("quantity below the instrument's minimum")
     except (ValueError, ArithmeticError, ZeroDivisionError) as error:
-        return refused_plan(
-            profile,
-            symbol=symbol,
-            ts_ns=ts_ns,
-            setup=setup,
-            rank=rank,
-            reason=f"sizing refusal: {error}",
-        )
+        return refuse(f"sizing refusal: {error}")
     limit = limit_price(ask, tick)
     return EntryPlan(
         profile.key,
@@ -408,6 +378,16 @@ class AcEntry:
         if self._equity_source is not None:
             return self._equity_source()
         return self.equity
+
+    def _refuse(self, *, ts_ns: int, setup: str, rank: int | None, reason: str) -> EntryPlan:
+        return refused_plan(
+            self.profile,
+            symbol=str(self.instrument.id.symbol),
+            ts_ns=ts_ns,
+            setup=setup,
+            rank=rank,
+            reason=reason,
+        )
 
     def observe_rank(
         self,
@@ -472,9 +452,7 @@ class AcEntry:
         if self.catalyst is not None and ts_ns >= self.catalyst.knowable_at_ns:
             self.catalyst = None
             if not fresh:
-                return refused_plan(
-                    self.profile,
-                    symbol=str(self.instrument.id.symbol),
+                return self._refuse(
                     ts_ns=ts_ns,
                     setup="CATALYST",
                     rank=None,
@@ -497,9 +475,7 @@ class AcEntry:
             return None
         assert ask is not None
         if not fresh:
-            return refused_plan(
-                self.profile,
-                symbol=str(self.instrument.id.symbol),
+            return self._refuse(
                 ts_ns=ts_ns,
                 setup="FIRST_LEG",
                 rank=self.armed_rank,
@@ -656,35 +632,3 @@ def entry_parameters(fixture: bool = False) -> EntryParameters:
 
 def b_parameters() -> BParameters:
     return load_b_parameters(B_PARAMETERS)
-
-
-__all__ = [
-    "AC_PARAMETERS",
-    "C_LANE",
-    "ENABLED",
-    "HALF_RISK",
-    "REFUSED_SLOTS",
-    "SLOTS",
-    "SLOT_LANES",
-    "TRAIL_FRACTION",
-    "AcEntry",
-    "AcLedger",
-    "AcNode",
-    "Catalyst",
-    "Deployment",
-    "EntryPlan",
-    "NodeDisabled",
-    "Profile",
-    "SizingRefusal",
-    "Slot",
-    "SlotRefusal",
-    "b_parameters",
-    "entry_parameters",
-    "load_profiles",
-    "plan_entry",
-    "profiles",
-    "rank_multiple",
-    "refused_plan",
-    "replace",
-    "require_writable_slot",
-]
