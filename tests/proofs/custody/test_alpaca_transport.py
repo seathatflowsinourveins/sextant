@@ -1,6 +1,5 @@
 """Paper-only Alpaca transport: status mapping and one wire call, with no network."""
 
-from collections.abc import Mapping
 from typing import Any
 
 import pytest
@@ -38,11 +37,17 @@ def wire_request() -> WireRequest:
     )
 
 
+def query_request() -> WireRequest:
+    return WireRequest(
+        "GET", "/v2/positions", {}, None, ActionKind.QUERY, 0, 0, "lease-token", "params-hash"
+    )
+
+
 class FakeResponse:
-    def __init__(self, status_code: int, payload: Mapping[str, object] | None = None):
+    def __init__(self, status_code: int, payload: object = None):
         self.status_code, self.payload = status_code, payload
 
-    def json(self) -> Mapping[str, object]:
+    def json(self) -> object:
         if self.payload is None:
             raise ValueError("empty response body")
         return self.payload
@@ -75,12 +80,17 @@ def build(session: FakeSession, **kwargs: Any):
 
 
 def send(
-    session: FakeSession, *, base_url: str = PAPER_HOST, timeout_s: float = 5.0
+    session: FakeSession,
+    *,
+    request: WireRequest | None = None,
+    base_url: str = PAPER_HOST,
+    timeout_s: float = 10.0,
 ) -> tuple[Outcome, list[int]]:
     wire_calls: list[int] = []
     session.wire_calls = wire_calls
+    outbound = wire_request() if request is None else request
     outcome = build(session, base_url=base_url, timeout_s=timeout_s)(
-        wire_request(), lambda: wire_calls.append(1)
+        outbound, lambda: wire_calls.append(1)
     )
     return outcome, wire_calls
 
@@ -104,7 +114,8 @@ def test_200_ack_carries_the_venue_id_and_sends_one_wire_and_one_request():
     }
     assert isinstance(kwargs["json"], dict)
     assert kwargs["json"] == ORDER_BODY
-    assert kwargs["timeout"] == 5.0
+    assert kwargs["timeout"] == 10.0
+    assert kwargs["allow_redirects"] is False
 
 
 def test_201_ack_behaves_like_200():
@@ -172,6 +183,32 @@ def test_transport_errors_are_unknown_after_exactly_one_wire(error):
     outcome, wire_calls = send(session)
 
     assert outcome == Outcome("UNKNOWN")
+    assert wire_calls == [1]
+    assert len(session.calls) == 1
+
+
+def test_a_redirect_is_not_followed_and_maps_to_unknown():
+    session = FakeSession(FakeResponse(302, {"message": "moved"}))
+
+    outcome, wire_calls = send(session)
+
+    assert outcome == Outcome("UNKNOWN")
+    assert wire_calls == [1]
+    assert len(session.calls) == 1
+    assert session.calls[0][2]["allow_redirects"] is False
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [[], [{"symbol": "AAA", "qty": "100"}], {"account_number": "acct-1"}],
+    ids=["empty-list", "list", "mapping"],
+)
+def test_a_query_2xx_decodable_body_is_an_ack_without_a_venue_id(payload):
+    session = FakeSession(FakeResponse(200, payload))
+
+    outcome, wire_calls = send(session, request=query_request())
+
+    assert outcome == Outcome("ACK")
     assert wire_calls == [1]
     assert len(session.calls) == 1
 

@@ -9,7 +9,8 @@ rather than a raise. The official Create an Order reference (read 2026-11-09) su
 ``RequestException``.
 
 One transport call is one HTTP request: ``wire()`` runs exactly once immediately before it,
-and the account pacer owns every retry. Only ``PAPER_HOST`` is reachable by construction, so
+and the account pacer owns every retry. Redirects are not followed, so a 3xx is an unknown
+outcome rather than a second request. Only ``PAPER_HOST`` is reachable by construction, so
 no call here can reach the live venue. HTTP and network answers become ``Outcome`` values,
 never exceptions, and no message carries the key, the secret or the order body.
 """
@@ -21,6 +22,7 @@ from urllib.parse import urlsplit
 import requests
 
 from sextant.execution.alpaca import Outcome, WireRequest
+from sextant.execution.pacer import ActionKind
 
 PAPER_HOST = "https://paper-api.alpaca.markets"
 
@@ -42,12 +44,17 @@ def _paper_base_url(base_url: str) -> str:
     return base_url
 
 
-def _outcome(response: Any) -> Outcome:
+def _outcome(response: Any, *, query: bool) -> Outcome:
     status = response.status_code
     if status in (200, 201):
         try:
             payload = response.json()
         except ValueError:
+            return Outcome("UNKNOWN")
+        if query:
+            # A confirmed query resets consecutive_429; its body may be a mapping or a list.
+            if isinstance(payload, (Mapping, list)):
+                return Outcome("ACK")
             return Outcome("UNKNOWN")
         venue_order_id = payload.get("id") if isinstance(payload, Mapping) else None
         if isinstance(venue_order_id, str) and venue_order_id:
@@ -68,7 +75,10 @@ def build_transport(
     secret: str,
     session: Any = None,
     base_url: str = PAPER_HOST,
-    timeout_s: float = 5.0,
+    # Pinned upstream: northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa,
+    # src/nautilus_alpaca/http.py:146 sets the REST socket timeout as
+    # ``timeout_secs: float = 10.0``; mirror that exact 10.0 s.
+    timeout_s: float = 10.0,
 ) -> Callable[[WireRequest, Callable[[], None]], Outcome]:
     """Return a one-request paper transport; HTTP results all come back as an Outcome."""
     if not key or not secret:
@@ -90,9 +100,10 @@ def build_transport(
                 headers=headers,
                 json=dict(request.body),
                 timeout=timeout_s,
+                allow_redirects=False,
             )
         except requests.RequestException:
             return Outcome("UNKNOWN")
-        return _outcome(response)
+        return _outcome(response, query=request.kind == ActionKind.QUERY)
 
     return transport
