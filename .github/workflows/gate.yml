@@ -225,7 +225,7 @@ jobs:
           classify_inline_comments: 'false'
           prompt: ${{ steps.text.outputs.text }}
           claude_args: >-
-            --model opus --effort max --disallowedTools Bash,Edit,Write,NotebookEdit
+            --model claude-fable-5-2 --effort max --disallowedTools Bash,Edit,Write,NotebookEdit
             --json-schema '{"type":"object","properties":{"findings":{"type":"array","items":{"type":"object","properties":{"title":{"type":"string"},"body":{"type":"string"},"priority":{"type":"integer"}}}},"overall_correctness":{"type":"string","enum":["patch is correct","patch is incorrect"]},"overall_explanation":{"type":"string"}},"required":["findings","overall_correctness","overall_explanation"]}'
       - name: Report a redacted Claude execution error
         if: failure() && steps.review.outcome == 'failure'

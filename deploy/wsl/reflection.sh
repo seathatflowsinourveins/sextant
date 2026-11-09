@@ -22,7 +22,7 @@ if [ -n "$id" ]; then
   exit 0
 fi
 orca-ide automations create --name "$name" --trigger "26 3 * * *" --timezone UTC \
-  --provider claude --extra-agent-args="--model claude-opus-5-5 --effort max" \
+  --provider claude --extra-agent-args="--model claude-fable-5-2 --effort max" \
   --repo "path:$PWD" --workspace-mode new-per-run --base-branch "$base_branch" --setup skip \
   --precheck "$precheck" --precheck-timeout 120 --disabled \
   --prompt "$(cat deploy/wsl/reflection-prompt.md)" --json > /dev/null
