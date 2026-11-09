@@ -187,12 +187,14 @@ trail and ADR-0024's slots.
 2. K2 rank = the last computable generation at or before the flag (the e2e replay's rank 0
    means unranked). The 14:31–14:36Z generations are not computable, so every flag in that
    gap uses the 14:29 generation; this is recorded, not hidden.
-3. Enter at the flag's fresh two-sided ask, and re-prove the ask's freshness at the run's
-   completion; an ask older than 5 s at either moment is the thin-quote refusal class. The
-   entry is refused when `max(last, ask)` is beyond quiet × 1.03.
+3. Enter at the run's completion with the then-current two-sided ask; an ask older than 5 s at
+   completion is the thin-quote refusal class. The entry is refused when `max(last, ask)` is
+   beyond quiet × 1.03. The flag stays the onset timestamp, never the fill time.
 4. B's protection is the same 2.5% reduce-only `trailing_stop_market`, modeled at the
-   triggering print. The each-case hold-flat control uses the entry price, or the run-last
-   price when the entry was refused.
+   triggering print. A position the tape never stops is HELD: its exit is unset, its last
+   print is reported as an unrealized mark, and the ledger scores it `HELD/NOT_EXITED` rather
+   than a protected return. The each-case hold-flat control uses the entry price, or the
+   run-last price when the entry was refused.
 5. Arms: (a) ADR-0024's 2/5 slots in time order, never freed; (b) 8/20; (c) 2/5 plus ADR-0006's
    flat-slot rotation after a fast sell to the best-ranked pending name, with no lift and no
    held rotation (no expected-lift estimate exists). Every case and arm is a MODELED row,
@@ -206,19 +208,19 @@ trail and ADR-0024's slots.
 | 2/5 | NWGL | COMPLETE | 8 | 2 | 3.36 | 3.3999 | 3.31 | −1.49% | +8.04% |
 | 2/5 | TTD | FAIL | 37 | — | — | — | — | — | +7.70% (no slot) |
 | 2/5 | MF | FAIL | 0 | — | — | — | — | — | +25.74% (3% cap) |
-| 2/5 | OMH | FAIL | 2 | — | — | — | — | — | +215.54% (no slot) |
+| 2/5 | OMH | FAIL | 2 | — | — | — | — | — | +215.40% (no slot) |
 | 2/5 | CKX | FAIL | 0 | — | — | — | — | — | +11.04% (thin quote) |
 | 8/20 | ONDS | COMPLETE | 147 | 1 | 5.43 | 5.56 | 5.42 | −0.18% | +8.98% |
 | 8/20 | NWGL | COMPLETE | 8 | 2 | 3.36 | 3.3999 | 3.31 | −1.49% | +8.04% |
-| 8/20 | TTD | COMPLETE | 37 | 3 | 13.92 | 14.335 | 14.2955 | +2.70% | +7.54% |
+| 8/20 | TTD | HELD | 37 | 3 | 13.90 | 14.335 | held @ 14.2955 | not scored | +7.70% |
 | 8/20 | MF | FAIL | 0 | — | — | — | — | — | +25.74% (3% cap) |
-| 8/20 | OMH | COMPLETE | 2 | 4 | 23.41 | 24.67 | 24.01 | +2.56% | +215.81% |
+| 8/20 | OMH | COMPLETE | 2 | 4 | 23.44 | 24.67 | 24.01 | +2.43% | +215.40% |
 | 8/20 | CKX | FAIL | 0 | — | — | — | — | — | +11.04% (thin quote) |
 | 2/5-rotation | ONDS | COMPLETE | 147 | 1 | 5.43 | 5.56 | 5.42 | −0.18% | +8.98% |
 | 2/5-rotation | NWGL | COMPLETE | 8 | 2 | 3.36 | 3.3999 | 3.31 | −1.49% | +8.04% |
-| 2/5-rotation | TTD | COMPLETE | 37 | 2 | 14.00 | 14.335 | 14.2955 | +2.11% | +6.93% (rotated) |
+| 2/5-rotation | TTD | HELD | 37 | 2 | 14.00 | 14.335 | held @ 14.2955 | not scored | +6.93% (rotated) |
 | 2/5-rotation | MF | FAIL | 0 | — | — | — | — | — | +25.74% (3% cap) |
-| 2/5-rotation | OMH | FAIL | 2 | — | — | — | — | — | +215.54% (no slot) |
+| 2/5-rotation | OMH | FAIL | 2 | — | — | — | — | — | +215.40% (no slot) |
 | 2/5-rotation | CKX | FAIL | 0 | — | — | — | — | — | +11.04% (thin quote) |
 
 ### Findings
@@ -231,8 +233,9 @@ trail and ADR-0024's slots.
   OMH. The rotation arm gives TTD the first freed slot at 14.00 (the ask at the freed moment)
   and still has no slot for OMH, because the two slots are held by ONDS/NWGL then ONDS/TTD.
 - **Protection vs hold-flat**: the trail is a floor, not a participation rule. ONDS/NWGL exit
-  −0.18%/−1.49% while holding to the 15:28 marks returns +8.98%/+8.04%; TTD and OMH protect
-  +2.70%/+2.56% while holding returns a little less or far more (OMH +215.81%).
+  −0.18%/−1.49% while holding to the 15:28 marks returns +8.98%/+8.04%; OMH protects +2.43%
+  while holding returns +215.40%. TTD never trips its trail: entry 13.90, H 14.335, last print
+  14.2955 is +2.85% unrealized but the row is HELD, not a protected exit.
 - **The K2 rank is context, not the trigger.** ONDS ranks 147 and TTD 37 at their flags; OMH
   ranks 2 but the 2/5 control still has no slot; MF and CKX rank 0. The rank orders the
   rotation and reports the arm, while the first-leg scan is the causal entry rule.
@@ -242,8 +245,9 @@ trail and ADR-0024's slots.
 ### Limitations
 
 - The cross-section's flags are an ex post scan over the day's tapes; the case set is the
-  owner's cross-section, and the entry moment is the run's first print. This is a research
-  case study, not a live detector: the detectors remain unadmitted.
+  owner's cross-section. The flag is the onset, but the fill is at the run's confirmed ask,
+  so the entry can be seconds after the flag. This is a research case study, not a live
+  detector: the detectors remain unadmitted.
 - The K2 ranks have no computable generation from 14:31 to 14:36Z, and MF/CKX rank 0 at their
   flags. The rank is recorded as context only.
 - The marks are the cross-section's 15:28 ET prices; the trails are modeled at print prices,

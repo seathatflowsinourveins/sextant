@@ -20,11 +20,14 @@ import hashlib
 from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any, cast
 
 import pyarrow.parquet as pq
 import pytest
+from nautilus_trader.model import InstrumentId, OrderSide, Price, Quantity
 
-from sextant.backtest.b_e2e import load_spec, run_case
+from sextant.backtest.b_e2e import _Protect, _ProtectConfig, load_spec, run_case
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "b-e2e-owner-fill.json"
 FIXTURE_SHA256 = "87fc4a24a654f26466a07058bbf3d63c2e61254274e05677768997463f26636a"
@@ -101,3 +104,31 @@ def test_every_arm_writes_one_modeled_trial_log_row(tmp_path):
         assert config["tier"] == "MODELED"
         assert config["block_set_id"] == "2026-01-05"
         assert row["state"] == "COMPLETE"
+
+
+def test_partial_exit_fills_are_aggregated_before_the_return():
+    strategy = _Protect(
+        _ProtectConfig(
+            instrument_id=InstrumentId.from_str("TEST.ALPACA"),
+            trigger_ns=0,
+            trigger_price=Decimal("100"),
+            quantity=Decimal("50"),
+            trail_fraction=Decimal("0.025"),
+        )
+    )
+    strategy.trail_cid = "trail"
+    strategy.entry_ts_ns = 1
+    strategy.entry_price = Decimal("100")
+
+    for ts_event, price in ((2, "110"), (3, "90")):
+        event = SimpleNamespace(
+            order_side=OrderSide.SELL,
+            client_order_id="trail",
+            ts_event=ts_event,
+            last_px=Price.from_str(price),
+            last_qty=Quantity.from_int(25),
+        )
+        strategy.on_order_filled(cast(Any, event))
+
+    assert strategy.exited is True
+    assert strategy.exit_price == Decimal("100")

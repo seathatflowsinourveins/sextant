@@ -125,12 +125,13 @@ class TracePoint:
 class Trail:
     high: Decimal
     level: Decimal
-    exit_ts_ns: int
-    exit_price: Decimal
-    protected: float
+    exit_ts_ns: int | None
+    exit_price: Decimal | None
+    protected: float | None
     hold_flat: float
     path: tuple[TracePoint, ...]
     exited: bool
+    mark_price: Decimal | None
 
 
 @dataclass(frozen=True)
@@ -275,14 +276,15 @@ def _quote_at(case: CaseData, at_ns: int) -> Quote | None:
 
 
 def _entry_at(case: CaseData, run: Run, rule: EntryRule) -> tuple[Entry | None, str]:
-    """The first-leg ask at the run's flag; fresh at the start and still fresh at completion."""
-    quote = _quote_at(case, run.flag_ns)
+    """The first-leg ask once the run is confirmed; the fill is never retrospective."""
+    quote = _quote_at(case, run.confirm_ns)
     if quote is None:
-        return None, "thin quote: no fresh ask at run completion (no quote at or before the run)"
-    age = run.flag_ns - quote.ts_ns
+        return None, "thin quote: no fresh ask at run completion (no quote at or before completion)"
+    age = run.confirm_ns - quote.ts_ns
     if age > MAX_AGE_NS:
         return None, (
-            f"thin quote: no fresh ask at run completion (last quote {age / 1e9:.1f}s old, max 5s)"
+            "thin quote: no fresh ask at run completion "
+            f"(last quote {age / 1e9:.1f}s old at completion, max 5s)"
         )
     if quote.bid >= quote.ask:
         return None, "crossed quote: no fresh two-sided ask at run completion"
@@ -292,16 +294,7 @@ def _entry_at(case: CaseData, run: Run, rule: EntryRule) -> tuple[Entry | None, 
             "first leg is beyond the 3% cap "
             f"(max(last {run.last}, ask {quote.ask}) > quiet {run.quiet} * 1.03)"
         )
-    confirm = _quote_at(case, run.confirm_ns)
-    if confirm is None:
-        return None, "thin quote: no fresh ask at run completion (no quote at or before completion)"
-    confirm_age = run.confirm_ns - confirm.ts_ns
-    if confirm_age > MAX_AGE_NS:
-        return None, (
-            "thin quote: no fresh ask at run completion "
-            f"(last quote {confirm_age / 1e9:.1f}s old at completion, max 5s)"
-        )
-    return Entry(ts_ns=run.flag_ns, price=quote.ask, quote_ts_ns=quote.ts_ns), ""
+    return Entry(ts_ns=run.confirm_ns, price=quote.ask, quote_ts_ns=quote.ts_ns), ""
 
 
 def _quote_entry(case: CaseData, at_ns: int) -> tuple[Entry | None, str]:
@@ -326,8 +319,8 @@ def trail(case: CaseData, filled: Entry) -> Trail:
     high = filled.price
     level = high * (1 - TRAIL_FRACTION)
     path: list[TracePoint] = []
-    exit_ts_ns = filled.ts_ns
-    exit_price = filled.price
+    exit_ts_ns: int | None = None
+    exit_price: Decimal | None = None
     exited = False
     for print_ in case.trades:
         if print_.ts_ns <= filled.ts_ns:
@@ -341,18 +334,17 @@ def trail(case: CaseData, filled: Entry) -> Trail:
             exit_price = print_.price
             exited = True
             break
-    if not exited and path:
-        exit_ts_ns = path[-1].ts_ns
-        exit_price = path[-1].price
+    mark_price = None if exited else (path[-1].price if path else filled.price)
     return Trail(
         high=high,
         level=level,
         exit_ts_ns=exit_ts_ns,
         exit_price=exit_price,
-        protected=float(exit_price / filled.price - 1),
+        protected=None if exit_price is None else float(exit_price / filled.price - 1),
         hold_flat=float(case.mark / filled.price - 1),
         path=tuple(path),
         exited=exited,
+        mark_price=mark_price,
     )
 
 
@@ -364,6 +356,7 @@ def _free_slot(slots: list[ArmRow | None], at_ns: int, *, allow_exited: bool) ->
             allow_exited
             and row.walked is not None
             and row.walked.exited
+            and row.walked.exit_ts_ns is not None
             and row.walked.exit_ts_ns <= at_ns
         ):
             return index
@@ -392,12 +385,15 @@ def _rotate(
         filled, _ = _quote_entry(item.case, at_ns)
         if filled is None:
             continue
+        ceiling = item.run.quiet * (1 + rule.max_move)
+        if filled.price < item.run.quiet or max(item.run.last, filled.price) > ceiling:
+            continue
         filled = Entry(filled.ts_ns, filled.price, filled.quote_ts_ns, rotated=True)
         walked = trail(item.case, filled)
         row = ArmRow(
             case=item.case,
             arm=arm,
-            state="COMPLETE",
+            state="COMPLETE" if walked.exited else "HELD",
             reason="rotated into a flat slot after a fast sell; no lift required (ADR-0006)",
             rank=item.rank,
             slot=slot + 1,
@@ -427,14 +423,13 @@ def _process_exits(
     rule: EntryRule,
 ) -> None:
     while True:
-        exits = [
-            (row.walked.exit_ts_ns, index)
-            for index, row in enumerate(slots)
-            if row is not None
-            and row.walked is not None
-            and row.walked.exited
-            and row.walked.exit_ts_ns <= before_ns
-        ]
+        exits: list[tuple[int, int]] = []
+        for index, row in enumerate(slots):
+            if row is None or row.walked is None or not row.walked.exited:
+                continue
+            exit_ns = row.walked.exit_ts_ns
+            if exit_ns is not None and exit_ns <= before_ns:
+                exits.append((exit_ns, index))
         if not exits:
             return
         at_ns, slot = min(exits)
@@ -544,7 +539,7 @@ def run_arms(
         row = ArmRow(
             case=case,
             arm=label,
-            state="COMPLETE",
+            state="COMPLETE" if walked.exited else "HELD",
             reason="",
             rank=rank,
             slot=slot + 1,
@@ -557,6 +552,21 @@ def run_arms(
         )
         slots[slot] = row
         rows[case.case] = row
+    if rotation:
+        horizon = max(
+            (print_.ts_ns for case in cases for print_ in case.trades),
+            default=0,
+        )
+        _process_exits(
+            slots,
+            rows,
+            pending,
+            before_ns=horizon,
+            arm=label,
+            capacity=capacity,
+            rotation=rotation,
+            rule=rule,
+        )
     return tuple(rows[case.case] for case in ordered)
 
 
@@ -612,13 +622,18 @@ def _params(row: ArmRow, session: str) -> dict:
         "onset": _iso(row.onset_ns),
         "entry_ts": "" if entry is None else _iso(entry.ts_ns),
         "entry": "" if entry is None else str(entry.price),
-        "entry_basis": "ask at the run's first print; freshness proved at run completion",
+        "entry_basis": (
+            "ask at run completion (the then-current quote); onset is the run's first print"
+        ),
         "high": "" if walked is None else str(walked.high),
         "trail_level": "" if walked is None else str(walked.level),
-        "exit_ts": "" if walked is None else _iso(walked.exit_ts_ns),
-        "exit": "" if walked is None else str(walked.exit_price),
+        "exit_ts": "" if walked is None or walked.exit_ts_ns is None else _iso(walked.exit_ts_ns),
+        "exit": "" if walked is None or walked.exit_price is None else str(walked.exit_price),
         "exited": "" if walked is None else str(walked.exited),
-        "protected": "" if walked is None else f"{walked.protected:.6f}",
+        "protected": (
+            "" if walked is None or walked.protected is None else f"{walked.protected:.6f}"
+        ),
+        "mark": "" if walked is None or walked.mark_price is None else str(walked.mark_price),
         "hold_flat": "" if row.hold_flat is None else f"{row.hold_flat:.6f}",
         "rule": (
             "first_leg_window_s=120 first_leg_trades_count=5 "
@@ -633,7 +648,7 @@ def _append(row: ArmRow, log: TrialLog, session: str) -> None:
     config = _identity(row.arm, row.case.case, row.capacity, row.rotation, session)
     config["params_hash"] = snapshot_hash(params)
     if row.state == "COMPLETE":
-        assert row.walked is not None
+        assert row.walked is not None and row.walked.protected is not None
         log.append(
             "b_e2e_cohort",
             params,
@@ -643,6 +658,19 @@ def _append(row: ArmRow, log: TrialLog, session: str) -> None:
             days=[session],
             daily_net_returns=[row.walked.protected],
             objective=row.walked.protected,
+        )
+    elif row.state == "HELD":
+        assert row.walked is not None and row.walked.mark_price is not None
+        log.append(
+            "b_e2e_cohort",
+            params,
+            config,
+            0,
+            state="FAIL",
+            error=(
+                "HELD/NOT_EXITED: the tape ended before B's trail tripped; "
+                f"unrealized mark {row.walked.mark_price} is not scored as a protected return"
+            ),
         )
     else:
         log.append("b_e2e_cohort", params, config, 0, state="FAIL", error=row.reason)
@@ -659,7 +687,7 @@ def _hold_flat(case: CaseData, rule: EntryRule) -> tuple[float | None, str, str]
     filled, _ = entry(case, run, rule)
     if filled is not None:
         basis = str(filled.price)
-        return float(case.mark / filled.price - 1), basis, "first-leg ask at the run flag"
+        return float(case.mark / filled.price - 1), basis, "first-leg ask at run completion"
     return float(case.mark / run.last - 1), str(run.last), "run-last (entry refused)"
 
 
@@ -814,10 +842,23 @@ def _row_dict(row: ArmRow) -> dict:
         "rotated": bool(row.entry and row.entry.rotated),
         "high": None if row.walked is None else str(row.walked.high),
         "trail_level": None if row.walked is None else str(row.walked.level),
-        "exit_ts": None if row.walked is None else _iso(row.walked.exit_ts_ns),
-        "exit": None if row.walked is None else str(row.walked.exit_price),
+        "exit_ts": (
+            None
+            if row.walked is None or row.walked.exit_ts_ns is None
+            else _iso(row.walked.exit_ts_ns)
+        ),
+        "exit": (
+            None
+            if row.walked is None or row.walked.exit_price is None
+            else str(row.walked.exit_price)
+        ),
         "exited": None if row.walked is None else row.walked.exited,
         "protected": None if row.walked is None else row.walked.protected,
+        "mark": (
+            None
+            if row.walked is None or row.walked.mark_price is None
+            else str(row.walked.mark_price)
+        ),
         "hold_flat": row.hold_flat,
     }
 
@@ -826,10 +867,10 @@ def _markdown(rows: list[ArmRow], cases: tuple[CaseData, ...] | list[CaseData]) 
     lines = [
         "# Six-mover cohort replay (PR-3)",
         "",
-        "The owner's 2026-11-09 cross-section. Entry = the reviewed first-leg ask at the run's "
-        "first print (the cross-section's flag), with ask freshness proved at run completion; "
-        "protection = B's 2.5% broker-held trail; rows are MODELED in the one cumulative ledger."
-        " The entry-onset column is seconds from the loaded tape's first print to the entry.",
+        "The owner's 2026-11-09 cross-section. Entry = the reviewed first-leg ask once the "
+        "five-print run is confirmed (the then-current quote); the entry-onset column keeps the "
+        "run's first print. Protection = B's 2.5% broker-held trail; a position the tape never "
+        "stops is HELD and its mark is not scored. Rows are MODELED in the one cumulative ledger.",
         "",
         "| arm | case | state | K2 rank | slot | entry | entry-onset (s) | high | exit "
         "| protected | hold-flat | note |",
@@ -838,8 +879,16 @@ def _markdown(rows: list[ArmRow], cases: tuple[CaseData, ...] | list[CaseData]) 
     for row in rows:
         entry = "" if row.entry is None else str(row.entry.price)
         high = "" if row.walked is None else str(row.walked.high)
-        exit_ = "" if row.walked is None else str(row.walked.exit_price)
-        protected = "" if row.walked is None else f"{row.walked.protected:+.2%}"
+        if row.walked is None:
+            exit_ = ""
+        elif row.walked.exited:
+            exit_ = "" if row.walked.exit_price is None else str(row.walked.exit_price)
+        else:
+            exit_ = f"held @ {row.walked.mark_price}"
+        if row.walked is None or row.walked.protected is None:
+            protected = "not scored"
+        else:
+            protected = f"{row.walked.protected:+.2%}"
         hold = "" if row.hold_flat is None else f"{row.hold_flat:+.2%}"
         note = row.reason or ("rotated" if row.entry and row.entry.rotated else "")
         lag = "" if row.entry is None else f"{(row.entry.ts_ns - row.onset_ns) / 1e9:.1f}"

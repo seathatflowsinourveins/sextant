@@ -375,6 +375,8 @@ class _Protect(Strategy):
         self.entry_ts_ns: int | None = None
         self.exit_price: Decimal | None = None
         self.exit_ts_ns: int | None = None
+        self.exit_qty = Decimal(0)
+        self.exit_notional = Decimal(0)
         self.exited = False
         self.position_id = None
         self.high: Decimal | None = None
@@ -451,9 +453,13 @@ class _Protect(Strategy):
             self.entry_ts_ns = event.ts_event
             self.entry_price = event.last_px.as_decimal()
         elif event.order_side == OrderSide.SELL and event.client_order_id == self.trail_cid:
-            self.exit_ts_ns = event.ts_event
-            self.exit_price = event.last_px.as_decimal()
-            self.exited = True
+            quantity = event.last_qty.as_decimal()
+            self.exit_qty += quantity
+            self.exit_notional += event.last_px.as_decimal() * quantity
+            if self.exit_qty >= self.cfg.quantity:
+                self.exit_ts_ns = event.ts_event
+                self.exit_price = self.exit_notional / self.exit_qty
+                self.exited = True
 
 
 def _head_sha() -> str:

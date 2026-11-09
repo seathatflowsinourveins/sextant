@@ -7,10 +7,12 @@ design; the real six-mover run reads today's SIP tapes and the e2e-omh K2 ranks.
 The behaviour under proof:
 - the first leg is five non-decreasing prints above the quiet price, inside
   ``first_leg_window_s`` and ``first_leg_max_move``;
-- entry fills at the fresh ask at run completion and a stale ask is refused, never loosened;
-- B's 2.5% trail exits at the first print below the high minus 2.5%;
+- entry fills at the then-current ask once the run is confirmed, and a stale ask is refused;
+- B's 2.5% trail exits at the first print below the high minus 2.5%, while a position the
+  tape never stops is HELD and its mark is not scored as a protected return;
 - the control arm's busy slot refuses the next run, and ADR-0006's flat-slot rotation gives
-  the freed slot to the best-ranked pending name with no lift;
+  the freed slot to the best-ranked pending name with no lift, rechecking the first-leg cap;
+- rotation is processed after the final candidate, not only before the next candidate's flag;
 - every arm writes MODELED rows to the one cumulative ledger, refusals included.
 """
 
@@ -18,6 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
 
@@ -26,6 +29,7 @@ import pytest
 
 from sextant.backtest.b_e2e import reviewed_rule
 from sextant.backtest.b_e2e_cohort import (
+    Quote,
     entry,
     find_run,
     load_cases,
@@ -63,14 +67,14 @@ def test_first_leg_finds_five_non_decreasing_prints_within_the_cap():
     assert run.confirm_ns == run.start_ns + 4_000_000_000
 
 
-def test_entry_fills_at_the_fresh_ask_and_a_stale_quote_is_refused():
+def test_entry_fills_at_the_confirmed_ask_and_a_stale_quote_is_refused():
     cases = _cases()
     aaa = cases["aaa"]
     filled, reason = entry(aaa, _run("aaa"), reviewed_rule())
     assert reason == ""
     assert filled is not None
-    assert filled.price == Decimal("5.41")
-    assert filled.ts_ns == _run("aaa").flag_ns
+    assert filled.price == Decimal("5.43")
+    assert filled.ts_ns == _run("aaa").confirm_ns
 
     ddd = cases["ddd"]
     refused, refusal = entry(ddd, _run("ddd"), reviewed_rule())
@@ -87,9 +91,9 @@ def test_the_trail_exits_at_the_first_print_below_high_minus_2_5_percent():
     assert walked.high == Decimal("5.60")
     assert walked.level == Decimal("5.46")
     assert walked.exit_price == Decimal("5.40")
-    assert walked.exit_ts_ns == filled.ts_ns + 9_000_000_000
-    assert walked.protected == pytest.approx(float(Decimal("5.40") / Decimal("5.41") - 1))
-    assert walked.hold_flat == pytest.approx(float(Decimal("5.60") / Decimal("5.41") - 1))
+    assert walked.exit_ts_ns == filled.ts_ns + 5_000_000_000
+    assert walked.protected == pytest.approx(float(Decimal("5.40") / Decimal("5.43") - 1))
+    assert walked.hold_flat == pytest.approx(float(Decimal("5.60") / Decimal("5.43") - 1))
 
 
 def test_a_busy_slot_refuses_every_later_run_in_the_control_arm():
@@ -110,14 +114,43 @@ def test_rotation_fills_a_flat_slot_with_the_best_pending_name():
     assert states["bbb"].entry.price == Decimal("10.50")
     assert states["bbb"].slot == 1
     assert "rotate" in states["bbb"].reason
-    assert states["ccc"].state == "COMPLETE"
+    assert states["ccc"].state == "HELD"
+    assert states["ccc"].walked is not None
+    assert states["ccc"].walked.protected is None
+    assert states["ccc"].walked.mark_price == Decimal("20.30")
+
+
+def test_rotation_is_processed_after_the_last_candidate():
+    cases = _cases()
+    rows = run_arms([cases["aaa"], cases["bbb"]], capacity=1, rotation=True)
+    states = {row.case.case: row for row in rows}
+
+    assert states["bbb"].state == "COMPLETE"
+    assert states["bbb"].entry is not None
+    assert states["bbb"].entry.price == Decimal("10.50")
+    assert states["bbb"].slot == 1
+    assert "rotate" in states["bbb"].reason
+
+
+def test_rotation_rechecks_the_first_leg_cap_on_the_delayed_quote():
+    cases = _cases()
+    quotes = list(cases["bbb"].quotes)
+    quotes[-1] = Quote(quotes[-1].ts_ns, Decimal("10.55"), Decimal("10.60"))
+    hot = replace(cases["bbb"], quotes=tuple(quotes))
+
+    rows = run_arms([cases["aaa"], hot, cases["ccc"]], capacity=1, rotation=True)
+    states = {row.case.case: row for row in rows}
+
+    assert states["bbb"].state == "FAIL"
+    assert states["bbb"].entry is None
+    assert states["bbb"].reason == "no slot under this arm"
 
 
 def test_eight_slots_take_every_quotable_entry_and_refusals_stay_failed():
     rows = run_arms(list(_cases().values()), capacity=8, rotation=False)
     states = {row.case.case: row.state for row in rows}
 
-    assert states == {"aaa": "COMPLETE", "bbb": "COMPLETE", "ccc": "COMPLETE", "ddd": "FAIL"}
+    assert states == {"aaa": "COMPLETE", "bbb": "COMPLETE", "ccc": "HELD", "ddd": "FAIL"}
     ddd = next(row for row in rows if row.case.case == "ddd")
     assert "fresh" in ddd.reason
 
@@ -139,5 +172,12 @@ def test_every_arm_writes_one_modeled_row_per_case(tmp_path):
         assert config["tier"] == "MODELED"
         assert config["block_set_id"] == "2026-11-09"
     failed = [row for row in written if row["state"] == "FAIL"]
-    assert len(failed) == 1
-    assert "fresh" in failed[0]["error"]
+    assert len(failed) == 2
+    errors = {row["error"] for row in failed}
+    assert any("fresh" in error for error in errors)
+    assert any("HELD/NOT_EXITED" in error for error in errors)
+    completed = [
+        row for row in written if row["state"] == "COMPLETE" and row["strategy"] == "b_e2e_cohort"
+    ]
+    assert len(completed) == 2
+    assert all(row["objective"] is not None for row in completed)
