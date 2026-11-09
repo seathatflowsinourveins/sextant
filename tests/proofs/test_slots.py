@@ -1,5 +1,7 @@
 from decimal import Decimal
 
+import pytest
+
 from sextant.entry.slots import Allocation, Candidate, SlotPool
 
 
@@ -14,12 +16,32 @@ def _candidates(count: int, unqualified: frozenset[int] = frozenset()) -> tuple[
     )
 
 
-def test_the_recorded_share_gives_two_of_five_and_eight_of_twenty():
-    pool = SlotPool()
-    assert pool.slots(5) == 2
-    assert pool.slots(20) == 8
-    assert pool.slots(0) == 0
-    assert pool.slots(7) == 2  # 2.8 floors to the recorded whole-slot count
+@pytest.mark.parametrize(
+    ("count", "expected"),
+    (
+        (-1, 0),
+        (0, 0),
+        (1, 1),
+        (2, 1),
+        (3, 2),
+        (4, 2),
+        (5, 2),
+        (6, 3),
+        (7, 3),
+        (8, 4),
+        (9, 4),
+        (10, 4),
+        (20, 8),
+    ),
+)
+def test_the_recorded_share_rounds_up(count: int, expected: int):
+    assert SlotPool().slots(count) == expected
+
+
+def test_allocation_uses_the_ceiling_rounded_reservation():
+    assert SlotPool().allocate(_candidates(7), custody_open=0) == Allocation(
+        ("S0", "S1", "S2"), 3, "filled"
+    )
 
 
 def test_custody_counts_first_and_the_pool_is_shared():
@@ -37,16 +59,22 @@ def test_unknown_or_invalid_custody_arms_nothing():
     assert pool.allocate(_candidates(5), custody_open=-1).reason == "custody_invalid"
 
 
-def test_first_moved_order_is_the_fill_order():
+@pytest.mark.parametrize(
+    ("best_qualified", "expected"),
+    ((True, ("BEST", "SECOND")), (False, ("SECOND", "LOW"))),
+)
+def test_the_callers_ranking_is_preserved_over_first_moved_order(
+    best_qualified: bool, expected: tuple[str, ...]
+):
     pool = SlotPool()
     candidates = (
-        Candidate("LATE", first_moved_ns=30),
-        Candidate("EARLY", first_moved_ns=10),
-        Candidate("MIDDLE", first_moved_ns=20),
-        Candidate("LATER", first_moved_ns=40),
+        Candidate("BEST", first_moved_ns=30, qualified=best_qualified),
+        Candidate("SECOND", first_moved_ns=40),
+        Candidate("LOW", first_moved_ns=10),
+        Candidate("LOWER", first_moved_ns=20),
         Candidate("LAST", first_moved_ns=50),
     )
-    assert pool.allocate(candidates, custody_open=0).armed == ("EARLY", "MIDDLE")
+    assert pool.allocate(candidates, custody_open=0).armed == expected
 
 
 def test_unqualified_and_unused_slots_pass_over():
