@@ -34,6 +34,7 @@ PARAMETER_NAMES = frozenset({TRAIL_PERCENT_NAME, CLAIM_LATENCY_NAME})
 PARAMETER_KEYS = frozenset({"name", "unit", "value", "source", "calibration_state", "last_change"})
 MAX_TRAIL_FRACTION = Decimal("0.025")
 FILL_EVENTS = frozenset({"fill", "partial_fill"})
+RESERVATION_END_EVENTS = frozenset({"canceled", "expired", "done_for_day"})
 TERMINAL_EVENTS = frozenset({"canceled", "expired", "rejected", "stopped", "done_for_day"})
 OPEN_ORDER_LIMIT = 500
 MAX_CLIENT_ORDER_ID = 128
@@ -176,6 +177,8 @@ class Protector:
         self.pages: list[Page] = []
         self.frozen: set[str] = set()
         self._cancelling: set[str] = set()
+        self._last_position: dict[str, Decimal] = {}
+        self._last_reserved: dict[str, Decimal] = {}
         self._sequence = 0
 
     def page(self, reason: str, symbol: str | None = None, detail: str = "") -> None:
@@ -209,19 +212,32 @@ class Protector:
                 "owner_event_fail_closed",
                 f"owner order event {event}",
             )
+            if event in RESERVATION_END_EVENTS:
+                self.reconcile()
 
     def reconcile(self) -> dict[str, Position]:
         """Match the broker's open orders and positions, then protect the whole shares."""
 
         positions, house, owner_sells, unrecognized = self._snapshot()
         for symbol, position in positions.items():
+            reserved = owner_sells.get(symbol, Decimal(0))
+            previous = self._last_reserved.get(symbol)
+            freed = symbol not in self._last_position or (
+                previous is not None and reserved < previous
+            )
             self._reconcile_symbol(
                 symbol,
                 position,
                 house.pop(symbol, []),
-                owner_sells.get(symbol, Decimal(0)),
+                reserved,
                 symbol in unrecognized,
+                freed,
             )
+            self._last_position[symbol] = _decimal(position.qty, "position.qty")
+            self._last_reserved[symbol] = reserved
+        for symbol in set(self._last_position) - set(positions):
+            self._last_position.pop(symbol, None)
+            self._last_reserved.pop(symbol, None)
         for symbol, ours in house.items():
             if symbol not in positions:
                 for order in ours:
@@ -303,23 +319,35 @@ class Protector:
     def _clean(ours: list[Order], protective: int) -> bool:
         return len(ours) <= 1 and all(_leaves(order) <= protective for order in ours)
 
+    def _fail_claim(self, update: TradeUpdate, symbol: str, reason: str, detail: str) -> None:
+        """Fail closed, and after an owner sell partial fill arm the shares it frees."""
+
+        self._fail_closed(symbol, reason, detail)
+        if (
+            _event_name(update.event) == "partial_fill"
+            and _event_name(update.order.side).lower() == "sell"
+        ):
+            self.reconcile()
+
     def _handle_owner_fill(self, update: TradeUpdate, symbol: str) -> None:
         filled_ns = _timestamp_ns(update.timestamp)
         if filled_ns is None:
-            self._fail_closed(symbol, "custody_unresolved", "owner fill has no timestamp")
+            self._fail_claim(update, symbol, "custody_unresolved", "owner fill has no timestamp")
             return
         now_ns = self._now_ns()
         if filled_ns > now_ns:
-            self._fail_closed(symbol, "invalid_claim_clock", "owner fill clock is in the future")
+            self._fail_claim(
+                update, symbol, "invalid_claim_clock", "owner fill clock is in the future"
+            )
             return
         latency_ns = int(self._parameters.claim_max_latency_s * NS_PER_SECOND)
         if now_ns - filled_ns > latency_ns:
-            self._fail_closed(
-                symbol, "claim_too_late", "owner fill is older than claim_max_latency_s"
+            self._fail_claim(
+                update, symbol, "claim_too_late", "owner fill is older than claim_max_latency_s"
             )
             return
         if update.position_qty is None:
-            self._fail_closed(symbol, "custody_unresolved", "owner fill has no position_qty")
+            self._fail_claim(update, symbol, "custody_unresolved", "owner fill has no position_qty")
             return
         positions = self.reconcile()
         position = positions.get(symbol)
@@ -354,6 +382,7 @@ class Protector:
         ours: list[Order],
         owner_sell_reserved: Decimal,
         unrecognized_open_order: bool,
+        freed: bool,
     ) -> None:
         quantity = _decimal(position.qty, "position.qty")
         if quantity < 0:
@@ -417,8 +446,16 @@ class Protector:
                 self._cancel_excess(ours, protective, "quantity_mismatch")
                 self.frozen.add(symbol)
                 self.page("quantity_mismatch", symbol)
-            else:
-                self.page("owner_add_unprotected", symbol)
+                if not in_rth:
+                    self.page("unprotected_outside_rth_until_pr2", symbol)
+                return
+            if freed:
+                if in_rth and self._cancel(ours[0], "arm_freed_quantity"):
+                    self._submit_trail(symbol, protective)
+                elif not in_rth:
+                    self.page("unprotected_outside_rth_until_pr2", symbol)
+                return
+            self.page("owner_add_unprotected", symbol)
             if not in_rth:
                 self.page("unprotected_outside_rth_until_pr2", symbol)
             return
@@ -446,7 +483,7 @@ class Protector:
         except Exception as exc:
             self.page("trail_submit_failed", symbol, type(exc).__name__)
 
-    def _cancel(self, order: Order, reason: str) -> None:
+    def _cancel(self, order: Order, reason: str) -> bool:
         if not self._is_ours(order):
             raise ProtectorRefusal("refusing to cancel an order the house does not own")
         order_id = str(order.id)
@@ -456,6 +493,8 @@ class Protector:
         except Exception as exc:
             self._cancelling.discard(order_id)
             self.page("cancel_failed", order.symbol, f"{reason}: {type(exc).__name__}")
+            return False
+        return True
 
     def _is_ours(self, order: Order) -> bool:
         return bool(order.client_order_id) and order.client_order_id.startswith(

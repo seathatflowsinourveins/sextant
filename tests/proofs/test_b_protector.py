@@ -303,6 +303,32 @@ def test_an_owner_working_sell_reserves_those_shares_from_the_house_trail():
     assert "owner_reserved_unprotected" in [page.reason for page in p.pages]
 
 
+def test_an_owner_sell_cancel_arms_the_freed_shares_to_protective():
+    owner = api_order(client_order_id="owner-sell-1", side="sell", qty="4")
+    house = api_order(
+        client_order_id="B001-trail-AAPL-small",
+        side="sell",
+        qty="6",
+        order_type="trailing_stop",
+        trail_percent="2.5",
+    )
+    client = FakeTradingClient(positions=[api_position("10")], orders=[owner, house])
+    p = protector(client)
+    p.bind()
+    p.reconcile()
+
+    assert client.cancelled == []
+    assert client.submitted == []
+
+    client.orders = [order for order in client.orders if str(order.id) != str(owner.id)]
+    p.handle(api_update(owner, event="canceled", position_qty=10.0))
+
+    assert [request.qty for request in client.submitted] == [10]
+    assert client.cancelled == [str(house.id)]
+    assert str(owner.id) not in client.cancelled
+    assert client.replaced == []
+
+
 def test_an_owner_order_event_cancels_an_oversized_house_trail_before_freezing():
     house = api_order(
         client_order_id="B001-trail-AAPL-old",
@@ -511,9 +537,11 @@ def test_an_owner_add_pages_and_leaves_the_house_trail_alone():
         order_type="trailing_stop",
         trail_percent="2.5",
     )
-    client = FakeTradingClient(positions=[api_position("12")], orders=[house])
+    client = FakeTradingClient(positions=[api_position("10")], orders=[house])
     p = protector(client)
     p.bind()
+    p.reconcile()
+    client.positions = [api_position("12")]
     p.reconcile()
 
     assert client.cancelled == []
