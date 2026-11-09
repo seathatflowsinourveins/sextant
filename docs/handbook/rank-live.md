@@ -273,3 +273,73 @@ pin, and measure against the target's actual size guard before handoff
 The owner has unblocked live ranking; rollout starts when B is ready, under the
 trading lead's six-step rollout. This port keeps `enabled=0`, overnight OFF and
 all display-only boundaries; it performs no rollout or controller apply.
+
+## Bar-fidelity REST host, 2026-11-09
+
+TV-HOST adds the host the seam above was waiting for: it polls SIP 1-minute bars
+over REST, feeds them through main's `RankingPublisher` and T1's `LiveProducer`,
+and writes `sextant.j5-ranked/1` atomically. It is display only. Nothing here
+opens a stream, places an order, launches the Windows controller or schedules
+itself; the lease, the atomic writer and the two-clock rule are T1's, unchanged.
+
+- **Transport.** `tradingview/bars.py:AlpacaBarSource` chunks the requested
+  universe (150 by default, at most 200 symbols per call) and waits the same
+  `data.alpaca_history.Pacer` before every call, so retries and pages share one
+  <= 200/min allocation. Requests are `StockBarsRequest(TimeFrame(1, Minute),
+  feed=SIP, adjustment=RAW, sort=ASC)`; bars keep the vendor `vw` and `n` fields
+  ([ADR-0003](adr/0003-ranking-and-feeds.md):14), and a bar without `n` is
+  refused rather than given a count.
+- **Bar to tick.** `trades_accel` is a count of ticks in `TradeWindow.totals`, so
+  one bar becomes one volume-bearing `TradeTick` at its close plus `n - 1`
+  unit-size counted twins seeded into the volume window
+  (`TradeWindow.append_count`). The twins carry no dollar volume: the bar's
+  `close x volume` is added exactly once and the 60 s/300 s windows count the
+  vendor trade count. The representation is proven equal to `n` independent
+  appends. Provenance is labelled "bar fidelity": within-bar ordering and
+  aggressor are unknown, so the witness cannot support a first-second statement
+  and `mover_min_trades_accel` is a trade-count gate, not a print-verified one.
+- **Prefix.** A first bar that starts the segment anchors at its own open; a
+  later first bar anchors at the prior official close. `Quantity` refuses zero,
+  so the anchor is a unit-size tick and its own dollar volume is subtracted from
+  the segment prefix, leaving that prefix at zero. Later bars append at their
+  close clocks; a bar whose close is after the market clock, a stale bar, or a
+  bar outside the segment or universe is refused, never back-dated.
+- **Coverage.** `BarPoll(bars, requested, failed)` says what the poll covered. A
+  complete poll sets `READY` with expected == observed == universe and zero
+  missing/invalid/late; any failed symbol sets `DEGRADED` with the explicit
+  missing count. A degraded poll never clears the list: `publish_unit` writes an
+  explicit unavailable document with `watchlists: null`.
+- **Mappings.** The host takes an operator-supplied exact
+  `SYMBOL -> EXCHANGE:SYMBOL` JSON map. It never invents a venue; a missing
+  mapping makes the unit unavailable rather than dropping the row.
+- **Universe and baseline builders.** `bars.build_universe` reproduces the e2e's
+  documented NMS operating-company superset from the public NASDAQ Trader
+  directories, dropping test issues, ETFs, `$` symbols, over-long symbols and
+  warrant/unit/right/preferred/fund name and suffix patterns; it is a documented
+  superset, not point-in-time membership. `baseline.build_baseline` builds five
+  prior XNYS sessions of per-session cumulative dollar-volume and trade-count
+  curves, interpolates each session at the offset and takes the median; a minute
+  without a bar carries the previous cumulative value forward. Five sessions is
+  the replay's choice, not a seal-bound constant.
+
+### Parity witness, 2026-11-09
+
+`scripts/tv_host_parity.py` runs the host over the recorded e2e artifacts
+(`arrays/2026-11-09.npz`, `baseline_pre.npz`, `baseline_rth.npz`, `ranks.npz`
+and `daily.json`) with the same fixture registry and compares every minute's K2
+order with the replay matrix. It uses the standard library only, including a
+small `.npy` reader, so the witness adds no dependency.
+
+- **Vendor-count run** (the host path): zero hard mismatches over the 454
+  host-representable recorded minutes. The only differences are permutations
+  inside equal-score groups, because the research replay broke score ties with
+  its documented one-tick-per-bar proxy while the host uses the vendor trade
+  count that K2 and the brief require. Every equal-score group keeps exactly the
+  same rank set.
+- **Replay-count control** (`--count-mode replay`): the full rank matrix matches
+  every minute exactly, proving the publisher/reader/unit path equals the e2e
+  replay when fed the same counts.
+- **One boundary minute** (PRE 09:29) is skipped: its bar closes exactly at the
+  09:30 PRE boundary, and the replay clipped that tick to `end - 1 ns`, a
+  catalog-clock convention the live host never applies because a bar that closes
+  at the boundary belongs to the next segment.
