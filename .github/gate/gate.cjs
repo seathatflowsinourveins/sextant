@@ -101,8 +101,8 @@ async function prompt({ github, context, core }, number, head, engine) {
   let text;
   if (engine === 'dsh') {
     text = base + '\nUse the PerryLink/dsh-github model pipeline: first call ci_run with ' +
-      JSON.stringify({ task: 'analyze', pr: String(pr.number), ownerRepo: `${context.repo.owner}/${context.repo.repo}` }) +
-      '. Read the returned diff. Then call ci_run with task publish, the same pr and ownerRepo, ' +
+      JSON.stringify({ task: 'analyze', pr: `${context.repo.owner}/${context.repo.repo}#${pr.number}` }) +
+      '. Read the returned diff. Then call ci_run with task publish and the same qualified pr reference, ' +
       'a review body starting with Review of ' + head + ', and your findings. ' +
       `Use severity error only when the Report section permits blocking AND the finding is P0${threshold ? '/P1' : ''}; otherwise use warning or lower. Findings need file, line (or null), rule, severity and message. ` +
       'Publish even if there are no findings. Use only the GitHub review tools. Do not execute commands. ' +
