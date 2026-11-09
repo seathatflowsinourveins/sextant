@@ -1,11 +1,18 @@
-"""PR-M3: AgentsView as the five-runtime usage-only archive (L1/L2).
+"""PR-M3: AgentsView as the usage-only archive for the four parseable runtimes.
+
+At the pin, `internal/parser/deepseek_harness.go` reads dsh JSONL versions 0-4
+but has no `job/registered` event type, which every dsh v0.2.2-rc.1 session
+carries: all 48 configured dsh files fail sync with 0 rows while `sync` exits 0
+(local review, 2026-11-09). The dsh root therefore stays off until a cooled pin
+parses the event; the claude, codex, antigravity-cli and muse roots archive.
 
 Source: kenn-io/agentsview@v0.46.1 `65523169ae016d10112b70ed3410487204764fbc`
 (MIT, published 2026-10-23): `cmd/agentsview/cli.go:123`, the `usage` command;
 `internal/telemetry/telemetry.go:16,54-55`, the telemetry opt-out the wrapper sets;
 `internal/parser/types.go`, the claude, codex, deepseek-harness, antigravity-cli
-and muse session roots; `docs/configuration.md:9,46-47,248-249,1509-1510,2382,
-2388-2395` and `docs/token-usage.md:756-769`, the config keys and query flags.
+and muse session roots; `docs/configuration.md:9,46-47,248-249,514-517,651-654,
+1509-1510,2382,2388-2395` and `docs/token-usage.md:756-769`, the config keys,
+empty-`dirs` and dsh read rules, and the query flags (read 2026-11-09).
 Static reads only: no binary, daemon, network or session file is touched.
 """
 
@@ -89,19 +96,38 @@ def test_config_binds_loopback_and_archives_usage_only() -> None:
     assert config["agents"].get("codex-cloud", {}).get("enabled") is not True
 
 
-def test_config_registers_the_five_sextant_runtime_homes() -> None:
+def test_config_registers_the_four_parseable_runtime_homes() -> None:
     text = (MONITOR / "agentsview-config.toml").read_text()
     agents = _config()["agents"]
     assert agents["claude"]["dirs"] == ["~/.claude/projects"]
     assert agents["codex"]["dirs"] == []
     lane = "~/.local/share/sextant-lane-runtimes/codex-home"
     assert agents["codex"]["homes"] == [lane]
-    assert agents["deepseek-harness"]["dirs"] == ["~/.dsh-enhanced/sessions"]
     assert agents["antigravity-cli"]["dirs"] == ["~/.gemini/antigravity-cli"]
     assert agents["muse"]["dirs"] == ["~/.local/share/muse/sessions"]
     assert text.count("homes = ") == 1, "the installer rewrites this one line"
     installer = (MONITOR / "install-agentsview.sh").read_text()
     assert ".config/orca/codex-accounts" in installer and "*/home" in installer
+
+
+def test_dsh_stays_off_until_the_pin_parses_job_registered() -> None:
+    """The archive never claims a runtime the pin cannot parse.
+
+    An explicit empty `dirs` clears the default root (docs/configuration.md:514-517),
+    so the dsh runtime archives nothing instead of failing 48 files while `sync`
+    exits 0. Flipping the pin flag to true must carry the root back.
+    """
+    agents = _config()["agents"]
+    pins = _pins()["agentsview"]
+    parsed = pins.get("parses_dsh_job_events")
+    assert isinstance(parsed, bool), "the pin records whether it parses dsh job events"
+    dsh = agents["deepseek-harness"]
+    if parsed:
+        assert dsh["dirs"] == ["~/.dsh-enhanced/sessions"], "re-enable the dsh root"
+    else:
+        assert dsh["dirs"] == [], "v0.46.1 has no job/registered type; keep dsh off"
+        assert "homes" not in dsh
+        assert "job/registered" in pins["dsh_gap"], "the gap names the missing event"
 
 
 def test_usage_query_is_offline_no_sync_json_under_nice_and_ionice() -> None:

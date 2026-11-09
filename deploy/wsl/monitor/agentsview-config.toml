@@ -1,4 +1,5 @@
-# AgentsView v0.46.1 (65523169ae016d10112b70ed3410487204764fbc) usage-only archive.
+# AgentsView v0.46.1 (65523169ae016d10112b70ed3410487204764fbc) usage-only archive
+# for the four runtimes this pin parses: claude, codex, antigravity-cli and muse.
 # Installed as config.toml in the dedicated data directory (docs/configuration.md:9).
 # host and archive_content are upstream keys (docs/configuration.md:248-249); the
 # usage value keeps session metadata and usage values and drops transcript text,
@@ -15,8 +16,15 @@ dirs = ["~/.claude/projects"]
 dirs = []
 homes = ["~/.local/share/sextant-lane-runtimes/codex-home"]
 
+# The pinned parser reads dsh JSONL v0-4 (docs/configuration.md:651-654) but has
+# no `job/registered` event type, which every dsh v0.2.2-rc.1 session carries: all
+# 48 configured dsh files failed sync with 0 deepseek-harness rows while `sync`
+# exited 0 (local review, 2026-11-09). An explicit empty `dirs` clears the default
+# root (:514-517), so dsh is pinned off instead of silently archiving nothing; a
+# cooled release whose parser knows the event restores
+# dirs = ["~/.dsh-enhanced/sessions"].
 [agents.deepseek-harness]
-dirs = ["~/.dsh-enhanced/sessions"]
+dirs = []
 
 [agents.antigravity-cli]
 dirs = ["~/.gemini/antigravity-cli"]
