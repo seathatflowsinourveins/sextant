@@ -8,35 +8,12 @@ import pytest
 
 @pytest.mark.parametrize(
     ("command", "version"),
-    (
-        ("pi", "1.4.0"),
-        ("omp", "18.12.6"),
-        ("opencode2", "2.1.4"),
-        ("hermes", "0.22.5"),
-        ("agy", "1.4.6"),
-    ),
+    (("agy", "1.4.6"),),
 )
 def test_installed_native_version(command: str, version: str) -> None:
     result = subprocess.run([command, "--version"], capture_output=True, text=True, check=False)
     assert result.returncode == 0, result.stderr
     assert version in result.stdout
-
-
-def test_installed_sdk_pair() -> None:
-    python = Path.home() / ".local/share/sextant-lane-runtimes/openhands/bin/python"
-    result = subprocess.run(
-        [
-            str(python),
-            "-c",
-            "from importlib.metadata import version; "
-            "assert version('openhands-sdk') == version('openhands-tools') == '1.58.1'; "
-            "from openhands.sdk import Agent, Conversation",
-        ],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert result.returncode == 0, result.stderr
 
 
 def test_fresh_router_bind_and_available_memory() -> None:

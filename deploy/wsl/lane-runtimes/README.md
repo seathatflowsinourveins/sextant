@@ -4,7 +4,7 @@ Issue [#62](https://github.com/seathatflowsinourveins/sextant/issues/62). [Evide
 
 In the clean Sextant distro, run `just lane-runtimes`. This installs under `~/.local/share/sextant-lane-runtimes`, with commands in `~/.local/bin`. It keeps the existing encrypted store and router data on a repeat install. It checks the owner's 20 GB **MemAvailable** floor before installation. Do not reinstall packages while a router sign-in is in progress.
 
-The npm lock covers Pi and OpenCode v2; Pi's documented `--ignore-scripts` install is followed by OpenCode's required, version-checking postinstall. OMP and Antigravity are release binaries verified against GitHub's SHA-256 digests. Hermes uses its own installer at the full commit, including its TUI build. OpenHands SDK and tools are the matched 1.58.1 pair, with a separate hashed Python lock. No `srt` wrapper is installed. Gemini CLI was removed on the owner's 2026-11-06 instruction, verbatim: **"drop gemini, it was not working"**; its pin remains only in retirement history.
+The one native release binary is Antigravity, verified against GitHub's SHA-256 digest; the router is OmniRoute's pinned npm lock. No `srt` wrapper is installed. Pi, OMP, OpenCode v2, Hermes and the OpenHands SDK were retired on 2026-11-08 under [ADR-0030:35](../../../docs/adr/0030-latest-sota-models.md); their pins stay in `retired_runtimes` and Git. OpenHands is a recorded REJECT, not a pause: AO 0.14.10's adapter drives only its unmaintained CLI, and the re-evaluation report's reopen trigger is a maintained headless or ACP worker with max-effort control, at least 14 days old. Gemini CLI was removed on the owner's 2026-11-06 instruction, verbatim: **"drop gemini, it was not working"**. A host installed before 2026-11-08 keeps the old launchers and prefix directories; this installer neither creates nor repairs them.
 
 ## Fresh router
 
@@ -19,35 +19,25 @@ Create the route once, using the same installed launcher for upstream CLI comman
 ~/.local/share/sextant-lane-runtimes/router-start.sh combo list --json
 ```
 
-`routing.json` declares the combo and endpoint; `model-policy.json` records the owner's model rule, dated Artificial Analysis/vendor sources and the lead-approved Google interim. OmniRoute owns scoring, connection quota and health behavior. The single target pins **gpt-6.1-sol, max** across the five GPT runtimes. Recorded request artifacts show max on the successful calls; this is not a task-quality benchmark or a measurement of private provider compute. Native Codex subscription headroom is separate from the router's connected accounts.
+`routing.json` declares the combo and endpoint; `model-policy.json` records the owner's model rule, dated Artificial Analysis/vendor sources and the lead-approved Google interim. OmniRoute owns scoring, connection quota and health behavior. The single target pins **gpt-6.1-sol, max** on Codex, the one runtime still on the router. Recorded request artifacts show max on the successful calls; this is not a task-quality benchmark or a measurement of private provider compute. Native Codex subscription headroom is separate from the router's connected accounts.
 
 ## Native tabs
 
 Use Orca's known agents, with no task prompt while opening a sign-in tab:
 
 ```bash
-orca agent launch --agent pi --surface terminal
-orca agent launch --agent omp --surface terminal
-orca agent launch --agent opencode2 --surface terminal
-orca agent launch --agent hermes --surface terminal
 orca agent launch --agent antigravity --surface terminal
 ```
 
-Pi has no per-tool approval flag. The launcher supplies OMP's `--yolo` and OpenCode's `--auto`; Orca 1.4.251 does not supply those two itself. Hermes receives `--yolo`; Orca supplies Antigravity's `--dangerously-skip-permissions`. Explicit upstream denies still apply. These are native processes with the user's filesystem/network access.
-
-Pi, OMP, OpenCode, Hermes and OpenHands each receive their own #94 encrypted-store key, renamed on injection to **`OMNIROUTE_API_KEY`**, and use the profiles generated from `routing.json`. The names are `OMNIROUTE_KEY_PI`, `_OMP`, `_OPENCODE`, `_HERMES` and `_OPENHANDS`; #94 owns minting and renewal. Wrapping `orca agent launch` in `with-keys.sh` would key only the CLI client, so the installed runtime command is the injection point. The source shape is the old roster's `ns-native.sh`, with none of its jail or custom inference transport.
-
-Hermes runs turns in its upstream shared gateway. A pre-key client can reconnect and restart that daemon with its old launch environment: close or relaunch those clients, then run `hermes gateway restart --detach` through the installed per-runtime command. The daemon keeps its launch key until restarted; coordinate this with #94's key renewal. Never put a key in `--api-key`, a config file or a URL. OpenCode's one-shot flags belong after its subcommand: `opencode2 run --format json 'task'` is expanded to `run --standalone --auto`, not root flags followed by `run`.
+Orca supplies Antigravity's `--dangerously-skip-permissions`; explicit upstream denies still apply. It is a native process with the user's filesystem/network access. The retired runtimes have no tab: the installer no longer puts their commands on `PATH`.
 
 The Google family uses native, owner-authenticated **Antigravity** and OmniRoute's **agy** and **antigravity** provider connections. ADR-0030's model policy applies to those surfaces: **interim: Carbon not in this account's catalog (Google staged trusted-partner rollout)**, with `gemini-4-argon-high` at High until the account lists Carbon. The native launcher selects `--model gemini-4-argon-high --effort high` and documented `AGY_CLI_DISABLE_AUTO_UPDATE=true`; Antigravity reads project `AGENTS.md` directly. If an owner browser step is required, title its tab **SIGN-IN: Antigravity**; the current owner session is already authenticated. The freshness detector owns the later Carbon switch.
-
-OpenHands is programmatic: Orca 1.4.251 rejects `--agent openhands-sdk`. The installed `openhands-sdk 'task message'` command uses upstream's SDK example, project `AGENTS.md` loading, `NeverConfirm` and `Conversation.close()` cleanup; it runs in a plain Orca terminal. It receives its own `_OPENHANDS` key at the same endpoint. Only a bounded routing smoke task was dispatched during acceptance.
 
 Use the main cockpit workspace for persistent runtime/router tabs after the owner finishes sign-ins; the lane worktree can then follow the usual post-merge cleanup. The lead owns that handover, so cleanup must not interrupt a pending browser flow.
 
 ## Codex on the router
 
-`sextant-codex` runs Codex CLI 0.167.0 on OmniRoute's pool for Orca and native workers. That Codex is the sandbox's existing pin (the manifest's Runtimes row, installed by `deploy/wsl/setup.sh`), not one of `pins.json`'s release-cooled runtimes: tag `rust-v0.167.0` was cut on 2026-11-05, so the two-week rule above does not cover it. It runs with OmniRoute's own `launch-codex` provider block: `model_provider=omniroute`, `routing.json`'s base URL, `wire_api=responses`, `env_key=OMNIROUTE_API_KEY` and `requires_openai_auth=false`. The model is `sextant-gpt`, the combo every runtime key is restricted to; OmniRoute's credential loop fails a call over to the pool's next Codex connection, and serves it as `gpt-6.1-sol` at `max`. The effort comes from `model-policy.json`. The key is `OMNIROUTE_KEY_CODEX`, injected by `with-keys.sh` and minted by `just omni-keys renew codex`; the same strict hop also carries `CONTEXT7_API_KEY` and `EXA_API_KEY` for the lane MCP set (below); until then the launcher stops at `with-keys --strict`.
+`sextant-codex` runs Codex CLI 0.167.0 on OmniRoute's pool for Orca and native workers. That Codex is the sandbox's existing pin (the manifest's Runtimes row, installed by `deploy/wsl/setup.sh`), not one of `pins.json`'s release-cooled runtimes: tag `rust-v0.167.0` was cut on 2026-11-05, so the two-week rule above does not cover it. It runs with OmniRoute's own `launch-codex` provider block: `model_provider=omniroute`, `routing.json`'s base URL, `wire_api=responses`, `env_key=OMNIROUTE_API_KEY` and `requires_openai_auth=false`. The model is `sextant-gpt`, the combo the Codex key is restricted to; OmniRoute's credential loop fails a call over to the pool's next Codex connection, and serves it as `gpt-6.1-sol` at `max`. The effort comes from `model-policy.json`. The key is `OMNIROUTE_KEY_CODEX`, injected by `with-keys.sh` and minted by `just omni-keys renew codex`; the same strict hop also carries `CONTEXT7_API_KEY` and `EXA_API_KEY` for the lane MCP set (below); until then the launcher stops at `with-keys --strict`.
 
 - **Home:** `CODEX_HOME` is always `codex-home` in this prefix (mode 0700), never `~/.codex` or an Orca account home; the launcher refuses a home that resolves into one. It drops `ORCA_CODEX_HOME`, stale OpenAI/Codex keys and Claude tokens. Orca keeps worktree trust in its own homes, so the launch folder is trusted for that run only, in AO's `-c projects={…}` form.
 - **Sandbox:** `sextant-codex` defaults to `-s workspace-write` and `sextant-codex-review` to `-s read-only`. A caller's own `-s`, `--sandbox`, bypass, `--approve-for-me` or `sandbox_mode` stands. `workspace-write` keeps network off unless `sandbox_workspace_write.network_access` is set, so a writer that pushes needs that or a caller's bypass.
@@ -58,7 +48,7 @@ Use the main cockpit workspace for persistent runtime/router tabs after the owne
 
 ## Verification
 
-`uv run --frozen pytest tests/proofs/test_lane_runtimes.py` checks the retained roster, release pins, profile contracts and runtime-side injection without real secrets. `tests/proofs/test_sextant_codex.py` checks the Codex launcher's key, home, provider block, sandbox defaults and receipt against stand-ins for the store, Codex and the router. `uv run --frozen pytest tests/host/test_native_runtime_host.py` checks installed versions, SDK pair, durable service, local bind and memory floor. [smoke-receipts.json](smoke-receipts.json) records the separate real-call evidence for all six retained runtimes, including failed attempts and instrumentation limits. None of these is a task-quality benchmark.
+`uv run --frozen pytest tests/proofs/test_lane_runtimes.py` checks the retained roster, asserts the retired set **absent** from `install.sh`, the launchers and `pins.json`, asserts the retired profile writer and npm lock are gone, and keeps the router and model-policy contracts, without real secrets. `tests/proofs/test_sextant_codex.py` checks the Codex launcher's key, home, provider block, sandbox defaults and receipt against stand-ins for the store, Codex and the router. `uv run --frozen pytest tests/host/test_native_runtime_host.py` checks the installed Antigravity version, durable service, local bind and memory floor. [smoke-receipts.json](smoke-receipts.json) records the real-call evidence gathered at the six-runtime install: it is dated history, not the current roster, and none of these is a task-quality benchmark.
 
 ## Runtime parity: shelf, MCP set and launch pins
 

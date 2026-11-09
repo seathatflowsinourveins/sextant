@@ -366,17 +366,12 @@ def preflight(home: Path) -> None:
     pins = json.loads((HERE / "pins.json").read_text())
     _guard_roots(home, prefix, cache, muse, home / ".local/bin")
     names = (
-        "bin", "bin/antigravity", "bin/omp", "mcp-bridge", "mcp-bridge/node_modules",
-        "node_modules", "hermes-source", "hermes-home", "hermes-home/config.yaml", "openhands",
+        "bin", "bin/antigravity", "mcp-bridge", "mcp-bridge/node_modules",
         "router", "router/node_modules", "router/node_modules/omniroute/.env", "router-data",
-        "package.json", "package-lock.json", "pins.json", "model-policy.json", "repository-path",
-        "api-launch.sh", "codex-launch.sh", "antigravity-launch.sh", "dsh-launch.sh",
-        "muse-launch.sh", "router-start.sh", "configure.py", "routing.json", "openhands-lane.py",
-        "mcp-bridge/package.json", "mcp-bridge/package-lock.json", "router/package.json",
-        "router/package-lock.json", "profiles", "profiles/pi", "profiles/pi/models.json",
-        "profiles/pi/settings.json", "profiles/omp", "profiles/omp/models.yml",
-        "profiles/omp/config.yml", "profiles/hermes", "profiles/hermes/config.yaml",
-        "profiles/opencode.json", "profiles/openhands.json",
+        "pins.json", "model-policy.json", "repository-path", "codex-launch.sh",
+        "antigravity-launch.sh", "dsh-launch.sh", "muse-launch.sh", "router-start.sh",
+        "routing.json", "mcp-bridge/package.json", "mcp-bridge/package-lock.json",
+        "router/package.json", "router/package-lock.json",
     )  # fmt: skip
     _guard_roots(prefix, *(prefix / name for name in names))
     _guard_roots(muse, muse / f"muse-{pins['muse']['version']}")
@@ -411,7 +406,7 @@ def main() -> int:
     prefix = home / ".local/share/sextant-lane-runtimes"
     cache = home / ".local/share/sextant-runtime-skills"
     repository = Path((prefix / "repository-path").read_text().strip())
-    for name in ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN"):  # api-launch.sh's rule
+    for name in ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN"):  # the launchers' rule
         os.environ.pop(name, None)
     os.environ["AGY_CLI_DISABLE_AUTO_UPDATE"] = "true"
     steps = {

@@ -1,9 +1,0 @@
-{
-  "name": "sextant-native-lane-runtimes",
-  "private": true,
-  "description": "Native Orca CLI packages; separate from the devcontainer runtimes.",
-  "dependencies": {
-    "@earendil-works/pi-coding-agent": "1.4.0",
-    "@opencode/cli": "2.1.4"
-  }
-}

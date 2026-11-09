@@ -2,7 +2,7 @@
 # sextant-codex: Codex CLI 0.167.0 on OmniRoute's sextant-gpt pool, on the Responses wire, at max.
 # The shape is OmniRoute's own Codex launcher, cheaper-inference/OmniRoute@191dce8d534ceb56c28a08e71381284a9a87838f
 # bin/cli/commands/launch-codex.mjs: buildCodexProviderArgs's -c provider block, buildCodexEnv with
-# --inherit-env, and a child whose signals are passed on; the key comes in as api-launch.sh's does.
+# --inherit-env, and a child whose signals are passed on; the key comes in through `with-keys.sh`'s strict hop.
 # Config keys: openai/codex@rust-v0.167.0 086ccc833bc9cf01024ad2dd6af7dbd421b6bf9a. Rows: docs/manifest.md.
 # Installed once, linked as sextant-codex (writers) and sextant-codex-review (reviewers), for Orca
 # and native workers. Never as `codex`: AO 0.14.10 reconciles its Codex accounts by running the
@@ -35,7 +35,7 @@ unset ORCA_CODEX_HOME OMNIROUTE_API_KEY CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_AUTH_T
 # launch-codex.mjs STRIPPED_CODEX_ENV_KEYS: no stale OpenAI key or base URL shadows the router.
 unset OPENAI_API_KEY OPENAI_BASE_URL OPENAI_API_BASE OPENAI_ORG_ID OPENAI_ORGANIZATION CODEX_API_KEY
 
-# Probes need no credential and make no call to attest (api-launch.sh's version probe): version and
+# Probes need no credential and make no call to attest (the retained launchers' version probe): version and
 # help, and Codex's subcommands that manage it rather than run a session (codex-rs/cli/src/main.rs:145-245).
 offline=0
 case "${1:-}" in login | logout | features | completion | doctor | debug) offline=1 ;; esac

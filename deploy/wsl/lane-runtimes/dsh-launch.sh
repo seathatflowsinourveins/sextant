@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # dsh with-keys wrapper (the lead's ruling, 2026-11-07, option (i)), carried from northstar@b384d298d217d3f8d9aa83356994629536a34795
-# scripts/ns-native.sh: with-keys -> exec, as api-launch.sh does. One strict hop injects the DeepSeek key and the two
+# scripts/ns-native.sh: with-keys -> exec, as the retained launchers do. One strict hop injects the DeepSeek key and the two
 # keys the lane MCP set's Context7 and Exa headers read (config/dsh/mcp), into this one process; there is no key file.
 # with-keys exports into the current environment and execs (scripts/key-systemd.sh ns_systemd_inject), so a caller's
 # keys survive a nested call. dsh-tui's locator (cli/adapters/dsh/locate.mjs) takes the first quoted, $-free .js path

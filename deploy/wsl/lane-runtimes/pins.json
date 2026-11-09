@@ -7,62 +7,6 @@
     "catalog": "src/shared/agent-launch/catalog/tui-agent-config.ts"
   },
   "runtimes": {
-    "pi": {
-      "repository": "earendil-works/pi",
-      "tag": "v1.4.0",
-      "commit": "4a080252f06caf63a525d7873c5d94d3c23887e0",
-      "version": "1.4.0",
-      "published_at": "2026-10-21T22:49:48Z",
-      "orca_agent": "pi",
-      "install_source": "https://github.com/earendil-works/pi/blob/4a080252f06caf63a525d7873c5d94d3c23887e0/README.md",
-      "convergence": "seathatflowsinourveins/northstar@b384d298d217d3f8d9aa83356994629536a34795:docs/decisions/0070-agent-runtimes-and-harnesses.md (operative successor to ADR-0006), ADR-0033 and ADR-0056",
-      "npm_package": "@earendil-works/pi-coding-agent"
-    },
-    "omp": {
-      "repository": "can1357/oh-my-pi",
-      "tag": "v18.12.6",
-      "commit": "45c35e40c46166dc726ccc52f5d27f40f2449f99",
-      "version": "18.12.6",
-      "published_at": "2026-10-21T21:02:53Z",
-      "orca_agent": "omp",
-      "install_source": "https://github.com/can1357/oh-my-pi/blob/45c35e40c46166dc726ccc52f5d27f40f2449f99/README.md",
-      "convergence": "seathatflowsinourveins/northstar@b384d298d217d3f8d9aa83356994629536a34795:docs/decisions/0070-agent-runtimes-and-harnesses.md (operative successor to ADR-0006), ADR-0033 and ADR-0056",
-      "asset": "omp-linux-x64",
-      "url": "https://github.com/can1357/oh-my-pi/releases/download/v18.12.6/omp-linux-x64",
-      "sha256": "85d9daf3a05fc76e8cd425ae1904eb576af8d21cc85fcf4690742626e07ccfa4"
-    },
-    "opencode2": {
-      "repository": "anomalyco/opencode",
-      "tag": "v2.1.4",
-      "commit": "68bc26b7da1990ce10ffecfbc1e09eb13aa5d824",
-      "version": "2.1.4",
-      "published_at": "2026-10-23T10:13:53.203Z",
-      "orca_agent": "opencode2",
-      "install_source": "https://github.com/anomalyco/opencode/blob/68bc26b7da1990ce10ffecfbc1e09eb13aa5d824/README.md",
-      "convergence": "seathatflowsinourveins/northstar@b384d298d217d3f8d9aa83356994629536a34795:docs/decisions/0070-agent-runtimes-and-harnesses.md (operative successor to ADR-0006), ADR-0033 and ADR-0056",
-      "npm_package": "@opencode/cli"
-    },
-    "hermes": {
-      "repository": "NousResearch/hermes-agent",
-      "tag": "v0.22.5",
-      "commit": "bf0203a794a07aac3ff764972ab9087baa4e4f4e",
-      "version": "0.22.5",
-      "published_at": "2026-10-23T05:28:45Z",
-      "orca_agent": "hermes",
-      "install_source": "https://github.com/NousResearch/hermes-agent/blob/bf0203a794a07aac3ff764972ab9087baa4e4f4e/scripts/install.sh",
-      "convergence": "seathatflowsinourveins/northstar@b384d298d217d3f8d9aa83356994629536a34795:docs/decisions/0070-agent-runtimes-and-harnesses.md (operative successor to ADR-0006), ADR-0033 and ADR-0056",
-      "installer_sha256": "99cb3691d55019c6973a7acb775a915648666cc24e483ca827a1cdbb3531a674"
-    },
-    "openhands-sdk": {
-      "repository": "OpenHands/software-agent-sdk",
-      "tag": "v1.58.1",
-      "commit": "60192ed54db73ac658ac1a07462916126c32d3a0",
-      "version": "1.58.1",
-      "published_at": "2026-10-23T00:44:35Z",
-      "orca_agent": null,
-      "install_source": "https://github.com/OpenHands/software-agent-sdk/blob/60192ed54db73ac658ac1a07462916126c32d3a0/README.md",
-      "convergence": "seathatflowsinourveins/northstar@b384d298d217d3f8d9aa83356994629536a34795:docs/decisions/0070-agent-runtimes-and-harnesses.md (operative successor to ADR-0006), ADR-0033 and ADR-0056"
-    },
     "antigravity": {
       "repository": "google-antigravity/antigravity-cli",
       "tag": "1.4.6",
@@ -85,6 +29,52 @@
       "retired_on": "2026-11-06",
       "authority": "Owner, verbatim, relayed by the lead on #62",
       "reason": "drop gemini, it was not working"
+    },
+    "pi": {
+      "repository": "earendil-works/pi",
+      "tag": "v1.4.0",
+      "commit": "4a080252f06caf63a525d7873c5d94d3c23887e0",
+      "version": "1.4.0",
+      "retired_on": "2026-11-08",
+      "authority": "ADR-0030, Retired from routing (docs/adr/0030-latest-sota-models.md:35)",
+      "reason": "retired from routing; its manifest row and launch are deleted by this PR"
+    },
+    "omp": {
+      "repository": "can1357/oh-my-pi",
+      "tag": "v18.12.6",
+      "commit": "45c35e40c46166dc726ccc52f5d27f40f2449f99",
+      "version": "18.12.6",
+      "retired_on": "2026-11-08",
+      "authority": "ADR-0030, Retired from routing (docs/adr/0030-latest-sota-models.md:35)",
+      "reason": "retired from routing; its manifest row and launch are deleted by this PR"
+    },
+    "opencode2": {
+      "repository": "anomalyco/opencode",
+      "tag": "v2.1.4",
+      "commit": "68bc26b7da1990ce10ffecfbc1e09eb13aa5d824",
+      "version": "2.1.4",
+      "retired_on": "2026-11-08",
+      "authority": "ADR-0030, Retired from routing (docs/adr/0030-latest-sota-models.md:35)",
+      "reason": "retired from routing; its manifest row and launch are deleted by this PR"
+    },
+    "hermes": {
+      "repository": "NousResearch/hermes-agent",
+      "tag": "v0.22.5",
+      "commit": "bf0203a794a07aac3ff764972ab9087baa4e4f4e",
+      "version": "0.22.5",
+      "retired_on": "2026-11-08",
+      "authority": "ADR-0030, Retired from routing (docs/adr/0030-latest-sota-models.md:35)",
+      "reason": "retired from routing; its manifest row and launch are deleted by this PR"
+    },
+    "openhands-sdk": {
+      "repository": "OpenHands/software-agent-sdk",
+      "tag": "v1.58.1",
+      "commit": "60192ed54db73ac658ac1a07462916126c32d3a0",
+      "version": "1.58.1",
+      "retired_on": "2026-11-08",
+      "authority": "Lead ruling on the OpenHands re-evaluation, 2026-11-08; ADR-0030, Retired from routing (docs/adr/0030-latest-sota-models.md:35)",
+      "reason": "REJECT: AO 0.14.10's openhands adapter launches only the unmaintained OpenHands CLI, with no headless or ACP worker; report sha256 f91990d0b2b5bfd4843d09c68693c50fb47747bd339b5e2d4d1afa084f32eb9b",
+      "reopen": "a maintained OpenHands headless or ACP worker with max-effort control and a release at least 14 days old; then a fresh census leg"
     }
   },
   "omniroute": {
