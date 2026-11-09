@@ -74,12 +74,20 @@ processors:
       - key: output
         action: delete
   # Fail-closed backstop: mask secret-shaped keys and values that survive
-  # deletion (RECONCILE §5.2 step B, regexes verbatim).
+  # deletion (RECONCILE §5.2 step B). Secret-bearing keys only: the singular
+  # *_token suffix (access_token, refresh_token, ...), never the plural
+  # *_tokens usage counters (input_tokens, gen_ai.usage.input_tokens, ...),
+  # which are also pinned safe by ignored_key_patterns (upstream
+  # redactionprocessor README at the pin: ignored attributes are processed
+  # first and never blocked).
   redaction:
     allow_all_keys: true
     redact_all_types: true
+    ignored_key_patterns:
+      - "(?i).*_tokens$"
     blocked_key_patterns:
-      - "(?i).*(api_key|secret|token|password|authorization|credential).*"
+      - "(?i).*(api_key|secret|password|authorization|credential).*"
+      - "(?i).*(_token|access_token)$"
     blocked_values:
       - "sk-[A-Za-z0-9_-]{16,}"
       - "gh[pousr]_[A-Za-z0-9_]{20,}"

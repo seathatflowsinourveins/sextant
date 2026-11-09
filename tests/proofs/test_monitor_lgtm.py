@@ -162,11 +162,59 @@ def test_redaction_masks_secret_shaped_keys_and_values() -> None:
     assert redaction["allow_all_keys"] is True
     assert redaction["redact_all_types"] is True
     assert redaction["blocked_key_patterns"] == [
-        "(?i).*(api_key|secret|token|password|authorization|credential).*"
+        "(?i).*(api_key|secret|password|authorization|credential).*",
+        "(?i).*(_token|access_token)$",
     ]
+    assert redaction["ignored_key_patterns"] == ["(?i).*_tokens$"]
     assert SECRET_VALUES <= set(redaction["blocked_values"])
-    for pattern in [*redaction["blocked_key_patterns"], *redaction["blocked_values"]]:
+    for pattern in [
+        *redaction["blocked_key_patterns"],
+        *redaction["blocked_values"],
+        *redaction["ignored_key_patterns"],
+    ]:
         re.compile(pattern)
+
+
+def test_redaction_keeps_token_counts_and_masks_secret_keys() -> None:
+    # A sample claude_code.api_request record (attribute names per the Claude
+    # Code monitoring docs pinned in genai-mapping.md): every *_tokens count
+    # must survive, every secret-bearing key must be masked. Applies the
+    # redaction processor's documented order (ignored keys first, then
+    # blocked key patterns, then blocked values) to the committed config.
+    redaction = _collector()["processors"]["redaction"]
+
+    def masked(key: str, value: object) -> bool:
+        if any(re.search(p, key) for p in redaction.get("ignored_key_patterns", [])):
+            return False
+        if key in redaction.get("ignored_keys", []):
+            return False
+        if any(re.search(p, key) for p in redaction["blocked_key_patterns"]):
+            return True
+        return any(re.search(p, str(value)) for p in redaction["blocked_values"])
+
+    counts = {
+        "input_tokens": 1200,
+        "output_tokens": 340,
+        "cache_read_tokens": 900,
+        "cache_creation_tokens": 120,
+        "gen_ai.usage.input_tokens": 2220,
+        "gen_ai.usage.output_tokens": 340,
+        "gen_ai.usage.cache_read.input_tokens": 900,
+        "duration_ms": 1500,
+    }
+    secrets = {
+        "api_key": "s" + "k-" + "x" * 20,
+        "access_token": "opaque-access-value",
+        "refresh_token": "opaque-refresh-value",
+        "client_secret": "opaque-secret-value",
+        "authorization": "opaque-auth-header",
+        "user_password": "opaque-password-value",
+        "db_credential": "opaque-credential-value",
+    }
+    for key, value in counts.items():
+        assert not masked(key, value), f"token count {key} must survive redaction"
+    for key, value in secrets.items():
+        assert masked(key, value), f"secret-bearing key {key} must be masked"
 
 
 def test_invocation_names_are_extracted_not_deleted() -> None:
@@ -192,6 +240,12 @@ def test_genai_mapping_is_pinned_and_keeps_vendor_series() -> None:
     assert "Development" in mapping
     assert "gen_ai.client.inference.usage.input_tokens" in mapping
     assert "cacheRead" in mapping and "Add, never rename" in mapping
+    # The vendor half is pinned too, so every row is checkable at this commit.
+    assert "code.claude.com/docs/en/monitoring-usage" in mapping
+    assert "read 2026-11-08" in mapping
+    assert "086ccc833bc9cf01024ad2dd6af7dbd421b6bf9a" in mapping
+    assert "gen_ai.usage.cache_read.input_tokens" in mapping
+    assert "191dce8d534ceb56c28a08e71381284a9a87838f" in mapping
     assert "no source" in mapping  # Unknown stays unknown, never 0.
     # The collector derives attribute aliases only; it renames no metric.
     assert "set(metric.name" not in _read(f"{LGTM}/otelcol-config.yaml")
