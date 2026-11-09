@@ -2,8 +2,10 @@
 
 The protector claims only positively reconciled owner fills, puts one native trailing stop on
 the reconcilable whole shares, and never cancels, replaces or resizes an owner order. Outside
-regular market hours it pages instead of submitting, because the native trailing stop does not
-trigger there; PR-2 owns the 24/5 path.
+regular market hours the native trail rests but does not trigger, so the protector emulates
+its trigger from quotes through NautilusTrader's own calculator and, after a persistent run
+of eligible trades, cancels the trail and releases one marketable extended-hours LIMIT
+(``docs/design.md`` X4; Alpaca orders page read 2026-11-09).
 """
 
 from __future__ import annotations
@@ -21,10 +23,17 @@ from typing import Any, Protocol
 
 from alpaca.trading.enums import OrderSide, QueryOrderStatus, TimeInForce
 from alpaca.trading.models import Order, Position, TradeAccount, TradeUpdate
-from alpaca.trading.requests import GetOrdersRequest, OrderRequest, TrailingStopOrderRequest
+from alpaca.trading.requests import (
+    GetOrdersRequest,
+    LimitOrderRequest,
+    OrderRequest,
+    TrailingStopOrderRequest,
+)
 from alpaca.trading.stream import TradingStream
 
+from sextant.exits.policy import ExitParams
 from sextant.paper.config import PaperAccount
+from sextant.paper.outside_rth import OutsideRthError, OutsideRthTrail
 from sextant.paper.sessions import Session, session_at
 
 B_LANE = "alpaca-paper-b"
@@ -52,6 +61,15 @@ class Page:
     reason: str
     symbol: str | None = None
     detail: str = ""
+
+
+@dataclass(frozen=True)
+class _PendingRelease:
+    """One broken trail waiting for its terminal cancellation before the LIMIT goes out."""
+
+    price: Decimal
+    trail_order_id: str
+    whole: int
 
 
 @dataclass(frozen=True)
@@ -151,6 +169,10 @@ def _leaves(order: Order) -> Decimal:
     return quantity - filled
 
 
+def _is_limit(order: Order) -> bool:
+    return _event_name(getattr(order, "order_type", None)) == "limit"
+
+
 def _safe_symbol(symbol: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]", "_", symbol)[:40]
 
@@ -166,6 +188,7 @@ class Protector:
         *,
         now_ns: Callable[[], int] = time.time_ns,
         on_page: Callable[[Page], None] | None = None,
+        exit_params: ExitParams | None = None,
     ) -> None:
         if account.lane != B_LANE:
             raise ProtectorRefusal("B's protector runs only on the slot-2 B paper lane")
@@ -179,6 +202,11 @@ class Protector:
         self._cancelling: set[str] = set()
         self._last_position: dict[str, Decimal] = {}
         self._last_reserved: dict[str, Decimal] = {}
+        self._exit_params = exit_params if exit_params is not None else ExitParams.starts()
+        self._outside: dict[str, OutsideRthTrail] = {}
+        self._pending_release: dict[str, _PendingRelease] = {}
+        self._released_symbols: set[str] = set()
+        self._house: dict[str, list[Order]] = {}
         self._sequence = 0
 
     def page(self, reason: str, symbol: str | None = None, detail: str = "") -> None:
@@ -196,6 +224,124 @@ class Protector:
             raise ProtectorRefusal(
                 "the broker account number does not match the configured B paper account"
             )
+
+    def emulated_trigger(self, symbol: str) -> Decimal | None:
+        """The trigger the outside-RTH node is currently watching, if any."""
+
+        state = self._outside.get(symbol)
+        return None if state is None else state.trigger
+
+    def on_quote(
+        self,
+        symbol: str,
+        *,
+        bid: Decimal | None,
+        ask: Decimal | None,
+        last: Decimal | None,
+        ts_ns: int | None = None,
+    ) -> Decimal | None:
+        """Feed one outside-RTH quote to the emulated trailing trigger.
+
+        The node's data adapter calls this; in the regular session the native trail owns the
+        trigger, so the observation is ignored there.
+        """
+
+        at = self._now_ns() if ts_ns is None else ts_ns
+        if session_at(at) not in (Session.PRE, Session.POST, Session.OVERNIGHT):
+            return None
+        return self._outside_state(symbol).observe_quote(bid=bid, ask=ask, last=last, ts_ns=at)
+
+    def on_trade(self, symbol: str, price: Decimal, ts_ns: int | None = None) -> bool:
+        """Feed one outside-RTH trade; true when it completes a persistent breach."""
+
+        at = self._now_ns() if ts_ns is None else ts_ns
+        if session_at(at) not in (Session.PRE, Session.POST, Session.OVERNIGHT):
+            return False
+        state = self._outside.get(symbol)
+        if state is None or not state.observe_trade(price, at):
+            return False
+        self._begin_outside_release(symbol, at)
+        return True
+
+    def _outside_state(self, symbol: str) -> OutsideRthTrail:
+        state = self._outside.get(symbol)
+        if state is None:
+            state = OutsideRthTrail(
+                trail_fraction=self._parameters.native_trail_fraction,
+                params=self._exit_params,
+            )
+            self._outside[symbol] = state
+        return state
+
+    def _adopt_outside(self, symbol: str, order: Order) -> None:
+        """Take the resting native trail's stop price as the emulated trigger once."""
+
+        state = self._outside_state(symbol)
+        if state.has_trigger:
+            return
+        stop_price = getattr(order, "stop_price", None)
+        if stop_price is None:
+            self.page(
+                "outside_rth_trigger_missing",
+                symbol,
+                "the resting native trail has no stop price to emulate",
+            )
+            return
+        state.adopt(_decimal(str(stop_price), "order.stop_price"), self._now_ns())
+
+    def _begin_outside_release(self, symbol: str, ts_ns: int) -> None:
+        """Cancel the trail and release one LIMIT after its terminal cancellation."""
+
+        state = self._outside.get(symbol)
+        if state is None or state.released or symbol in self._released_symbols:
+            return
+        trails = [order for order in self._house.get(symbol, []) if not _is_limit(order)]
+        if len(trails) != 1:
+            self.page(
+                "outside_rth_no_trail_at_breach",
+                symbol,
+                "the breach has no single resting native trail to cancel",
+            )
+            return
+        try:
+            price = state.release_price(ts_ns)
+        except OutsideRthError as exc:
+            self.page("outside_rth_release_unpriced", symbol, str(exc))
+            return
+        available = self._last_position.get(symbol, Decimal(0)) - self._last_reserved.get(
+            symbol, Decimal(0)
+        )
+        whole = int(available.to_integral_value(rounding=ROUND_FLOOR)) if available > 0 else 0
+        if whole <= 0:
+            self.page("outside_rth_release_unquantified", symbol, "no unreserved whole share")
+            return
+        if not self._cancel(trails[0], "outside_rth_breach"):
+            return
+        self._pending_release[symbol] = _PendingRelease(
+            price=price, trail_order_id=str(trails[0].id), whole=whole
+        )
+        state.mark_released(ts_ns)
+
+    def _submit_outside_limit(self, symbol: str, pending: _PendingRelease) -> None:
+        self._sequence += 1
+        client_order_id = (
+            f"{self._account.house_prefix}outside-{_safe_symbol(symbol)}-"
+            f"{self._now_ns()}-{self._sequence}"
+        )
+        request = LimitOrderRequest(
+            symbol=symbol,
+            qty=pending.whole,
+            side=OrderSide.SELL,
+            time_in_force=TimeInForce.GTC,
+            limit_price=float(pending.price),
+            extended_hours=True,
+            client_order_id=client_order_id[:MAX_CLIENT_ORDER_ID],
+        )
+        try:
+            self._client.submit_order(request)
+        except Exception as exc:
+            self._released_symbols.discard(symbol)
+            self.page("outside_limit_submit_failed", symbol, type(exc).__name__)
 
     def handle(self, update: TradeUpdate) -> None:
         symbol = update.order.symbol
@@ -227,6 +373,7 @@ class Protector:
         except ProtectorRefusal as exc:
             self.page("open_orders_truncated", None, str(exc))
             return {}
+        self._house = {symbol: list(ours) for symbol, ours in house.items()}
         for symbol, position in positions.items():
             quantity = _decimal(position.qty, "position.qty")
             previous_position = self._last_position.get(symbol)
@@ -259,6 +406,12 @@ class Protector:
             if symbol not in positions:
                 for order in ours:
                     self._cancel(order, "flat_with_house_exit")
+        held = set(positions)
+        self._outside = {s: state for s, state in self._outside.items() if s in held}
+        self._pending_release = {
+            s: pending for s, pending in self._pending_release.items() if s in held
+        }
+        self._released_symbols &= held
         return positions
 
     def _snapshot(
@@ -413,7 +566,21 @@ class Protector:
         if event in TERMINAL_EVENTS:
             known = order_id in self._cancelling
             self._cancelling.discard(order_id)
-            if not known:
+            pending = self._pending_release.pop(symbol, None)
+            if pending is not None and pending.trail_order_id == order_id:
+                if event == "canceled":
+                    self._released_symbols.add(symbol)
+                    self._submit_outside_limit(symbol, pending)
+                else:
+                    state = self._outside.get(symbol)
+                    if state is not None:
+                        state.rearm()
+                    self.page(
+                        "outside_rth_release_failed",
+                        symbol,
+                        f"the resting trail ended {event} before the release",
+                    )
+            elif not known:
                 self.page("house_exit_lost", symbol, f"a house exit ended {event}")
             self.reconcile()
 
@@ -473,36 +640,42 @@ class Protector:
             self.frozen.add(symbol)
             self.page("more_than_one_house_exit", symbol)
             return
-        in_rth = session_at(self._now_ns()) is Session.RTH
+        session = session_at(self._now_ns())
+        in_rth = session is Session.RTH
+        if session is Session.CLOSED:
+            self.page("market_closed", symbol, "B writes only in an open session")
+            return
+        if symbol in self._pending_release:
+            # The breach already decided the release; wait for the trail's terminal
+            # cancellation instead of arming a second exit beside it.
+            return
         if ours:
             held = _leaves(ours[0])
+            limit = _is_limit(ours[0])
             if held == protective:
-                if not in_rth:
-                    self.page(
-                        "unprotected_outside_rth_until_pr2",
-                        symbol,
-                        "the resting native trail does not trigger outside regular market hours",
-                    )
+                if limit:
+                    self._released_symbols.discard(symbol)
+                elif not in_rth:
+                    self._adopt_outside(symbol, ours[0])
                 return
             if held > protective:
                 self._cancel_excess(ours, protective, "quantity_mismatch")
                 self.frozen.add(symbol)
                 self.page("quantity_mismatch", symbol)
-                if not in_rth:
-                    self.page("unprotected_outside_rth_until_pr2", symbol)
                 return
-            if freed:
-                if in_rth and self._cancel(ours[0], "arm_freed_quantity"):
+            if limit or freed or not in_rth:
+                reason = "arm_freed_quantity" if freed and in_rth else "outside_rth_resize"
+                if self._cancel(ours[0], reason):
+                    if limit:
+                        self._released_symbols.discard(symbol)
                     self._submit_trail(symbol, protective)
-                elif not in_rth:
-                    self.page("unprotected_outside_rth_until_pr2", symbol)
                 return
             self.page("owner_add_unprotected", symbol)
-            if not in_rth:
-                self.page("unprotected_outside_rth_until_pr2", symbol)
             return
         if not in_rth:
-            self.page("unprotected_outside_rth_until_pr2", symbol)
+            if symbol in self._released_symbols:
+                return
+            self._submit_trail(symbol, protective)
             return
         self._submit_trail(symbol, protective)
 

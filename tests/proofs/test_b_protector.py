@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 import pytest
 from alpaca.trading.enums import OrderSide, TimeInForce
 from alpaca.trading.models import Order, Position, TradeAccount, TradeUpdate
-from alpaca.trading.requests import TrailingStopOrderRequest
+from alpaca.trading.requests import LimitOrderRequest, TrailingStopOrderRequest
 from alpaca.trading.stream import TradingStream
 
 from sextant.paper.b_protector import (
@@ -94,6 +94,9 @@ def api_order(
     order_type: str = "limit",
     status: str = "new",
     trail_percent: str | None = None,
+    stop_price: str | None = None,
+    limit_price: str | None = None,
+    extended_hours: bool = False,
 ) -> Order:
     payload = {
         "id": str(uuid4()),
@@ -104,7 +107,7 @@ def api_order(
         "order_class": "simple",
         "time_in_force": "gtc",
         "status": status,
-        "extended_hours": False,
+        "extended_hours": extended_hours,
         "symbol": symbol,
         "qty": qty,
         "filled_qty": filled_qty,
@@ -113,6 +116,10 @@ def api_order(
     }
     if trail_percent is not None:
         payload["trail_percent"] = trail_percent
+    if stop_price is not None:
+        payload["stop_price"] = stop_price
+    if limit_price is not None:
+        payload["limit_price"] = limit_price
     return Order.model_validate(payload)
 
 
@@ -143,7 +150,7 @@ class FakeTradingClient:
         self.positions = list(positions)
         self.orders = list(orders)
         self.calls: list[str] = []
-        self.submitted: list[TrailingStopOrderRequest] = []
+        self.submitted: list[TrailingStopOrderRequest | LimitOrderRequest] = []
         self.cancelled: list[str] = []
         self.replaced: list[object] = []
 
@@ -161,19 +168,31 @@ class FakeTradingClient:
 
     def submit_order(self, order_data):
         self.calls.append("submit_order")
-        assert isinstance(order_data, TrailingStopOrderRequest)
+        assert isinstance(order_data, (TrailingStopOrderRequest, LimitOrderRequest))
         assert order_data.client_order_id is not None
         assert order_data.symbol is not None
         self.submitted.append(order_data)
-        order = api_order(
-            client_order_id=order_data.client_order_id,
-            symbol=order_data.symbol,
-            qty=str(order_data.qty),
-            side="sell",
-            order_type="trailing_stop",
-            status="new",
-            trail_percent=str(order_data.trail_percent),
-        )
+        if isinstance(order_data, LimitOrderRequest):
+            order = api_order(
+                client_order_id=order_data.client_order_id,
+                symbol=order_data.symbol,
+                qty=str(order_data.qty),
+                side="sell",
+                order_type="limit",
+                status="new",
+                limit_price=str(order_data.limit_price),
+                extended_hours=bool(order_data.extended_hours),
+            )
+        else:
+            order = api_order(
+                client_order_id=order_data.client_order_id,
+                symbol=order_data.symbol,
+                qty=str(order_data.qty),
+                side="sell",
+                order_type="trailing_stop",
+                status="new",
+                trail_percent=str(order_data.trail_percent),
+            )
         self.orders.append(order)
         return order
 
@@ -447,7 +466,7 @@ def test_a_slot_one_lane_and_a_foreign_account_number_refuse_before_any_order():
     assert "get_all_positions" not in client.calls
 
 
-def test_a_reconnect_and_outside_rth_page_instead_of_submitting(monkeypatch):
+def test_a_reconnect_and_outside_rth_arms_the_native_trail_instead_of_paging(monkeypatch):
     async def no_connect(self) -> None:
         return None
 
@@ -478,17 +497,18 @@ def test_a_reconnect_and_outside_rth_page_instead_of_submitting(monkeypatch):
             position_qty=10.0,
         )
     )
-    assert client.submitted == []
-    assert [page.reason for page in p.pages] == ["unprotected_outside_rth_until_pr2"]
+    assert len(client.submitted) == 1
+    assert p.pages == []
 
 
-def test_an_existing_house_trail_outside_rth_is_not_counted_as_protection():
+def test_an_existing_house_trail_outside_rth_is_adopted():
     house = api_order(
         client_order_id="B001-trail-AAPL-old",
         side="sell",
         qty="10",
         order_type="trailing_stop",
         trail_percent="2.5",
+        stop_price="97.50",
     )
     after_hours = datetime(2026, 11, 9, 20, 30, tzinfo=ET)
     client = FakeTradingClient(positions=[api_position("10")], orders=[house])
@@ -498,7 +518,8 @@ def test_an_existing_house_trail_outside_rth_is_not_counted_as_protection():
 
     assert client.submitted == []
     assert client.cancelled == []
-    assert [page.reason for page in p.pages] == ["unprotected_outside_rth_until_pr2"]
+    assert p.pages == []
+    assert p.emulated_trigger("AAPL") == Decimal("97.50")
 
 
 def test_a_house_trail_that_would_oversell_is_cancelled_and_pages():
