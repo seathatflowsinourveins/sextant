@@ -2,10 +2,13 @@
 
 The e2e-omh replay published the candidate table (``metrics.json``) and the
 prior-session daily bars.  This module turns them into the cohort file the
-harness loads, deriving a candidate's prior close from the official prior-day
-daily close (the replay's own convention).  It never invents a cohort: the
-truth and control sets are the frozen K3 predicates, and the declared counts in
-``metrics.json`` are cross-checked before a file is written.
+harness loads.  A candidate's reference is always the official prior-day daily
+close recorded with its source; when that close is missing the candidate keeps
+``prior_close: null`` and is excluded with a counted reason.  K2 section 2
+forbids a fallback close (an unknown reference stays unknown), so no value is
+ever derived from the session's own later price.  The truth and control sets
+are the frozen K3 predicates, and the declared counts in ``metrics.json`` are
+cross-checked before a file is written.
 
 Usage::
 
@@ -21,14 +24,21 @@ import argparse
 import json
 from collections.abc import Mapping, Sequence
 from datetime import date
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
 SCHEMA = "ranking-e2e.cohort/1"
 MIN_MOVE = Decimal("0.05")
 MIN_PREMARKET_DOLLAR_VOLUME = Decimal("1000000")
-PRIOR_CLOSE_QUANTUM = Decimal("0.0001")
+OFFICIAL_PRIOR_CLOSE = "official_prior_daily_close"
+MISSING_PRIOR_CLOSE = "missing_official_prior_close"
+LABELS = {
+    "survivor_only": True,
+    "pit_verified": False,
+    "inference_eligible": False,
+    "universe": "e2e-omh 2026-11-09 bar-close candidate table; no dated PIT membership",
+}
 
 
 def _decimal(value: Decimal | int | str) -> Decimal:
@@ -67,8 +77,10 @@ def build_cohort(
 
     Truth is ``move >= 5% and premarket dollar volume >= $1m``; controls are the
     remaining candidates with ``move < 5%`` and the same premarket floor.  A
-    missing prior-day close falls back to ``last_close / (1 + move)``; the
-    fallback is recorded by its arithmetic, never invented.
+    missing official prior-day close is never derived from ``last_close`` or
+    ``move``: the candidate records ``prior_close: null`` and a counted
+    exclusion, and is kept out of both the truth and control sets (K2 section 2
+    and 3).  Every candidate carries the source of its prior close.
     """
     priors = tuple(sorted(prior_sessions))
     if not priors or priors[-1] >= session:
@@ -76,6 +88,8 @@ def build_cohort(
     candidates: list[dict[str, Any]] = []
     truth: list[str] = []
     controls: list[str] = []
+    excluded: list[dict[str, str]] = []
+    planned_truth = 0
     seen: set[str] = set()
     for row in metrics["candidates"]:
         symbol = row["symbol"]
@@ -86,35 +100,47 @@ def build_cohort(
         last_close = _decimal(row["last_close"])
         premarket = _decimal(row["premarket_dollar_volume"])
         full = _decimal(row["full_dollar_volume"])
+        wants_truth = premarket >= MIN_PREMARKET_DOLLAR_VOLUME and move >= MIN_MOVE
+        wants_control = premarket >= MIN_PREMARKET_DOLLAR_VOLUME and move < MIN_MOVE
+        if wants_truth:
+            planned_truth += 1
         prior_close = daily_closes.get(symbol)
         if prior_close is None or prior_close <= 0:
-            growth = Decimal(1) + move
-            if growth <= 0:
-                raise ValueError(f"{symbol}: cannot derive a prior close from move {move}")
-            prior_close = (last_close / growth).quantize(
-                PRIOR_CLOSE_QUANTUM, rounding=ROUND_HALF_UP
+            candidates.append(
+                {
+                    "symbol": symbol,
+                    "move": str(move),
+                    "premarket_dollar_volume": str(premarket),
+                    "full_dollar_volume": str(full),
+                    "last_close": str(last_close),
+                    "prior_close": None,
+                    "prior_close_source": MISSING_PRIOR_CLOSE,
+                }
             )
+            excluded.append({"symbol": symbol, "reason": MISSING_PRIOR_CLOSE})
+            continue
         candidates.append(
             {
                 "symbol": symbol,
                 "move": str(move),
                 "premarket_dollar_volume": str(premarket),
                 "full_dollar_volume": str(full),
+                "last_close": str(last_close),
                 "prior_close": str(prior_close),
+                "prior_close_source": OFFICIAL_PRIOR_CLOSE,
             }
         )
-        if premarket >= MIN_PREMARKET_DOLLAR_VOLUME:
-            if move >= MIN_MOVE:
-                truth.append(symbol)
-            else:
-                controls.append(symbol)
+        if wants_truth:
+            truth.append(symbol)
+        elif wants_control:
+            controls.append(symbol)
 
     declared = metrics.get("primary")
     if isinstance(declared, Mapping) and "cohort" in declared:
-        if int(declared["cohort"]) != len(truth):
+        if int(declared["cohort"]) != planned_truth:
             raise ValueError(
                 "primary cohort mismatch: "
-                f"metrics says {declared['cohort']}, predicates find {len(truth)}"
+                f"metrics says {declared['cohort']}, predicates find {planned_truth}"
             )
     secondary = metrics.get("secondary")
     if isinstance(secondary, Mapping) and "cohort" in secondary:
@@ -133,9 +159,17 @@ def build_cohort(
         "schema": SCHEMA,
         "session": session.isoformat(),
         "prior_sessions": [day.isoformat() for day in priors],
+        "labels": dict(LABELS),
         "candidates": candidates,
         "truth": truth,
         "controls": controls,
+        "excluded": excluded,
+        "counts": {
+            "candidates": len(candidates),
+            "planned_truth": planned_truth,
+            "observed_truth": len(truth),
+            "excluded": len(excluded),
+        },
     }
 
 

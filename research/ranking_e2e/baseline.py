@@ -15,6 +15,8 @@ from datetime import date
 from decimal import Decimal
 from statistics import median
 
+from .bars import Bar
+
 NS = 1_000_000_000
 ZERO = Decimal(0)
 
@@ -102,7 +104,7 @@ class MeanCurveBaseline(CurveBaseline):
 
 
 def cumulative_curves(
-    day_bars: Mapping[str, Sequence[object]],
+    day_bars: Mapping[str, Sequence[Bar]],
     symbols: Sequence[str],
     start_ns: int,
     minutes: int,
