@@ -197,11 +197,24 @@ def test_dependabot_covers_every_ecosystem() -> None:
     config = yaml.safe_load(dependabot)
     for ecosystem in ("npm", "uv", "docker", "github-actions", "devcontainers"):
         assert f"package-ecosystem: {ecosystem}" in dependabot
-    assert len(config["updates"]) == 6
+    assert len(config["updates"]) == 7
     for update in config["updates"]:
         assert update["cooldown"] == {"default-days": 14}
-    for path in ("/.devcontainer/agents", "/.devcontainer/qmd", "/deploy/wsl/dsh", "/config/dsh"):
-        assert path in dependabot
+    npm = [update for update in config["updates"] if update["package-ecosystem"] == "npm"]
+    assert [update["directories"] for update in npm if "directories" in update] == [
+        ["/.devcontainer/agents", "/config/dsh"]
+    ]
+    assert sorted(update["directory"] for update in npm if "directory" in update) == [
+        "/.devcontainer/qmd",
+        "/deploy/wsl/dsh",
+    ]
+    dsh = next(update for update in npm if update.get("directory") == "/deploy/wsl/dsh")
+    assert dsh["schedule"] == {"interval": "daily"}
+    assert dsh["open-pull-requests-limit"] == 2
+    # pnpm is pinned to exactly dsh-tui's 11.21.0, so every update type is ignored there.
+    assert dsh["ignore"] == [{"dependency-name": "pnpm"}]
+    assert all("update-types" not in rule for rule in dsh["ignore"])
+    assert "# pnpm moves only with dsh-tui's toolchain" in dependabot
 
 
 def test_scoreboard_uses_upstream_actions() -> None:

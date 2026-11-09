@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const FAMILIES = ['codex', 'claude', 'dsh', 'muse', 'agy'];
-const RISK = /^(\.github\/|dangerfile\.js$|REVIEW_GUIDELINES\.md$|review\/rubric\.md$|shared\/review-rules\.md$|src\/sextant\/(execution|exits|paper|risk|alpaca)\/|lanes\/(paper|live)\/|deploy\/live\/)/;
+const RISK = /^(\.github\/|dangerfile\.js$|REVIEW_GUIDELINES\.md$|review\/rubric\.md$|shared\/review-rules\.md$|config\/dsh\/review-cmd\/|src\/sextant\/(execution|exits|paper|risk|alpaca)\/|lanes\/(paper|live)\/|deploy\/live\/)/;
 
 function marker(body, prefix, choices) {
   if (!body.includes(prefix)) return '';

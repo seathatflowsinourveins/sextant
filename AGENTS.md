@@ -41,7 +41,7 @@ Review-Family <other-family-or-delete>
 - **Secrets:** never in a file, commit, log, command line or URL. Never print an environment variable's value. Broker jobs use GitHub Environment secrets; the public review gate uses repository review secrets under the owner's 2026-11-09 key policy. On the clean distro, keys live in `scripts/keys.sh`'s encrypted store and reach one command at a time through `scripts/with-keys.sh`; holding a paper key is not permission to trade (`docs/adr/0028-local-keys.md`). Live keys never enter this store or the sandbox, and broker keys never enter the sandbox.
 - **Live:** only the `live` environment's job on the `live` branch places live orders. Agents never touch a live endpoint.
 - **Custody:** the owner's orders are never cancelled, sold back or resized, and one writer owns each account's quantities.
-- **Paper:** each account has one writer; paper is never gated by P&L or counts, only by its hard lines.
+- **Paper:** each account has one writer; paper is never gated by P&L or counts, only by its hard lines. A has no account: Alpaca paper slot 1 is the owner's Peregrine account since 2026-11-07, external, with no Sextant writer or stream, and A runs replay and sim only until the owner assigns one.
 - **Money:** the engine's `Price`, `Quantity` and `Money` types or `Decimal`, never floats.
 - **Destructive actions and guards:** no unrequested destructive action and no bypass of a required guard or check.
 - **Sign-ins:** no Claude OAuth in a third-party runtime outside the explicitly bounded TUI6 dsh-tui exception; do not infer wider sign-in authority from it.
