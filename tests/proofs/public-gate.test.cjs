@@ -37,7 +37,9 @@ test('ambiguous, malformed and conflicting markers fail closed', () => {
   for (const body of ['Agent-Family <family>', 'Agent-Family: dsh', 'Agent-Family  dsh',
     'Agent-Family codex\nAgent-Family dsh', 'Review-Family codex',
     'Agent-Family codex\nReview-Family codex', 'Agent-Family dsh\nReview-Family opus',
-    'Agent-Family dsh\nReview-Family claude\nReview-Family codex']) assert.throws(() => gate.route(body, []), body);
+    'Agent-Family dsh\nReview-Family claude\nReview-Family codex',
+    'Agent-Family codex2', 'Agent-Family dsh_foo', 'Agent-Family codexX',
+    'Agent-Family dsh\nReview-Family codex2']) assert.throws(() => gate.route(body, []), body);
 });
 
 function fixture() {

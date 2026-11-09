@@ -9,11 +9,11 @@ const RISK = /^(\.github\/|dangerfile\.js$|REVIEW_GUIDELINES\.md$|review\/rubric
 
 function marker(body, prefix, choices) {
   if (!body.includes(prefix)) return '';
-  const matches = [...body.matchAll(new RegExp(`${prefix} ([a-z]+)(?![a-z-])`, 'g'))];
+  const matches = [...body.matchAll(new RegExp(`${prefix} ([a-z]+)(?![A-Za-z0-9_-])`, 'g'))];
   const values = [...new Set(matches.map(match => match[1]))];
   if (values.length !== 1 || !choices.includes(values[0])) throw Error(`Invalid ${prefix} marker`);
   // A valid marker elsewhere must not hide an unfilled or unsupported marker.
-  const remainder = body.replace(new RegExp(`${prefix} (${choices.join('|')})(?![a-z-])`, 'g'), '');
+  const remainder = body.replace(new RegExp(`${prefix} (${choices.join('|')})(?![A-Za-z0-9_-])`, 'g'), '');
   if (remainder.includes(prefix)) throw Error(`Conflicting ${prefix} markers`);
   return values[0];
 }
