@@ -47,7 +47,9 @@ def test_parametrize_parser_skips_an_empty_parameter_set() -> None:
     tree = ast.parse(
         "import pytest\n@pytest.mark.parametrize('value', [()])\ndef test_empty(value):\n    pass\n"
     )
-    decorator = tree.body[1].decorator_list[0]
+    node = tree.body[1]
+    assert isinstance(node, ast.FunctionDef)
+    decorator = node.decorator_list[0]
     assert evidence._parametrize_ids(decorator, tree) == []
 
 
