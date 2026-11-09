@@ -23,6 +23,10 @@ class ActionKind(IntEnum):
     SUBMIT = 4
 
 
+class PacerRefused(RuntimeError):
+    """The account pacer did not admit a broker call; the caller must fail closed."""
+
+
 class TokenBucket:
     def __init__(self, limit: int, window_ns: int, burst: int):
         self.limit, self.window_ns, self.burst = limit, window_ns, burst

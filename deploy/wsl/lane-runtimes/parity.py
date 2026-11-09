@@ -285,11 +285,66 @@ def _bundle_installed(profile: Path, bundle: Path) -> bool:
     )
 
 
+def _quality_target(repository: Path, spec: str) -> tuple[str, str]:
+    """A plugin row's `dsh plugin add` argument and the dependency value the profile records.
+    Same mapping as .github/gate/upstream/parity.py:274-284 (P10): a repository bundle is
+    added by absolute path and records as a link; a github: spec records verbatim; an npm
+    spec records as its exact version."""
+    if spec.startswith(("config/", ".github/")):
+        target = str(repository / spec)
+        return target, f"link:{os.path.realpath(target)}"
+    return spec, (spec if spec.startswith("github:") else spec.rsplit("@", 1)[1])
+
+
+def _quality_missing(profile: Path, name: str, repository: Path) -> list[str]:
+    """The host quality rows this profile has not recorded (the gate's _quality_missing).
+    A profile that never ran has no manifest, so every row is missing and dsh plugin
+    initializes it with the add. The host spec carries the P10 picks and no quality bundle;
+    a spec that gains one takes it from the same dependency record."""
+    quality = SPEC["runtimes"]["dsh"]["quality"]
+    if name not in quality["profiles"]:
+        return []
+    manifest = profile / "package.json"
+    present = json.loads(manifest.read_text()).get("dependencies", {}) if manifest.is_file() else {}
+    wanted = {}
+    for entry in quality["plugins"]:
+        if name in entry.get("profiles", quality["profiles"]):
+            target, recorded = _quality_target(repository, entry["spec"])
+            wanted[target] = (entry["package"], recorded)
+    bundle_path = SPEC["runtimes"]["dsh"].get("quality_bundle")
+    if bundle_path:
+        bundle = repository / bundle_path
+        package = json.loads((bundle / "package.json").read_text())["name"]
+        wanted[str(bundle)] = (package, f"link:{os.path.realpath(bundle)}")
+    return [
+        spec
+        for spec, (package, version) in wanted.items()
+        if _recorded(profile, present.get(package)) != version
+    ]
+
+
+def _install_bundle_dependencies(targets: list[str]) -> list[str]:
+    """A repository bundle's pinned dependency must live beside it before dsh loads it:
+    the review shim imports @apcamargo/dsh-review from its own node_modules. The gate
+    adapter installs it the same way (.github/gate/parity-entry.py:39-50); a bundle
+    without a lockfile has nothing to install."""
+    states = []
+    for target in targets:
+        path = Path(target)
+        if path.is_dir() and (path / "pnpm-lock.yaml").is_file():
+            _native(["pnpm", "--dir", target, "install", "--frozen-lockfile"])
+            states.append(f"{path.name}: installed its pinned dependency")
+    return states
+
+
 def dsh_missing(profile: Path, repository: Path) -> list[str]:
     """A shipped profile that never ran has no manifest; dsh plugin initializes its template
-    (dsh-official-bundles PROFILE_TEMPLATES; dsh-app-boot)."""
+    (dsh-official-bundles PROFILE_TEMPLATES; dsh-app-boot). dsh-tui composes the MCP set
+    through its sextant-dsh-research bundle but still takes the quality rows."""
+    name = profile.name
     bundle = repository / SPEC["runtimes"]["dsh"]["mcp_bundle"]
-    return [] if _bundle_installed(profile, bundle) else [str(bundle)]
+    mcp = [] if name == "dsh-tui" or _bundle_installed(profile, bundle) else [str(bundle)]
+    return [*mcp, *_quality_missing(profile, name, repository)]
 
 
 def install_dsh(
@@ -306,9 +361,13 @@ def install_dsh(
             "dsh plugin --profile dsh-tui add step for this repository before parity; "
             "no dsh changes made"
         )
+    # acp and headless take the MCP set; all three quality profiles take the P10 rows, so
+    # dsh-tui is processed too. A quality row is installed with its own pinned dependency.
+    quality_profiles = SPEC["runtimes"]["dsh"]["quality"]["profiles"]
+    profiles = [*SPEC["runtimes"]["dsh"]["profiles"]]
+    profiles += [name for name in quality_profiles if name not in profiles]
     states = [copy_skill(path, dsh_home / "skills") for path in skills.values()]
-    # acp and headless; dsh-tui composes the same MCP set through its sextant-dsh-research bundle.
-    for name in SPEC["runtimes"]["dsh"]["profiles"]:
+    for name in profiles:
         missing = dsh_missing(dsh_home / "profiles" / name, repository)
         if missing and shutil.which("pnpm") is None:  # dsh-plugin-manager spawns pnpm from PATH
             raise Refused(
@@ -318,6 +377,7 @@ def install_dsh(
                 "setup.sh"
             )
         if missing:
+            states.extend(_install_bundle_dependencies(missing))
             _native([*dsh, "plugin", "--profile", name, "add", "--save-exact", *missing])
             states.append(f"{name}: added {' '.join(missing)}")
     return states

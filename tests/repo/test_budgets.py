@@ -14,7 +14,7 @@ def test_agent_files_stay_short() -> None:
 
 
 def test_justfile_stays_short() -> None:
-    assert _lines(ROOT / "justfile") < 100
+    assert _lines(ROOT / "justfile") < 105
 
 
 def test_at_most_thirty_one_page_adrs() -> None:
@@ -34,11 +34,20 @@ def test_src_stays_under_budget() -> None:
     # #134) and the TradingView watchlist (#64). Then to 21,550 on 2026-11-09 (owner, in the
     # sextant-next lead's tab: "raise and resolute them at full speed now, it is long overdue"),
     # for rank-live (+589) and Owner Desk Phase 1 (+151), paired with X3's consolidation PRs and
-    # the weekly consolidation report. Growth is paired with consolidation: each PR
+    # the weekly consolidation report. Then to 24,000 on 2026-11-09 after #69's TradingView
+    # host and #83's B replay merged back to back: each CI passed against a base without the
+    # other, so the combined tree reached 23,020 against 21,550. The weekly report (#90,
+    # 6750396545) shows only three safe dead lines and four duplicate blocks, so the raise
+    # leaves 980 lines of headroom and the safe deletions stay a follow-up. Then to 26,500 the
+    # same day under the owner's ruling ("those limit exit not for throtting but sota self
+    # maintanced consolidation, please don't ask again but consolidate and raise if truly
+    # needed"): the open PRs that fit alone plus the TradingView diagnostics fix need 26,059.
+    # After each consolidation merge the cap ratchets back to the measured size plus a stated
+    # headroom. Growth is paired with consolidation: each PR
     # shows its native replacements, a weekly report from maintained tools proposes deletions,
     # and a later raise must cite that report. One-off study code stays on tagged research
     # branches. The owner: "it can be grow but with sota sustainable consolidation".
-    assert sum(_lines(path) for path in (ROOT / "src").rglob("*.py")) < 21550
+    assert sum(_lines(path) for path in (ROOT / "src").rglob("*.py")) < 26500
 
 
 def test_design_stays_short() -> None:

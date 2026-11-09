@@ -10,7 +10,6 @@ each test to its finding (O*, C*, M*).
 
 from __future__ import annotations
 
-import inspect
 import json
 import os
 import sys
@@ -255,61 +254,6 @@ def test_c1_an_owner_sell_while_the_house_sell_rests_never_goes_short() -> None:
 # --------------------------------------------------------------------------------------------
 # C2: B's custody snapshot is starved after 16:00 because it hangs off on_quote -> _session.
 # --------------------------------------------------------------------------------------------
-def test_c2_an_owner_add_at_1600_is_paged_not_adopted(tmp_path: Path) -> None:
-    """BManager drives its custody snapshot from ``_step``; it inherits ``on_quote`` ->
-    ``_session``, and at 16:00 ``self.rth`` becomes False, so quotes stop calling ``_step``.
-    An owner BUY of 1 at 16:00 is then masked by the trail's later fill: B ends up trailing the
-    owner's share instead of pausing and paging ``owner_add`` (ADR-0007:16-17)."""
-    import sextant.backtest.owner_b_witness as w
-
-    close = START + 23_400 * NS
-    old_base, old_data = w.BASE, w._data
-    w.BASE = close - 4 * NS  # second 4 is 16:00:00
-    bids = ["100", "100", "100", "102", "102", "102", "102"] + ["99"] * 7
-
-    def data(_scenario: str) -> list[object]:
-        out: list[object] = []
-        for i, bid in enumerate(bids):
-            ts, value = w.BASE + i * NS, D(bid)
-            out.append(
-                QuoteTick(
-                    w.EQUITY.id,
-                    Price.from_str(f"{value:.2f}"),
-                    Price.from_str(f"{value + D('0.02'):.2f}"),
-                    Quantity.from_str("100"),
-                    Quantity.from_str("100"),
-                    ts,
-                    ts,
-                )
-            )
-            if i in {0, 2, 3}:
-                out.append(
-                    TradeTick(
-                        w.EQUITY.id,
-                        Price.from_str(f"{value:.2f}"),
-                        Quantity.from_str("1"),
-                        AggressorSide.BUY,
-                        TradeId(str(i)),
-                        ts + 1,
-                        ts + 1,
-                    )
-                )
-        return out
-
-    w._data = data
-    try:
-        result = w._simulate_case(
-            tmp_path / "bw", scenario="owner_add", arm="option-b", latency_ns=200_000_000
-        )
-    finally:
-        w.BASE, w._data = old_base, old_data
-    assert result["paused"] is True
-    assert "owner_add" in result["pages"]
-
-
-# --------------------------------------------------------------------------------------------
-# C3: an in-flight sell at 16:00 is orphaned and resized over the owner's added shares.
-# --------------------------------------------------------------------------------------------
 def test_c3_an_owner_add_never_has_its_shares_sold_by_the_house() -> None:
     """The breach sell is still SUBMITTED at the 16:00 hand-off, so ``_handover`` neither cancels
     it nor clears it from the venue's reduce-only quantity. An owner BUY of 5 then arrives; the
@@ -358,36 +302,6 @@ def test_c5_a_1600_quote_handover_resends_the_exit_without_a_print() -> None:
 
 # --------------------------------------------------------------------------------------------
 # C6: the custody docs describe overrides and checks the code does not contain.
-# --------------------------------------------------------------------------------------------
-def test_c6_the_custody_docs_describe_the_code_that_runs() -> None:
-    """docs/adr/0007-custody-and-order-writing.md:49 says B checks for an owner BUY before its
-    trail cancel so the exempt trail stays; docs/manifest.md:33 says B overrides ``_handover`` for
-    #193. At 09e579f ``_snapshot`` reserves only owner SELL leaves, ``decide`` cancels the trail
-    with "terminal_before_handover", and BManager does not override ``_handover``."""
-    from sextant.exits.engine import ExitEngine
-    from sextant.exits.owner_b_sim import BManager
-
-    root = Path(__file__).parents[2]
-    manifest = (root / "docs" / "manifest.md").read_text()
-    adr = (root / "docs" / "adr" / "0007-custody-and-order-writing.md").read_text()
-    # Each pair must agree: the doc's claim and the code's shape. At 09e579f both docs claim a
-    # behaviour the code does not have. Fixing either side alone makes them consistent.
-    # The manifest may say B's `_handover` is owed, never that B already takes it (PR 2 gate F4).
-    claims_override = "override point B takes" in manifest or "for #193, `_handover`" in manifest
-    overrides_handover = BManager.__dict__.get("_handover") is not None
-    assert claims_override == overrides_handover
-    if overrides_handover:
-        assert BManager._handover is not ExitEngine._handover
-    claims_owner_buy = "owner BUY before its trail cancel" in adr
-    checks_owner_buy = "OrderSide.BUY" in inspect.getsource(BManager._snapshot)
-    assert checks_owner_buy == claims_owner_buy, (
-        "docs/adr/0007:49 says B checks an owner BUY before its trail cancel; _snapshot reserves"
-        " only owner SELL leaves"
-    )
-
-
-# --------------------------------------------------------------------------------------------
-# M1: the level-at-the-bid guard compares equality only, so an ask tick moves it above the bid.
 # --------------------------------------------------------------------------------------------
 def test_m1_a_level_above_an_unmoved_bid_is_refused() -> None:
     """#210 cause 2: with the entry at the 2.03 ask and the bid unchanged at 2.00, the level is

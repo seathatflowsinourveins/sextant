@@ -9,7 +9,7 @@
 **What it runs.**
 - `NS movers` and `NS focus` membership from the research producer, with read-back, at most five unmapped names omitted, one corrective removal for extras, and a refusal on more; the display list never narrows the lanes' ranked universe and never reorders it ([ADR-0026](../../docs/adr/0026-tradingview-sync-and-order-presets.md)).
 - Four v6 `indicator()` presets — EMA 10/30, Hurst with R/S lags 4/8/16/32 and a 50-bar flow proxy, a quote-imbalance size table, and exit levels from a completed 5-minute Wilder ATR22 × 3 with R and a 6 bps cost breakeven. They are displays; Pine fills are not execution evidence ([ADR-0021](../../docs/adr/0021-tradingview-display.md)).
-- Managed-paper entries, including the owner's TradingView entries intended for B's manager, use a plain LIMIT with no attached bracket; outside RTH, apply the broker's extended-hours/session rules. The historical NS ALPACA DAY LIMIT BRACKET and NS IBKR DAY LIMIT BRACKET presets are for owner-managed positions only. Their 2%/1% placeholders are illustrative, not exit policy; DAY expiry does not flatten inventory ([ADR-0021](../../docs/adr/0021-tradingview-display.md), [ADR-0026](../../docs/adr/0026-tradingview-sync-and-order-presets.md), [paper](../paper/README.md)).
+- Managed-paper entries, including the owner's TradingView entries intended for B's manager, use the owner-manual `NS ALPACA DAY LIMIT MANAGED` preset: LIMIT, 0 relative ticks, DAY, no attached bracket, confirmation on. "TV presets can place brackets without confirmation", so managed-paper entries stay plain LIMIT, never a bracket; outside RTH, apply the broker's extended-hours/session rules. The historical NS ALPACA DAY LIMIT BRACKET and NS IBKR DAY LIMIT BRACKET presets are for owner-managed positions only. Their 2%/1% placeholders are illustrative, not exit policy; DAY expiry does not flatten inventory ([ADR-0021](../../docs/adr/0021-tradingview-display.md), [ADR-0026](../../docs/adr/0026-tradingview-sync-and-order-presets.md), [paper](../paper/README.md), [preset card and dated sources](../../docs/tradingview.md#owner-manual-order-presets)).
 - Lightweight Charts 5.2.1 (`b2ce010e4ad59f6556c9ed60e2b2b30feccdd2d1`) as the licensed display renderer for broker, Nautilus and TCA views, with the NOTICE and attribution obligations kept ([ADR-0021](../../docs/adr/0021-tradingview-display.md)).
 
 Acceptance is bounded: the initial four pine_check replies were not Desktop installs or saved scripts. Later records support two-run new-script/binding/compile and layout passes, but indicator-preset installation failed and retains an owner-manual/Pine fallback. Attributed installation of four files is not full persistence, input, chart or fill parity ([ADR-0026](../../docs/adr/0026-tradingview-sync-and-order-presets.md)).
@@ -31,4 +31,9 @@ for local receipts; it makes no session or installation claim. The
 [operating notes](../../docs/tradingview.md) hold the parameter registry, exact
 sources, owner commands and outstanding acceptance. Linux auth has no
 persistence option; every owner session needs browser consent. No unattended
-service or Desktop controller is installed.
+service or Desktop controller is installed. The operational K2 ranking
+registry is [`k2-ranking.params.json`](k2-ranking.params.json): the twelve
+ranking rows with pinned sources, all UNCALIBRATED; the DISPLAY deployment
+ages take the display registry's freshness bounds (600/1200/1200), so an
+operational display registry builds from the file, while the trading/entry
+deployment's ages stay UNAVAILABLE until sourced.

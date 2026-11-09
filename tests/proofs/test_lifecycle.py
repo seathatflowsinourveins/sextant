@@ -45,7 +45,7 @@ def test_the_sweep_runs_in_place_and_forces_only_merged_heads() -> None:
     assert "orca-ide automations create" in lifecycle and '--workspace "path:$PWD"' in lifecycle
     assert "--repo" not in lifecycle and "--precheck" in lifecycle
     assert "orca worktree rm --worktree branch:<branch> --delete-branch" in PROMPT
-    assert "git branch -d <branch>" in PROMPT and "issue #35" in PROMPT
+    assert "git branch -d <branch>" in PROMPT and "issue #89" in PROMPT
     # Squash merges never look merged to git, so the one forced delete is bound to GitHub's record:
     # the PR merged, and the branch's head is the commit that PR merged.
     assert re.findall(r"-D\b", PROMPT) == ["-D"]

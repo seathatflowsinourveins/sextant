@@ -191,12 +191,30 @@ def test_environments_restrict_branches() -> None:
 
 
 def test_dependabot_covers_every_ecosystem() -> None:
+    import yaml
+
     dependabot = _read(".github/dependabot.yml")
+    config = yaml.safe_load(dependabot)
     for ecosystem in ("npm", "uv", "docker", "github-actions", "devcontainers"):
         assert f"package-ecosystem: {ecosystem}" in dependabot
-    assert dependabot.count("cooldown") == 6
-    for path in ("/.devcontainer/agents", "/.devcontainer/qmd", "/deploy/wsl/dsh", "/config/dsh"):
-        assert path in dependabot
+    assert len(config["updates"]) == 7
+    for update in config["updates"]:
+        assert update["cooldown"] == {"default-days": 14}
+    npm = [update for update in config["updates"] if update["package-ecosystem"] == "npm"]
+    assert [update["directories"] for update in npm if "directories" in update] == [
+        ["/.devcontainer/agents", "/config/dsh"]
+    ]
+    assert sorted(update["directory"] for update in npm if "directory" in update) == [
+        "/.devcontainer/qmd",
+        "/deploy/wsl/dsh",
+    ]
+    dsh = next(update for update in npm if update.get("directory") == "/deploy/wsl/dsh")
+    assert dsh["schedule"] == {"interval": "daily"}
+    assert dsh["open-pull-requests-limit"] == 2
+    # pnpm is pinned to exactly dsh-tui's 11.21.0, so every update type is ignored there.
+    assert dsh["ignore"] == [{"dependency-name": "pnpm"}]
+    assert all("update-types" not in rule for rule in dsh["ignore"])
+    assert "# pnpm moves only with dsh-tui's toolchain" in dependabot
 
 
 def test_scoreboard_uses_upstream_actions() -> None:
@@ -213,6 +231,28 @@ def test_scoreboard_runs_only_daily_or_on_dispatch() -> None:
     assert "push" not in triggers
     assert set(triggers) == {"schedule", "workflow_dispatch"}
     assert triggers["schedule"] == [{"cron": "17 6 * * *"}]
+    assert workflow["jobs"]["scoreboard"]["if"] == (
+        "${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && "
+        "(github.event_name == 'schedule' || github.actor == github.repository_owner) }}"
+    )
+
+
+def test_scoreboard_measures_the_stop_rule_over_the_last_twenty_merges() -> None:
+    text = (WORKFLOWS / "scoreboard.yml").read_text()
+    assert "--state merged --limit 100" in text
+    assert "sort:updated-desc" in text
+    assert "sort_by(.mergedAt) | reverse | .[0:20]" in text
+    assert "fromdateiso8601" in text
+    assert "stop-rule.md" in text
+    assert "Median merge time: ${median} h against a 1.00 h limit." in text
+    assert "Stop rule: ${verdict}" in text
+    assert "Find or create the scoreboard issue" in text
+    assert "Scheduled workflows" in text
+    assert "merged:>=${{ steps.window.outputs.since }}" in text
+    assert "last.mergedAt" in text
+    assert "s/^#+ Proven rows:" in text
+    assert "url=$(gh issue create" in text
+    assert "refs/heads/main" not in text
 
 
 def test_lessons_keep_their_seed_and_stay_append_only() -> None:

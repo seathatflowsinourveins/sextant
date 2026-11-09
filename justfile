@@ -11,6 +11,11 @@ sync:
 # Everything the required `ci` check runs.
 ci: sync lint test secrets
 
+# Check the locked dsh profile, the live profile and the generated ecosystem index.
+session-start:
+    python3 scripts/dsh_profile_doctor.py
+    python3 scripts/ecosystem_index.py --check
+
 lint:
     uv run --frozen ruff check .
     uv run --frozen ruff format --check .
@@ -38,7 +43,7 @@ orca-update:
 lifecycle:
     bash deploy/wsl/lifecycle.sh
 
-# Inside the clean distro only: the verified reflection, Orca's automation behind its session/merge precheck (#114).
+# Inside the clean distro only: the verified reflection, Orca's automation behind its session/merge precheck (#91).
 reflection:
     bash deploy/wsl/reflection.sh
 

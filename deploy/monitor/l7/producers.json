@@ -1,0 +1,106 @@
+{
+  "version": 1,
+  "schema": "sextant.monitor.producers/1",
+  "source": "github/gh-aw@v1.0.1 0627fdbe4beb5f3b71aa569f8d97150b87f2111a pkg/cli/logs_report.go; M1 genai-mapping.md open-telemetry/semantic-conventions-genai@9ffc7e00c639be7712e544e3e54331e885dccf84 (read 2026-10-21); ADR-0030; read 2026-11-09",
+  "rows": [
+    {
+      "series": "sextant_llm_cache_hit_ratio",
+      "status": "PRODUCED",
+      "producer": "recording-rule:sextant_llm_cache_hit_ratio",
+      "requires": "M1 GenAI token counters (PR-M2 runtime feed)",
+      "source": "open-telemetry/semantic-conventions-genai@9ffc7e00c639be7712e544e3e54331e885dccf84 gen_ai.client.inference.usage.cache_read.input_tokens and input_tokens; M1 genai-mapping.md; read 2026-11-09",
+      "last_change": "2026-11-09"
+    },
+    {
+      "series": "sextant_llm_cache_write_waste_ratio",
+      "status": "PRODUCED",
+      "producer": "recording-rule:sextant_llm_cache_write_waste_ratio",
+      "requires": "M1 GenAI token counters (PR-M2 runtime feed)",
+      "source": "open-telemetry/semantic-conventions-genai@9ffc7e00c639be7712e544e3e54331e885dccf84 gen_ai.client.inference.usage.cache_write.input_tokens and cache_read.input_tokens; M1 genai-mapping.md; read 2026-11-09",
+      "last_change": "2026-11-09"
+    },
+    {
+      "series": "sextant_agent_context_pressure_ratio",
+      "status": "PENDING",
+      "producer": "none in this tree",
+      "owner": "PR-M2 (M1 runtime feeds)",
+      "reason": "The pinned GenAI mapping has no context-window metric; a hardcoded window would be an uncited constant.",
+      "source": "M1 genai-mapping.md; read 2026-11-09",
+      "last_change": "2026-11-09"
+    },
+    {
+      "series": "sextant_agent_tool_failures_consecutive",
+      "status": "PENDING",
+      "producer": "none in this tree",
+      "owner": "PR-M2/PR-M3 (runtime feeds)",
+      "reason": "No pinned tool_result failure series exists yet; the retry loop needs the runtime feed, not a fabricated zero.",
+      "source": "Balusu (2026) doi:10.1145/3805760.3814931; IBM XPerf arXiv:2608.20370v1; read 2026-11-08",
+      "last_change": "2026-11-09"
+    },
+    {
+      "series": "sextant_agent_error_ratio",
+      "status": "PRODUCED",
+      "producer": "recording-rule:sextant_agent_error_ratio",
+      "requires": "L5 sextant_gh_aw_error_ratio from gh-aw RunData error_count/turns",
+      "source": "github/gh-aw@v1.0.1 0627fdbe4beb5f3b71aa569f8d97150b87f2111a pkg/cli/logs_report.go RunData.error_count and RunData.turns; scripts/monitor_github.py run_metrics; read 2026-11-09",
+      "last_change": "2026-11-09"
+    },
+    {
+      "series": "sextant_llm_cost_usd",
+      "status": "PENDING",
+      "producer": "none in this tree",
+      "owner": "PR-M2 (M1 cost feed)",
+      "reason": "The pinned GenAI mapping has no cost metric; the vendor claude_code.cost.usage series is not wired in this tree.",
+      "source": "M1 genai-mapping.md vendor table; read 2026-11-09",
+      "last_change": "2026-11-09"
+    },
+    {
+      "series": "sextant_llm_quota_remaining_ratio",
+      "status": "PENDING",
+      "producer": "none in this tree",
+      "owner": "PR-M2 (M1 quota feed)",
+      "reason": "No quota-remaining metric exists in the pinned GenAI mapping or this tree.",
+      "source": "M1 genai-mapping.md; read 2026-11-09",
+      "last_change": "2026-11-09"
+    },
+    {
+      "series": "sextant_llm_quota_burn_ratio_per_hour",
+      "status": "PENDING",
+      "producer": "none in this tree",
+      "owner": "PR-M2 (M1 quota feed)",
+      "reason": "No quota-burn metric exists in the pinned GenAI mapping or this tree.",
+      "source": "M1 genai-mapping.md; read 2026-11-09",
+      "last_change": "2026-11-09"
+    },
+    {
+      "series": "sextant_review_model_effort_compliance_ratio",
+      "status": "PENDING",
+      "producer": "none in this tree",
+      "owner": "PR-M2/ADR-0030 detector",
+      "reason": "L5 records model_effort but this PR does not judge it against the owner's pins; the detector is not landed.",
+      "source": "docs/adr/0030-latest-sota-models.md; github/gh-aw@v1.0.1 0627fdbe4beb5f3b71aa569f8d97150b87f2111a reference/engines.md; read 2026-11-09",
+      "last_change": "2026-11-09"
+    },
+    {
+      "series": "sextant_monitor_last_success_timestamp_seconds",
+      "status": "PRODUCED",
+      "producer": "scripts/monitor_github.py::metrics_from_records",
+      "source": "L5 collector heartbeat; ADR-0018; read 2026-11-09",
+      "last_change": "2026-11-09"
+    },
+    {
+      "series": "sextant_gh_aw_rebuild_factor",
+      "status": "PRODUCED",
+      "producer": "scripts/monitor_github.py::run_metrics",
+      "source": "github/gh-aw@v1.0.1 0627fdbe4beb5f3b71aa569f8d97150b87f2111a pkg/cli/logs_models.go WorkingSetMetrics.rebuild_factor; read 2026-11-09",
+      "last_change": "2026-11-09"
+    },
+    {
+      "series": "sextant_gh_aw_friction_events",
+      "status": "PRODUCED",
+      "producer": "scripts/monitor_github.py::run_metrics",
+      "source": "github/gh-aw@v1.0.1 0627fdbe4beb5f3b71aa569f8d97150b87f2111a pkg/cli/logs_report.go RunData.friction; read 2026-11-09",
+      "last_change": "2026-11-09"
+    }
+  ]
+}
