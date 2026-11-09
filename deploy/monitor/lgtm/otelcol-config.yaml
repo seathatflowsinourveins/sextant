@@ -1,0 +1,142 @@
+# Sextant replacement for docker/otelcol-config.yaml from
+# grafana/docker-otel-lgtm@9c57b1400ccdb8920e1a2b6083134cc5ef244a8f,
+# mounted read-only over /otel-lgtm/otelcol-config.yaml (upstream
+# docker/run-otelcol.sh starts otelcol-contrib with that file). Receivers
+# and in-container exporters are upstream's, unchanged; the host publishes
+# only 127.0.0.1:3000/4317/4318 (compose.yaml). Deliberate changes:
+# health_check binds 127.0.0.1 inside the container, the upstream CORS
+# wildcard is dropped (senders are local CLIs, not browsers), and three
+# processors run before batch on every signal that persists content:
+# transform (extract kept invocation names), attributes (delete sensitive
+# tool fields), redaction (mask secret-shaped values). Processors are
+# open-telemetry/opentelemetry-collector-contrib@v0.163.0
+# df849b5403c041d5e799e7846392a6f18b0b55ae (the image bundles v0.163.1):
+# processor/transformprocessor, processor/attributesprocessor and
+# processor/redactionprocessor (config.go: allow_all_keys, allowed_keys,
+# blocked_key_patterns, redact_all_types, blocked_values). Prompt and
+# response logging stays unset at the runtimes (PR-M2); this overlay is the
+# fail-closed second layer if a content field ever arrives.
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+  prometheus/collector:
+    config:
+      scrape_configs:
+        - job_name: "opentelemetry-collector"
+          scrape_interval: 1s
+          static_configs:
+            - targets: ["127.0.0.1:8888"]
+
+extensions:
+  health_check:
+    endpoint: 127.0.0.1:13133
+    path: "/ready"
+
+processors:
+  # Copy dotted vendor names to the kept underscored aliases before any
+  # deletion (§5.2 step A: extract, then delete). Vendor series and
+  # attributes otherwise pass through lossless; the pinned vendor ->
+  # gen_ai.* mapping lives in genai-mapping.md.
+  transform:
+    error_mode: ignore
+    log_statements:
+      - set(log.attributes["skill_name"], log.attributes["skill.name"]) where log.attributes["skill.name"] != nil
+      - set(log.attributes["mcp_server_name"], log.attributes["mcp_server.name"]) where log.attributes["mcp_server.name"] != nil
+      - set(log.attributes["mcp_tool_name"], log.attributes["mcp_tool.name"]) where log.attributes["mcp_tool.name"] != nil
+    trace_statements:
+      - set(span.attributes["skill_name"], span.attributes["skill.name"]) where span.attributes["skill.name"] != nil
+      - set(span.attributes["mcp_server_name"], span.attributes["mcp_server.name"]) where span.attributes["mcp_server.name"] != nil
+      - set(span.attributes["mcp_tool_name"], span.attributes["mcp_tool.name"]) where span.attributes["mcp_tool.name"] != nil
+    metric_statements:
+      - set(datapoint.attributes["skill_name"], datapoint.attributes["skill.name"]) where datapoint.attributes["skill.name"] != nil
+      - set(datapoint.attributes["mcp_server_name"], datapoint.attributes["mcp_server.name"]) where datapoint.attributes["mcp_server.name"] != nil
+      - set(datapoint.attributes["mcp_tool_name"], datapoint.attributes["mcp_tool.name"]) where datapoint.attributes["mcp_tool.name"] != nil
+  # Deterministic deletion of the content-bearing tool fields that
+  # OTEL_LOG_TOOL_DETAILS=1 / Codex [otel] also export (RECONCILE §5.2).
+  attributes:
+    actions:
+      - key: tool_input
+        action: delete
+      - key: tool_parameters
+        action: delete
+      - key: full_command
+        action: delete
+      - key: bash_command
+        action: delete
+      - key: file_path
+        action: delete
+      - key: arguments
+        action: delete
+      - key: output
+        action: delete
+  # Fail-closed backstop: mask secret-shaped keys and values that survive
+  # deletion (RECONCILE §5.2 step B). Secret-bearing keys only: the singular
+  # *_token suffix (access_token, refresh_token, ...), never the plural
+  # *_tokens usage counters (input_tokens, gen_ai.usage.input_tokens, ...),
+  # which are also pinned safe by ignored_key_patterns (upstream
+  # redactionprocessor README at the pin: ignored attributes are processed
+  # first and never blocked).
+  redaction:
+    allow_all_keys: true
+    redact_all_types: true
+    ignored_key_patterns:
+      - "(?i).*_tokens$"
+    blocked_key_patterns:
+      - "(?i).*(api_key|secret|password|authorization|credential).*"
+      - "(?i).*(_token|access_token)$"
+    blocked_values:
+      - "sk-[A-Za-z0-9_-]{16,}"
+      - "gh[pousr]_[A-Za-z0-9_]{20,}"
+      - "github_pat_[A-Za-z0-9_]{20,}"
+      - "AIza[0-9A-Za-z_-]{35}"
+      - "AKIA[0-9A-Z]{16}"
+      - "PK[0-9A-Z]{18,}"
+      - "(?i)(bearer|token|key|secret|password)[=: ]+['\"]?[A-Za-z0-9._~+/=-]{16,}"
+  batch:
+
+exporters:
+  otlp_http/metrics:
+    endpoint: http://127.0.0.1:9090/api/v1/otlp
+    tls:
+      insecure: true
+  otlp_http/traces:
+    endpoint: http://127.0.0.1:4418
+    tls:
+      insecure: true
+  otlp_http/logs:
+    endpoint: http://127.0.0.1:3100/otlp
+    tls:
+      insecure: true
+  otlp_grpc/profiles:
+    endpoint: http://127.0.0.1:4040
+    tls:
+      insecure: true
+  debug/metrics:
+    verbosity: detailed
+  debug/traces:
+    verbosity: detailed
+  debug/logs:
+    verbosity: detailed
+
+service:
+  extensions: [health_check]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [transform, attributes, redaction, batch]
+      exporters: [otlp_http/traces]
+    metrics:
+      receivers: [otlp, prometheus/collector]
+      processors: [transform, attributes, batch]
+      exporters: [otlp_http/metrics]
+    logs:
+      receivers: [otlp]
+      processors: [transform, attributes, redaction, batch]
+      exporters: [otlp_http/logs]
+    profiles:
+      receivers: [otlp]
+      exporters: [otlp_grpc/profiles]

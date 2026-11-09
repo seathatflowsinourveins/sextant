@@ -31,11 +31,14 @@ def test_src_stays_under_budget() -> None:
     # Raised by the owner from 15,000 to 17,500 on 2026-11-06 (#58, 6701393837), to 17,650 and
     # 17,720 on 2026-11-07 (#58, 6709238862, 6709939678), then to 20,800 the same day (#58,
     # 6711818587): B's path to ready, live ranking (#66's fix, the registry loader, #133, #137,
-    # #134) and the TradingView watchlist (#64). Growth is paired with consolidation: each PR
+    # #134) and the TradingView watchlist (#64). Then to 21,550 on 2026-11-09 (owner, in the
+    # sextant-next lead's tab: "raise and resolute them at full speed now, it is long overdue"),
+    # for rank-live (+589) and Owner Desk Phase 1 (+151), paired with X3's consolidation PRs and
+    # the weekly consolidation report. Growth is paired with consolidation: each PR
     # shows its native replacements, a weekly report from maintained tools proposes deletions,
     # and a later raise must cite that report. One-off study code stays on tagged research
     # branches. The owner: "it can be grow but with sota sustainable consolidation".
-    assert sum(_lines(path) for path in (ROOT / "src").rglob("*.py")) < 20800
+    assert sum(_lines(path) for path in (ROOT / "src").rglob("*.py")) < 21550
 
 
 def test_design_stays_short() -> None:
