@@ -4,9 +4,13 @@ This serves the owner's first step: rank potential extreme movers as they start.
 It is an offline implementation of the live input/output seam, with no client,
 key lookup, stream opener, controller launcher or running schedule. The gate
 branch's `ci`, `source` and `review` policy governs this port; it merges only
-after the budget PR #27. The owner cadence ruling is implemented DISABLED;
-landing, B's feed check and explicit lead enablement remain prerequisites
-(lead 2026-11-08 19:10:06, 19:21:44 and 19:49:24 EST, rank-live handoff).
+after the budget PR #27. The 2026-11-09 TV-LOOP ruling starts the owner-consented
+loop and ships the cadence registry `enabled=1` in the same reviewed PR; the
+change takes effect at the next session boundary (ADR-0018). Stream opening, B's
+feed check and explicit lead enablement of the Windows controller remain
+separate (lead 2026-11-08 19:10:06, 19:21:44 and 19:49:24 EST, rank-live
+handoff; LEAD-1219-tv-pr3-skills.md, SHA-256
+`045f4b2e01128f3e5db21acef340f451451cca4a99994f4fb69287659de266a1`).
 
 ## Data path and sources
 
@@ -104,7 +108,7 @@ retain confirmed changes and unknown outcomes. No selection tool or corrective
 write on a stop. Membership sync does not promise rank-order sorting. Existing
 J5 proofs remain the controller-policy witness; this producer never calls it.
 
-## Registry and disabled owner cadence
+## Registry and owner-consented loop
 
 Every ranking knob stays in main's required `Registry` (all twelve rows, explicit
 source/date, UNCALIBRATED; no defaults). The shipped operational rows live in
@@ -132,7 +136,7 @@ state. There are no missing-value or fixture defaults.
 
 | Registry row | Shipped value | Meaning |
 |---|---|---|
-| `enabled` | 0 | DISABLED; future activation also needs a landed SHA and explicit lead enable receipt |
+| `enabled` | 1 | Enabled by the 2026-11-09 TV-LOOP ruling; effective at the next session boundary. A remaining `0` copy refuses before any state or page |
 | `changed_only` | 1 | Compare exact sets with complete confirmed read-back, ignoring rank/order/score |
 | `max_concurrent_runs` | 1 | Serialized admission and a durable active-run receipt |
 | `max_retries` | 0 | Failed/abandoned runs latch; no retry or automatic recovery |
@@ -154,12 +158,13 @@ membership is unchanged or rank data is unavailable. The high flag persists
 across restarts; a failed page latches admission and leaves `page_pending`.
 
 Call `Cadence.claim` with a fresh producer unit, aware supplied clock and sourced
-Windows weekly-use percentage. Shipped `enabled=0` refuses before any state or
-page. Future enablement must be a reviewed between-session registry change after
-landing, with the lead's explicit receipt. The caller attests those receipts;
-this offline gate cannot verify remote landing or the lead's identity.
-A complete by-ID membership receipt is also required to establish the initial
-comparison; unknown inventory never authorizes a clear or a first-run guess.
+Windows weekly-use percentage. Shipped `enabled=1` is the reviewed between-session
+change after landing; a copy still carrying `0` refuses before any state or page.
+The caller attests those receipts; this offline gate cannot verify remote landing
+or the lead's identity. `--loop` supplies the landed SHA from its own checkout,
+the enabled row's source as the enable receipt, and a complete by-ID membership
+read-back for the initial comparison; unknown inventory never authorizes a clear
+or a first-run guess.
 
 Every cooperating J5 admission process uses the same canonical state root.
 Native `WriterLease` serializes read/claim/finish, and `write_atomic` durably binds
@@ -171,11 +176,50 @@ with existing state requires reviewed migration. This local protocol cannot
 exclude an external host or controller that ignores it; existing Windows J5
 single-controller/allowlist/non-use gates remain required.
 
+## Owner-consented loop
+
+`tradingview/loop.py --loop` starts the process that consumes the admission gate.
+It preflights the registry, landed SHA and enable source without opening a
+session, opens exactly one `official_client` consent context, and performs one
+complete by-ID read-back before the first compare. No unit is pre-read before
+consent.
+
+Each tick sleeps to the current floor, rereads `--research-dir` (the newest
+complete display unit; a symlinked `latest` may be atomically replaced), reads
+the two explicit memberships into a display-admission view, and calls
+`Cadence.claim`. Only an admitted run calls `sync_research(apply=True)`; a
+verified `applied` result with both read-back keys calls `finish(successful=True)`
+with the operation count and read-back sizes as its receipt. A refused or stale
+unit never becomes an empty desired list: it leaves both lists unchanged and
+pages once per distinct episode. The page is written straight to stderr
+because the OAuth redaction guard disables `logging` for the consent session,
+so an ERROR record would be dropped. A sync failure finishes the run as failed,
+latching the same no-retry policy, and stops the process. The loop exits at the
+20:00 ET display close rather than holding OAuth across the closed window, and it
+has no catch-up queue.
+
+The admission comparison is the observed pair `NS movers` and `NS focus`, not
+their union: a name that moves between lists changes both sets even when the
+union is unchanged, and it must sync. The window and floors come only from the
+registry; the loop adds no timer, service, alternate transport or second client.
+`--weekly-usage-pct`/`--usage-source` let a caller supply the Windows controller's
+sourced number; when unset, the default is zero with a source stating that this
+process has no Claude surface, so the 900s branch is not exercised. The default
+state root is `~/sextant-data/tradingview-j5`; every cooperating process must use
+the same canonical root. A restart refuses state that holds an active, failed or
+page-pending run, or that was written by another reviewed registry, before it
+opens a new consent session; the reviewed reconciliation or migration must finish
+first. A healthy restart reconciles the saved comparison with the startup by-ID
+read-back, so the first claim compares the desired pair with the broker's current
+membership, not with a stale pair that could skip a needed sync.
+
 Only an admitted `run_id` may be handed to the existing Windows-native Claude
-controller after enablement. No launcher is installed here. The controller must
-still validate fresh input before **each** batch under ADR-0021; the cadence does
-not extend second-scale producer expiry. `finish` accepts only the matching
-outcome/read-back receipt. Unknown completion keeps the active receipt blocked.
+controller after enablement. The loop spends its admitted run on the no-LLM cloud
+MCP sync itself; that separate controller path still has no launcher here. The
+controller must still validate fresh input before **each** batch under ADR-0021;
+the cadence does not extend second-scale producer expiry. `finish` accepts only
+the matching outcome/read-back receipt. Unknown completion keeps the active
+receipt blocked.
 
 The recorded first-session measurement is **`first_session_j5_run_time_ns`**:
 UTC receipt end minus admitted start for the first completed J5 run, including
@@ -209,6 +253,11 @@ Witnesses cover every owner rule, minute/second boundaries, Eastern DST/XNYS,
 restart and cross-process serialization, failed/abandoned runs, strict usage
 threshold/paging, missing authority, and synthetic first-session receipt timing.
 No test under `tests/repo` is edited; the no-LLM client research remains separate.
+The 2026-11-09 TV-LOOP tests were RED first for the absent loop and two-list
+admission, then GREEN against the real SDK seam. They cover the startup
+read-back, one sync per admission, unchanged-member skip, a cross-list move with
+an unchanged union, stale-page-once with no write, the failed-apply latch, the
+20:00 ET exit and CLI wiring.
 
 Lesson: a membership retry is not a new change; keep the active/failed receipt
 through restarts. Cadence acceptance needs clocked controller receipts and
@@ -279,7 +328,10 @@ pin, and measure against the target's actual size guard before handoff
 `docs/handbook/practices.md`, Harness; `tests/proofs/test_manifest_union.py`).
 The owner has unblocked live ranking; rollout starts when B is ready, under the
 trading lead's six-step rollout. This port keeps `enabled=0`, overnight OFF and
-all display-only boundaries; it performs no rollout or controller apply.
+all display-only boundaries; it performs no rollout or controller apply. The
+owner-consented loop enables the cadence (`enabled=1`) for itself only, keeps
+overnight OFF and all display-only boundaries, and performs no rollout or
+controller apply.
 
 ## Bar-fidelity REST host, 2026-11-09
 
