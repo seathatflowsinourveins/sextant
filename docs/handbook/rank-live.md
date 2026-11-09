@@ -2,9 +2,10 @@
 
 This serves the owner's first step: rank potential extreme movers as they start.
 It is an offline implementation of the live input/output seam, with no client,
-key lookup, stream opener, controller launcher or running schedule. It lands
-after B, with dsh and Google gates. The owner cadence ruling is implemented
-DISABLED; landing and explicit lead enablement remain prerequisites
+key lookup, stream opener, controller launcher or running schedule. The gate
+branch's `ci`, `source` and `review` policy governs this port; it merges only
+after the budget PR #27. The owner cadence ruling is implemented DISABLED;
+landing, B's feed check and explicit lead enablement remain prerequisites
 (lead 2026-11-08 19:10:06, 19:21:44 and 19:49:24 EST, rank-live handoff).
 
 ## Data path and sources
@@ -248,3 +249,27 @@ remain untouched. The two branch-only pure-projection test files are retired
 with those APIs; producer proofs are adapted to the real ranker/reader, complete
 generation hash, two clocks, bounded snapshots, atomic failure and refusals.
 J5's controller-policy proofs remain unchanged.
+
+## Gate port receipt, 2026-11-09
+
+The T1 ruling carries the four source commits in order: `788df62b346955ff713cd75ac804a9f6bacd9bdf`,
+`29d2cd4a327ca4c0d33c47a6e213e210d9909674`, `506639935de0da6eb8bcbe1ba0b758dcfd6bf518`
+and `7f353a5420e5dbce67990bb3376ce0bee3460a5b`. Against gate
+`6db8dae20ab930c1511d5e1a4e0000fe4f9b717b`, the implementation, registry and
+proofs match that final source exactly. No source conflict needed a design choice.
+The manifest retains every gate row and adds only the three rank-live rows.
+Gate's instructions, review rules, workflows and size tests remain unchanged.
+
+Measured Python source is **16,129 + 589 = 16,718 lines**, below gate's cap of
+**21,550**. The +589 is the 299-line producer plus 290-line cadence module;
+there is no new dependency, scorer, controller or running service. The earlier
+<20,800 receipt above describes the original carry, not gate's current cap.
+
+Lesson: a source carry does not carry its old landing policy. Preserve the
+target branch's rules and manifest union, compare the implementation to its
+pin, and measure against the target's actual size guard before handoff
+(`6db8dae20ab930c1511d5e1a4e0000fe4f9b717b`:
+`docs/handbook/practices.md`, Harness; `tests/proofs/test_manifest_union.py`).
+The owner has unblocked live ranking; rollout starts when B is ready, under the
+trading lead's six-step rollout. This port keeps `enabled=0`, overnight OFF and
+all display-only boundaries; it performs no rollout or controller apply.
