@@ -1,4 +1,6 @@
-# Upstream SEC submission fixture
+# Upstream SEC submission and Atom fixtures
+
+`atom-current-excerpt.xml` (2,248 bytes, SHA-256 `43e2f8f71b960d96a480008dc2ae3203c5378b410eeda53803860f974900631b`) is an excerpt composed 2026-11-09 for PR-F7: the feed header plus the first 8-K, first 6-K and first Form 4 `<entry>` elements, each copied byte-for-byte, from the second recorded response (`start=100` Latest Filings Atom page) in `tests/cassettes/test_get_all_current_filings.yaml` in dgunning/edgartools@v5.62.1 `9f2ff388c0ad21cfbaba4c7587ba8be7abe6816d` (cassette SHA-256 `18a7d390e915f08438d49a3fdb8427d86a7881b241c65699e8cf81eda19b9ea1`). The excerpt order is 8-K, 6-K, 4 by selection, not the page's order, and it is not a whole SEC response. Its entries carry source acceptance in `<updated>` only; no local receipt or point-in-time availability is known from it, and no corporate event in it is assigned a polarity.
 
 `0000943374-24-000509.txt` is copied byte-for-byte from `data/sgml/0000943374-24-000509.txt` in dgunning/edgartools@v5.62.1 `9f2ff388c0ad21cfbaba4c7587ba8be7abe6816d`, read 2026-11-06. SHA-256: `521de6ce26894f75f215215cbea9746932d5093908bfc45688b93e10cf43f394` (161,378 bytes).
 
