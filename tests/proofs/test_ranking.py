@@ -633,3 +633,34 @@ def test_k2_preregistration_stays_frozen_and_not_run() -> None:
         assert heading in text
     folded = "docs/research/2026-11-09-k2-historical-ranking-preregistration.md"
     assert not (ROOT / folded).exists()
+
+
+def test_k3_preregistration_stays_frozen_and_not_run() -> None:
+    note = (ROOT / "docs/research/2026-11-06-ranking.md").read_bytes()
+    title = b"# K3 early-stage detection: preregistration\n"
+    end = b"## K2 preregistration, frozen (Wave W2 fold; NOT_RUN)"
+    section = note[note.index(title) : note.index(end)]
+    digest = "fecd378a5b40fc2d6d2e03b16dda605c9f82102dad8e95735ffef24a459aca0b"
+    assert sha256(section).hexdigest() == digest
+    text = section.decode()
+    assert "**Status: frozen protocol; NOT_RUN.**" in text
+    for heading in (
+        "## K3.2 Estimand and pairing (frozen)",
+        "## K3.4 Data, PIT and windows (frozen)",
+        "## K3.5 Arms (frozen; all MODELED, rejects included)",
+        "## K3.7 Costs (frozen: none consumed)",
+        "## K3.8 Parameters (frozen: names and authority, no defaults)",
+        "## K3.9 Dependence, replication, multiplicity; metrics and tests",
+        "## K3.10 Trial count bound to the one TrialLog (frozen)",
+        "## K3.11 Decision rule (frozen: HOLD)",
+    ):
+        assert heading in text
+    for arm in ("**Arm (a)", "**Arm (b)", "**Arm (c)", "**Arm (d)", "**Arm K", "**Arm H"):
+        assert arm in text
+    assert "Rejected arms, recorded not deleted" in text
+    for standalone in (
+        "docs/research/2026-11-09-k3-onset.md",
+        "docs/research/2026-11-09-k3-onset-preregistration.md",
+        "docs/research/2026-11-09-k3-preregistration.md",
+    ):
+        assert not (ROOT / standalone).exists()
