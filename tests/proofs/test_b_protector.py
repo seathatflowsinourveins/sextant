@@ -22,6 +22,7 @@ from sextant.paper.b_protector import (
     ProtectorStream,
     load_b_parameters,
 )
+from sextant.paper.b_protector_main import PacerRefused
 from sextant.paper.config import PaperAccount
 from sextant.paper.sessions import Session, session_at
 
@@ -159,6 +160,10 @@ class FakeTradingClient:
         self.calls.append("get_orders")
         return list(self.orders)
 
+    def get_order_by_client_id(self, client_id: str) -> Order:
+        self.calls.append("get_order_by_client_id")
+        raise AssertionError("the fixture has no order with that client order id")
+
     def submit_order(self, order_data):
         self.calls.append("submit_order")
         assert isinstance(order_data, TrailingStopOrderRequest)
@@ -185,6 +190,50 @@ class FakeTradingClient:
     def replace_order_by_id(self, *args, **kwargs):
         self.replaced.append((args, kwargs))
         raise AssertionError("the protector must never replace an order")
+
+
+class RefusingClient(FakeTradingClient):
+    """The account pacer refuses a broker read while an owner fill is being claimed."""
+
+    def get_all_positions(self):
+        raise PacerRefused("the account pacer did not admit get_all_positions")
+
+
+class TimedOutSubmitClient(FakeTradingClient):
+    """The broker accepted the trail but the response was lost, so it is not listed yet."""
+
+    def __init__(self, *, account=None, positions=(), orders=()):
+        super().__init__(account=account, positions=positions, orders=orders)
+        self.by_client_id: dict[str, Order] = {}
+        self.lookups: list[str] = []
+
+    def submit_order(self, order_data):
+        self.calls.append("submit_order")
+        assert isinstance(order_data, TrailingStopOrderRequest)
+        self.submitted.append(order_data)
+        client_order_id = order_data.client_order_id
+        symbol = order_data.symbol
+        assert client_order_id is not None
+        assert symbol is not None
+        order = api_order(
+            client_order_id=client_order_id,
+            symbol=symbol,
+            qty=str(order_data.qty),
+            side="sell",
+            order_type="trailing_stop",
+            status="new",
+            trail_percent=str(order_data.trail_percent),
+        )
+        self.by_client_id[client_order_id] = order
+        raise TimeoutError("the submit response was lost")
+
+    def get_order_by_client_id(self, client_id: str) -> Order:
+        self.calls.append("get_order_by_client_id")
+        self.lookups.append(client_id)
+        order = self.by_client_id.get(client_id)
+        if order is None:
+            raise AssertionError("unexpected client order id")
+        return order
 
 
 def protector(client, *, now=NOW_NS, account=None, params=None) -> Protector:
@@ -715,3 +764,38 @@ def test_a_truncated_open_order_snapshot_refuses_writes():
 
     assert client.submitted == []
     assert "open_orders_truncated" in [page.reason for page in p.pages]
+
+
+def test_a_pacer_refusal_freezes_the_symbol_instead_of_escaping_the_handler():
+    client = RefusingClient(positions=[api_position("10")])
+    p = protector(client)
+    p.bind()
+
+    p.handle(api_update(api_order(client_order_id="owner-buy-1"), event="fill", position_qty=10.0))
+
+    assert "AAPL" in p.frozen
+    assert "pacer_refused" in [page.reason for page in p.pages]
+    assert client.submitted == []
+
+
+def test_a_timed_out_submit_is_resolved_by_its_client_order_id_before_any_second_exit():
+    client = TimedOutSubmitClient(positions=[api_position("10")])
+    p = protector(client)
+    p.bind()
+    p.handle(api_update(api_order(client_order_id="owner-buy-1"), event="fill", position_qty=10.0))
+
+    assert len(client.submitted) == 1
+    client_order_id = client.submitted[0].client_order_id
+    assert client_order_id is not None
+
+    p.reconcile()
+
+    assert client.lookups == [client_order_id]
+    assert "AAPL" in p.frozen
+    assert "submit_unresolved" in [page.reason for page in p.pages]
+
+    client.orders = [client.by_client_id[client_order_id]]
+    p.reconcile()
+
+    assert "AAPL" not in p.frozen
+    assert len(client.submitted) == 1

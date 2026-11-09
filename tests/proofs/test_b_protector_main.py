@@ -3,14 +3,26 @@
 import asyncio
 import json
 from pathlib import Path
+from typing import cast
 from uuid import uuid4
 
 import pytest
+from alpaca.trading.enums import OrderSide, TimeInForce
 from alpaca.trading.models import TradeAccount
+from alpaca.trading.requests import TrailingStopOrderRequest
 from alpaca.trading.stream import TradingStream
 
+from sextant.execution.custody import AccountScope, CustodyError, WriterLease
+from sextant.execution.pacer import AccountPacer
 from sextant.paper.b_protector import ProtectorRefusal
-from sextant.paper.b_protector_main import main
+from sextant.paper.b_protector_main import (
+    BudgetControls,
+    PacedTradingClient,
+    PacerRefused,
+    main,
+)
+from sextant.paper.config import PaperBudget
+from sextant.risk.controls import Controls
 
 ROOT = Path(__file__).parents[2]
 
@@ -49,7 +61,11 @@ class FakeTradingClient:
         self.calls.append("get_orders")
         return []
 
-    def submit_order(self, order_data):
+    def get_order_by_client_id(self, client_id):
+        self.calls.append("get_order_by_client_id")
+        raise AssertionError("the smoke path must not resolve an order identity")
+
+    def submit_order(self, order_data) -> None:
         self.calls.append("submit_order")
         raise AssertionError("the smoke path must not submit")
 
@@ -201,3 +217,76 @@ def test_main_prefers_a_full_expected_account_id_over_the_suffix(tmp_path, monke
     assert pages == []
     assert runs == ["run"]
     assert client.calls == ["get_account", "get_account"]
+
+
+def test_a_second_writer_holding_the_account_lease_refuses_before_any_broker_call(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("ALPACA_PAPER_2_API_KEY", "test-key")
+    monkeypatch.setenv("ALPACA_PAPER_2_SECRET_KEY", "test-secret")
+    monkeypatch.setenv("B_EXPECTED_ACCOUNT_SUFFIX", "ture")
+    parameters = ROOT / "lanes/paper/b-parameters.json"
+    config = write_config(tmp_path, "b-slot2.json")
+    _, runs = patch_stream(monkeypatch)
+
+    held = WriterLease(AccountScope("ALPACA", "paper-fixture"), tmp_path / "locks", "other-writer")
+    held.acquire()
+    factory_calls: list[dict] = []
+
+    def factory(**kwargs):
+        factory_calls.append(kwargs)
+        return FakeTradingClient()
+
+    try:
+        with pytest.raises(CustodyError):
+            main(
+                ["--config", str(config), "--parameters", str(parameters)],
+                client_factory=factory,
+                on_page=no_page,
+            )
+    finally:
+        held.close()
+
+    assert factory_calls == []
+    assert runs == []
+
+
+def test_a_deferred_submit_is_retained_and_sent_by_the_next_pacer_drain():
+    clock = [0]
+
+    class Broker(FakeTradingClient):
+        def __init__(self) -> None:
+            super().__init__()
+            self.submitted: list[object] = []
+
+        def get_account(self) -> TradeAccount:
+            self.calls.append("get_account")
+            return self.account
+
+        def submit_order(self, order_data) -> None:
+            self.calls.append("submit_order")
+            self.submitted.append(order_data)
+
+    broker = Broker()
+    budget = PaperBudget(requests=4, window_s=60, broker_cap=4, external_reserve=0, source="test")
+    pacer = AccountPacer(cast(Controls, BudgetControls(budget)), now_ns=lambda: clock[0])
+    paced = PacedTradingClient(broker, pacer)
+
+    paced.get_account()
+    request = TrailingStopOrderRequest(
+        symbol="AAPL",
+        qty=10,
+        side=OrderSide.SELL,
+        time_in_force=TimeInForce.GTC,
+        trail_percent=2.5,
+        client_order_id="B001-trail-AAPL-deferred",
+    )
+
+    with pytest.raises(PacerRefused):
+        paced.submit_order(request)
+    assert broker.submitted == []
+
+    clock[0] += 21_000_000_000
+    pacer.drain()
+
+    assert broker.submitted == [request]
