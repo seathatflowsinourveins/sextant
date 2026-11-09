@@ -71,7 +71,7 @@ Source inventory only; no code copied. All trading paths below are at northstar-
 
 ## Amendment 2026-11-06: the lesson journal's writer until a paper lane operates
 
-- **Authority:** the lead's ruling on [#72](https://github.com/seathatflowsinourveins/sextant/issues/72#issuecomment-6689961145), carried by [#102](https://github.com/seathatflowsinourveins/sextant/issues/102). L2 is otherwise unchanged.
+- **Authority:** the lead's ruling on [#72](https://github.com/seathatflowsinourveins/sextant-archive/issues/72#issuecomment-6689961145), carried by [#102](https://github.com/seathatflowsinourveins/sextant-archive/issues/102). L2 is otherwise unchanged.
 - **Writer:** L2 names the Alpaca lane as the single writer, and no Sextant paper lane operates yet. Until one does, **the lead is the single writer**. The lead's PRs append through the one `lesson/1` appender (#96). When a paper lane operates, the writer passes to it: Paper B (#78) first, with a dated amendment. There is never a second writer, and other lanes hand their lessons to the current writer.
 - **Revisit when:** a paper lane operates (handover, owner-confirmed), or a lesson lands outside the current writer.
 

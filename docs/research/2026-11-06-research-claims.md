@@ -19,7 +19,7 @@ All five qualifying release downloads were retrieved and SHA-256 checked against
 | `memory-leg-deepseek.md` | DeepSeek, dsh/model/max above; sections 1–7; **agent memory only**[6] | `f47fdcf80002842749fafe3fa477af6d7aca4e1b6aa2dbd8d53e46025cce9f68` | QUALIFYING only for that job; not a retrieval/compounding vote |
 | `landscape-leg-gpt.md`, `memory-leg-gpt.md` | #91 Inputs, line 17[1] | Earlier receipt: `2026-11-06-research-leg-receipt.json`, `release_inputs` | EXCLUDED: max when ultra was offered; never upgraded to qualifying by this ledger |
 | Claude landscape / `data-leg-claude.md` | #91 Inputs, line 17[1] | No Claude landscape artifact in that input set | MISSING_SOURCE for a Claude landscape vote; the data brief is a different job |
-| #91 reconciliation | Claude worker, Opus 5.5; Inputs, Verdicts, Not verified[1] | `127551a9ae8c8e9013da6236b187df6c9740167d4c9bc177100e4773055252a8` | One published reconciliation, not evidence of two independent syntheses |
+| #91 reconciliation | Claude worker, Opus 5.5; Inputs, Verdicts, Not verified[1] | `5a5a010d86267108b4f1f73b2a251ce067bcc078e59e9fc21e30c91d622ea56e` | One published reconciliation, not evidence of two independent syntheses |
 
 **Locator key for the job table:**
 - **C:** #91 reconciliation at the named memory/landscape job.[1]
@@ -51,7 +51,7 @@ Landscape job 9 is exactly the three memory jobs, not another vote or adoption. 
 
 ## Owner ruling and unresolved claims that must not disappear
 
-The lead's [published owner-ruling receipt](https://github.com/seathatflowsinourveins/sextant/issues/58#issuecomment-6690931913), 2026-11-06T17:19:59Z, says **“No shared memory for now” (memsearch not adopted, #113)**. It is owner policy, not a third independent research vote. Native per-runtime assistance, reviewed repo records and qmd retrieval do not authorize a shared journal, capture service, memory branch, sync hook or automatic conversation ingestion.
+The lead's [published owner-ruling receipt](https://github.com/seathatflowsinourveins/sextant-archive/issues/58#issuecomment-6690931913), 2026-11-06T17:19:59Z, says **“No shared memory for now” (memsearch not adopted, #113)**. It is owner policy, not a third independent research vote. Native per-runtime assistance, reviewed repo records and qmd retrieval do not authorize a shared journal, capture service, memory branch, sync hook or automatic conversation ingestion.
 
 | Claim ID | Claim / conflict | Evidence verdict | Precise source | Remaining evidence / owner |
 |---|---|---|---|---|
@@ -79,12 +79,12 @@ These sources are read at Sextant `445614d2b010137538e4bf2d51b1b7cbd1bbcb40`. Th
 
 ## #129 registered audit: awaiting actual published syntheses
 
-**Dependency, not a reconciliation.** The [registered issue](https://github.com/seathatflowsinourveins/sextant/issues/129) fixes five feature verdicts: `USED`, `SELF-BUILT-WHERE-NATIVE-EXISTS`, `AVOIDED-WITH-REASON`, `NOT-YET-NEEDED`, `UNAVAILABLE-AT-PIN`, each with a Sextant location and pinned Nautilus source; missing citation means UNKNOWN.[8] The local brief at `~/sextant-data/nautilus-audit/BRIEF.md` was read and its SHA-256 matched the issue's `343b407e803983bebf98968e9aaccb3f96d9ecf6654dcd70a3d19f53fae9047e`. This brief is a requirement, not evidence of feature use.
+**Dependency, not a reconciliation.** The [registered issue](https://github.com/seathatflowsinourveins/sextant-archive/issues/129) fixes five feature verdicts: `USED`, `SELF-BUILT-WHERE-NATIVE-EXISTS`, `AVOIDED-WITH-REASON`, `NOT-YET-NEEDED`, `UNAVAILABLE-AT-PIN`, each with a Sextant location and pinned Nautilus source; missing citation means UNKNOWN.[8] The local brief at `~/sextant-data/nautilus-audit/BRIEF.md` was read and its SHA-256 matched the issue's `343b407e803983bebf98968e9aaccb3f96d9ecf6654dcd70a3d19f53fae9047e`. This brief is a requirement, not evidence of feature use.
 
 | Input ID | Published input / locator | Evidence verdict | Publication / SHA-256 or explicit absence |
 |---|---|---|---|
 | `129-I01` | Registered neutral brief, issue body[8] | REGISTERED_BRIEF | Hash above; no changed criteria |
-| `129-I02` | DeepSeek leg receipt, [issue comment 6692530548](https://github.com/seathatflowsinourveins/sextant/issues/129#issuecomment-6692530548) | RECEIPTED_ONLY | Published 30,227-byte receipt, `0d4a180525130eb79a510eb3604db1b9faca02bd2c1adef86ef34603a16a5128`; raw leg not evaluated by this ledger |
+| `129-I02` | DeepSeek leg receipt, [issue comment 6692530548](https://github.com/seathatflowsinourveins/sextant-archive/issues/129#issuecomment-6692530548) | RECEIPTED_ONLY | Published 30,227-byte receipt, `0d4a180525130eb79a510eb3604db1b9faca02bd2c1adef86ef34603a16a5128`; raw leg not evaluated by this ledger |
 | `129-I03` | GPT audit leg | AWAITING_PUBLICATION | No completed published result supplied at cutoff; no hash or finding inferred from an in-progress run |
 | `129-I04` | Claude audit leg | AWAITING_PUBLICATION | No completed published result supplied at cutoff; no hash or finding inferred |
 | `129-S01` | First independent synthesis | AWAITING_PUBLISHED_SYNTHESIS | Source/family/hash unavailable; no guessed filename or completion claim |
@@ -101,7 +101,7 @@ The following are **brief scope entries, not feature findings**. Each awaits bot
 | `129-N05` | Alpaca if present; InteractiveBrokers adapters | AWAITING_PUBLISHED_SYNTHESES | Same brief, Adapters[8] | Same dependency; #91's pinned absence is not a current installation audit |
 | `129-N06` | Cache, MessageBus, persistence, portfolio, analyzers/statistics | AWAITING_PUBLISHED_SYNTHESES | Same brief, Infrastructure[8] | Same dependency; no operation, trial, merit or live result inferred |
 
-**Next evidence event.** The lead/roster-ops publishes both independently authored synthesis handles, families, byte hashes and the audited code pins on #129 and notifies #109. Only then can a later sourced amendment compare per-feature findings, retain disagreements and mark uncited claims UNKNOWN. The dependency was reported on [#109](https://github.com/seathatflowsinourveins/sextant/issues/109#issuecomment-6692637321). This PR completes the available #91 ledger plus explicit #129 dependency inventory; it does **not** close #109 or claim the #129 convergence complete.
+**Next evidence event.** The lead/roster-ops publishes both independently authored synthesis handles, families, byte hashes and the audited code pins on #129 and notifies #109. Only then can a later sourced amendment compare per-feature findings, retain disagreements and mark uncited claims UNKNOWN. The dependency was reported on [#109](https://github.com/seathatflowsinourveins/sextant-archive/issues/109#issuecomment-6692637321). This PR completes the available #91 ledger plus explicit #129 dependency inventory; it does **not** close #109 or claim the #129 convergence complete.
 
 ## Verification boundary and lesson
 
@@ -112,13 +112,13 @@ The following are **brief scope entries, not feature findings**. Each awaits bot
 ## Sources
 
 [1] https://github.com/seathatflowsinourveins/sextant/blob/096b14752509af1bb0d0b956c1fcd0895d445c5b/docs/research/2026-11-06-legs-convergence.md
-[2] https://github.com/seathatflowsinourveins/sextant/releases/download/research-legs-2026-11-06/landscape-leg-gpt-ultra.md
-[3] https://github.com/seathatflowsinourveins/sextant/releases/download/research-legs-2026-11-06/landscape-leg-deepseek.md
-[4] https://github.com/seathatflowsinourveins/sextant/releases/download/research-legs-2026-11-06/memory-leg-gpt-ultra.md
-[5] https://github.com/seathatflowsinourveins/sextant/releases/download/research-legs-2026-11-06/memory-leg-claude.md
-[6] https://github.com/seathatflowsinourveins/sextant/releases/download/research-legs-2026-11-06/memory-leg-deepseek.md
+[2] https://github.com/seathatflowsinourveins/sextant-archive/releases/download/research-legs-2026-11-06/landscape-leg-gpt-ultra.md
+[3] https://github.com/seathatflowsinourveins/sextant-archive/releases/download/research-legs-2026-11-06/landscape-leg-deepseek.md
+[4] https://github.com/seathatflowsinourveins/sextant-archive/releases/download/research-legs-2026-11-06/memory-leg-gpt-ultra.md
+[5] https://github.com/seathatflowsinourveins/sextant-archive/releases/download/research-legs-2026-11-06/memory-leg-claude.md
+[6] https://github.com/seathatflowsinourveins/sextant-archive/releases/download/research-legs-2026-11-06/memory-leg-deepseek.md
 [7] https://github.com/seathatflowsinourveins/sextant/blob/445614d2b010137538e4bf2d51b1b7cbd1bbcb40/docs/research/2026-11-06-qmd-bench.md
-[8] https://github.com/seathatflowsinourveins/sextant/issues/129
+[8] https://github.com/seathatflowsinourveins/sextant-archive/issues/129
 [9] https://github.com/tobi/qmd/blob/facd35e01359e59d938bc9418e93fb9318addee3/README.md
 [10] https://github.com/zilliztech/memsearch/blob/65d8b220d4265f70441785aa22203f0e85ea3ec6/plugins/claude-code/README.md
 [11] https://github.com/akitaonrails/ai-memory/blob/b9453c964e76b3e7591fe79b428048562bdf036c/companions/ai-memory-wikisync/README.md

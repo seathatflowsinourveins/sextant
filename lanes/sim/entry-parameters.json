@@ -3,7 +3,7 @@
     "name": "first_leg_window_s",
     "unit": "seconds",
     "value": 120,
-    "source": "seathatflowsinourveins/northstar-lanes@00203275944a22655b3e14b221cfde9a265d549a:src/northstar_lanes/registry.py:48 (:67 duplicate); SurgeConfig/MinuteSnapshotConfig UNCALIBRATED starts from ARCH LEAD #413; REVIEWED by the lead's ruling https://github.com/seathatflowsinourveins/sextant/pull/68#issuecomment-6712251048 (2026-11-07 14:53 EST) on the dsh method review 87d0749f at daeb3b1",
+    "source": "seathatflowsinourveins/northstar-lanes@00203275944a22655b3e14b221cfde9a265d549a:src/northstar_lanes/registry.py:48 (:67 duplicate); SurgeConfig/MinuteSnapshotConfig UNCALIBRATED starts from ARCH LEAD #413; REVIEWED by the lead's ruling https://github.com/seathatflowsinourveins/sextant-archive/pull/68#issuecomment-6712251048 (2026-11-07 14:53 EST) on the dsh method review 87d0749f at daeb3b1",
     "calibration": "UNCALIBRATED",
     "last_change": "2026-11-07",
     "scope": "REVIEWED"
@@ -12,7 +12,7 @@
     "name": "first_leg_trades_count",
     "unit": "count",
     "value": 5,
-    "source": "seathatflowsinourveins/northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:configs/paper/profiles.yaml:114; REVIEWED by the lead's ruling https://github.com/seathatflowsinourveins/sextant/pull/68#issuecomment-6712251048 (2026-11-07 14:53 EST) on the dsh method review 87d0749f at daeb3b1",
+    "source": "seathatflowsinourveins/northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:configs/paper/profiles.yaml:114; REVIEWED by the lead's ruling https://github.com/seathatflowsinourveins/sextant-archive/pull/68#issuecomment-6712251048 (2026-11-07 14:53 EST) on the dsh method review 87d0749f at daeb3b1",
     "calibration": "UNCALIBRATED",
     "last_change": "2026-11-07",
     "scope": "REVIEWED"
@@ -21,7 +21,7 @@
     "name": "first_leg_span_s",
     "unit": "seconds",
     "value": "2",
-    "source": "seathatflowsinourveins/northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:configs/paper/profiles.yaml:126; REVIEWED by the lead's ruling https://github.com/seathatflowsinourveins/sextant/pull/68#issuecomment-6712251048 (2026-11-07 14:53 EST) on the dsh method review 87d0749f at daeb3b1",
+    "source": "seathatflowsinourveins/northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:configs/paper/profiles.yaml:126; REVIEWED by the lead's ruling https://github.com/seathatflowsinourveins/sextant-archive/pull/68#issuecomment-6712251048 (2026-11-07 14:53 EST) on the dsh method review 87d0749f at daeb3b1",
     "calibration": "UNCALIBRATED",
     "last_change": "2026-11-07",
     "scope": "REVIEWED"
@@ -30,7 +30,7 @@
     "name": "first_leg_max_move",
     "unit": "ratio",
     "value": "0.03",
-    "source": "seathatflowsinourveins/northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:configs/paper/profiles.yaml:138; REVIEWED by the lead's ruling https://github.com/seathatflowsinourveins/sextant/pull/68#issuecomment-6712251048 (2026-11-07 14:53 EST) on the dsh method review 87d0749f at daeb3b1",
+    "source": "seathatflowsinourveins/northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:configs/paper/profiles.yaml:138; REVIEWED by the lead's ruling https://github.com/seathatflowsinourveins/sextant-archive/pull/68#issuecomment-6712251048 (2026-11-07 14:53 EST) on the dsh method review 87d0749f at daeb3b1",
     "calibration": "UNCALIBRATED",
     "last_change": "2026-11-07",
     "scope": "REVIEWED"
@@ -48,7 +48,7 @@
     "name": "entry_chase_bps",
     "unit": "basis_points",
     "value": "0",
-    "source": "seathatflowsinourveins/northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:configs/paper/profiles.yaml:162; REVIEWED by the lead's ruling https://github.com/seathatflowsinourveins/sextant/pull/68#issuecomment-6712251048 (2026-11-07 14:53 EST) on the dsh method review 87d0749f at daeb3b1",
+    "source": "seathatflowsinourveins/northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:configs/paper/profiles.yaml:162; REVIEWED by the lead's ruling https://github.com/seathatflowsinourveins/sextant-archive/pull/68#issuecomment-6712251048 (2026-11-07 14:53 EST) on the dsh method review 87d0749f at daeb3b1",
     "calibration": "UNCALIBRATED",
     "last_change": "2026-11-07",
     "scope": "REVIEWED"
@@ -57,7 +57,7 @@
     "name": "entry_ttl_s",
     "unit": "seconds",
     "value": 1,
-    "source": "seathatflowsinourveins/northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:configs/paper/profiles.yaml:174; REVIEWED by the lead's ruling https://github.com/seathatflowsinourveins/sextant/pull/68#issuecomment-6712251048 (2026-11-07 14:53 EST) on the dsh method review 87d0749f at daeb3b1",
+    "source": "seathatflowsinourveins/northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:configs/paper/profiles.yaml:174; REVIEWED by the lead's ruling https://github.com/seathatflowsinourveins/sextant-archive/pull/68#issuecomment-6712251048 (2026-11-07 14:53 EST) on the dsh method review 87d0749f at daeb3b1",
     "calibration": "UNCALIBRATED",
     "last_change": "2026-11-07",
     "scope": "REVIEWED"
@@ -111,7 +111,7 @@
     "name": "atr_period",
     "unit": "count",
     "value": 22,
-    "source": "seathatflowsinourveins/northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:configs/paper/profiles.yaml:37 (trail_atr_period, renamed by src/northstar_trading/strategies/premarket_gap/lane_exit_inputs.py:48-64); REVIEWED by the lead's ruling https://github.com/seathatflowsinourveins/sextant/pull/68#issuecomment-6712251048 (2026-11-07 14:53 EST) on the dsh method review 87d0749f at daeb3b1",
+    "source": "seathatflowsinourveins/northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:configs/paper/profiles.yaml:37 (trail_atr_period, renamed by src/northstar_trading/strategies/premarket_gap/lane_exit_inputs.py:48-64); REVIEWED by the lead's ruling https://github.com/seathatflowsinourveins/sextant-archive/pull/68#issuecomment-6712251048 (2026-11-07 14:53 EST) on the dsh method review 87d0749f at daeb3b1",
     "calibration": "UNCALIBRATED",
     "last_change": "2026-11-07",
     "scope": "REVIEWED"
@@ -120,7 +120,7 @@
     "name": "atr_bar_minutes",
     "unit": "minutes",
     "value": 5,
-    "source": "seathatflowsinourveins/northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:configs/paper/profiles.yaml:38 (trail_bar_minutes, renamed by src/northstar_trading/strategies/premarket_gap/lane_exit_inputs.py:48-64); REVIEWED by the lead's ruling https://github.com/seathatflowsinourveins/sextant/pull/68#issuecomment-6712251048 (2026-11-07 14:53 EST) on the dsh method review 87d0749f at daeb3b1",
+    "source": "seathatflowsinourveins/northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:configs/paper/profiles.yaml:38 (trail_bar_minutes, renamed by src/northstar_trading/strategies/premarket_gap/lane_exit_inputs.py:48-64); REVIEWED by the lead's ruling https://github.com/seathatflowsinourveins/sextant-archive/pull/68#issuecomment-6712251048 (2026-11-07 14:53 EST) on the dsh method review 87d0749f at daeb3b1",
     "calibration": "UNCALIBRATED",
     "last_change": "2026-11-07",
     "scope": "REVIEWED"
@@ -129,7 +129,7 @@
     "name": "max_data_age_s",
     "unit": "seconds",
     "value": 5,
-    "source": "seathatflowsinourveins/northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:src/northstar_trading/strategies/base.py:144 default quote_max_age_secs=5; deployments/paper.json:167; premarket_gap/scanner.py:855-859 feeds FirstLegSignal.max_age_ns; REVIEWED by the lead's ruling https://github.com/seathatflowsinourveins/sextant/pull/68#issuecomment-6712251048 (2026-11-07 14:53 EST) on the dsh method review 87d0749f at daeb3b1",
+    "source": "seathatflowsinourveins/northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:src/northstar_trading/strategies/base.py:144 default quote_max_age_secs=5; deployments/paper.json:167; premarket_gap/scanner.py:855-859 feeds FirstLegSignal.max_age_ns; REVIEWED by the lead's ruling https://github.com/seathatflowsinourveins/sextant-archive/pull/68#issuecomment-6712251048 (2026-11-07 14:53 EST) on the dsh method review 87d0749f at daeb3b1",
     "calibration": "UNCALIBRATED",
     "last_change": "2026-11-07",
     "scope": "REVIEWED"

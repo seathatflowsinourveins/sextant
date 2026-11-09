@@ -1,6 +1,6 @@
 # TradingView display sync
 
-Issue [#52](https://github.com/seathatflowsinourveins/sextant/issues/52),
+Issue [#52](https://github.com/seathatflowsinourveins/sextant-archive/issues/52),
 [ADR-0021](adr/0021-tradingview-display.md) and
 [ADR-0026](adr/0026-tradingview-sync-and-order-presets.md) govern this slice.
 It supplies no universe selection, machine signal, market feed or order path.
