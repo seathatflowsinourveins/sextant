@@ -162,6 +162,28 @@ def test_the_search_never_evaluates_a_holdout_session(tmp_path: Path) -> None:
     assert calls[-1] == holdout
 
 
+def test_a_duplicated_holdout_date_is_rejected_before_any_trial(tmp_path: Path) -> None:
+    sessions = _sessions()
+    holdout = sessions[-13:]
+    calls: list[tuple[str, ...]] = []
+
+    def evaluate(params, days):
+        calls.append(tuple(days))
+        return _evaluate(sessions)(params, days)
+
+    result = tuning.run_study(
+        _spec(),
+        evaluate,
+        sessions=sessions + holdout,
+        holdout_days=holdout,
+        log_path=tmp_path / "trials.parquet",
+    )
+    assert result.decision == "NOT_EVALUABLE"
+    assert "unique" in result.reason or "overlap" in result.reason
+    assert calls == []
+    assert not (tmp_path / "trials.parquet").exists()
+
+
 def test_a_supported_series_proposes_but_never_adopts(tmp_path: Path) -> None:
     sessions = _sessions()
     holdout = sessions[-13:]
@@ -265,15 +287,55 @@ def test_deflated_sharpe_is_a_probability() -> None:
 
 def test_pbo_detects_a_dominant_trial_and_needs_enough_blocks() -> None:
     matrix = np.zeros((8, 16))
-    matrix[:, :] = 0.001
-    matrix[3, :] = 0.01
+    matrix[:, 3] = np.linspace(0.009, 0.011, 8)
     assert tuning.pbo_cscv(matrix, s=4) == 0.0
     assert tuning.pbo_cscv(matrix[:, :5], s=4) is None
-    first = [0.01] * 8 + [-0.01] * 8
-    second = [-0.01] * 8 + [0.01] * 8
-    mixed = np.array([first, first, second, second, first, first, second, second])
-    mixed_pbo = tuning.pbo_cscv(mixed, s=4)
-    assert mixed_pbo is not None and mixed_pbo > 0.0
+
+
+def test_pbo_ranks_by_sharpe_not_mean() -> None:
+    a = (0.009, 0.011, -0.10, 0.12)
+    b = (-0.10, 0.14, 0.019, 0.021)
+    matrix = np.array([a, a, b, b], dtype=float).T
+    assert tuning.pbo_cscv(matrix, s=2) == 1.0
+
+
+def test_deflated_sharpe_counts_the_cumulative_ledger(tmp_path: Path) -> None:
+    sessions = _sessions()
+    holdout = sessions[-13:]
+    log_path = tmp_path / "trials.parquet"
+    log = tuning.TrialLog(log_path)
+    spec = _spec()
+    for index in range(100):
+        config = tuning._trial_config(spec, arm_id=f"prior-{index}", sha="a" * 40)
+        config["params_hash"] = tuning.snapshot_hash({})
+        log.append(
+            spec.name,
+            {},
+            config,
+            spec.seed,
+            state="COMPLETE",
+            days=("2020-01-01",),
+            daily_net_returns=(0.0,),
+            fold_scores=(0.0,),
+            objective=0.0,
+        )
+
+    def evaluate(params, days):
+        values = [0.016 if index % 2 == 0 else -0.004 for index in range(len(days))]
+        return tuple(
+            tuning.Observation(day, f"case-{index}", value)
+            for index, (day, value) in enumerate(zip(days, values, strict=True))
+        )
+
+    result = tuning.run_study(
+        spec,
+        evaluate,
+        sessions=sessions,
+        holdout_days=holdout,
+        log_path=log_path,
+    )
+    assert result.dsr < 0.95
+    assert result.decision == "NO_PROPOSAL"
 
 
 def test_the_wilcoxon_pruner_can_stop_a_bad_trial(tmp_path: Path) -> None:

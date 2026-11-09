@@ -234,8 +234,23 @@ def deflated_sharpe(returns: Sequence[float], trials: int) -> float:
     return float(normal.cdf((ratio - expected) * math.sqrt(array.size - 1) / denominator))
 
 
+def _block_sharpe(block: np.ndarray) -> np.ndarray:
+    """Per-trial Sharpe on one block; the constant series is flat, not undefined."""
+    means = block.mean(axis=0)
+    deviations = block.std(axis=0, ddof=0)
+    scores = np.zeros(means.shape, dtype=float)
+    varying = deviations > 0
+    scores[varying] = means[varying] / deviations[varying]
+    return scores
+
+
 def pbo_cscv(matrix: np.ndarray, *, s: int = 16) -> float | None:
-    """Probability of backtest overfitting, by CSCV over ``s`` contiguous blocks."""
+    """Probability of backtest overfitting, by CSCV over ``s`` contiguous blocks.
+
+    The in-sample winner and the out-of-sample rank use Sharpe, the statistic the
+    search maximizes; ranking means would let the gate miss overfitting (Bailey et al.,
+    "The Probability of Backtest Overfitting", CSCV).
+    """
     data = np.asarray(matrix, dtype=float)
     if data.ndim != 2:
         raise ValueError("the PBO matrix is observations by trials")
@@ -251,8 +266,8 @@ def pbo_cscv(matrix: np.ndarray, *, s: int = 16) -> float | None:
     for chosen in combinations(range(s), s // 2):
         is_index = np.concatenate([blocks[index] for index in chosen])
         oos_index = np.concatenate([blocks[index] for index in range(s) if index not in chosen])
-        in_sample = data[is_index].mean(axis=0)
-        out_sample = data[oos_index].mean(axis=0)
+        in_sample = _block_sharpe(data[is_index])
+        out_sample = _block_sharpe(data[oos_index])
         best = int(np.argmax(in_sample))
         rank = 1 + int((out_sample > out_sample[best]).sum())
         total += 1
@@ -304,6 +319,8 @@ def _eligibility(
     spec: StudySpec, sessions: Sequence[str], holdout_days: Sequence[str]
 ) -> _Eligibility:
     ordered, holdout = tuple(sessions), tuple(holdout_days)
+    if len(set(ordered)) != len(ordered) or ordered != tuple(sorted(ordered)):
+        return _Eligibility((), holdout, (), "sessions must be unique and chronological")
     if not holdout:
         return _Eligibility(
             (), (), (), "holdout missing: ADR-0015 requires one untouched 12-24 month holdout"
@@ -318,6 +335,8 @@ def _eligibility(
             (), holdout, (), f"holdout spans {span} days, outside the 12-24 month rule"
         )
     train = ordered[: -len(holdout)]
+    if set(train) & set(holdout):
+        return _Eligibility((), holdout, (), "training and holdout sessions overlap")
     if len(train) < spec.n_folds:
         return _Eligibility(
             train,
@@ -421,6 +440,23 @@ def _proposals(
     return tuple(proposals)
 
 
+def _prior_attempts(log: TrialLog, spec: StudySpec) -> int:
+    """MODELED attempts already in the cumulative ledger for this study and arm."""
+    block = f"{spec.name}:{spec.symbol_class}:{spec.arm}"
+    count = 0
+    for record in log.records:
+        try:
+            config = json.loads(record["config"])
+        except (TypeError, ValueError):
+            continue
+        if config.get("tier") != "MODELED" or config.get("block_set_id") != block:
+            continue
+        if str(config.get("arm_id", "")).endswith(":holdout"):
+            continue
+        count += 1
+    return count
+
+
 def run_study(
     spec: StudySpec,
     evaluate: Callable[[Mapping[str, Any], Sequence[str]], Sequence[Observation]],
@@ -443,6 +479,7 @@ def run_study(
         )
     train, holdout, folds = eligibility.train, eligibility.holdout, eligibility.folds
     log = TrialLog(Path(log_path))
+    attempts = _prior_attempts(log, spec)
     sha = _implementation_sha()
     series: dict[int, list[float]] = {}
 
@@ -516,7 +553,7 @@ def run_study(
     best_logged = _logged(best_suggested)
     best_returns = series[best.number]
     best_objective = float(best.value) if best.value is not None else None
-    dsr = deflated_sharpe(best_returns, spec.n_trials)
+    dsr = deflated_sharpe(best_returns, attempts + spec.n_trials)
     matrix = np.asarray(list(series.values()), dtype=float).T
     pbo = pbo_cscv(matrix, s=16) if matrix.shape[1] >= 32 else None
 
