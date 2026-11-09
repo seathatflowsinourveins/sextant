@@ -12,7 +12,7 @@ Everything here comes from a SOTA source: a maintained repo or framework at a pi
 - Every run leaves the next one better: a lesson from a session, a review or a trade goes into `docs/handbook/` and into the skill or rule it changes, through a PR.
 - Each tunable value has a registry row and source. A sourced value without calibration is an uncalibrated starting value, never measured success. If the value or its authority is missing, keep it unavailable; fixtures supply no default authority. Reviewed changes occur between sessions, and nightly tuning only proposes. [ADR-0018](docs/adr/0018-evidence-and-learning-loop.md)
 - Every arm and run counts in one cumulative trial ledger, across replay, sim and paper, including rejected alternatives. Tiers are never pooled and history is never reset.
-- **Models are never stale:** every model surface runs its family's latest, highest-scoring model at its highest effort, ranked by the vendor's list and Artificial Analysis's Intelligence Index, ignoring gaps under 3 points. GPT's workhorse is `gpt-6.1-sol` (owner), and Claude stays native. A daily detector proposes pin moves as PRs. [ADR-0030](docs/adr/0030-latest-sota-models.md)
+- **Models are never stale:** every model surface runs its family's latest, highest-scoring model at its highest effort, ranked by the vendor's list and Artificial Analysis's Intelligence Index, ignoring gaps under 3 points. The owner's assignments: GPT's workhorse is `gpt-6.1-sol`, the Claude lead is Fable 5.2 and the Claude workhorse is Opus 5.5, each at max, and Claude stays native. A daily detector proposes pin moves as PRs; a named workhorse moves only on the owner's word. [ADR-0030](docs/adr/0030-latest-sota-models.md)
 - The harness keeps itself current: upstream bumps and better picks arrive as PRs with evidence, and what is no longer used is deleted. Git keeps the history.
 
 ## The lanes
@@ -29,7 +29,7 @@ Everything here comes from a SOTA source: a maintained repo or framework at a pi
 - Follow the [landing verdict rule](.github/workflows/shared/review-rules.md#report): only Always P0 or a concrete exact-head failing witness blocks; other findings share one follow-up issue. From the third reviewed head, only P0 blocks.
 - Never push to `main`. If `main` goes red, revert.
 - Tracking is GitHub Issues only.
-- One Claude lead only: it orchestrates and does no lane work; Roster ops dispatches writers and Landing merges; dsh, Codex, Muse and agy do the work (the owner's orchestrator-only rule; the lead's lessons, 2026-11-09).
+- One Claude lead only, on Fable 5.2: it orchestrates and does no lane work; Roster ops dispatches writers and Landing merges; Claude Opus 5.5, dsh, Codex, Muse and agy do the work (the owner's orchestrator-only rule and 2026-11-09 assignment; the lead's lessons, 2026-11-09).
 
 Fill the author placeholder with your actual family (`codex`, `claude`, `dsh`, `muse` or `agy`); fill the second with another family allowed by the key policy, or delete that line. Unfilled placeholders block review. Use ASCII prefixes, one ASCII space and no colon. Matching scans the whole body, including comments and code blocks; a misspelled prefix is unrecognized. A new completed CI run selects the route for its exact head. AO's Codex worker refuses a Codex reviewer and preserves both markers.
 ```text
