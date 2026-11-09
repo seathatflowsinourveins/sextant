@@ -315,7 +315,9 @@ class Protector:
         if not in_rth:
             self.page("unprotected_outside_rth_until_pr2", symbol)
             return
-        if all(self._cancel(order, "rearm_full_protective_quantity") for order in ours):
+        # Attempt every cancellation: one stalled request must not spare the rest.
+        results = [self._cancel(order, "rearm_full_protective_quantity") for order in ours]
+        if all(results):
             self._submit_trail(symbol, protective)
 
     def _submit_trail(self, symbol: str, whole: int) -> None:

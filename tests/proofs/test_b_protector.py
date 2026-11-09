@@ -419,6 +419,50 @@ def test_more_than_one_house_exit_is_replaced_by_one_full_trail():
     assert [request.qty for request in client.submitted] == [10]
 
 
+class _StalledCancel(FakeTradingClient):
+    """Records every cancel request, but lets the first one fail before the rest."""
+
+    def __init__(self, *args, stalled_id, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.stalled_id = str(stalled_id)
+
+    def cancel_order_by_id(self, order_id) -> None:
+        self.calls.append("cancel_order_by_id")
+        self.cancelled.append(str(order_id))
+        if str(order_id) == self.stalled_id:
+            raise ConnectionError("cancel request stalled")
+        self.orders = [o for o in self.orders if str(o.id) != str(order_id)]
+
+
+def test_a_stalled_house_trail_cancel_still_attempts_the_other_cancel():
+    first = api_order(
+        client_order_id="B001-trail-AAPL-a",
+        side="sell",
+        qty="10",
+        order_type="trailing_stop",
+        trail_percent="2.5",
+    )
+    second = api_order(
+        client_order_id="B001-trail-AAPL-b",
+        side="sell",
+        qty="10",
+        order_type="trailing_stop",
+        trail_percent="2.5",
+    )
+    client = _StalledCancel(
+        positions=[api_position("10")], orders=[first, second], stalled_id=first.id
+    )
+    p = protector(client)
+    p.bind()
+
+    p.reconcile()
+
+    assert client.cancelled == [str(first.id), str(second.id)]
+    assert str(second.id) not in [str(order.id) for order in client.orders]
+    assert client.submitted == []
+    assert "cancel_failed" in [page.reason for page in p.pages]
+
+
 def test_an_unrecognized_foreign_order_pages_but_still_protects():
     foreign = api_order(client_order_id="owner-unknown-1").model_copy(update={"side": None})
     client = FakeTradingClient(positions=[api_position("10")], orders=[foreign])
