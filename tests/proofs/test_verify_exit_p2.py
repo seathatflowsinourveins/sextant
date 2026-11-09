@@ -10,8 +10,6 @@ each test to its finding (O*, C*, M*).
 
 from __future__ import annotations
 
-import json
-import os
 import sys
 from decimal import Decimal as D
 from pathlib import Path
@@ -402,34 +400,9 @@ def test_m3_an_armed_gain_lock_below_the_bid_still_sells() -> None:
 
 
 # --------------------------------------------------------------------------------------------
-# M4: the committed #98/#141 surface no longer reruns from its exact inputs.
+# M4 moved with the exit-grid study to `research/exit-grid-141` (`exit-grid-141-2026-11-09`);
+# the study's driver proof reruns every cell there, including this one, against the recorded run.
 # --------------------------------------------------------------------------------------------
-RERUN = os.environ.get("SEXTANT_RERUN_141") == "1"
-# Lead ruling (a), 2026-11-07: the committed surface stays as history and PR 2's engine run is
-# recorded beside it, so the rerun is compared with that run (the verifier's own test retargeted).
-EVIDENCE = (
-    Path(__file__).parents[2] / "docs" / "research" / "2026-11-06-exit-grid-141" / "run-a8282a4"
-)
-
-
-@pytest.mark.skipif(not RERUN, reason="opt-in (SEXTANT_RERUN_141=1); needs #41's exact inputs")
-def test_m4_the_committed_dropped_arm_surface_still_reruns(tmp_path: Path) -> None:
-    """docs/research/2026-11-06-exit-grid-141.md:70 says "Reproduced: every cell ... equals the
-    committed surface", and 2026-11-06-exit-econ-98.md:3 commits -49.71/-53.52 bps for the
-    "Exit engine at starts, R_w dropped" arm. At 09e579f the same cell reruns at -46.24/-49.96:
-    the minute-bar close quote (the LOW proxy) is stamped 1 ns before the bar's HIGH print, so
-    ``high_bid`` is the low proxy and the raise is refused."""
-    from sextant.research import exit_econ_98 as x98
-    from sextant.research import exit_grid_141 as grid
-    from sextant.research.exit_study_41 import DEFAULT_INPUTS
-
-    inputs = Path(os.environ.get("SEXTANT_EXIT_STUDY_41", str(DEFAULT_INPUTS)))
-    cid = "b0.01-m1-g0.1"
-    ctx = x98.prepare(inputs, tmp_path / "catalog")
-    result = x98.evaluate(ctx, dict(grid.cells())[cid], range_estimable=False, arm=cid)
-    committed = json.loads((EVIDENCE / "report.json").read_text())["surface"][cid]
-    for bps in ("3", "6"):
-        assert result["arm"][bps]["mean_bps"] == committed[bps]["mean_bps"]
 
 
 # --------------------------------------------------------------------------------------------
