@@ -11,6 +11,11 @@ sync:
 # Everything the required `ci` check runs.
 ci: sync lint test secrets
 
+# Check the locked dsh profile, the live profile and the generated ecosystem index.
+session-start:
+    python3 scripts/dsh_profile_doctor.py
+    python3 scripts/ecosystem_index.py --check
+
 lint:
     uv run --frozen ruff check .
     uv run --frozen ruff format --check .
