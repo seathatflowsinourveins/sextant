@@ -48,6 +48,13 @@ def test_the_gate_has_its_manifest_row() -> None:
     assert f"| {name} |" in MANIFEST.read_text()
 
 
+def test_the_screen_is_recurring_on_a_pin_bump() -> None:
+    page = PLUGINS.read_text()
+    assert "## Re-screen" in page
+    assert "pin bump" in page
+    assert TRUST_CHECK in page
+
+
 def test_every_admitted_register_row_is_pinned_and_disclosed() -> None:
     rows = _register_rows()
     assert rows, "the register section has no table"

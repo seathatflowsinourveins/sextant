@@ -19,6 +19,10 @@ Read 2026-11-09 from the catalog at `668c3fa6e759f413da6b90e3f3af9a3e6b0f6ee9`: 
 - **Watch [kenz1117/dsh-engram](https://github.com/kenz1117/dsh-engram)** (66★, MIT): SQLite FTS5 plus vector retrieval, a provenance chain, SM-2 and decay. Trigger: OpenViking is retired or a measured retrieval need remains. Never run two memories.
 - **Reject [pengpengyi92/dsh-quant](https://github.com/pengpengyi92/dsh-quant)** (68★, MIT): walk-forward evaluation is weaker than ADR-0015's CPCV and untouched holdout, and it owns no US-equity entry, exit or custody. **Reject [taoqizhang55-code/stockproof](https://github.com/taoqizhang55-code/stockproof)** and [kentleenot/dsh-trading-toolkit](https://github.com/kentleenot/dsh-trading-toolkit) for the same reason: a duplicate data and PIT owner.
 
+## Re-screen
+
+The screen is a snapshot, not a one-time approval. Re-screen on every catalog pin bump: a changed capability or a broken proof sends the plugin back through the five fields. [liuwenji007/dsh-trust-check](https://github.com/liuwenji007/dsh-trust-check)@`787912e37367e3b0e5cbe5a259253a88f3afd502` makes the pre-install gate and the pin-bump rescan the rule; [awesome-dsh-plugin](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin)@`668c3fa6e759f413da6b90e3f3af9a3e6b0f6ee9` is the dated index.
+
 ## The gate
 
 A plugin enters the `## Third-party plugins` section of `docs/manifest.md` only when its row records all five:
