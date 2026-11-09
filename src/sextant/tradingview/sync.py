@@ -212,6 +212,20 @@ async def _inventory(tools: OfficialTools) -> dict[str, tuple[str, set[str]]]:
     return result
 
 
+async def read_memberships(tools: OfficialTools) -> dict[str, frozenset[str]]:
+    """Complete by-ID read-back; an absent reserved list is the known-empty fresh install.
+
+    The display loop seeds ``Cadence`` with this pair so the first admission compares
+    against observed membership, never a guessed empty or cleared list. Unknown,
+    duplicate or aliased inventory raises before any run is claimed.
+    """
+    await tools.discover()
+    inventory = await _inventory(tools)
+    return {
+        name: frozenset(inventory[name][1]) if name in inventory else frozenset() for name in NAMES
+    }
+
+
 async def sync_research(
     tools: OfficialTools, inputs: ResearchInputs, *, apply=False
 ) -> dict[str, Any]:

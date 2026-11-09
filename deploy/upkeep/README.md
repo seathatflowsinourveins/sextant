@@ -19,7 +19,7 @@ on the single tracker issue `Hosted upkeep receipts`.
 ## What stays local
 
 Verified reflection needs the host's session transcripts, so it keeps running on
-the host under `dsh`, not here. The lifecycle sweep is a local Orca automation
+the host under Claude, not here. The lifecycle sweep is a local Orca automation
 too. Neither is part of this workflow.
 
 ## Dependency evidence without a token

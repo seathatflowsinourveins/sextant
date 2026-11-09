@@ -20,8 +20,8 @@ import pyarrow.parquet as pq
 from alpaca.common.enums import Sort
 from alpaca.data.enums import Adjustment, DataFeed
 from alpaca.data.historical import StockHistoricalDataClient
-from alpaca.data.models import BarSet
-from alpaca.data.requests import StockBarsRequest
+from alpaca.data.models import BarSet, TradeSet
+from alpaca.data.requests import StockBarsRequest, StockTradesRequest
 from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 from requests import Response
 
@@ -81,6 +81,31 @@ def raw_path(root: Path, bar: str, symbol: str, day: date) -> Path:
     return root / "alpaca_sip" / bar / symbol_name(symbol) / f"{day.isoformat()}.parquet"
 
 
+def trade_path(root: Path, symbol: str, day: date) -> Path:
+    """The raw trade receipt partitions by symbol and New York session, like bars."""
+    return root / "alpaca_sip" / "trades" / symbol_name(symbol) / f"{day.isoformat()}.parquet"
+
+
+def _land_pages(
+    path: Path,
+    pages: Sequence[str],
+    *,
+    metadata: dict[str, str],
+    validate: Callable[[str], object],
+) -> bool:
+    if path.exists():
+        return False
+    if not pages:
+        raise ValueError("Cannot land a request without a response")
+    for page in pages:
+        validate(page)
+    table = pa.table({"page": list(range(len(pages))), "response_json": list(pages)})
+    table = table.replace_schema_metadata(
+        {key.encode(): value.encode() for key, value in metadata.items()}
+    )
+    return publish_once(path, lambda target: pq.write_table(table, target))
+
+
 def land_raw(path: Path, pages: Sequence[str], *, symbol: str, day: date, bar: str) -> bool:
     """Parquet is an envelope, not a re-encoding of Alpaca prices or timestamps.
 
@@ -88,12 +113,6 @@ def land_raw(path: Path, pages: Sequence[str], *, symbol: str, day: date, bar: s
     unknown fields, duplicates and source order. No float-valued response model is
     serialized back to disk. Nautilus schemas are used only in catalog.py.
     """
-    if path.exists():
-        return False
-    if not pages:
-        raise ValueError("Cannot land a request without a response")
-    for page in pages:
-        BarSet(json.loads(page)["bars"] or {})
     metadata = {
         "source": "alpaca_sip",
         "feed": "sip",
@@ -104,11 +123,34 @@ def land_raw(path: Path, pages: Sequence[str], *, symbol: str, day: date, bar: s
         "bar": bar,
         "window": "America/New_York calendar day",
     }
-    table = pa.table({"page": list(range(len(pages))), "response_json": list(pages)})
-    table = table.replace_schema_metadata(
-        {key.encode(): value.encode() for key, value in metadata.items()}
+    return _land_pages(
+        path,
+        pages,
+        metadata=metadata,
+        validate=lambda page: BarSet(json.loads(page)["bars"] or {}),
     )
-    return publish_once(path, lambda target: pq.write_table(table, target))
+
+
+def _validate_trade_page(page: str) -> None:
+    TradeSet(json.loads(page)["trades"] or {})
+
+
+def land_trades(path: Path, pages: Sequence[str], *, symbol: str, day: date) -> bool:
+    """Keep each complete trade page; A7's raw fields are never re-encoded.
+
+    ``corrections`` and ``cancelErrors`` are WebSocket messages, not historical
+    pages, so a later revision needs its own receipt rather than an overwrite.
+    """
+    metadata = {
+        "source": "alpaca_sip",
+        "feed": "sip",
+        "kind": "trades",
+        "symbol": symbol_name(symbol),
+        "date": day.isoformat(),
+        "asof": day.isoformat(),
+        "window": "America/New_York calendar day",
+    }
+    return _land_pages(path, pages, metadata=metadata, validate=_validate_trade_page)
 
 
 def read_raw(path: Path) -> list[RawBar]:
@@ -124,6 +166,26 @@ def read_raw(path: Path) -> list[RawBar]:
     for text in table["response_json"].to_pylist():
         response = json.loads(text, parse_float=Decimal)
         for row in (response["bars"] or {}).get(symbol, []):
+            if timestamp(row["t"]).astimezone(NY).date() != day:
+                raise ValueError(f"Response escaped its source-day partition: {path}")
+            rows.append(row)
+    return rows
+
+
+def read_trades(path: Path) -> list[dict[str, Any]]:
+    """Read the vendor trade records back; prices are Decimal, timestamps stay text."""
+    table = pq.read_table(path)
+    meta = table.schema.metadata or {}
+    if meta.get(b"kind") != b"trades" or meta.get(b"feed") != b"sip":
+        raise ValueError(f"Not SIP trades: {path}")
+    symbol = meta[b"symbol"].decode()
+    day = date.fromisoformat(meta[b"date"].decode())
+    if meta.get(b"asof") != day.isoformat().encode():
+        raise ValueError(f"Raw archive lacks matching session asof; re-ingest separately: {path}")
+    rows: list[dict[str, Any]] = []
+    for text in table["response_json"].to_pylist():
+        response = json.loads(text, parse_float=Decimal)
+        for row in (response["trades"] or {}).get(symbol, []):
             if timestamp(row["t"]).astimezone(NY).date() != day:
                 raise ValueError(f"Response escaped its source-day partition: {path}")
             rows.append(row)
@@ -189,6 +251,20 @@ class AlpacaHistory(StockHistoricalDataClient):
         )
         self.pages = []
         self.get_stock_bars(request)
+        return tuple(self.pages)
+
+    def fetch_trades(self, symbol: str, day: date) -> tuple[str, ...]:
+        """Fetch every complete page of one New York session's SIP trades."""
+        request = StockTradesRequest(
+            symbol_or_symbols=symbol_name(symbol),
+            start=day_start(day),
+            end=day_start(day + timedelta(days=1)) - timedelta(microseconds=1),
+            feed=DataFeed.SIP,
+            sort=Sort.ASC,
+            asof=day.isoformat(),
+        )
+        self.pages = []
+        self.get_stock_trades(request)
         return tuple(self.pages)
 
     def close(self) -> None:

@@ -20,6 +20,7 @@ case "${0##*/} $*" in
     else echo '{"result": {"automations": []}}'; fi ;;
   "orca-ide automations create"*) touch "$FAKE_STATE" ;;
   "gh pr list"*) echo "${FAKE_MERGED:-0}" ;;
+  "gh repo view --json defaultBranchRef --jq .defaultBranchRef.name") echo gate ;;
   "git worktree list --porcelain") printf 'worktree %s\\n' "$FAKE_MAIN" ;;
 esac
 """
@@ -71,7 +72,7 @@ def test_the_reflection_is_a_marked_proposal_only_run() -> None:
 
 
 def test_setting_up_the_reflection_twice_makes_one_and_never_enables_it(tmp_path: Path) -> None:
-    env = _env(tmp_path, "orca-ide")
+    env = _env(tmp_path, "orca-ide", "gh")
     for _ in range(2):
         run = subprocess.run(["bash", str(SETUP)], env=env, capture_output=True, text=True)
         assert run.returncode == 0, run.stderr
@@ -80,6 +81,8 @@ def test_setting_up_the_reflection_twice_makes_one_and_never_enables_it(tmp_path
     edits = [call for call in calls if call.startswith("orca-ide automations edit r1 ")]
     assert len(creates) == 1 and "--disabled" in creates[0]
     assert len(edits) == 1 and "reflection-precheck.sh" in edits[0] and "--prompt" in edits[0]
+    assert "--base-branch origin/gate" in edits[0] and "--base-branch origin/gate" in creates[0]
+    assert "--repo path:" in edits[0] and "--repo path:" in creates[0]
     assert not any("--enabled" in call for call in calls)
 
 
