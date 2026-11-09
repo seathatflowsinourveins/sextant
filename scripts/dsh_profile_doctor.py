@@ -156,13 +156,18 @@ def _visible_files(target: Path) -> dict[Path, Path]:
     return files
 
 
+def _nested_link_paths(link: str, all_links: list[str]) -> set[Path]:
+    prefix = link.rstrip("/") + "/"
+    return {Path(other[len(prefix) :]) for other in all_links if other.startswith(prefix)}
+
+
 def _check_link(
     name: str,
     entry: dict[str, Any],
     live_target: Path,
     root: Path,
+    all_links: list[str],
     errors: list[str],
-    warnings: list[str],
 ) -> None:
     link = entry["link"]
     version = entry["version"]
@@ -187,27 +192,31 @@ def _check_link(
         errors.append(
             f"{name}: live target version {live_manifest.get('version')!r}, lock expects {version}"
         )
-    if not live_target.is_relative_to(root.resolve()):
-        warnings.append(
-            f"{name}: live link is outside the validated checkout; "
-            "name and version checked, bytes not compared"
-        )
-        return
+    nested = _nested_link_paths(link, all_links)
+    allowed = {Path(path) for path in entry.get("extra_live", [])}
+
+    def is_nested(rel: Path) -> bool:
+        return any(rel == item or item in rel.parents for item in nested)
 
     repo_files = _visible_files(repo_target)
     live_files = _visible_files(live_target)
     for rel, repo_file in sorted(repo_files.items()):
-        if rel in REPO_ONLY:
+        if rel in REPO_ONLY or is_nested(rel):
             continue
         live_file = live_files.get(rel)
         if live_file is None:
             errors.append(f"{name}: live link is missing {rel}")
         elif live_file.read_bytes() != repo_file.read_bytes():
             errors.append(f"{name}: live link differs at {rel}")
-    extras = sorted(set(live_files) - set(repo_files))
-    if extras:
-        named = ", ".join(str(path) for path in extras[:5])
-        warnings.append(f"{name}: {len(extras)} extra live file(s): {named}")
+    extras = sorted(rel for rel in set(live_files) - set(repo_files) if not is_nested(rel))
+
+    def is_allowed(rel: Path) -> bool:
+        return any(rel == item or item in rel.parents for item in allowed)
+
+    undeclared = [rel for rel in extras if not is_allowed(rel)]
+    if undeclared:
+        named = ", ".join(str(path) for path in undeclared[:5])
+        errors.append(f"{name}: {len(undeclared)} extra live file(s): {named}")
 
 
 def _check_dependencies(
@@ -219,6 +228,7 @@ def _check_dependencies(
     warnings: list[str],
 ) -> None:
     expected = {entry["package"]: entry for entry in lock["interactive"]["dependencies"]}
+    all_links = [entry["link"] for entry in expected.values() if entry.get("link")]
     live = profile["dependencies"]
     for name, entry in expected.items():
         if name not in live:
@@ -233,7 +243,7 @@ def _check_dependencies(
             live_target = Path(live_spec[5:]).expanduser()
             if not live_target.is_absolute():
                 live_target = profile_path.parent / live_target
-            _check_link(name, entry, live_target, root, errors, warnings)
+            _check_link(name, entry, live_target, root, all_links, errors)
         elif live_spec != spec:
             errors.append(f"{name}: expected {spec}, got {live_spec!r}")
     for name in sorted(set(live) - set(expected)):
