@@ -172,6 +172,29 @@ class Cadence:
         finally:
             self.lease.close()
 
+    def reconcile(self, membership: dict, *, source: str) -> dict:
+        """Compare against the observed membership after a restart.
+
+        A saved comparison is only as current as its last completed session; a
+        different broker inventory must not leave a stale pair that skips a
+        needed sync. Only a healthy state is reconciled.
+        """
+        desired = _members(membership)
+        if not isinstance(source, str) or not source.strip():
+            raise ValueError("complete read-back source required")
+        with self._locked() as state:
+            if (
+                state["active"] is not None
+                or state["failed"] is True
+                or state["page_pending"] is True
+            ):
+                raise ValueError("cadence state holds an unresolved run or page")
+            if state["confirmed"] != desired:
+                state["confirmed"] = desired
+                state["confirmed_source"] = source
+                write_atomic(self.state_path, state)
+            return desired
+
     def floor(self, now: datetime, weekly_usage_pct: Decimal) -> int | None:
         _ns(now)
         local, p = now.astimezone(ET), self.params

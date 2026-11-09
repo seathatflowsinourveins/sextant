@@ -209,7 +209,9 @@ state root is `~/sextant-data/tradingview-j5`; every cooperating process must us
 the same canonical root. A restart refuses state that holds an active, failed or
 page-pending run, or that was written by another reviewed registry, before it
 opens a new consent session; the reviewed reconciliation or migration must finish
-first.
+first. A healthy restart reconciles the saved comparison with the startup by-ID
+read-back, so the first claim compares the desired pair with the broker's current
+membership, not with a stale pair that could skip a needed sync.
 
 Only an admitted `run_id` may be handed to the existing Windows-native Claude
 controller after enablement. The loop spends its admitted run on the no-LLM cloud

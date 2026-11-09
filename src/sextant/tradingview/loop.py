@@ -312,6 +312,17 @@ def run_loop(
             )
             if _state_refusal(gate):
                 return 2
+            try:
+                gate.reconcile(
+                    {name: sorted(current[name]) for name in NAMES},
+                    source=f"startup by-ID read-back at {clock().isoformat()}",
+                )
+            except (OSError, ValueError):
+                print(
+                    "J5 cadence state could not reconcile with the startup read-back; "
+                    "a reviewed reconciliation is required."
+                )
+                return 2
             return await serve(
                 tools=tools,
                 cadence=gate,

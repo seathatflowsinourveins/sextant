@@ -176,7 +176,9 @@ apply latches the admitted run for reviewed reconciliation; there is no
 automatic retry or reset. A restart also refuses existing state that holds an
 active, failed or page-pending run, or that was written by another reviewed
 registry, before it opens a new consent session; the reviewed reconciliation or
-migration must finish first. The default state root is
+migration must finish first. On a healthy restart, the startup by-ID read-back
+replaces the saved comparison before the first claim, so a sync is judged
+against the broker's current lists rather than the previous session's. The default state root is
 `~/sextant-data/tradingview-j5` (`--cadence-root`); all cooperating processes
 must use the same canonical root. `--weekly-usage-pct`/`--usage-source` exist to
 supply the Windows controller's sourced number; when unset, the process states

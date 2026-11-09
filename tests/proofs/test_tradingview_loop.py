@@ -451,6 +451,60 @@ def test_run_loop_seeds_the_initial_membership_from_the_by_id_readback(tmp_path)
     }
 
 
+def test_restart_compares_against_the_startup_readback_not_the_saved_pair(tmp_path):
+    module = loop()
+    directory = unit(tmp_path / "unit")
+    clock, delays, pages, syncs = Clock(NOW + timedelta(seconds=151)), [], [], []
+    opened = []
+
+    saved = cadence(tmp_path, baseline={"NS movers": [], "NS focus": []})
+    stored = saved.claim(
+        module._admission(read_research_inputs(directory, now=NOW)),
+        now=NOW,
+        weekly_usage_pct=Decimal(0),
+        usage_source=NO_USAGE,
+    )
+    assert stored is not None
+    saved.finish(stored["run_id"], ended_at=NOW, successful=True, receipt_source="synthetic")
+    assert state(tmp_path)["confirmed"] == {
+        "NS movers": ["NASDAQ:AAPL", "NASDAQ:MSFT"],
+        "NS focus": ["NASDAQ:MSFT"],
+    }
+
+    @asynccontextmanager
+    async def client(authorize):
+        opened.append(authorize)
+        yield object()
+
+    async def read_current(tools):
+        # The broker lost AAPL after the saved session; the fresh unit still wants it.
+        return {"NS movers": frozenset({"NASDAQ:MSFT"}), "NS focus": frozenset()}
+
+    async def sync(tools, inputs, *, apply):
+        syncs.append(apply)
+        return applied()
+
+    result = module.run_loop(
+        research_dir=directory,
+        authorize=True,
+        registry=registry(tmp_path),
+        state_root=tmp_path / "state",
+        landed_sha="f" * 40,
+        clock=clock,
+        sleep=sleeper(clock, delays),
+        page=pages.append,
+        weekly_usage_pct=Decimal(0),
+        usage_source=NO_USAGE,
+        open_client=client,
+        read_current=read_current,
+        sync=sync,
+        cycles=1,
+    )
+    assert result == 0
+    assert opened == [True]
+    assert syncs == [True]
+
+
 def test_read_memberships_reads_the_complete_by_id_inventory():
     peer = Peer()
 
