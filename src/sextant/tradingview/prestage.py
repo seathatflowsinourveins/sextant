@@ -1,0 +1,620 @@
+"""Keep the newest complete display unit fresh for the current display segment.
+
+This is a REST-only, display-only producer: it replays the current PRE, RTH or
+POST session's completed one-minute SIP bars through the bar-fidelity host, then
+projects the ranked J5 document with the bridge into a research directory that
+``python -m sextant.tradingview --loop`` consumes.  It opens no stream, calls no
+TradingView endpoint, and places no order.
+
+Source: the merged ``host.py``, ``bridge.py``, ``producer.py`` and
+``baseline.py`` (alpaca-py 0.44.0 REST bars, ADR-0003, northstar-lanes
+registry). The producer supplies the operating clock and the slot-3 lease; it
+adds no ranking, projection or clock rule of its own.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import time
+from array import array
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from dataclasses import replace
+from datetime import UTC, date, datetime, timedelta
+from datetime import time as clock_time
+from decimal import Decimal
+from pathlib import Path
+from typing import Any, Protocol, cast
+from zoneinfo import ZoneInfo
+
+from alpaca.common.enums import Sort
+from alpaca.data.enums import Adjustment, DataFeed
+from alpaca.data.models import BarSet
+from alpaca.data.requests import StockBarsRequest
+from alpaca.data.timeframe import TimeFrame
+from exchange_calendars import get_calendar
+from nautilus_trader.common import MessageBus
+from nautilus_trader.model import TraderId
+
+from sextant.data.alpaca_history import Pacer, decimal_value
+from sextant.execution.state import write_atomic
+from sextant.ranking.baseline import BaselineTable, segment_start
+from sextant.ranking.engine import ReferencePrices, Segment
+from sextant.ranking.publisher import AssetState, RankingPublisher
+from sextant.ranking.registry import ROWS, Registry, RegistryRow
+from sextant.tradingview.bars import (
+    MAX_BATCH,
+    AlpacaBarSource,
+    Bar,
+    BarPoll,
+    PacedStockBars,
+    build_universe,
+)
+from sextant.tradingview.baseline import SCALE, FiveSessionBaseline, _session_start
+from sextant.tradingview.bridge import DisplayBounds, project_display_unit
+from sextant.tradingview.cadence import Cadence
+from sextant.tradingview.host import BarFidelityHost, load_symbol_map
+from sextant.tradingview.inputs import read_research_inputs
+from sextant.tradingview.producer import Clocks, reserve_stream
+
+NS = 1_000_000_000
+MINUTE_NS = 60 * NS
+# OVERNIGHT (20:00-04:00 ET) is the next PR: bridge.py must accept it and #138
+# supplies the boats baseline for this same publish path.
+SUPPORTED = frozenset({"PRE", "RTH", "POST"})
+ET = ZoneInfo("America/New_York")
+ROOT = Path(__file__).resolve().parents[3]
+DEFAULT_K2_REGISTRY = ROOT / "lanes/tradingview/k2-ranking.params.json"
+DEFAULT_CADENCE_REGISTRY = ROOT / "lanes/tradingview/j5-cadence.params.json"
+DEFAULT_STATE_ROOT = Path.home() / "sextant-data" / "tradingview-prestage"
+STREAM_SOURCE = "REST-only bar-fidelity display host; zero streams opened on slot 3"
+SIP_AUTHORITY = "slot-3 SIP market-data entitlement; REST-only display host"
+MAPPING_SOURCE = "NASDAQ Trader nasdaqlisted.txt + otherlisted.txt read 2026-11-09"
+REFERENCE_SOURCE = "alpaca_sip_raw_1day official close"
+ASSET_SOURCE = "NASDAQ Trader directory operating-company superset; NOT PIT membership"
+PROVENANCE = "alpaca_sip_raw_1min prior XNYS sessions; bar fidelity streaming one segment"
+BOUNDS = frozenset({"gap_bound", "rvol_bound", "max_age_s"})
+
+
+class PrestageError(ValueError):
+    """A refused producer input or tick; the previous complete unit stays in place."""
+
+
+class Source(Protocol):
+    """The recorded or live bar history one producer tick may read."""
+
+    def minute_bars(
+        self, symbols: Sequence[str], *, start: datetime, end: datetime
+    ) -> tuple[Bar, ...]: ...
+
+    def daily_closes(self, symbols: Sequence[str], *, day: date) -> dict[str, Decimal]: ...
+
+
+def load_registry(path: Path) -> Registry:
+    """Read the operational K2 registry file into the validated registry."""
+    raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    if raw.get("schema") != "k2-ranking.registry/1":
+        raise PrestageError("not a K2 ranking registry")
+    rows = []
+    for item in raw.get("rows") or ():
+        name, unit = item.get("name"), item.get("unit")
+        kind = ROWS.get(name)
+        if kind is None or kind[1] != unit:
+            raise PrestageError(f"unknown registry row: {name}")
+        value = kind[0](item["value"])
+        rows.append(
+            RegistryRow(
+                name,
+                unit,
+                value,
+                item["source"],
+                item["calibration_state"],
+                date.fromisoformat(item["last_change"]),
+            )
+        )
+    return Registry(tuple(rows))
+
+
+def load_maps(
+    nasdaq_listed: Path, other_listed: Path, symbol_map: Path
+) -> tuple[tuple[str, ...], dict[str, str]]:
+    """Public directory texts plus the operator's exact TradingView map."""
+    universe = build_universe(
+        Path(nasdaq_listed).read_text(encoding="utf-8"),
+        Path(other_listed).read_text(encoding="utf-8"),
+    )
+    raw = load_symbol_map(Path(symbol_map))
+    missing = tuple(name for name in universe if not raw.get(name))
+    if missing:
+        raise PrestageError(
+            f"The symbol map misses {len(missing)} of {len(universe)} directory symbols"
+        )
+    return universe, {name: str(raw[name]) for name in universe}
+
+
+def cadence_floor(
+    now: datetime,
+    *,
+    registry: Path = DEFAULT_CADENCE_REGISTRY,
+    state_root: Path = DEFAULT_STATE_ROOT,
+    weekly_usage_pct: Decimal = Decimal(0),
+) -> int | None:
+    """The J5 display floor from the shipped registry; never a timer or a literal."""
+    cadence = Cadence(Path(state_root) / "cadence-unused", Path(registry), page=lambda _: None)
+    return cadence.floor(now, weekly_usage_pct)
+
+
+def prior_sessions(day: date, count: int = 5) -> tuple[date, ...]:
+    """The most recent XNYS sessions strictly before ``day``, oldest first."""
+    calendar = get_calendar("XNYS")
+    sessions = calendar.sessions_in_range(day - timedelta(days=60), day - timedelta(days=1))
+    if len(sessions) < count:
+        raise PrestageError(f"fewer than {count} prior XNYS sessions")
+    return tuple(item.date() for item in sessions[-count:])
+
+
+def baseline_sessions(day: date, segment: Segment, count: int = 5) -> tuple[date, ...]:
+    """Prior sessions whose segment start did not move (early closes are skipped)."""
+    candidates = prior_sessions(day, count + 10)
+    chosen: list[date] = []
+    for candidate in reversed(candidates):
+        anchored = _session_start(candidate, segment)
+        found, _, _ = segment_start(anchored + NS)
+        if found is None or found.name != segment.name or found.start_ns != anchored:
+            continue
+        chosen.append(candidate)
+        if len(chosen) == count:
+            break
+    if len(chosen) < count:
+        raise PrestageError(f"fewer than {count} usable prior {segment.name} sessions")
+    return tuple(sorted(chosen))
+
+
+def build_segment_baseline(
+    source: Source,
+    *,
+    segment: Segment,
+    symbols: Sequence[str],
+    sessions: Sequence[date],
+    known_at: int,
+    provenance: str = PROVENANCE,
+) -> FiveSessionBaseline:
+    """Stream one session at a time into the same curves/digest as build_baseline."""
+    if segment.name not in SUPPORTED:
+        raise PrestageError(f"no baseline for a {segment.name} segment")
+    names = tuple(sorted(set(symbols)))
+    if not names or len(names) != len(tuple(symbols)):
+        raise PrestageError("A baseline needs distinct symbols")
+    ordered = tuple(sorted(set(sessions)))
+    if len(ordered) < 5 or len(ordered) != len(tuple(sessions)):
+        raise PrestageError("A baseline needs five distinct prior sessions")
+    span = segment.end_ns - segment.start_ns
+    if span <= 0 or span % MINUTE_NS:
+        raise PrestageError("A baseline segment spans whole minutes")
+    points = span // MINUTE_NS + 1
+    index = {name: position for position, name in enumerate(names)}
+    dv_curves: list[array] = []
+    count_curves: list[array] = []
+    digest = hashlib.sha256()
+    for day in ordered:
+        session_start = _session_start(day, segment)
+        start = datetime.fromtimestamp(session_start / NS, ET)
+        bars = source.minute_bars(names, start=start, end=start + timedelta(seconds=span // NS))
+        dv = array("q", [0]) * (len(names) * points)
+        counts = array("i", [0]) * (len(names) * points)
+        deltas: dict[int, list[int]] = {}
+        trade_deltas: dict[int, list[int]] = {}
+        for item in bars:
+            row = index.get(item.symbol)
+            if row is None:
+                raise PrestageError(f"Bar outside the baseline universe: {item.symbol}")
+            offset = (item.start_ns - session_start) // MINUTE_NS
+            if offset < 0 or offset >= points - 1:
+                continue
+            delta = deltas.setdefault(row, [0] * points)
+            count_delta = trade_deltas.setdefault(row, [0] * points)
+            delta[offset] += int(item.close * item.volume * SCALE)
+            count_delta[offset] += item.trades
+        for row, delta in deltas.items():
+            running = 0
+            running_trades = 0
+            base = row * points
+            count_delta = trade_deltas[row]
+            for point in range(1, points):
+                running += delta[point - 1]
+                running_trades += count_delta[point - 1]
+                dv[base + point] = running
+                counts[base + point] = running_trades
+        dv_curves.append(dv)
+        count_curves.append(counts)
+        digest.update(day.isoformat().encode())
+        digest.update(dv.tobytes())
+        digest.update(counts.tobytes())
+    if len(dv_curves) != 5:
+        raise PrestageError("A baseline needs five sessions")
+    return FiveSessionBaseline(
+        segment=segment.name,
+        end_s=span // NS,
+        sessions=ordered,
+        symbols=names,
+        known_at=known_at,
+        provenance=provenance,
+        dv=tuple(dv_curves),
+        counts=tuple(count_curves),
+        data_digest=digest.hexdigest(),
+    )
+
+
+def collect_references(
+    source: Source, *, day: date, symbols: Sequence[str]
+) -> tuple[tuple[str, ...], dict[str, Decimal]]:
+    """The official prior-session close, or a refusal; no symbol is invented."""
+    closes = source.daily_closes(symbols, day=day)
+    names = tuple(name for name in symbols if name in closes)
+    if not names:
+        raise PrestageError("no prior official close for the universe")
+    return names, {name: closes[name] for name in names}
+
+
+def _at(day: date, hour: int, minute: int = 0) -> int:
+    return int(datetime.combine(day, clock_time(hour, minute), tzinfo=ET).timestamp()) * NS
+
+
+def _ns(at: datetime) -> int:
+    return int(at.timestamp()) * NS
+
+
+class AlpacaDailyBars:
+    """Daily official closes through the same paced transport as the minute bars."""
+
+    def __init__(
+        self, client: PacedStockBars, *, batch: int = MAX_BATCH, feed: DataFeed = DataFeed.SIP
+    ) -> None:
+        if type(batch) is not int or not 1 <= batch <= MAX_BATCH:
+            raise ValueError(f"A daily close batch is 1..{MAX_BATCH}")
+        self._client, self._batch, self._feed = client, batch, feed
+
+    def daily_closes(self, symbols: Sequence[str], *, day: date) -> dict[str, Decimal]:
+        if not isinstance(day, date):
+            raise ValueError("A daily close request needs a date")
+        names = tuple(sorted(set(symbols)))
+        if not names:
+            return {}
+        start = datetime.combine(day, clock_time(0, 0), tzinfo=ET)
+        end = start + timedelta(days=1)
+        closes: dict[str, Decimal] = {}
+        for chunk in _chunks(names, self._batch):
+            request = StockBarsRequest(
+                symbol_or_symbols=list(chunk),
+                timeframe=cast(TimeFrame, TimeFrame.Day),
+                start=start,
+                end=end,
+                feed=self._feed,
+                adjustment=Adjustment.RAW,
+                sort=Sort.ASC,
+            )
+            bars = cast(BarSet, self._client.get_stock_bars(request))
+            for symbol, rows in bars.data.items():
+                for row in rows:
+                    stamp = row.timestamp
+                    local = (
+                        stamp.astimezone(ET)
+                        if stamp.tzinfo is not None
+                        else stamp.replace(tzinfo=UTC).astimezone(ET)
+                    )
+                    if local.date() != day:
+                        continue
+                    closes[str(symbol).upper()] = decimal_value(row.close)
+        return closes
+
+
+class AlpacaSource:
+    """The live REST source one producer tick reads."""
+
+    def __init__(self, bars: AlpacaBarSource, daily: AlpacaDailyBars) -> None:
+        self._bars, self._daily = bars, daily
+
+    def minute_bars(
+        self, symbols: Sequence[str], *, start: datetime, end: datetime
+    ) -> tuple[Bar, ...]:
+        return self._bars.minute_bars(symbols, start=start, end=end)
+
+    def daily_closes(self, symbols: Sequence[str], *, day: date) -> dict[str, Decimal]:
+        return self._daily.daily_closes(symbols, day=day)
+
+
+def _chunks(names: Sequence[str], size: int) -> Iterable[Sequence[str]]:
+    for index in range(0, len(names), size):
+        yield names[index : index + size]
+
+
+def publish_tick(
+    *,
+    lease: Any,
+    source: Source,
+    segment: Segment,
+    baseline: FiveSessionBaseline,
+    symbols: Sequence[str],
+    prior_closes: Mapping[str, Decimal],
+    prior_close_ns: int,
+    symbol_map: Mapping[str, str],
+    registry: Registry,
+    epoch: str,
+    universe_source: str,
+    now_ns: int,
+    unit_dir: Path,
+    j5_path: Path,
+    bounds: DisplayBounds,
+    max_age: int = 1_200,
+    feed: str = "sip",
+) -> dict[str, Any]:
+    """Replay the current segment once and publish one complete unit."""
+    if segment.name not in SUPPORTED:
+        raise PrestageError(f"the producer does not write {segment.name} units")
+    if not segment.start_ns <= now_ns < segment.end_ns:
+        raise PrestageError("the publish clock is outside the supplied segment")
+    start = datetime.fromtimestamp(segment.start_ns / NS, ET)
+    end = datetime.fromtimestamp(now_ns / NS, ET)
+    bars = source.minute_bars(symbols, start=start, end=end)
+    future = tuple(item for item in bars if item.close_ns > now_ns)
+    if future:
+        raise PrestageError(f"{len(future)} bars close after the publish clock")
+    by_minute: dict[int, list[Bar]] = {}
+    for item in bars:
+        if item.start_ns < segment.start_ns or item.close_ns > segment.end_ns:
+            continue
+        by_minute.setdefault(item.close_ns, []).append(item)
+    clocks = sorted(by_minute)
+    if not clocks:
+        raise PrestageError("no completed minute bars for this segment")
+    latest_close_ns = clocks[-1]
+
+    publisher = RankingPublisher(
+        bus=MessageBus(TraderId.from_str(f"TV-PRODUCER-{segment.name}-001")),
+        epoch=epoch,
+        feed=feed,
+        segment=segment,
+        registry=registry,
+        universe=tuple(symbols),
+        universe_source=universe_source,
+        baseline=cast(BaselineTable, baseline),
+    )
+    for name in symbols:
+        publisher.set_symbol(
+            name,
+            references=ReferencePrices(prior_closes[name], prior_close_ns, REFERENCE_SOURCE),
+            asset=AssetState(prior_close_ns, segment.end_ns, False, "common", ASSET_SOURCE),
+        )
+    host = BarFidelityHost(
+        publisher,
+        lease=lease,
+        sip_authority=SIP_AUTHORITY,
+        symbol_map=dict(symbol_map),
+    )
+
+    ingested = 0
+    for close_ns in clocks:
+        ingested += host.ingest(
+            BarPoll(bars=tuple(by_minute[close_ns]), requested=tuple(symbols)),
+            market_ns=close_ns,
+            received_ns=close_ns,
+        )
+
+    publish_clock_ns = max(latest_close_ns, min(now_ns, segment.end_ns - NS))
+    max_age_ns = registry.seconds("input_max_age_s")
+    for name, state in list(publisher.states.items()):
+        if state.latest is None:
+            continue
+        event_ns = state.latest.observations.get("ts_event")
+        price_ns = state.latest.observations.get("last_price_ts")
+        if (
+            type(event_ns) is not int
+            or publish_clock_ns - event_ns > max_age_ns
+            or (type(price_ns) is int and publish_clock_ns - price_ns > max_age_ns)
+        ):
+            publisher.states[name] = replace(state, latest=None)
+
+    if not host.heartbeat(at=latest_close_ns, received_ns=publish_clock_ns):
+        raise PrestageError("the bar-fidelity heartbeat was refused")
+    j5 = host.publish(
+        Path(j5_path),
+        now=publish_clock_ns,
+        mapping_clocks=Clocks(latest_close_ns, publish_clock_ns, MAPPING_SOURCE),
+    )
+    if j5.get("status") != "fresh":
+        raise PrestageError(f"the J5 unit is not fresh: {j5.get('reason')}")
+    projected = project_display_unit(j5, bounds=bounds)
+    unit_dir = Path(unit_dir)
+    staging = unit_dir.parent / f".{unit_dir.name}.staging"
+    for filename, document in projected.documents().items():
+        write_atomic(staging / filename, document)
+    validated = read_research_inputs(
+        staging,
+        now=datetime.fromtimestamp(publish_clock_ns / NS, UTC),
+        max_age=max_age,
+    )
+    unit_dir.mkdir(parents=True, exist_ok=True)
+    for filename in projected.documents():
+        os.replace(staging / filename, unit_dir / filename)
+    return {
+        "schema": "sextant.tv-prestage-receipt/1",
+        "segment": segment.name,
+        "session_date": segment.session_date.isoformat(),
+        "now_ns": now_ns,
+        "publish_clock_ns": publish_clock_ns,
+        "bars": sum(len(by_minute[clock]) for clock in clocks),
+        "ingested": ingested,
+        "expires_at_ns": _ns(validated.expires_at),
+        "unit_dir": str(unit_dir),
+        "generation_sha256": j5["generation_sha256"],
+    }
+
+
+def _next_display_open(now_ns: int) -> int:
+    local = datetime.fromtimestamp(now_ns / NS, ET)
+    calendar = get_calendar("XNYS")
+    for offset in range(0, 9):
+        day = local.date() + timedelta(days=offset)
+        candidate = datetime.combine(day, clock_time(4, 0), tzinfo=ET)
+        if candidate <= local:
+            continue
+        if calendar.is_session(day.isoformat()):
+            return _ns(candidate)
+    raise PrestageError("no display session opens in the next eight days")
+
+
+def run(
+    *,
+    research_dir: Path,
+    nasdaq_listed: Path,
+    other_listed: Path,
+    symbol_map_path: Path,
+    bounds: DisplayBounds,
+    k2_registry: Path = DEFAULT_K2_REGISTRY,
+    cadence_registry: Path = DEFAULT_CADENCE_REGISTRY,
+    state_root: Path = DEFAULT_STATE_ROOT,
+    max_age: int = 1_200,
+    once: bool = False,
+    clock: Callable[[], int] = time.time_ns,
+    sleep: Callable[[float], None] = time.sleep,
+    source_factory: Callable[[Any], Source] | None = None,
+    page: Callable[[str], None] = print,
+) -> int:
+    """Refresh one segment's unit on the registry cadence until the display closes."""
+    if type(max_age) is not int or not 1 <= max_age <= 3_600:
+        raise PrestageError("max_age is 1..3600 seconds")
+    registry = load_registry(Path(k2_registry))
+    universe, symbol_map = load_maps(Path(nasdaq_listed), Path(other_listed), Path(symbol_map_path))
+    state_root = Path(state_root)
+    while True:
+        now_ns = int(clock())
+        segment, _, _ = segment_start(now_ns)
+        if segment is None or segment.name not in SUPPORTED:
+            reason = (
+                "the exchange is closed"
+                if segment is None
+                else f"{segment.name} is not produced until #138 supplies a BOATS baseline"
+            )
+            page(f"TV producer idle: {reason}; no unit written.")
+            if once:
+                return 0
+            sleep(max(0.0, (_next_display_open(now_ns) - now_ns) / NS))
+            continue
+        with reserve_stream(
+            state_root / "leases",
+            paper_slot=3,
+            existing_streams=0,
+            source=STREAM_SOURCE,
+        ) as lease:
+            if source_factory is None:
+                pacer = Pacer(Decimal("190"))
+                lease.bind_pacer(pacer)
+                client = PacedStockBars(pacer=pacer)
+                source: Source = AlpacaSource(
+                    AlpacaBarSource(client, batch=MAX_BATCH),
+                    AlpacaDailyBars(client, batch=MAX_BATCH),
+                )
+            else:
+                source = source_factory(lease)
+            sessions = baseline_sessions(segment.session_date, segment)
+            baseline = build_segment_baseline(
+                source,
+                segment=segment,
+                symbols=universe,
+                sessions=sessions,
+                known_at=_at(sessions[-1], 20),
+            )
+            reference_day = segment.session_date if segment.name == "POST" else sessions[-1]
+            available, closes = collect_references(source, day=reference_day, symbols=universe)
+            reference_ns = segment.start_ns if segment.name == "POST" else _at(sessions[-1], 16)
+            universe_source = (
+                "NASDAQ Trader nasdaqlisted.txt + otherlisted.txt read 2026-11-09; "
+                f"{len(available)} of {len(universe)} directory symbols with a "
+                f"{reference_day.isoformat()} SIP official close; NOT PIT membership"
+            )
+            epoch = f"tv-producer-{segment.name.lower()}-{segment.session_date:%Y%m%d}"
+            last_start = int(clock())
+            while True:
+                now_ns = int(clock())
+                if now_ns >= segment.end_ns:
+                    break
+                try:
+                    receipt = publish_tick(
+                        lease=lease,
+                        source=source,
+                        segment=segment,
+                        baseline=baseline,
+                        symbols=available,
+                        prior_closes=closes,
+                        prior_close_ns=reference_ns,
+                        symbol_map={name: symbol_map[name] for name in available},
+                        registry=registry,
+                        epoch=epoch,
+                        universe_source=universe_source,
+                        now_ns=now_ns,
+                        unit_dir=Path(research_dir),
+                        j5_path=state_root / "j5-unit.json",
+                        bounds=bounds,
+                        max_age=max_age,
+                    )
+                    page(json.dumps(receipt, sort_keys=True, default=str))
+                except (PrestageError, ValueError) as error:
+                    page(f"TV producer skipped a tick: {error}")
+                    if once:
+                        return 1
+                if once:
+                    return 0
+                delay = cadence_floor(
+                    datetime.fromtimestamp(int(clock()) / NS, UTC),
+                    registry=cadence_registry,
+                    state_root=state_root,
+                )
+                if delay is None:
+                    break
+                spent = max(0.0, (int(clock()) - last_start) / NS)
+                sleep(max(0.0, delay - spent))
+                last_start = int(clock())
+    return 0
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="python -m sextant.tradingview.prestage",
+        description="Keep the newest complete display unit fresh for PRE, RTH and POST.",
+    )
+    parser.add_argument("--research-dir", type=Path, required=True)
+    parser.add_argument("--nasdaq-listed", type=Path, required=True)
+    parser.add_argument("--other-listed", type=Path, required=True)
+    parser.add_argument("--symbol-map", type=Path, required=True, dest="symbol_map_path")
+    parser.add_argument("--gap-bound", type=Decimal, required=True)
+    parser.add_argument("--rvol-bound", type=Decimal, required=True)
+    parser.add_argument("--bounds-max-age-s", type=int, required=True)
+    parser.add_argument("--k2-registry", type=Path, default=DEFAULT_K2_REGISTRY)
+    parser.add_argument("--cadence-registry", type=Path, default=DEFAULT_CADENCE_REGISTRY)
+    parser.add_argument("--state-root", type=Path, default=DEFAULT_STATE_ROOT)
+    parser.add_argument("--max-age", type=int, default=1_200)
+    parser.add_argument("--once", action="store_true")
+    args = parser.parse_args(argv)
+    try:
+        bounds = DisplayBounds(args.gap_bound, args.rvol_bound, args.bounds_max_age_s)
+        return run(
+            research_dir=args.research_dir,
+            nasdaq_listed=args.nasdaq_listed,
+            other_listed=args.other_listed,
+            symbol_map_path=args.symbol_map_path,
+            bounds=bounds,
+            k2_registry=args.k2_registry,
+            cadence_registry=args.cadence_registry,
+            state_root=args.state_root,
+            max_age=args.max_age,
+            once=args.once,
+        )
+    except (PrestageError, ValueError) as error:
+        print(f"TV producer stopped: {error}")
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

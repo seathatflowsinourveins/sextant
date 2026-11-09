@@ -341,3 +341,42 @@ admitted apply per tick, stale input leaves the lists unchanged and pages, and
 `enabled=1` is reviewed in this PR and effective at the next session boundary.
 Stream opening and controller activation still require landing and explicit lead
 enablement.
+
+## Segment unit producer for the display directory
+
+`tradingview/prestage.py` is the repo entry point that keeps the newest
+complete display unit fresh for the current PRE, RTH or POST segment, so the
+display loop above reads a fresh `--research-dir` without a manual step. One
+operator-started process holds one slot-3 data lease:
+
+```sh
+uv run --frozen python -m sextant.tradingview.prestage \
+  --research-dir "$HOME/sextant-data/tradingview-prestage/unit" \
+  --nasdaq-listed nasdaqlisted.txt --other-listed otherlisted.txt \
+  --symbol-map symbol_map.json \
+  --gap-bound 0.05 --rvol-bound 2 --bounds-max-age-s 600
+```
+
+The directory texts are the public NASDAQ Trader files read on the lane's
+published date; the symbol map is the operator's exact TradingView map and must
+cover the whole filtered universe; the three bounds are the caller-supplied
+display metadata from the bridge (there is no default authority). `--once`
+publishes one tick and exits, nonzero if that tick is refused. Otherwise the
+process sleeps the shipped J5 cadence floor (150 s in the 07:00–10:30 and 15:00–16:00 ET onset windows, 300 s
+elsewhere inside 04:00–20:00 ET; the J5 900 s weekly-usage floor is available
+but this process supplies no usage figure, so it never applies it), releases
+the lease at the segment boundary, and waits for the next 04:00 ET session open.
+Overnight is not produced until #138 supplies a BOATS baseline.
+
+Each tick fetches the current segment's completed SIP minutes and replays every
+completed minute through the bar-fidelity host. The reference close is the same
+session's official close for POST and the prior session's official close for PRE
+and RTH. The tick rebuilds the five-session baseline once per segment from the
+five prior XNYS sessions, projects the fresh J5 document with the bridge, writes
+the three documents to a staging copy, validates that copy with
+`read_research_inputs(max_age=1200)`, and only then replaces the three files in
+the display directory. A refused tick leaves the previous complete unit in
+place; a crash between replacements can only leave a mixed generation, which is
+unreadable, never empty or last-valid. No stream is opened, no TradingView call
+is made, no order or controller exists, and no unattended service is installed:
+the operator starts the process, exactly as they start the display loop.

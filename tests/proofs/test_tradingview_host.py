@@ -844,3 +844,124 @@ def test_symbol_map_is_explicit_and_unique(tmp_path: Path) -> None:
     path.write_text('{"AAA": "not a venue"}', encoding="utf-8")
     with pytest.raises(ValueError, match="mapping"):
         load_symbol_map(path)
+
+
+POST_START = DAY_START + 12 * 3600 * NS
+POST_SCOPE = Segment(
+    "POST",
+    date(2026, 11, 9),
+    POST_START,
+    POST_START + 4 * 3600 * NS,
+    "fixture XNYS regular close 16:00 ET",
+)
+
+
+def post_session_bar(
+    symbol: str, day: date, minute: int, close: str, volume: int, trades: int
+) -> Bar:
+    start = int(datetime.combine(day, time(16, 0), tzinfo=NY).timestamp()) * NS + minute * 60 * NS
+    return Bar(
+        symbol=symbol,
+        start_ns=start,
+        open=D(close),
+        close=D(close),
+        volume=volume,
+        trades=trades,
+    )
+
+
+def post_bar(symbol: str, minute: int, close: str, volume: int, trades: int, *, open_: str) -> Bar:
+    return Bar(
+        symbol=symbol,
+        start_ns=POST_START + minute * 60 * NS,
+        open=D(open_),
+        close=D(close),
+        volume=volume,
+        trades=trades,
+    )
+
+
+def post_baseline() -> BaselineTable:
+    return BaselineTable(
+        tuple(
+            BaselineSample(name, "POST", "2026-11-06", offset, D(dollars), D(0))
+            for name in ("AAA", "BBB", "CCC")
+            for offset, dollars in ((0, 0), (14_400, 3960))
+        ),
+        "fixture explicit complete POST curves; linear within minute",
+        POST_START - NS,
+        "sip",
+    )
+
+
+def post_publisher() -> RankingPublisher:
+    pub = RankingPublisher(
+        bus=MessageBus(TraderId.from_str("HOST-POST-001")),
+        epoch="host-fixture-post-1",
+        feed="sip",
+        segment=POST_SCOPE,
+        registry=registry(),
+        universe=("AAA", "BBB", "CCC"),
+        universe_source="fixture selected symbols; NOT PIT universe",
+        baseline=post_baseline(),
+    )
+    pub.set_coverage(Coverage(CoverageState.READY, True, 3, 3, 0, 0, 0))
+    for name in pub.universe:
+        pub.set_symbol(
+            name,
+            references=ReferencePrices(D("10.00"), POST_START - NS, "fixture official close"),
+            asset=AssetState(POST_START - NS, POST_SCOPE.end_ns, False, "common", "fixture vendor"),
+        )
+    return pub
+
+
+def test_post_baseline_is_built_from_supplied_sessions() -> None:
+    sessions = tuple(
+        (day, (post_session_bar("AAA", day, 0, "10.00", 100, 1),))
+        for day in (
+            date(2026, 11, 2),
+            date(2026, 11, 3),
+            date(2026, 11, 4),
+            date(2026, 11, 5),
+            date(2026, 11, 6),
+        )
+    )
+    table = build_baseline(
+        sessions,
+        symbols=("AAA",),
+        segment=POST_SCOPE,
+        known_at=POST_START - 20 * 3600 * NS,
+        provenance="fixture five prior POST sessions",
+    )
+    assert table.segment == "POST"
+    assert table.end_s == 14_400
+    assert table.points == 241
+    value = table.cumulative("AAA", "POST", D(60))
+    assert value is not None
+    assert value.dollar_volume == D(1000)
+
+
+def test_post_anchor_marks_the_segment_covered(tmp_path: Path) -> None:
+    with reserve_stream(
+        tmp_path / "leases", paper_slot=3, existing_streams=0, source="fixture"
+    ) as lease:
+        host = BarFidelityHost(
+            post_publisher(),
+            lease=lease,
+            sip_authority="fixture SIP authority",
+            symbol_map={name: f"NASDAQ:{name}" for name in ("AAA", "BBB", "CCC")},
+        )
+        close_ns = POST_START + 60 * NS
+        ingested = host.ingest(
+            BarPoll(
+                bars=(post_bar("AAA", 0, "10.25", 100, 5, open_="10.00"),),
+                requested=("AAA", "BBB", "CCC"),
+            ),
+            market_ns=close_ns,
+            received_ns=close_ns,
+        )
+        assert ingested == 1
+        state = host.publisher.states["AAA"]
+        assert state.segment_covered is True
+        assert state.segment_dollar_volume == D("10.25") * 100
+        assert host.publisher.coverage.state is CoverageState.READY
