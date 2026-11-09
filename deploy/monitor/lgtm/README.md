@@ -11,9 +11,11 @@ read in its own upstream UI — see `../upstream-ui-map.md`.
   `start.sh` feeds Grafana a throwaway random admin password that is never
   stored or printed. There is no keys.sh step.
 - Loopback only: `127.0.0.1:3000` (Grafana), `127.0.0.1:4317` (OTLP gRPC),
-  `127.0.0.1:4318` (OTLP HTTP). Grafana analytics/update checks are off and
-  the `run-grafana.sh` override removes the forced plugin download, so the
-  container makes no outbound calls. Never run upstream `run-lgtm.sh`.
+  `127.0.0.1:4318` (OTLP HTTP). Grafana analytics/update checks are off,
+  plugin preinstall is disabled (`GF_PLUGINS_PREINSTALL_DISABLED=true`,
+  including Grafana's built-in default set), and the `run-grafana.sh`
+  override removes the forced `grafana-llm-app` download, so no start
+  downloads a plugin or reports usage. Never run upstream `run-lgtm.sh`.
 - `otelcol-config.yaml` strips content-bearing tool fields and masks
   secret-shaped values before anything persists; `genai-mapping.md` pins
   the vendor -> `gen_ai.*` schema. Runtime feeds land in PR-M2, so until

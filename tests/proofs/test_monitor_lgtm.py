@@ -100,8 +100,12 @@ def test_grafana_is_passwordless_viewer_only_with_telemetry_off() -> None:
     # The admin password is required only by first-run creation; it is an
     # environment name interpolated fail-closed, never a literal or default.
     assert env["GF_SECURITY_ADMIN_PASSWORD"].startswith("${GF_SECURITY_ADMIN_PASSWORD:?")
+    # No plugin is downloaded on any start: Grafana merges its built-in
+    # default preinstall set unless [plugins] preinstall_disabled is set,
+    # and no preinstall list is supplied either.
+    assert env["GF_PLUGINS_PREINSTALL_DISABLED"] == "true"
+    assert "GF_PLUGINS_PREINSTALL" not in env and "GF_INSTALL_PLUGINS" not in env
     compose = _read(f"{LGTM}/compose.yaml")
-    assert "GF_PLUGINS_PREINSTALL" not in compose
     assert "admin/admin" not in compose and "keys.sh" not in compose
 
 

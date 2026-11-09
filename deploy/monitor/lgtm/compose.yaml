@@ -25,9 +25,10 @@ services:
     environment:
       # grafana/grafana@v13.2.4 af4a33e3786594ad72f72d97e6744010330c2977:
       # docs/sources/setup-grafana/configure-grafana/_index.md (the
-      # GF_<SECTION>_<KEY> override pattern; [analytics] keys) and
-      # conf/defaults.ini ([auth.anonymous], [auth], [auth.basic],
-      # [security] keys). Passwordless per the lead amendment 2026-11-08:
+      # GF_<SECTION>_<KEY> override pattern; [analytics], [plugins] keys)
+      # and conf/defaults.ini ([auth.anonymous], [auth], [auth.basic],
+      # [security], [plugins] keys) with pkg/setting/setting_plugins.go
+      # (default preinstall set). Passwordless per the lead amendment 2026-11-08:
       # anonymous read-only access, no login form, no basic-auth API path.
       GF_ANALYTICS_REPORTING_ENABLED: "false"
       GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
@@ -36,6 +37,10 @@ services:
       GF_AUTH_ANONYMOUS_ORG_ROLE: "Viewer"
       GF_AUTH_DISABLE_LOGIN_FORM: "true"
       GF_AUTH_BASIC_ENABLED: "false"
+      # [plugins] preinstall_disabled ("disables all preinstalled
+      # plugins"): without it Grafana merges its built-in default
+      # preinstall set and downloads unpinned catalog code at start.
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
       # [security] admin_password, set once on first run. Supplied only by
       # start.sh as a throwaway random value; never stored or printed.
       GF_SECURITY_ADMIN_PASSWORD: ${GF_SECURITY_ADMIN_PASSWORD:?start via deploy/monitor/lgtm/start.sh}

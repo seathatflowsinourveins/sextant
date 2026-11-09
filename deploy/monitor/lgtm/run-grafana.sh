@@ -4,8 +4,10 @@
 # /otel-lgtm/run-grafana.sh by compose.yaml. Two deliberate changes, nothing
 # else: (1) the block that forced GF_PLUGINS_PREINSTALL=grafana-llm-app (a
 # grafana.com download on every start, even when the variable was set empty)
-# is removed, so Grafana starts with zero outbound calls; (2) the anonymous
-# org-role default is Viewer, not Admin (compose also pins Viewer).
+# is removed — together with compose's GF_PLUGINS_PREINSTALL_DISABLED=true,
+# which disables Grafana's built-in default preinstall set, no start
+# downloads any plugin; (2) the anonymous org-role default is Viewer, not
+# Admin (compose also pins Viewer).
 
 # shellcheck disable=SC1091 # Flint 0.20.3 runs ShellCheck without source following.
 source ./common.sh
