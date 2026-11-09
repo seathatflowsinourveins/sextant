@@ -2,17 +2,17 @@
 
 This package runs the frozen K3 development table on one session. It is
 the Part 1 harness: it measures the K2 ranking state, the mean-baseline
-variant, the premarket gap arm and the keep-alive arm on the same sealed
+variant, the keep-alive arm and the premarket gap sub-arm on the same sealed
 cohort. Detection-only results stay in the hashed report; they never
 become TrialLog rows (custodian ruling, ADR-0019:26). There is no entry,
 sizing, fill or return claim. Evaluation code stays here, never in `src/`.
 
 Protocol authority: `docs/research/2026-11-06-ranking.md`, K3 section
 SHA-256 `fecd378a5b40fc2d6d2e03b16dda605c9f82102dad8e95735ffef24a459aca0b`
-at commit `ba5116de4dc84444bbd00e62dfe9bc0b1b691001`; K2 section
+(frozen at base `cb9a290`, on gate since #118) and K2 section
 `fc019b18602429f0f641588eed45467ca555f4bbc568284327f1a346dd33426f`.
-The harness verifies both digests by default and refuses to run if either
-moves on the checked-out doc.
+The harness verifies both digests in the checked-out doc by default and
+refuses to run if either moves.
 
 ## What it computes
 
@@ -28,29 +28,47 @@ moves on the checked-out doc.
   (330 minute offsets) and RTH 09:30-11:35 (125), cumulative
   `close x volume` and bar count at each minute, missing minutes carried
   forward. K2 uses the per-offset median; the mean arm uses the mean.
-- Replay: one synthetic tick per non-zero-volume minute at bar close,
-  one generation per minute. There is no synthetic prior-close or
-  segment-start tick: a zero-size anchor at a segment boundary uses that
-  segment's first bar open only when the first bar starts exactly at the
-  boundary. The segment end is widened by one nanosecond so the 09:30 and
-  11:35 bar closes are inside the engine's half-open `[start, end)`.
+- Replay: one synthetic tick per non-zero-volume minute at bar close, one
+  generation per minute. No print is fabricated: there is no anchor or
+  segment-start tick. A segment's dollar-volume prefix is covered only by
+  an explicit prefix receipt (the recording's request window and the
+  recorded day's hash, checked against the bar files), which covers every
+  recorded symbol from each segment start alike. Without it every name is
+  `segment_prefix_unknown` and the ranking arms are `NOT_ESTIMABLE`. The
+  segment end is widened by one nanosecond so the 09:30 and 11:35 bar
+  closes are inside the engine's half-open `[start, end)`.
 - Every generation ranks the full K2 section 5 universe: all computable
   `state.latest` rows, not only the minute-active subset, and respects
   `publish_min_interval_s`. `universe` is recorded per generation.
-- Arms: K2 (`move x dvol_ratio`), mean baseline (one discrete change),
-  premarket gap (only the fixed 04:00-04:05 first open; trigger mode
-  `NOT_RUN` because the frozen ADR-0024 does not record numeric
-  thresholds), keep-alive on qualified K2 top-100 membership (current
-  entry qualification, quota cap, 20:00 reset), and Page CUSUM
-  (`NOT_RUN`: its five adapter rows are UNAVAILABLE at the seal). OFI and
-  catalyst arms are `NOT_IN_FROZEN_PROTOCOL`; the frozen K3 section
-  defines only the four named arms plus the K2 and hold-flat comparators.
-- Metrics: detected/late/censored, recall at onset, signed p50/p90
-  latency in seconds (`flag - onset`; Hyndman-Fan type 7), first entry at
-  or before onset, late entries, false flags per control-symbol-hour,
-  separate never-crossed control rates, the +/-60/120/300 s windows,
-  per-name flag counts and paired K2 contrasts on identical names. Date
-  is the block; one session is a development table, not a trial.
+- Arms: K2 (`move x dvol_ratio`); the mean baseline (one discrete change);
+  keep-alive on K2 top-100 membership; the premarket gap rule; Page CUSUM.
+  Arm (a), ADR-0024's gap rule exactly as recorded, is `NOT_RUN`: its
+  recorded calibrations need ADV20 (the $5m candidate-ADV floor, the
+  unknown-ADV exclusion and trigger mode's `max(50000, 0.001 x ADV20)`
+  floor) and the prior session's post-market turnover (the $1m prior-post
+  filter), and the harness takes no receipt for either; trigger mode's
+  below-5% gap is an UNCALIBRATED grid. What runs is the fixed-mode
+  gap-only sub-arm, `gap_fixed_open_sub_arm` (first open in 04:00-04:05 at
+  least 1% over the prior close), a different arm under K3.8. Keep-alive
+  retains a member whose row is not computable while its last computable
+  row qualified; fresh admits fill first and the retained take free slots
+  in K2's own order; `reset` is 20:00. Page CUSUM is `NOT_RUN` (its five
+  adapter rows are UNAVAILABLE). OFI and catalyst arms are
+  `NOT_IN_FROZEN_PROTOCOL`.
+- Metrics: detected, late and censored; recall at onset (a first flag at
+  or before `tau`) beside the ever-detected share; signed p50/p90 latency
+  in seconds (`flag - onset`; Hyndman-Fan type 7); first entry at or
+  before onset; the +/-60/120/300 s windows; per-name flags; paired K2
+  contrasts; baseline availability per arm, read from each name's latest
+  row at onset (a zero normal is unavailable), with per-mover unknown
+  reasons; keep-alive persistence among names first admitted strictly
+  before onset. False flags count every control that enters the top 100
+  (K2, mean), becomes a member (keep-alive) or gap-flags (sub-arm), over
+  two denominators, every control charged the window and each control's
+  own row hours, all-control and never-crossed apart, labelled
+  `DEVELOPMENT_CHOICE_PENDING_U4_SEAL`. Empty denominators are undefined,
+  never zero. Date is the block; one session is a development table, not
+  a trial.
 
 ## Use
 
@@ -60,82 +78,99 @@ uv run --frozen python -m research.ranking_e2e.build_cohort \
 
 uv run --frozen python -m research.ranking_e2e.runner \
   --cohort cohort.json --bars-root <raw 1min root> \
-  --protocol-doc <ranking doc> --out <session dir>
+  --prefix-receipt <prefix-receipt.json> --out <session dir>
 ```
 
-`--protocol-doc` points at the checkout that carries the frozen K3
-section (commit `ba5116d`); omit it to verify the checked-out doc.
+The prefix receipt is JSON with `schema` `ranking-e2e.prefix-receipt/1`,
+`session`, `feed: sip`, `timeframe: 1Min`, `window_et` `{start, end}`, the
+recorded day's `data_sha256` (the runner's per-day receipt) and `source`.
+`--protocol-doc` overrides the checkout's ranking doc. A verified run
+refuses a dirty tree, so the report binds the committed head it ran.
 `--no-verify-protocol` exists only for synthetic tests and stamps the
 report `SYNTHETIC_NOT_VERIFIED`.
 
-## 2026-11-09 development table
+## The development table and its history
 
-Cohort: 4,647 candidates, 159 truth (bar-close onset), 249 controls,
-205 never-crossed controls, 0 excluded. One session, SIP raw 1-minute
-bars 04:00-11:35 ET. Full-generation ranking leaves 111 rankable at
-onset and 48 with no rank.
-
-| Arm | Recall @30 | Recall @100 | Rankable at onset | Other |
-|---|---|---|---|---|
-| K2 | 3/159 (1.89%) | 10/159 (6.29%) | 111 | 13 first entered top-100 at/before onset; 18 late; p50 lead -300 s; p90 14,580 s; false 0 |
-| Mean baseline | 4/159 (2.52%) | 10/159 (6.29%) | 111 | 13 first entered at/before onset; 18 late; false 0 |
-| Gap, fixed 04:00-04:05 | 29/159 detected (18.24%) | - | - | p50 -8,280 s; p90 -60 s; false 55/249 = 0.0291; never-crossed 45/205 = 0.0290; windows 60/120/300 = 13/14/14 |
-| Keep-alive | 3/4 persisted (75%) | - | - | 3 unconditional members at onset; qualified fresh only, quota capped |
-| Page CUSUM | NOT_RUN | - | - | five adapter rows UNAVAILABLE; river defaults refused |
-| OFI / catalyst | NOT_IN_FROZEN_PROTOCOL | - | - | no thresholds in the frozen section |
-
-Onset strata: PRE 04:00-04:30 14, PRE rest 24, RTH 09:30-10:00 87,
-RTH rest 34. The earlier minute-active replay's 8/159 and 12/159 were
-flattered by ranking only rows printed in the generation minute; the
-full K2 section 5 universe gives 3/159 and 10/159. The figures are
-descriptive, one session, with no interval, significance or after-cost
+No table is kept in this file. The current table is the clean-tree rerun
+at the landing head; its report and generations files are hashed, and the
+PR body cites those digests with the head, the harness hash, the data
+hashes and the `params_hash`. Writing numbers here after the run would
+move the head the receipts bind. The table is descriptive, one session,
+bar-close U10 sensitivity, with no interval, significance or after-cost
 claim (K3.7).
+
+Earlier runs stay on the record as superseded, identified by their own
+implementation receipts; none of their numbers is quoted anywhere:
+
+- Run 1, receipt `git_head` `cb9a290` before the harness was committed
+  (harness tree `61d54fc4...`): void under round 1's P0 fallback prior
+  close and P0 minute-active subset ranking, and every round-2 P1 below.
+- Run 2, `git_head` `5a2167c` from a dirty tree (harness tree
+  `ff481c58...`): void under round-2 P1s 1-5 and the provenance P1.
+- Run 3, `git_head` `5a2167c` from a dirty tree (harness tree
+  `5dcefe85...`; the committed `53b9e8a` tree hashes `cf163da7...`), the
+  table the round-2 head quoted: void under round-2 P1s 1-5 and the
+  provenance P1.
 
 ## Review fixes
 
-- **P0-1 no fallback prior close**: `build_cohort` keeps a missing
-  official close as null, records `missing_official_prior_close`, counts
-  the exclusion, and never derives a reference. Witness:
-  `test_build_cohort_from_metrics_and_daily_closes`.
-- **P0-2 full K2 section 5 generations**: every generation ranks all
-  computable `state.latest` rows, not the minute-active subset. Witness:
-  `test_full_generation_ranks_carried_rows`.
-- **P1 gap anchor**: one session-scoped 04:00-04:05 arm, first open only;
-  trigger mode `NOT_RUN`. Witness:
-  `test_gap_arm_uses_only_the_fixed_opening_window`.
-- **P1 keep-alive**: current entry qualification, quota cap and 20:00
-  reset. Witness:
-  `test_keep_alive_requires_current_qualification_and_quota`.
-- **P1 metric set**: signed latency in seconds, late vs censored, windows,
-  per-name flags, baseline-available and universe counts, paired K2
-  contrasts. Witness: `test_signed_latency_late_flag_and_windows`.
-- **P1 PIT labels**: labels are required and travel verbatim; the W1 K2
-  run stays `NOT_RUN`. Witness: `test_cohort_requires_pit_labels`.
-- **P1 CLI verification**: verification is the default; the override is
-  explicit and labels a synthetic run. Witness:
-  `test_runner_cli_verifies_by_default`.
-- **P1 N1 -> B leg**: `entry_protection.status = UNKNOWN` because PR-3's
-  harness (#83) is not on gate; no parallel harness was built.
-- **TrialLog custodian ruling**: `ledger.detection_row` and `append`
-  refuse every detection-only row; the runner builds no row. Witness:
-  `test_ledger_refuses_every_detection_only_row`.
-- **P2/P3**: signed lead, percentiles in seconds, no fabricated
-  prior-close anchor, no cross-segment merge of first-entry times, no
-  internal `sharadar-42` path in the cohort docstring, and a
-  `params_hash`-bearing registry receipt.
+Round 1 (witnesses fail at `5a2167c`): no fallback prior close
+(`test_build_cohort_from_metrics_and_daily_closes`); full K2 section 5
+generations (`test_full_generation_ranks_carried_rows`); one
+session-scoped 04:00-04:05 gap window
+(`test_gap_arm_uses_only_the_fixed_opening_window`); PIT labels required
+(`test_cohort_requires_pit_labels`); verification by default
+(`test_runner_cli_verifies_by_default`); no detection-only TrialLog row
+(`test_ledger_refuses_every_detection_only_row`).
 
-All eight witnesses fail at `5a2167c` and pass at the fix head.
+Round 2, the six P1s by their Fix lines (witnesses fail at `53b9e8a`,
+rebased as `e80f6ee`):
+
+1. **Keep-alive never retained**: it carries each name's last computable
+   qualification and K2 order key itself, retains an uncomputable member
+   that last qualified, orders retained names by K2's own key, and counts
+   persistence only for first entry strictly before `tau`. Witnesses:
+   `test_keep_alive_retains_a_member_whose_row_turns_uncomputable`,
+   `test_keep_alive_persistence_needs_first_entry_strictly_before_onset`,
+   `test_keep_alive_quota_fills_fresh_first_then_k2_order`.
+2. **Structural-zero ranking false flags**: flags are read from the
+   per-segment first-entry maps with controls included, beside coverage
+   hours per control. Witness:
+   `test_ranking_false_flags_count_controls_that_enter_the_top_100`.
+3. **Baseline availability and recall**: availability comes from each
+   name's latest row at onset per arm; recall at onset excludes late
+   flags. Witnesses:
+   `test_baseline_availability_reads_the_latest_state_per_arm`,
+   `test_signed_latency_late_flag_and_windows`.
+4. **Synthetic coverage tick**: the anchor is gone; coverage comes from
+   the prefix receipt for every recorded symbol, or ranking is
+   `NOT_ESTIMABLE`. Witnesses:
+   `test_prefix_receipt_covers_every_recorded_symbol_without_a_synthetic_print`,
+   `test_no_prefix_receipt_leaves_ranking_not_estimable_with_reasons`,
+   `test_prefix_receipt_for_other_bytes_is_refused`.
+5. **Arm (a)'s name**: arm (a) is `NOT_RUN` with its missing quantities;
+   the run is `gap_fixed_open_sub_arm`. Witness:
+   `test_arm_a_stays_not_run_and_the_gap_sub_arm_carries_its_own_name`.
+6. **Provenance**: a verified run refuses a dirty tree and records
+   `tree_clean`; the table is the clean rerun at the landing head. Witness:
+   `test_verified_run_refuses_a_dirty_tree_and_binds_a_clean_one`.
+
+The round-2 P2 and P3 findings not subsumed here are in one follow-up
+issue, including the seal items' derivation and the arm tier labels.
 
 ## Seal and ledger
 
-`session.json` carries the eight seal items. At this session:
-`session_list`, `cohort_controls`, `market_data`, `baseline` and
-`implementation` are AVAILABLE; `registry` is PARTIAL (the 12 operational
-rows are reviewed, but the entry/trading ages are UNAVAILABLE);
-`triallog` is NOT_RUN pending the custodian ruling; `other_family_review`
-is ABSENT. The trial state is therefore NOT_RUN and no row is appended.
+`session.json` carries the eight seal items and the implementation
+receipt (`git_head`, `tree_clean`, harness and ranking-code SHAs). The
+custodian ruled that detection-only rows are refused and only trading
+arms through N1 then B's protection write MODELED rows, so the trial
+state is `NOT_RUN` and no row is appended; the `triallog` seal item's
+reason text still predates that ruling (follow-up issue).
 `ledger.detection_row` and `ledger.append` raise `LedgerRefused` for
-detection-only content; there is no side ledger.
+detection-only content; there is no side ledger. The N1 -> B leg is
+`NOT_RUN` here: #83 on gate carries the first-leg picks and B's
+protection replay, and wiring these arms into it is a separate successor
+task under its own frozen, costed protocol (K3.7).
 
 ## Fidelity
 
@@ -152,11 +187,11 @@ detection-only content; there is no side ledger.
 
 ## Tests
 
-`tests/proofs/test_ranking_e2e.py` has 19 tests covering protocol hashes
-and the K3 presence gate, cohort labels/validation/hashing, mean/median
-curves, interpolation, the fixed gap window, the CUSUM recurrence,
-qualified keep-alive membership, percentiles, signed latency/windows,
-the full-generation witness, the CLI verification default, no
-detection-only ledger row, the missing-close witness and a synthetic
-end-to-end run. Run `pytest tests/proofs/test_ranking_e2e.py -q` under
-the local memory scope.
+`tests/proofs/test_ranking_e2e.py` has 29 tests: protocol hashes and the
+K3 presence gate, cohort labels/validation/hashing, mean/median curves,
+the fixed gap window, the CUSUM recurrence, keep-alive retention and
+quota order, percentiles, signed latency and recall at onset, the false
+flag table, the full-generation witness, the CLI verification default,
+no detection-only ledger row, the missing-close witness, and a
+three-prior-session run that witnesses each round-2 P1. Run
+`pytest tests/proofs/test_ranking_e2e.py -q` under the local memory scope.

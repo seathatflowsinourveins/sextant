@@ -5,21 +5,26 @@ statistics, arm mechanisms and the refusal paths. They do not claim an edge:
 the frozen K3 section is detection-only (K3.7), and a trial needs the eight
 seal receipts (K3.8), which this session does not have.
 
-The witness tests marked ``WITNESS`` fail on the prior harness at 5a2167c:
-missing prior close derivation, minute-active ranking, the 07:30 gap
-substitute, unqualified keep-alive membership, unsigned latency, missing
-labels, a detection-only TrialLog row and a CLI that skips protocol
-verification by default.
+Tests marked ``WITNESS`` fail on an earlier harness. Round 1 (fail at
+5a2167c): missing prior close derivation, minute-active ranking, the 07:30 gap
+substitute, unsigned latency, missing labels, a detection-only TrialLog row and
+a CLI that skips protocol verification by default. Round 2 (fail at 53b9e8a,
+rebased as e80f6ee): keep-alive that never retains, a structural-zero ranking
+false-flag rate, baseline availability read from the rank, late flags counted
+as recall, segment coverage conferred by a synthetic opening tick, arm (a)
+wearing the full rule's name, and a verified run from a dirty tree.
 """
 
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import sys
 from datetime import UTC, date, datetime, timedelta, timezone
 from decimal import Decimal as D
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -30,6 +35,7 @@ from research.ranking_e2e import arms, bars, baseline, cohort, ledger, metrics, 
 
 NS = 1_000_000_000
 ET = timezone(timedelta(hours=-5), "EST")
+REGISTRY = ROOT / "lanes" / "tradingview" / "k2-ranking.params.json"
 
 
 def _ns(day: str, hh: int, mm: int) -> int:
@@ -105,8 +111,8 @@ def _synthetic_tree(tmp_path: Path) -> Path:
 
 
 def _inactive_tree(tmp_path: Path) -> Path:
-    """OMH's last row is 04:01; M2 prints at 04:02.  The 04:03 generation must
-    still rank OMH's carried row (WITNESS for full K2 section 5 generations)."""
+    """M2 prints at 04:08 and OMH does not; the 04:09 generation must still rank
+    OMH's carried 04:08 row (WITNESS for full K2 section 5 generations)."""
     root = tmp_path / "inactive"
     for day in ("2026-11-05", "2026-11-06"):
         _write_day(root, day, _prior_rows())
@@ -114,8 +120,9 @@ def _inactive_tree(tmp_path: Path) -> Path:
         root,
         "2026-11-09",
         {
-            "OMH": [(4, m, "7.40", f"7.{40 + m:02d}", 1000) for m in range(6)],
-            "M2": [(4, 0, "20.00", "20.00", 1000), (4, 5, "20.50", "21.00", 1000)],
+            "OMH": [(4, m, "7.40", f"7.{40 + m:02d}", 1000) for m in range(8)],
+            "M2": [(4, m, "20.00", "20.00", 1000) for m in range(8)]
+            + [(4, 8, "20.50", "21.00", 1000)],
             "CTRL": [(4, 0, "10.00", "10.00", 1000)],
         },
     )
@@ -171,15 +178,182 @@ def _cohort_json(tmp_path: Path) -> Path:
     return path
 
 
+def _receipt(
+    tmp_path: Path, root: Path, *, day: str = "2026-11-09", data_sha256: str | None = None
+) -> Path:
+    """The recording's prefix receipt: its window and the recorded day's hash."""
+    path = tmp_path / f"prefix-receipt-{root.name}-{day}.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema": "ranking-e2e.prefix-receipt/1",
+                "session": day,
+                "feed": "sip",
+                "timeframe": "1Min",
+                "window_et": {"start": "04:00", "end": "11:40"},
+                "data_sha256": data_sha256 or runner._day_receipt(root, date.fromisoformat(day)),
+                "source": "test fixture: every requested symbol recorded 04:00-11:40 ET",
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+def _run(
+    tmp_path: Path,
+    root: Path,
+    cohort_path: Path,
+    *,
+    out: str,
+    registry: Path = REGISTRY,
+    receipt: bool = True,
+    **kwargs: Any,
+) -> runner.SessionResult:
+    """Run one synthetic session.  The witnesses also run against the pre-fix
+    harness, which has no prefix-receipt input, so the receipt is passed only
+    when the code under test accepts it and the witness then fails on a value."""
+    extra: dict[str, Any] = {}
+    if receipt and "prefix_receipt" in inspect.signature(runner.run_session).parameters:
+        extra["prefix_receipt"] = _receipt(tmp_path, root)
+    return runner.run_session(
+        cohort_path=cohort_path,
+        bars_root=root,
+        reg_path=registry,
+        out_dir=tmp_path / out,
+        verify_protocol=kwargs.pop("verify_protocol", False),
+        **extra,
+        **kwargs,
+    )
+
+
+def _generations(path: Path) -> list[dict[str, Any]]:
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+
+
+# --------------------------------------------- round-2 witness tree (keep-alive)
+KEEP_DAY = "2026-11-09"
+KEEP_PRIOR = ("2026-11-04", "2026-11-05", "2026-11-06")
+
+
+def _fixture_registry(tmp_path: Path) -> Path:
+    """Fixture-only gate values so a bar-fidelity name can qualify; never operating values."""
+    data = json.loads(REGISTRY.read_text(encoding="utf-8"))
+    for row in data["rows"]:
+        value = {
+            "mover_min_move": "0.01",
+            "mover_min_trades_accel": "1",
+            "mover_min_dvol_ratio": "1",
+        }.get(row["name"])
+        if value is not None:
+            row["value"] = value
+            row["source"] = (
+                "test fixture only (tests/proofs/test_ranking_e2e.py); not an operating value"
+            )
+    path = tmp_path / "fixture-registry.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    return path
+
+
+def _keep_tree(tmp_path: Path) -> Path:
+    """Six names, three prior sessions, prior close 10.00 for all.
+
+    KEEP qualifies at 04:07, is silent 04:08-04:20, then its 04:20 bar finds no
+    trade in the prior acceleration window, so its 04:21 row is not computable
+    (``prior_window_zero_trades``) while it crosses +5% (onset 04:21).  SAME and
+    LATE are first admitted exactly at their onset.  CTRL is a flat control.
+    FAST crosses +5% in its first bar (onset 04:01, not yet computable).  THIN
+    traded on one of three prior sessions, so its median normal is zero and its
+    mean normal is not.  LATE's first bar starts at 04:02, not at the boundary.
+    """
+    root = tmp_path / "keep"
+    prior = {
+        symbol: [(4, m, "10.00", "10.00", 1000) for m in range(11)]
+        for symbol in ("KEEP", "SAME", "CTRL", "FAST", "LATE")
+    }
+    for day in KEEP_PRIOR[:2]:
+        _write_day(root, day, prior)
+    _write_day(
+        root, KEEP_PRIOR[2], {**prior, "THIN": [(4, m, "10.00", "10.00", 1000) for m in range(11)]}
+    )
+    keep_closes = ("10.12", "10.15", "10.18", "10.21", "10.24", "10.27", "10.30", "10.33")
+    _write_day(
+        root,
+        KEEP_DAY,
+        {
+            "KEEP": [(4, m, close, close, 3000) for m, close in enumerate(keep_closes)]
+            + [(4, 20, "10.40", "10.60", 3000)],
+            "SAME": [(4, m, "10.00", "10.00", 3000) for m in range(9)]
+            + [(4, 9, "10.00", "10.60", 3000)],
+            "CTRL": [(4, m, "10.00", "10.00", 1000) for m in range(10)],
+            "FAST": [(4, 0, "10.50", "10.60", 3000)]
+            + [(4, m, "10.60", "10.60", 3000) for m in range(1, 10)],
+            "THIN": [(4, m, "10.00", "10.00", 3000) for m in range(9)]
+            + [(4, 9, "10.00", "10.60", 3000)],
+            "LATE": [(4, m, "10.00", "10.10", 3000) for m in range(2, 11)]
+            + [(4, 11, "10.10", "10.60", 3000)],
+        },
+    )
+    return root
+
+
+def _keep_cohort(tmp_path: Path) -> Path:
+    path = tmp_path / "keep-cohort.json"
+
+    def candidate(symbol: str, move: str) -> dict[str, str]:
+        return {
+            "symbol": symbol,
+            "move": move,
+            "premarket_dollar_volume": "1000000",
+            "full_dollar_volume": "1000000",
+            "prior_close": "10.00",
+            "prior_close_source": "official_prior_daily_close",
+        }
+
+    truth = ["KEEP", "SAME", "FAST", "THIN", "LATE"]
+    path.write_text(
+        json.dumps(
+            {
+                "schema": "ranking-e2e.cohort/1",
+                "session": KEEP_DAY,
+                "prior_sessions": list(KEEP_PRIOR),
+                "labels": {
+                    "survivor_only": True,
+                    "pit_verified": False,
+                    "inference_eligible": False,
+                },
+                "candidates": [candidate(s, "0.06") for s in truth] + [candidate("CTRL", "0.00")],
+                "truth": truth,
+                "controls": ["CTRL"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+@pytest.fixture(scope="module")
+def keep_run(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, runner.SessionResult]:
+    tmp_path = tmp_path_factory.mktemp("keep")
+    result = _run(
+        tmp_path,
+        _keep_tree(tmp_path),
+        _keep_cohort(tmp_path),
+        out="keep-out",
+        registry=_fixture_registry(tmp_path),
+    )
+    return tmp_path / "keep-out", result
+
+
 # ---------------------------------------------------------------- protocol
 def test_protocol_hashes_reproduce_the_frozen_bytes() -> None:
     doc = ROOT / "docs" / "research" / "2026-11-06-ranking.md"
     raw = doc.read_bytes()
     k2 = protocol.extract_section(raw, b"# K2 historical")
     assert hashlib.sha256(k2).hexdigest() == protocol.K2_SECTION_SHA256
-    if b"# K3 " in raw:
-        k3 = protocol.extract_section(raw, b"# K3 ", stop=b"## K2 preregistration")
-        assert hashlib.sha256(k3).hexdigest() == protocol.K3_SECTION_SHA256
+    k3 = protocol.extract_section(raw, b"# K3 ", stop=b"## K2 preregistration")
+    assert hashlib.sha256(k3).hexdigest() == protocol.K3_SECTION_SHA256
+    assert protocol.verify_protocol(doc).k3_present
 
 
 def test_protocol_extracts_the_k3_section_up_to_the_k2_fold() -> None:
@@ -275,25 +449,46 @@ def test_page_cusum_recurrence_and_alarm() -> None:
     assert c.update(D("0.0")) is False  # alarm is latched once
 
 
-def test_keep_alive_retains_only_through_incomplete_inputs() -> None:
-    ka = arms.KeepAlive(top_n=2)
-    first = ka.update(rank={"A": 1, "B": 2, "C": 3}, qualified={"A", "B", "C"})
-    assert first == {"A", "B"}
-    # B's row disappears (incomplete input) and B stays qualified -> retained.
-    second = ka.update(rank={"A": 1, "C": 3}, qualified={"A", "B", "C"})
-    assert second == {"A", "B"}
-    # B's row is computable but rank 3, no longer entry-qualified -> dropped.
-    third = ka.update(rank={"A": 1, "B": 3, "C": 3}, qualified={"A", "C"})
-    assert third == {"A"}
+class _Row:
+    """The four fields keep-alive reads from a ranked K2 row."""
+
+    def __init__(self, symbol: str, rank: int, score: str, accel: str = "1", ok: bool = True):
+        self.symbol, self.rank = symbol, rank
+        self.score, self.trades_accel = D(score), D(accel)
+        self.ok = ok
 
 
-def test_keep_alive_requires_current_qualification_and_quota() -> None:  # WITNESS (P1)
+def _ok(row: _Row) -> bool:
+    return row.ok
+
+
+def test_keep_alive_retains_only_an_uncomputable_member_that_last_qualified() -> None:
     ka = arms.KeepAlive(top_n=2)
-    assert ka.update(rank={"A": 1}, qualified=set()) == set()
-    assert ka.update(rank={"A": 1, "B": 2, "C": 3}, qualified={"A", "B"}) == {"A", "B"}
-    assert ka.update(rank={"A": 1}, qualified={"A", "B"}) == {"A", "B"}
+    # A and B are fresh admits; C is outside the top 2.
+    first = ka.update([_Row("A", 1, "9"), _Row("B", 2, "8"), _Row("C", 3, "7")], qualifies=_ok)
+    assert first == {"A", "B"} and ka.retained == set()
+    # B has no computable row (absent from the ranking): its last computable row
+    # qualified, so it is retained through the incomplete input.
+    assert ka.update([_Row("A", 1, "9"), _Row("C", 2, "7", ok=False)], qualifies=_ok) == {"A", "B"}
+    assert ka.retained == {"B"}
+    # B is computable again but no longer qualifies: judged afresh and dropped.
+    assert ka.update([_Row("A", 1, "9"), _Row("B", 2, "8", ok=False)], qualifies=_ok) == {"A"}
+    # B loses its row again, but it is no longer a member: nothing to keep alive.
+    assert ka.update([_Row("A", 1, "9")], qualifies=_ok) == {"A"} and ka.retained == set()
     ka.reset()
-    assert ka.update(rank={"A": 1}, qualified={"A"}) == {"A"}
+    assert ka.update([_Row("C", 1, "7")], qualifies=_ok) == {"C"} and ka.retained == set()
+
+
+def test_keep_alive_quota_fills_fresh_first_then_k2_order() -> None:  # WITNESS (P1 keep-alive)
+    ka = arms.KeepAlive(top_n=3)
+    ka.update([_Row("ZED", 1, "9"), _Row("MID", 2, "7"), _Row("ABE", 3, "5")], qualifies=_ok)
+    # All three lose their computable rows; one fresh name takes a slot.  Quotas
+    # win, so two of the three are retained in K2's own order on their last
+    # computable rows (score desc, then trades_accel desc, then symbol), not in
+    # alphabetical order, which would keep ABE.
+    members = ka.update([_Row("NEW", 1, "1")], qualifies=_ok)
+    assert members == {"NEW", "ZED", "MID"}
+    assert ka.retained == {"ZED", "MID"}
 
 
 # ---------------------------------------------------------------- metrics
@@ -303,17 +498,22 @@ def test_percentile_is_named_linear_interpolation() -> None:
     assert metrics.percentile([], 50) is None
 
 
-def test_signed_latency_late_flag_and_windows() -> None:  # WITNESS (P1 metrics)
+def test_signed_latency_late_flag_and_windows() -> None:  # WITNESS (P1 recall at onset)
     onsets = {"OMH": 100 * NS, "M2": 200 * NS}
     flags = {"OMH": 90 * NS, "M2": 210 * NS, "CTRL": 50 * NS}
     rec = metrics.detection_metrics(onsets, flags, controls=["CTRL"], session_hours=D("2"))
     assert rec.detected == 2 and rec.late == 1 and rec.censored == 0
-    assert rec.recall == D("1")
+    # K3.2 (ii): recall at onset counts a first flag at or before tau only.
+    assert rec.detected_at_onset == 1 and rec.recall_at_onset == D("0.5")
+    assert rec.ever_detected == D("1")
     assert rec.p50_latency_s == D("0")  # signed: -10 and +10
     assert rec.p90_latency_s == D("8")
     assert rec.windows[60]["count"] == 2
     assert rec.per_name_flags == {"OMH": 1, "M2": 1}
-    assert rec.false_flags == 1 and rec.false_flags_per_symbol_hour == D("0.5")
+    table = rec.false_flags["all_controls"]
+    assert table["flagged"] == 1 and table["per_symbol_hour_session"] == "0.5"
+    assert table["per_symbol_hour_coverage"] is None  # no coverage hours supplied
+    assert rec.false_flags["denominator_status"] == "DEVELOPMENT_CHOICE_PENDING_U4_SEAL"
 
 
 def test_censored_only_when_no_flag_at_all() -> None:
@@ -322,20 +522,32 @@ def test_censored_only_when_no_flag_at_all() -> None:
     )
     assert rec.detected == 1 and rec.censored == 1 and rec.late == 0
     assert rec.p50_latency_s == D("-10")
+    empty = metrics.detection_metrics({}, {}, controls=[], session_hours=D("1"))
+    assert empty.recall_at_onset is None and empty.ever_detected is None
+
+
+def test_false_flag_table_carries_coverage_hours_and_separate_rates() -> None:
+    table = metrics.false_flag_table(
+        {"C1"},
+        controls=["C1", "C2", "C3"],
+        never_crossed=["C2", "C3"],
+        session_hours=D("2"),
+        coverage_hours={"C1": D("1"), "C2": D("0.5"), "C3": D("0")},
+        endpoint="test",
+    )
+    assert table["all_controls"]["flagged"] == 1
+    assert table["all_controls"]["per_symbol_hour_session"] == str(D(1) / D(6))
+    assert table["all_controls"]["per_symbol_hour_coverage"] == str(D(1) / D("1.5"))
+    assert table["all_controls"]["without_rows"] == 1
+    assert table["never_crossed"]["flagged"] == 0
+    assert table["never_crossed"]["per_symbol_hour_coverage"] == "0"
 
 
 # ----------------------------------------------------------------- runner
 def test_synthetic_runner_emits_generations_and_refuses_a_trial(tmp_path: Path) -> None:
     root = _synthetic_tree(tmp_path)
-    cpath = _cohort_json(tmp_path)
+    result = _run(tmp_path, root, _cohort_json(tmp_path), out="out")
     out = tmp_path / "out"
-    result = runner.run_session(
-        cohort_path=cpath,
-        bars_root=root,
-        reg_path=ROOT / "lanes" / "tradingview" / "k2-ranking.params.json",
-        out_dir=out,
-        verify_protocol=False,
-    )
     assert result.session == date(2026, 11, 9)
     assert result.onsets["OMH"] == _ns("2026-11-09", 4, 7)
     assert result.onsets["M2"] == _ns("2026-11-09", 4, 7)
@@ -343,11 +555,15 @@ def test_synthetic_runner_emits_generations_and_refuses_a_trial(tmp_path: Path) 
     assert (out / "generations.jsonl").exists() and (out / "session.json").exists()
     assert result.report["label"] == "SYNTHETIC_NOT_VERIFIED"
     assert result.report["protocol"]["verified"] is False
+    assert result.report["prefix"]["status"] == "RECEIPTED"
     assert result.rows["OMH"]["k2_rank_at_onset"] is not None
-    assert result.arms["gap"]["OMH"]["flag_ts"] == _ns("2026-11-09", 4, 0)
+    sub_arm = result.arms["gap_fixed_open_sub_arm"]
+    assert sub_arm["flags"]["OMH"]["flag_ts"] == _ns("2026-11-09", 4, 0)
     assert result.arms["mean"]["status"] == "MODELED"
     assert result.arms["page"]["status"] == "NOT_RUN"
     assert result.arms["ofi"]["status"] == "NOT_IN_FROZEN_PROTOCOL"
+    assert result.report["entry_protection"]["status"] == "NOT_RUN"
+    assert "not on gate" not in result.report["entry_protection"]["reason"]
     assert result.trial_status == "NOT_RUN"
     assert result.trial_row is None
     assert result.report["trial"]["row"] is None
@@ -355,20 +571,10 @@ def test_synthetic_runner_emits_generations_and_refuses_a_trial(tmp_path: Path) 
 
 def test_full_generation_ranks_carried_rows(tmp_path: Path) -> None:  # WITNESS (P0-2)
     root = _inactive_tree(tmp_path)
-    out = tmp_path / "inactive-out"
-    result = runner.run_session(
-        cohort_path=_cohort_json(tmp_path),
-        bars_root=root,
-        reg_path=ROOT / "lanes" / "tradingview" / "k2-ranking.params.json",
-        out_dir=out,
-        verify_protocol=False,
-    )
-    lines = [
-        json.loads(line)
-        for line in (out / "generations-k2-pre.jsonl").read_text(encoding="utf-8").splitlines()
-    ]
-    at_generation = next(line for line in lines if line["ts_ns"] == _ns("2026-11-09", 4, 6))
-    assert at_generation["universe"] == 2
+    result = _run(tmp_path, root, _cohort_json(tmp_path), out="inactive-out")
+    lines = _generations(tmp_path / "inactive-out" / "generations-k2-pre.jsonl")
+    at_generation = next(line for line in lines if line["ts_ns"] == _ns("2026-11-09", 4, 9))
+    assert at_generation["universe"] == 2  # M2's new row and OMH's carried row
     assert result.rows["M2"]["k2_universe_at_onset"] == 2
 
 
@@ -379,7 +585,7 @@ def test_runner_cli_verifies_by_default(
     cpath = _cohort_json(tmp_path)
     out = tmp_path / "cli-default"
     # Pin the checkout root at a doc without K3 so this proof still means
-    # "verify by default" after the K3 section lands on the branch.
+    # "verify by default" now that the K3 section is on the branch.
     (tmp_path / "docs" / "research").mkdir(parents=True)
     (tmp_path / "docs" / "research" / "2026-11-06-ranking.md").write_text(
         "# K2 historical\nnot the frozen doc\n", encoding="utf-8"
@@ -394,7 +600,7 @@ def test_runner_cli_verifies_by_default(
                 "--bars-root",
                 str(root),
                 "--registry",
-                str(ROOT / "lanes" / "tradingview" / "k2-ranking.params.json"),
+                str(REGISTRY),
                 "--out",
                 str(out),
             ]
@@ -404,22 +610,17 @@ def test_runner_cli_verifies_by_default(
 def test_runner_cli_writes_the_report_with_the_explicit_override(tmp_path: Path) -> None:
     root = _synthetic_tree(tmp_path)
     cpath = _cohort_json(tmp_path)
+    common = ["--cohort", str(cpath), "--bars-root", str(root), "--registry", str(REGISTRY)]
     out = tmp_path / "cli"
-    code = runner.main(
-        [
-            "--cohort",
-            str(cpath),
-            "--bars-root",
-            str(root),
-            "--registry",
-            str(ROOT / "lanes" / "tradingview" / "k2-ranking.params.json"),
-            "--out",
-            str(out),
-            "--no-verify-protocol",
-        ]
-    )
-    assert code == 0
+    assert runner.main([*common, "--out", str(out), "--no-verify-protocol"]) == 0
     assert (out / "session.json").exists()
+    out2 = tmp_path / "cli-receipt"
+    receipt = _receipt(tmp_path, root)
+    code = runner.main(
+        [*common, "--out", str(out2), "--no-verify-protocol", "--prefix-receipt", str(receipt)]
+    )
+    report = json.loads((out2 / "session.json").read_text(encoding="utf-8"))
+    assert code == 0 and report["prefix"]["status"] == "RECEIPTED"
 
 
 def test_ledger_refuses_every_detection_only_row() -> None:  # WITNESS (custodian ruling)
@@ -487,3 +688,155 @@ def test_build_cohort_from_metrics_and_daily_closes() -> None:
         "excluded": 1,
     }
     assert doc["labels"]["pit_verified"] is False
+
+
+# ------------------------------------------------- round-2 witnesses (run_session)
+def test_keep_alive_retains_a_member_whose_row_turns_uncomputable(
+    keep_run: tuple[Path, runner.SessionResult],
+) -> None:  # WITNESS (P1 keep-alive retention)
+    out, result = keep_run
+    lines = _generations(out / "generations-k2-pre.jsonl")
+    at_0421 = next(line for line in lines if line["ts_ns"] == _ns(KEEP_DAY, 4, 21))
+    # KEEP's 04:21 row has no trade in its prior window, so it is not ranked;
+    # its last computable row qualified, so keep-alive holds it.
+    assert "KEEP" in at_0421["members"] and "KEEP" not in at_0421["top100"]
+    assert result.rows["KEEP"]["k2_rank_at_onset"] is None
+    assert result.rows["KEEP"]["keepalive_member_at_onset"] is True
+    assert "prior_window_zero_trades" in result.rows["KEEP"]["k2_unknown_reasons"]
+    assert result.arms["keepalive"]["retained_member_generations"] > 0
+
+
+def test_keep_alive_persistence_needs_first_entry_strictly_before_onset(
+    keep_run: tuple[Path, runner.SessionResult],
+) -> None:  # WITNESS (P1 keep-alive denominator)
+    _, result = keep_run
+    keep = result.arms["keepalive"]
+    assert result.rows["SAME"]["keepalive_first"] == result.rows["SAME"]["onset_ts"]
+    assert result.rows["LATE"]["keepalive_first"] == result.rows["LATE"]["onset_ts"]
+    # Only KEEP entered strictly before its onset; SAME and LATE entered at it.
+    assert keep["persistence_denominator"] == 1
+    assert keep["persistence_at_onset"] == 1
+    assert keep["persistence_rate"] == "1"
+    assert keep["entered_at_onset_excluded"] == 2
+
+
+def test_ranking_false_flags_count_controls_that_enter_the_top_100(
+    keep_run: tuple[Path, runner.SessionResult],
+) -> None:  # WITNESS (P1 structural-zero false flags)
+    _, result = keep_run
+    k2 = result.arms["k2"]
+    assert D(str(k2["false_flags_per_symbol_hour"])) > 0
+    table = k2["false_flags"]
+    assert table["all_controls"]["flagged"] == 1 and table["never_crossed"]["flagged"] == 1
+    assert table["denominator_status"] == "DEVELOPMENT_CHOICE_PENDING_U4_SEAL"
+    # CTRL's row hours: first bar close 04:01 to the 09:30 PRE end, no RTH bars.
+    hours = D(str(result.report["controls"]["coverage_hours"]["CTRL"]))
+    assert hours == D(329) / 60
+    assert D(table["all_controls"]["per_symbol_hour_coverage"]) == 1 / hours
+    assert result.arms["mean"]["false_flags"]["all_controls"]["flagged"] == 1
+    assert result.arms["keepalive"]["false_flags"]["all_controls"]["flagged"] == 0
+
+
+def test_baseline_availability_reads_the_latest_state_per_arm(
+    keep_run: tuple[Path, runner.SessionResult],
+) -> None:  # WITNESS (P1 baseline availability)
+    _, result = keep_run
+    fast, thin = result.rows["FAST"], result.rows["THIN"]
+    # FAST is unranked at onset (no acceleration yet) but its normal exists.
+    assert fast["k2_rank_at_onset"] is None and fast["k2_baseline_available"] is True
+    assert "prior_window_uncovered" in fast["k2_unknown_reasons"]
+    # THIN traded on one of three prior sessions: zero median, positive mean.
+    assert thin["k2_baseline_available"] is False
+    assert "baseline_zero_dollar_volume" in thin["k2_unknown_reasons"]
+    assert thin["mean_baseline_available"] is True and thin["mean_rank_at_onset"] is not None
+    k2_share = result.arms["k2"]["baseline_available_at_onset"]
+    mean_share = result.arms["mean"]["baseline_available_at_onset"]
+    assert k2_share["available"] == 4 and k2_share["total"] == 5
+    assert k2_share["unavailable"] == {"baseline_zero_dollar_volume": 1}
+    assert mean_share["available"] == 5
+    assert result.report["counts"]["baseline_available_at_onset"] == 4
+
+
+def test_prefix_receipt_covers_every_recorded_symbol_without_a_synthetic_print(
+    keep_run: tuple[Path, runner.SessionResult],
+) -> None:  # WITNESS (P1 synthetic-tick coverage)
+    out, result = keep_run
+    # LATE's first bar starts at 04:02, so no opening tick could cover it; the
+    # recording receipt covers every recorded symbol from the segment start.
+    assert result.rows["LATE"]["prefix_covered"] is True
+    assert result.rows["LATE"]["k2_rank_at_onset"] is not None
+    # No anchor print: CTRL's prior acceleration window is first covered by its
+    # own 04:01 trade, so it first ranks at 04:07, not at 04:06.
+    lines = _generations(out / "generations-k2-pre.jsonl")
+    first_ctrl = next(line["ts_ns"] for line in lines if "CTRL" in line["top100"])
+    assert first_ctrl == _ns(KEEP_DAY, 4, 7)
+    assert result.report["prefix"]["status"] == "RECEIPTED"
+
+
+def test_no_prefix_receipt_leaves_ranking_not_estimable_with_reasons(tmp_path: Path) -> None:
+    result = _run(
+        tmp_path,
+        _keep_tree(tmp_path),
+        _keep_cohort(tmp_path),
+        out="no-receipt",
+        registry=_fixture_registry(tmp_path),
+        receipt=False,
+    )
+    for arm in ("k2", "mean", "keepalive"):
+        assert result.arms[arm]["status"] == "NOT_ESTIMABLE"
+        assert "segment_prefix_unknown" in result.arms[arm]["reason"]
+    assert result.report["prefix"]["status"] == "ABSENT"
+    assert "segment_prefix_unknown" in result.rows["LATE"]["k2_unknown_reasons"]
+    assert result.rows["FAST"]["k2_baseline_available"] is True
+    assert result.arms["gap_fixed_open_sub_arm"]["metrics"]["detected"] == 2
+
+
+def test_prefix_receipt_for_other_bytes_is_refused(tmp_path: Path) -> None:
+    root = _keep_tree(tmp_path)
+    bad = _receipt(tmp_path, root, data_sha256="0" * 64)
+    with pytest.raises(ValueError, match="prefix receipt"):
+        runner.run_session(
+            cohort_path=_keep_cohort(tmp_path),
+            bars_root=root,
+            reg_path=REGISTRY,
+            out_dir=tmp_path / "bad",
+            verify_protocol=False,
+            prefix_receipt=bad,
+        )
+
+
+def test_arm_a_stays_not_run_and_the_gap_sub_arm_carries_its_own_name(
+    keep_run: tuple[Path, runner.SessionResult],
+) -> None:  # WITNESS (P1 arm (a) identity)
+    _, result = keep_run
+    arm_a = result.arms["gap"]
+    assert arm_a["status"] == "NOT_RUN"
+    assert "ADV20" in arm_a["missing"]["adv20"]
+    assert "post-market" in arm_a["missing"]["prior_post_turnover"]
+    assert "UNCALIBRATED" in arm_a["trigger_mode"]["reason"]
+    sub = result.arms["gap_fixed_open_sub_arm"]
+    assert sub["status"] == "DEVELOPMENT_SUB_ARM"
+    assert sorted(sub["flags"]) == ["FAST", "KEEP"]
+    assert sub["metrics"]["detected_at_onset"] == 2
+    assert result.rows["FAST"]["gap_sub_arm_flag_ts"] == _ns(KEEP_DAY, 4, 0)
+
+
+def test_verified_run_refuses_a_dirty_tree_and_binds_a_clean_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:  # WITNESS (P1 provenance)
+    root = _synthetic_tree(tmp_path)
+    monkeypatch.setattr(
+        runner, "_git_status", lambda: " M research/ranking_e2e/runner.py\n", raising=False
+    )
+    with pytest.raises(RuntimeError, match="dirty"):
+        _run(tmp_path, root, _cohort_json(tmp_path), out="dirty", verify_protocol=True)
+    assert not (tmp_path / "dirty" / "session.json").exists()
+    monkeypatch.setattr(runner, "_git_status", lambda: "")
+    monkeypatch.setattr(runner, "_git_head", lambda: "b" * 40)
+    result = _run(tmp_path, root, _cohort_json(tmp_path), out="clean", verify_protocol=True)
+    implementation = result.report["implementation"]
+    assert implementation["git_head"] == "b" * 40 and implementation["tree_clean"] is True
+    assert implementation["harness_sha256"] == runner._tree_sha(
+        list((ROOT / "research" / "ranking_e2e").glob("*.py"))
+    )
+    assert result.report["label"] == "DEVELOPMENT_TABLE_NOT_A_TRIAL"

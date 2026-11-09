@@ -1,10 +1,13 @@
 """One-session replay: K2 comparator then the frozen arms, streamed.
 
 Fidelity is named, not hidden: one synthetic tick per non-zero-volume minute
-at the bar close, a zero-size anchor only when the first bar starts exactly at
-the segment boundary, zero-volume minutes skipped, one generation per minute,
-no freshness ages applied.  The K3 section is detection-only, so this runner
-emits a development table and never a TrialLog row.
+at the bar close, zero-volume minutes skipped, one generation per minute, no
+freshness ages applied.  No print is fabricated.  A segment's dollar-volume
+prefix is covered only by an explicit recording receipt (the fetch window and
+the recorded day's hash), which covers every recorded symbol from each segment
+start alike; without it every name stays ``segment_prefix_unknown`` and the
+ranking arms are NOT_ESTIMABLE.  The K3 section is detection-only, so this
+runner emits a development table and never a TrialLog row.
 """
 
 from __future__ import annotations
@@ -14,7 +17,7 @@ import hashlib
 import json
 import subprocess
 from collections.abc import Mapping, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, time
 from decimal import Decimal
 from pathlib import Path
@@ -44,6 +47,12 @@ PRE_MINUTES = 330
 RTH_MINUTES = 125
 SESSION_HOURS = Decimal(455) / 60
 ROOT = Path(__file__).resolve().parents[2]
+PREFIX_SCHEMA = "ranking-e2e.prefix-receipt/1"
+NOT_ESTIMABLE = (
+    "segment_prefix_unknown for every name: no prefix receipt binds the recording window, so "
+    "dvol_ratio and score stay unknown and no generation can rank (K2 section 2); ranking "
+    "reads are NOT_ESTIMABLE, never zero"
+)
 
 
 def _at(day: date, hour: int, minute: int) -> int:
@@ -90,6 +99,13 @@ def _git_head() -> str:
     ).stdout.strip()
 
 
+def _git_status() -> str:
+    """Uncommitted or untracked paths; empty only for a clean checkout."""
+    return subprocess.run(
+        ["git", "status", "--porcelain"], cwd=ROOT, check=True, capture_output=True, text=True
+    ).stdout
+
+
 def _day_receipt(root: Path, day: date) -> str:
     directory = Path(root) / "1min" / day.isoformat()
     digest = hashlib.sha256()
@@ -97,6 +113,59 @@ def _day_receipt(root: Path, day: date) -> str:
         digest.update(path.name.encode())
         digest.update(hashlib.sha256(path.read_bytes()).digest())
     return digest.hexdigest()
+
+
+@dataclass(frozen=True, slots=True)
+class PrefixReceipt:
+    """The recording's own coverage: every requested symbol fetched over one window."""
+
+    sha256: str
+    window_et: tuple[str, str]
+    window_start_ns: int
+    window_end_ns: int
+    data_sha256: str
+    source: str
+
+    def covers(self, segment: Segment) -> bool:
+        # The engine's segment end is one nanosecond past the last bar close.
+        return self.window_start_ns <= segment.start_ns and segment.end_ns - 1 <= self.window_end_ns
+
+
+def _hhmm(text: str) -> tuple[int, int]:
+    hour, minute = text.split(":")
+    return int(hour), int(minute)
+
+
+def load_prefix_receipt(path: Path, *, session: date, bars_root: Path) -> PrefixReceipt:
+    """Read and bind a prefix receipt to the exact recorded bar files of the session.
+
+    The receipt states the window the recording requested for every symbol and
+    the hash of the recorded day it describes; a receipt for other bytes, another
+    session or another feed is refused rather than trusted.
+    """
+    raw = Path(path).read_bytes()
+    data = json.loads(raw)
+    if data.get("schema") != PREFIX_SCHEMA:
+        raise ValueError(f"unsupported prefix receipt schema: {data.get('schema')!r}")
+    if data.get("session") != session.isoformat():
+        raise ValueError("prefix receipt is for another session")
+    if data.get("feed") != "sip" or data.get("timeframe") != "1Min":
+        raise ValueError("prefix receipt must describe the SIP 1-minute recording")
+    source = str(data.get("source") or "").strip()
+    if not source:
+        raise ValueError("prefix receipt needs its source")
+    window = (str(data["window_et"]["start"]), str(data["window_et"]["end"]))
+    actual = _day_receipt(bars_root, session)
+    if data.get("data_sha256") != actual:
+        raise ValueError("prefix receipt does not bind the recorded bars: data_sha256 differs")
+    return PrefixReceipt(
+        hashlib.sha256(raw).hexdigest(),
+        window,
+        _at(session, *_hhmm(window[0])),
+        _at(session, *_hhmm(window[1])),
+        actual,
+        source,
+    )
 
 
 def _prior_curves(
@@ -133,13 +202,56 @@ class SessionResult:
     report: dict[str, Any]
 
 
+@dataclass(slots=True)
+class SegmentReplay:
+    """One arm's replay of one segment, read from its published generations."""
+
+    covered: bool
+    first30: dict[str, int] = field(default_factory=dict)
+    first100: dict[str, int] = field(default_factory=dict)
+    rank_at_onset: dict[str, int | None] = field(default_factory=dict)
+    universe_at_onset: dict[str, int] = field(default_factory=dict)
+    onset_state: dict[str, dict[str, object]] = field(default_factory=dict)
+    member_first: dict[str, int] = field(default_factory=dict)
+    member_at_onset: dict[str, bool] = field(default_factory=dict)
+    ever_member: set[str] = field(default_factory=set)
+    retained_member_generations: int = 0
+    gap_flags: dict[str, dict[str, object]] = field(default_factory=dict)
+    generations: int = 0
+
+
+def _onset_record(state: MoverState | None) -> dict[str, object]:
+    """What the arm knew about a name at its onset: its latest row, ranked or not.
+
+    Baseline availability is the arm's own normal at that offset existing and
+    above zero, read from the row the engine computed, never from whether the
+    name was ranked; a zero normal is unavailable (K3.5 (b), K3.6).
+    """
+    row = None if state is None else state.latest
+    if row is None:
+        return {
+            "computable": False,
+            "baseline_available": False,
+            "baseline_reason": "no_row_at_onset",
+            "unknown_reasons": ["no_row_at_onset"],
+        }
+    normal = row.observations.get("baseline_dollar_volume")
+    available = normal is not None and normal > 0
+    reason = None
+    if not available:
+        reason = "baseline_unknown" if normal is None else "baseline_zero_dollar_volume"
+    return {
+        "computable": row.score is not None and row.trades_accel is not None,
+        "baseline_available": available,
+        "baseline_reason": reason,
+        "unknown_reasons": [str(item) for item in row.observations.get("unknown_reasons", ())],
+    }
+
+
 def _replay_arm(
     *,
     arm_name: str,
-    root: Path,
-    session: date,
     segment: Segment,
-    minutes: int,
     symbols: Sequence[str],
     today: Mapping[str, Sequence[bars.Bar]],
     refs: Mapping[str, ReferencePrices],
@@ -147,65 +259,40 @@ def _replay_arm(
     registry: Registry,
     onsets: Mapping[str, int],
     out_path: Path,
+    covered: bool,
     gap_arm: arms.GapArm | None = None,
     keep: arms.KeepAlive | None = None,
     publish_interval_ns: int = NS,
-) -> tuple[
-    dict[str, int],
-    dict[str, int],
-    dict[str, int | None],
-    dict[str, int],
-    dict[str, bool],
-    dict[str, bool],
-    dict[str, int],
-    dict[str, dict[str, object]],
-]:
+) -> SegmentReplay:
     """Replay one segment and publish full K2 generations.
 
     Every generation ranks the latest computable row of every symbol in the
     segment, not only the symbols whose bar closed in that minute (K2 section
-    5).  A symbol with no bar in the minute keeps its previous row until a new
-    tick replaces it.  The one synthetic tick allowed is the real opening price
-    of a bar that starts exactly at the segment boundary; when that bar is
-    absent the state starts at its first real bar and the prefix stays
-    uncovered.  No prior-close anchor is fabricated.
+    5); a symbol with no bar in the minute keeps its previous row.  No print is
+    synthesized: each state starts at its first real bar, and the segment's
+    dollar-volume prefix is covered only when ``covered`` says the recording
+    receipt spans the segment, for every symbol alike.  Ranks, membership and
+    onset reads come from the latest published generation at or before the tick.
     """
-    del root
     segment_bars = {
         symbol: tuple(
             bar for bar in today.get(symbol, ()) if segment.start_ns <= bar.ts_ns < segment.end_ns
         )
         for symbol in symbols
     }
-    states = {symbol: MoverState() for symbol in symbols if segment_bars[symbol] and symbol in refs}
+    states = {
+        symbol: MoverState(segment_covered=covered)
+        for symbol in symbols
+        if segment_bars[symbol] and symbol in refs
+    }
     pointers = {symbol: 0 for symbol in states}
-    first30: dict[str, int] = {}
-    first100: dict[str, int] = {}
-    rank_at_onset: dict[str, int | None] = {}
-    keepalive_first: dict[str, int] = {}
-    members_at_onset: dict[str, bool] = {}
-    baseline_available: dict[str, bool] = {}
-    universe_at_onset: dict[str, int] = {}
-    gap_flags: dict[str, dict[str, object]] = {}
+    out = SegmentReplay(covered=covered)
+    rank_map: dict[str, int | None] = {}
+    members: set[str] = set()
+    universe = 0
+    last_publish: int | None = None
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    last_publish = segment.start_ns - publish_interval_ns
     with out_path.open("w", encoding="utf-8") as stream:
-        # Bar fidelity: the opening bar's open is the first real price.  Use it
-        # as a zero-size anchor only when that bar actually starts at the
-        # boundary; a later first bar leaves the prefix unknown.
-        for symbol, blist in segment_bars.items():
-            if symbol not in states or not blist or blist[0].ts_ns != segment.start_ns:
-                continue
-            anchor = bars.anchor_tick(symbol, blist[0].open, segment.start_ns)
-            states[symbol], _ = advance_mover(
-                states[symbol],
-                cast(Any, anchor),
-                refs[symbol],
-                cast(Any, baseline_source),
-                segment=segment,
-                feed="sip",
-                registry=registry,
-            )
         for tick_ns in range(segment.start_ns + MINUTE_NS, segment.end_ns + 1, MINUTE_NS):
             for symbol, state in states.items():
                 pointer = pointers[symbol]
@@ -215,14 +302,14 @@ def _replay_arm(
                         bar = blist[pointer]
                         if gap_arm is not None:
                             flag = gap_arm.observe(bar, refs[symbol].prior_close)
-                            if flag is not None and symbol not in gap_flags:
-                                gap_flags[symbol] = {
+                            if flag is not None and symbol not in out.gap_flags:
+                                out.gap_flags[symbol] = {
                                     "flag_ts": flag.ts_ns,
                                     "price": flag.price,
                                     "gap": flag.gap,
                                     "reason": flag.reason,
                                 }
-                        state, row = advance_mover(
+                        state, _ = advance_mover(
                             state,
                             cast(Any, bars.tick_from_bar(bar)),
                             refs[symbol],
@@ -234,60 +321,76 @@ def _replay_arm(
                         states[symbol] = state
                     pointer += 1
                 pointers[symbol] = pointer
-            ranked: tuple[Any, ...] = ()
-            if tick_ns - last_publish >= publish_interval_ns:
-                generation = [state.latest for state in states.values() if state.latest is not None]
-                ranked = rank_movers(generation)
-                last_publish = tick_ns
-            rank_map = {row.symbol: row.rank for row in ranked}
-            qualified = {row.symbol for row in ranked if qualifies(row)}
-            members = keep.update(rank=rank_map, qualified=qualified) if keep is not None else set()
-            for row in ranked:
-                if row.rank is not None and row.rank <= 30 and row.symbol not in first30:
-                    first30[row.symbol] = tick_ns
-                if row.rank is not None and row.rank <= 100 and row.symbol not in first100:
-                    first100[row.symbol] = tick_ns
-            for symbol in members:
-                keepalive_first.setdefault(symbol, tick_ns)
-            if onsets:
-                by_symbol = {row.symbol: row for row in ranked}
-                for symbol, onset in onsets.items():
-                    if onset != tick_ns:
-                        continue
-                    rank_at_onset[symbol] = rank_map.get(symbol)
-                    members_at_onset[symbol] = symbol in members
-                    row = by_symbol.get(symbol)
-                    baseline_available[symbol] = (
-                        row is not None
-                        and row.observations.get("baseline_sessions") is not None
-                        and row.observations.get("baseline_dollar_volume") is not None
-                    )
-                    universe_at_onset[symbol] = len(ranked)
-            stream.write(
-                json.dumps(
-                    {
-                        "ts_ns": tick_ns,
-                        "segment": segment.name,
-                        "arm": arm_name,
-                        "universe": len(ranked),
-                        "top30": [row.symbol for row in ranked[:30]],
-                        "top100": [row.symbol for row in ranked[:100]],
-                        "members": sorted(members),
-                    },
-                    separators=(",", ":"),
+            if last_publish is None or tick_ns - last_publish >= publish_interval_ns:
+                ranked = rank_movers(
+                    state.latest for state in states.values() if state.latest is not None
                 )
-                + "\n"
-            )
-    return (
-        first30,
-        first100,
-        rank_at_onset,
-        keepalive_first,
-        members_at_onset,
-        baseline_available,
-        universe_at_onset,
-        gap_flags,
-    )
+                last_publish = tick_ns
+                out.generations += 1
+                rank_map = {row.symbol: row.rank for row in ranked}
+                universe = len(ranked)
+                retained: frozenset[str] = frozenset()
+                if keep is not None:
+                    members = keep.update(ranked, qualifies=qualifies)
+                    retained = keep.retained
+                    out.retained_member_generations += len(retained)
+                    out.ever_member |= members
+                for row in ranked:
+                    if row.rank is not None and row.rank <= 30:
+                        out.first30.setdefault(row.symbol, tick_ns)
+                    if row.rank is not None and row.rank <= 100:
+                        out.first100.setdefault(row.symbol, tick_ns)
+                for symbol in members:
+                    out.member_first.setdefault(symbol, tick_ns)
+                stream.write(
+                    json.dumps(
+                        {
+                            "ts_ns": tick_ns,
+                            "segment": segment.name,
+                            "arm": arm_name,
+                            "universe": universe,
+                            "top30": [row.symbol for row in ranked[:30]],
+                            "top100": [row.symbol for row in ranked[:100]],
+                            "members": sorted(members),
+                            "retained": sorted(retained),
+                        },
+                        separators=(",", ":"),
+                    )
+                    + "\n"
+                )
+            for symbol, onset in onsets.items():
+                if onset != tick_ns:
+                    continue
+                out.rank_at_onset[symbol] = rank_map.get(symbol)
+                out.universe_at_onset[symbol] = universe
+                out.member_at_onset[symbol] = symbol in members
+                out.onset_state[symbol] = _onset_record(states.get(symbol))
+    return out
+
+
+def _coverage_hours(
+    today: Mapping[str, Sequence[bars.Bar]], symbols: Sequence[str], segments: Sequence[Segment]
+) -> dict[str, Decimal]:
+    """Each symbol's row hours: from its first replayed bar close to each segment end.
+
+    A row exists from the first bar the replay processes in a segment (closed
+    by the segment's last tick) until the segment ends; a symbol with no such
+    bar has no row there and contributes no hours (K2 section 6 counts no-row
+    names apart).
+    """
+    hours: dict[str, Decimal] = {}
+    for symbol in symbols:
+        total = ZERO
+        for segment in segments:
+            closes = [
+                bar.close_ns
+                for bar in today.get(symbol, ())
+                if segment.start_ns <= bar.ts_ns and bar.close_ns < segment.end_ns
+            ]
+            if closes:
+                total += Decimal(segment.end_ns - 1 - min(closes)) / NS / 3600
+        hours[symbol] = total
+    return hours
 
 
 def _strata(onsets: Mapping[str, int], session: date) -> dict[str, list[str]]:
@@ -312,6 +415,8 @@ def _stratum_metrics(
     mean_rank: Mapping[str, int | None],
     gap_flags: Mapping[str, Mapping[str, object]],
     session: date,
+    *,
+    ranking_estimable: bool,
 ) -> dict[str, dict[str, object]]:
     out: dict[str, dict[str, object]] = {}
     for name, members in _strata(onsets, session).items():
@@ -319,22 +424,32 @@ def _stratum_metrics(
 
         def recall(
             rank_map: Mapping[str, int | None],
-            k: int,
             members: Sequence[str] = members,
             total: int = total,
-        ) -> str:
-            hits = sum(
-                1
-                for symbol in members
-                if (place := rank_map.get(symbol)) is not None and place <= k
-            )
-            return str(Decimal(hits) / total) if total else "0"
+        ) -> dict[int, str | None] | str:
+            if not ranking_estimable:
+                return "NOT_ESTIMABLE"
+            out_k: dict[int, str | None] = {}
+            for k in (30, 100):
+                hits = sum(
+                    1
+                    for symbol in members
+                    if (place := rank_map.get(symbol)) is not None and place <= k
+                )
+                out_k[k] = str(Decimal(hits) / total) if total else None
+            return out_k
 
+        flagged = [symbol for symbol in members if symbol in gap_flags]
         out[name] = {
             "truth": total,
-            "k2_recall": {k: recall(k2_rank, k) for k in (30, 100)},
-            "mean_recall": {k: recall(mean_rank, k) for k in (30, 100)},
-            "gap_detected": sum(1 for symbol in members if symbol in gap_flags),
+            "k2_recall": recall(k2_rank),
+            "mean_recall": recall(mean_rank),
+            "gap_sub_arm_at_onset": sum(
+                1
+                for symbol in flagged
+                if int(cast(int, gap_flags[symbol]["flag_ts"])) <= onsets[symbol]
+            ),
+            "gap_sub_arm_ever": len(flagged),
         }
     return out
 
@@ -348,6 +463,7 @@ def run_session(
     protocol_doc: Path | None = None,
     verify_protocol: bool = True,
     protocol_required: bool = True,
+    prefix_receipt: Path | None = None,
 ) -> SessionResult:
     sealed = cohort.load_cohort(Path(cohort_path))
     registry = load_registry(Path(reg_path))
@@ -357,6 +473,20 @@ def run_session(
         receipt = protocol.verify_protocol(doc)
         if protocol_required:
             receipt.require_frozen()
+    # The report binds the head it ran; a verified run from a dirty tree would
+    # bind bytes no commit holds (round-2 provenance finding), so it is refused.
+    dirty = _git_status()
+    if receipt is not None and dirty.strip():
+        raise RuntimeError(
+            "refusing a verified run from a dirty tree: commit first so the report binds "
+            "the head it ran (git status --porcelain is not empty)"
+        )
+    git_head = _git_head()
+    prefix = (
+        load_prefix_receipt(Path(prefix_receipt), session=sealed.session, bars_root=Path(bars_root))
+        if prefix_receipt is not None
+        else None
+    )
     symbols = sealed.symbols
     prior = sealed.prior_sessions
     today = bars.load_raw_day(Path(bars_root), sealed.session, symbols=set(symbols))
@@ -435,6 +565,13 @@ def run_session(
         _at(sealed.session, 11, 35) + 1,
         "XNYS regular session truncated at the cohort's 11:35 ET data end",
     )
+    if prefix is not None:
+        for segment in (pre, rth):
+            if not prefix.covers(segment):
+                raise ValueError(
+                    f"prefix receipt window {prefix.window_et} does not cover {segment.name}"
+                )
+    covered = prefix is not None
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     gap_arm = arms.GapArm(
@@ -443,27 +580,15 @@ def run_session(
     )
     keep = arms.KeepAlive(top_n=int(registry.top_n))
     publish_interval_ns = int(registry.publish_min_interval_s) * NS
-    k2_first30_seg: dict[str, dict[str, int]] = {}
-    k2_first100_seg: dict[str, dict[str, int]] = {}
-    k2_rank_seg: dict[str, dict[str, int | None]] = {}
-    k2_universe_seg: dict[str, dict[str, int]] = {}
-    k2_baseline_seg: dict[str, dict[str, bool]] = {}
-    ka_first_seg: dict[str, dict[str, int]] = {}
-    ka_members_seg: dict[str, dict[str, bool]] = {}
-    gap_flags: dict[str, dict[str, object]] = {}
-    mean_first30_seg: dict[str, dict[str, int]] = {}
-    mean_first100_seg: dict[str, dict[str, int]] = {}
-    mean_rank_seg: dict[str, dict[str, int | None]] = {}
-    for segment, minutes, median_base, mean_base, tag in (
-        (pre, PRE_MINUTES, median_pre, mean_pre, "pre"),
-        (rth, RTH_MINUTES, median_rth, mean_rth, "rth"),
+    k2: dict[str, SegmentReplay] = {}
+    mean: dict[str, SegmentReplay] = {}
+    for segment, median_base, mean_base, tag in (
+        (pre, median_pre, mean_pre, "pre"),
+        (rth, median_rth, mean_rth, "rth"),
     ):
-        f30, f100, rank, ka, m_at_onset, base_avail, universe, gaps = _replay_arm(
+        k2[segment.name] = _replay_arm(
             arm_name="k2",
-            root=bars_root,
-            session=sealed.session,
             segment=segment,
-            minutes=minutes,
             symbols=list(refs),
             today=today,
             refs=refs,
@@ -471,24 +596,14 @@ def run_session(
             registry=registry,
             onsets=onsets,
             out_path=out_dir / f"generations-k2-{tag}.jsonl",
+            covered=covered,
             gap_arm=gap_arm,
             keep=keep,
             publish_interval_ns=publish_interval_ns,
         )
-        k2_first30_seg[segment.name] = f30
-        k2_first100_seg[segment.name] = f100
-        k2_rank_seg[segment.name] = rank
-        k2_universe_seg[segment.name] = universe
-        k2_baseline_seg[segment.name] = base_avail
-        ka_first_seg[segment.name] = ka
-        ka_members_seg[segment.name] = m_at_onset
-        gap_flags.update(gaps)
-        f30, f100, rank, _, _, _, _, _ = _replay_arm(
+        mean[segment.name] = _replay_arm(
             arm_name="mean",
-            root=bars_root,
-            session=sealed.session,
             segment=segment,
-            minutes=minutes,
             symbols=list(refs),
             today=today,
             refs=refs,
@@ -496,13 +611,13 @@ def run_session(
             registry=registry,
             onsets=onsets,
             out_path=out_dir / f"generations-mean-{tag}.jsonl",
-            gap_arm=None,
-            keep=None,
+            covered=covered,
             publish_interval_ns=publish_interval_ns,
         )
-        mean_first30_seg[segment.name] = f30
-        mean_first100_seg[segment.name] = f100
-        mean_rank_seg[segment.name] = rank
+    gap_flags: dict[str, dict[str, object]] = {}
+    for replay in k2.values():
+        for symbol, flag in replay.gap_flags.items():
+            gap_flags.setdefault(symbol, flag)
 
     # One K2 generation stream for readers that want the frozen comparator as a
     # single time-ordered file; per-arm and per-segment streams stay beside it.
@@ -513,41 +628,26 @@ def run_session(
             if part.exists():
                 dst.write(part.read_bytes())
 
-    truth_onsets = {
-        symbol: ts for symbol, ts in onsets.items() if symbol in {c.symbol for c in sealed.truth}
-    }
+    truth_symbols = {c.symbol for c in sealed.truth}
+    truth_onsets = {symbol: ts for symbol, ts in onsets.items() if symbol in truth_symbols}
 
     def segment_for(ts: int) -> str:
         return "PRE" if ts < rth.start_ns else "RTH"
 
-    k2_rank = {
-        symbol: k2_rank_seg[segment_for(ts)].get(symbol) for symbol, ts in truth_onsets.items()
-    }
-    k2_first100 = {
-        symbol: k2_first100_seg[segment_for(ts)].get(symbol) for symbol, ts in truth_onsets.items()
-    }
-    k2_universe = {
-        symbol: k2_universe_seg[segment_for(ts)].get(symbol, 0)
-        for symbol, ts in truth_onsets.items()
-    }
-    k2_baseline_available = {
-        symbol: k2_baseline_seg[segment_for(ts)].get(symbol, False)
-        for symbol, ts in truth_onsets.items()
-    }
-    mean_rank = {
-        symbol: mean_rank_seg[segment_for(ts)].get(symbol) for symbol, ts in truth_onsets.items()
-    }
-    mean_first100 = {
-        symbol: mean_first100_seg[segment_for(ts)].get(symbol)
-        for symbol, ts in truth_onsets.items()
-    }
-    ka_first = {
-        symbol: ka_first_seg[segment_for(ts)].get(symbol) for symbol, ts in truth_onsets.items()
-    }
-    ka_members = {
-        symbol: ka_members_seg[segment_for(ts)].get(symbol, False)
-        for symbol, ts in truth_onsets.items()
-    }
+    def own(replays: Mapping[str, SegmentReplay], symbol: str) -> SegmentReplay:
+        return replays[segment_for(truth_onsets[symbol])]
+
+    no_row = _onset_record(None)
+    k2_rank = {s: own(k2, s).rank_at_onset.get(s) for s in truth_onsets}
+    k2_first100 = {s: own(k2, s).first100.get(s) for s in truth_onsets}
+    k2_universe = {s: own(k2, s).universe_at_onset.get(s) for s in truth_onsets}
+    k2_state = {s: own(k2, s).onset_state.get(s, no_row) for s in truth_onsets}
+    mean_rank = {s: own(mean, s).rank_at_onset.get(s) for s in truth_onsets}
+    mean_first100 = {s: own(mean, s).first100.get(s) for s in truth_onsets}
+    mean_universe = {s: own(mean, s).universe_at_onset.get(s) for s in truth_onsets}
+    mean_state = {s: own(mean, s).onset_state.get(s, no_row) for s in truth_onsets}
+    ka_first = {s: own(k2, s).member_first.get(s) for s in truth_onsets}
+    ka_members = {s: own(k2, s).member_at_onset.get(s, False) for s in truth_onsets}
     # A control is never-crossed when no bar-close on the same path reaches
     # +5% over its prior close.  The cohort's close move alone cannot answer
     # this, so replay the sealed intraday bars rather than imputing.
@@ -561,79 +661,116 @@ def run_session(
         peak = max(bar.close / control.prior_close - 1 for bar in control_bars)
         if peak < HALF_DECADE:
             never_crossed.append(control.symbol)
+    controls = [c.symbol for c in sealed.controls]
+    coverage = _coverage_hours(today, controls, (pre, rth))
+
+    def flag_table(flagged: set[str], endpoint: str) -> dict[str, object]:
+        return metrics.false_flag_table(
+            flagged,
+            controls=controls,
+            never_crossed=never_crossed,
+            session_hours=SESSION_HOURS,
+            coverage_hours=coverage,
+            endpoint=endpoint,
+        )
+
+    top100_endpoint = (
+        "control ever in the top 100 of a published PRE or RTH generation, 04:00-11:35 ET "
+        "(development endpoint; K2 section 6 matched-cell occupancy is not computed here)"
+    )
+    k2_flags = flag_table({s for r in k2.values() for s in r.first100}, top100_endpoint)
+    mean_flags = flag_table({s for r in mean.values() for s in r.first100}, top100_endpoint)
+    keep_flags = flag_table(
+        {s for r in k2.values() for s in r.ever_member},
+        "control ever a keep-alive member of a published PRE or RTH generation, 04:00-11:35 ET",
+    )
     k2_rm = metrics.ranking_metrics(
         truth_onsets,
         k2_rank,
         k2_first100,
         arm="k2",
-        universe_at_onset=k2_universe,
+        universe_at_onset={s: u for s, u in k2_universe.items() if u is not None},
     )
     mean_rm = metrics.ranking_metrics(
         truth_onsets,
         mean_rank,
         mean_first100,
         arm="mean",
-        universe_at_onset=k2_universe,
+        universe_at_onset={s: u for s, u in mean_universe.items() if u is not None},
     )
     gap_dm = metrics.detection_metrics(
         truth_onsets,
         {symbol: int(cast(int, row["flag_ts"])) for symbol, row in gap_flags.items()},
-        arm="gap",
-        controls=[c.symbol for c in sealed.controls],
+        arm=arms.GAP_SUB_ARM,
+        controls=controls,
         session_hours=SESSION_HOURS,
         never_crossed=never_crossed,
+        coverage_hours=coverage,
+        endpoint="control with a first-open gap flag in the 04:00-04:05 ET window",
     )
-    entered_before = [
-        symbol
-        for symbol in truth_onsets
-        if (entry := ka_first.get(symbol)) is not None and entry <= truth_onsets[symbol]
-    ]
-    persisted = [symbol for symbol in entered_before if ka_members.get(symbol, False)]
-    persistence_rate = Decimal(len(persisted)) / len(entered_before) if entered_before else ZERO
-    arms_report: dict[str, dict[str, object]] = {
-        "k2": {
+    k2_available = metrics.baseline_availability(truth_onsets, k2_state)
+    mean_available = metrics.baseline_availability(truth_onsets, mean_state)
+
+    def ranking_arm(
+        rm: metrics.RankingMetrics,
+        flags: dict[str, object],
+        available: dict[str, object],
+        **extra: object,
+    ) -> dict[str, object]:
+        if not covered:
+            return {
+                "status": "NOT_ESTIMABLE",
+                "reason": NOT_ESTIMABLE,
+                "baseline_available_at_onset": available,
+            }
+        all_controls = cast(dict[str, object], flags["all_controls"])
+        return {
             "status": "MODELED",
             "fidelity": "BAR_CLOSE_U10_SENSITIVITY",
-            "metrics": asdict(k2_rm),
-            "false_flags_per_symbol_hour": metrics.ranking_false_flags(
-                k2_first100,
-                controls=[c.symbol for c in sealed.controls],
-                session_hours=SESSION_HOURS,
-            ),
-        },
-        "mean": {
+            "metrics": asdict(rm),
+            "baseline_available_at_onset": available,
+            "false_flags": flags,
+            "false_flags_per_symbol_hour": all_controls["per_symbol_hour_session"],
+            **extra,
+        }
+
+    keep_report: dict[str, object] = (
+        {
             "status": "MODELED",
-            "fidelity": "BAR_CLOSE_U10_SENSITIVITY",
-            "metrics": asdict(mean_rm),
-            "paired_k2": metrics.paired_recall(truth_onsets, k2_rank, mean_rank),
-            "false_flags_per_symbol_hour": metrics.ranking_false_flags(
-                mean_first100,
-                controls=[c.symbol for c in sealed.controls],
-                session_hours=SESSION_HOURS,
-            ),
-        },
-        "keepalive": {
-            "status": "MODELED",
-            "persistence_at_onset": len(persisted),
-            "persistence_denominator": len(entered_before),
-            "persistence_rate": str(persistence_rate),
-            "unconditional_members_at_onset": sum(1 for v in ka_members.values() if v),
+            **metrics.persistence(truth_onsets, ka_first, ka_members),
             "first_entry": ka_first,
+            "retained_member_generations": sum(r.retained_member_generations for r in k2.values()),
+            "false_flags": keep_flags,
             "note": (
-                "qualified fresh admits only; quota top_n enforced; retained only through "
-                "an incomplete generation while qualified; 20:00 reset not reached at 11:35"
+                "qualified top-N fresh admits; an uncomputable member is retained while its "
+                "last computable row qualified; fresh first, then retained in K2 order up to "
+                "top_n; first entry strictly before tau; 20:00 reset not reached at 11:35"
             ),
-        },
-        "gap": {
-            "status": "MODELED",
+        }
+        if covered
+        else {"status": "NOT_ESTIMABLE", "reason": NOT_ESTIMABLE}
+    )
+    arms_report: dict[str, dict[str, object]] = {
+        "k2": ranking_arm(k2_rm, k2_flags, k2_available),
+        "mean": ranking_arm(
+            mean_rm,
+            mean_flags,
+            mean_available,
+            paired_k2=metrics.paired_recall(truth_onsets, k2_rank, mean_rank),
+        ),
+        "keepalive": keep_report,
+        "gap": arms.gap_rule_status(),
+        arms.GAP_SUB_ARM: {
+            "status": "DEVELOPMENT_SUB_ARM",
+            "frozen_arm": "a: NOT_RUN as recorded (arms.gap)",
+            "definition": (
+                "first open in the fixed 04:00-04:05 ET window at least 1% over the official "
+                "prior close; no ADV20, candidate-ADV, unknown-ADV or prior-post exclusion"
+            ),
             "fidelity": "BAR_CLOSE_U10_SENSITIVITY",
-            "mode": "fixed_04:00-04:05_first_open",
-            "trigger_mode": {
-                "status": "NOT_RUN",
-                "reason": "ADR-0024 records no numeric gap/sum(close x volume) thresholds",
-            },
+            "flag_clock": "bar start of the first in-window bar; onset tau is a bar close",
             "metrics": asdict(gap_dm),
-            **{symbol: row for symbol, row in gap_flags.items()},
+            "flags": gap_flags,
         },
         "page": {
             "status": "NOT_RUN",
@@ -662,22 +799,31 @@ def run_session(
     }
     rows_out = {
         symbol: {
-            "onset_ts": truth_onsets.get(symbol),
+            "onset_ts": tau,
+            "onset_segment": segment_for(tau),
+            "prefix_covered": covered,
             "k2_rank_at_onset": k2_rank.get(symbol),
             "k2_first_top100": k2_first100.get(symbol),
             "k2_universe_at_onset": k2_universe.get(symbol),
-            "k2_baseline_available": k2_baseline_available.get(symbol),
+            "k2_computable_at_onset": k2_state[symbol]["computable"],
+            "k2_baseline_available": k2_state[symbol]["baseline_available"],
+            "k2_unknown_reasons": k2_state[symbol]["unknown_reasons"],
             "mean_rank_at_onset": mean_rank.get(symbol),
             "mean_first_top100": mean_first100.get(symbol),
+            "mean_universe_at_onset": mean_universe.get(symbol),
+            "mean_computable_at_onset": mean_state[symbol]["computable"],
+            "mean_baseline_available": mean_state[symbol]["baseline_available"],
+            "mean_unknown_reasons": mean_state[symbol]["unknown_reasons"],
             "keepalive_first": ka_first.get(symbol),
             "keepalive_member_at_onset": ka_members.get(symbol),
-            "gap_flag_ts": gap_flags.get(symbol, {}).get("flag_ts"),
+            "gap_sub_arm_flag_ts": gap_flags.get(symbol, {}).get("flag_ts"),
         }
-        for symbol in truth_onsets
+        for symbol, tau in truth_onsets.items()
     }
     session_sha = cohort.session_list_hash([sealed.session, *prior])
-    implementation = {
-        "git_head": _git_head(),
+    implementation: dict[str, object] = {
+        "git_head": git_head,
+        "tree_clean": not dirty.strip(),
         "harness_sha256": _tree_sha(list((ROOT / "research" / "ranking_e2e").glob("*.py"))),
         "ranking_code_sha256": _tree_sha(
             [
@@ -700,7 +846,7 @@ def run_session(
             "12 display rows are reviewed; trading/entry freshness ages remain UNAVAILABLE"
         ),
         data_receipts=receipts,
-        implementation=implementation,
+        implementation={key: str(value) for key, value in implementation.items()},
         custodian_ruling=None,
         other_family_review=None,
     )
@@ -723,19 +869,36 @@ def run_session(
             "k3_sha256": receipt.k3_sha256 if receipt else None,
             "k2_sha256": receipt.k2_sha256 if receipt else None,
         },
+        "implementation": implementation,
         "registry": {
             "sha256": _sha256(Path(reg_path)),
             "params_hash": registry.params_hash,
             "rows": [row.name for row in registry.rows],
         },
         "bars": {"root_name": Path(bars_root).name, "receipts": receipts},
+        "prefix": (
+            {
+                "status": "RECEIPTED",
+                "sha256": prefix.sha256,
+                "window_et": list(prefix.window_et),
+                "data_sha256": prefix.data_sha256,
+                "source": prefix.source,
+                "rule": (
+                    "the recording requested every symbol over this window, so every symbol "
+                    "with recorded bars is covered from each segment start alike; no "
+                    "synthetic print"
+                ),
+            }
+            if prefix is not None
+            else {"status": "ABSENT", "reason": NOT_ESTIMABLE}
+        ),
         "fidelity": {
             "primary_estimand": (
                 "NOT_RUN (K3.4 trade-tape primary; this table is the bar-close U10 sensitivity)"
             ),
             "table_label": "BAR_CLOSE_U10_SENSITIVITY_NOT_PRIMARY",
             "data": "Alpaca SIP raw 1-minute bars, 04:00-11:35 ET",
-            "tick": "one synthetic tick per non-zero-volume minute at bar close",
+            "tick": "one synthetic tick per non-zero-volume minute at bar close; no anchor tick",
             "trades_accel": "bar-count proxy; the bar's n field is not a trade-tick stream",
             "freshness_ages": "not applied for a historical replay",
             "rth_end": "11:35 ET data end, not the 16:00 regular close",
@@ -752,25 +915,36 @@ def run_session(
             "onsets": len(truth_onsets),
             "unobserved_truth": len(sealed.truth) - len(truth_onsets),
             "missing_today_bars": len(missing_today),
-            "rankable_at_onset_k2": k2_rm.rankable,
-            "rankable_at_onset_mean": mean_rm.rankable,
+            "rankable_at_onset_k2": k2_rm.rankable if covered else None,
+            "rankable_at_onset_mean": mean_rm.rankable if covered else None,
             "never_crossed_controls": len(never_crossed),
-            "baseline_available_at_onset": sum(1 for v in k2_baseline_available.values() if v),
+            "baseline_available_at_onset": k2_available["available"],
+            "baseline_available_at_onset_mean": mean_available["available"],
+        },
+        "controls": {
+            "never_crossed": never_crossed,
+            "coverage_hours": {symbol: str(hours) for symbol, hours in coverage.items()},
+            "denominator_status": metrics.DENOMINATOR_STATUS,
         },
         "strata": {
             name: len(members) for name, members in _strata(truth_onsets, sealed.session).items()
         },
         "strata_metrics": _stratum_metrics(
-            truth_onsets, k2_rank, mean_rank, gap_flags, sealed.session
+            truth_onsets,
+            k2_rank,
+            mean_rank,
+            gap_flags,
+            sealed.session,
+            ranking_estimable=covered,
         ),
         "arms": arms_report,
         "rows": rows_out,
         "entry_protection": {
-            "status": "UNKNOWN",
+            "status": "NOT_RUN",
             "reason": (
-                "the N1 first-leg entry and B protection replay needs PR-3's harness (#83), "
-                "which is not on gate; K3.7 forbids a detection-only entry/return claim, so "
-                "this leg is UNKNOWN rather than a parallel harness"
+                "#83 on gate carries the N1 first-leg picks and B's protection replay; wiring "
+                "these arms into it is a separate successor task under its own frozen, costed "
+                "protocol citing the K3 hash (K3.7), so this detection harness builds no entry leg"
             ),
         },
         "trial": {
@@ -818,6 +992,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="frozen ranking protocol doc; defaults to the checkout's ranking doc",
     )
     parser.add_argument(
+        "--prefix-receipt",
+        type=Path,
+        default=None,
+        help=(
+            "the recording's prefix receipt (window and day hash); without it every segment "
+            "prefix stays unknown and the ranking arms are NOT_ESTIMABLE"
+        ),
+    )
+    parser.add_argument(
         "--no-verify-protocol",
         action="store_true",
         help="synthetic test only: label the report NOT_VERIFIED instead of hashing the protocol",
@@ -831,18 +1014,23 @@ def main(argv: Sequence[str] | None = None) -> int:
         protocol_doc=args.protocol_doc,
         verify_protocol=not args.no_verify_protocol,
         protocol_required=not args.no_verify_protocol,
+        prefix_receipt=args.prefix_receipt,
     )
-    k2 = result.arms["k2"]
+    found = result.arms
     summary = {
         "session": result.session.isoformat(),
         "label": result.report["label"],
+        "prefix": result.report["prefix"]["status"],
         "counts": result.report["counts"],
-        "k2_recall": k2["metrics"]["recall"],
-        "k2_false_flags_per_symbol_hour": k2["false_flags_per_symbol_hour"],
-        "mean_recall": result.arms["mean"]["metrics"]["recall"],
-        "gap_detected": result.arms["gap"]["metrics"]["detected"],
-        "page": result.arms["page"]["status"],
-        "ofi": result.arms["ofi"]["status"],
+        "k2": found["k2"]["status"],
+        "k2_recall": found["k2"].get("metrics", {}).get("recall"),
+        "k2_false_flags_per_symbol_hour": found["k2"].get("false_flags_per_symbol_hour"),
+        "mean_recall": found["mean"].get("metrics", {}).get("recall"),
+        "keepalive_persistence": found["keepalive"].get("persistence_rate"),
+        "arm_a": found["gap"]["status"],
+        "gap_sub_arm_recall_at_onset": found[arms.GAP_SUB_ARM]["metrics"]["recall_at_onset"],
+        "page": found["page"]["status"],
+        "ofi": found["ofi"]["status"],
         "trial_status": result.trial_status,
         "out": str(args.out),
     }

@@ -3,8 +3,9 @@
 The frozen K3 section reads SIP trades at 04:00-11:35 ET; the only bar cache
 that exists for the sealed 2026-11-09 cohort is the e2e-omh raw JSON.  This
 module keeps that fidelity explicit: one synthetic tick per non-zero-volume
-minute at the bar close, zero-size anchor at the segment start, zero-volume
-minutes skipped, and a named bar-close flag for every tick.
+minute at the bar close, zero-volume minutes skipped, and a named bar-close
+flag for every tick.  There is no anchor or segment-start tick: coverage of a
+segment prefix comes from the recording's receipt, never from a print.
 """
 
 from __future__ import annotations
@@ -85,10 +86,6 @@ def tick_from_bar(bar: Bar) -> Tick:
         at,
         at,
     )
-
-
-def anchor_tick(symbol: str, price: Decimal, at_ns: int) -> Tick:
-    return Tick(_InstrumentId(symbol), _DecimalView(price), _DecimalView(Decimal(0)), at_ns, at_ns)
 
 
 def parse_utc_ns(text: str) -> int:
