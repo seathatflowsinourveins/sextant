@@ -1,0 +1,53 @@
+# Local OTLP LGTM store. Source: grafana/docker-otel-lgtm@v0.38.0
+# 9c57b1400ccdb8920e1a2b6083134cc5ef244a8f (2026-10-23, Apache-2.0): README.md
+# (image, /data mount, *_EXTRA_ARGS retention rows, GF_* configuration) and
+# docker/Dockerfile (bundles Grafana v13.2.4, Prometheus v3.15.0, Tempo
+# v3.1.0, Loki v3.7.8, Pyroscope v2.4.1, OTel Collector Contrib v0.163.1;
+# EXPOSE 3000/3200/4040/4317/4318/9090). Only 3000/4317/4318 are published,
+# on 127.0.0.1 only. Never run upstream run-lgtm.sh (binds wider, offers OBI
+# --privileged/--pid=host). Rootless Docker only (AGENTS.md); start via
+# ./start.sh, which supplies the throwaway admin password. Tunables are
+# registry rows in parameters.json (UNCALIBRATED, ADR-0018).
+# Image digest: the registry index digest for grafana/otel-lgtm:0.38.0,
+# resolved read-only 2026-11-08 (registry manifest + Docker Hub tags API
+# agree); no pull was needed to pin it.
+name: sextant-monitor
+services:
+  lgtm:
+    image: grafana/otel-lgtm:0.38.0@sha256:75cdf892daffadf3763ef61c16a6d7f8586216fce0b40bba7874a0b053121084
+    container_name: sextant-lgtm
+    mem_limit: ${LGTM_CONTAINER_MEMORY:-2G}
+    ports: ["127.0.0.1:3000:3000", "127.0.0.1:4317:4317", "127.0.0.1:4318:4318"]
+    volumes:
+      - sextant-lgtm-data:/data
+      - ./otelcol-config.yaml:/otel-lgtm/otelcol-config.yaml:ro
+      - ./run-grafana.sh:/otel-lgtm/run-grafana.sh:ro
+    environment:
+      # grafana/grafana@v13.2.4 af4a33e3786594ad72f72d97e6744010330c2977:
+      # docs/sources/setup-grafana/configure-grafana/_index.md (the
+      # GF_<SECTION>_<KEY> override pattern; [analytics], [plugins] keys)
+      # and conf/defaults.ini ([auth.anonymous], [auth], [auth.basic],
+      # [security], [plugins] keys) with pkg/setting/setting_plugins.go
+      # (default preinstall set). Passwordless per the lead amendment 2026-11-08:
+      # anonymous read-only access, no login form, no basic-auth API path.
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: "Viewer"
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_AUTH_BASIC_ENABLED: "false"
+      # [plugins] preinstall_disabled ("disables all preinstalled
+      # plugins"): without it Grafana merges its built-in default
+      # preinstall set and downloads unpinned catalog code at start.
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+      # [security] admin_password, set once on first run. Supplied only by
+      # start.sh as a throwaway random value; never stored or printed.
+      GF_SECURITY_ADMIN_PASSWORD: ${GF_SECURITY_ADMIN_PASSWORD:?start via deploy/monitor/lgtm/start.sh}
+      # Retention rows: upstream README *_EXTRA_ARGS examples at the pin;
+      # values are parameters.json rows (UNCALIBRATED).
+      PROMETHEUS_EXTRA_ARGS: "--storage.tsdb.retention.time=90d"
+      LOKI_EXTRA_ARGS: "-store.retention=90d -compactor.retention-enabled=true -compactor.delete-request-store=filesystem"
+    restart: unless-stopped
+volumes:
+  sextant-lgtm-data:
