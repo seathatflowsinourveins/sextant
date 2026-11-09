@@ -117,9 +117,7 @@ def ten_exits(cov: IntervalCoverage) -> dict[str, Any]:
         elif cov.actions_start is not None and on < cov.actions_start:
             # The fallback exists only for a membership clipped at the coverage floor. An
             # interval that starts after the probe on explicit evidence arrived later.
-            ids = {
-                m.security_id for m in held if m.start_evidence == "pre_coverage_listing"
-            }
+            ids = {m.security_id for m in held if m.start_evidence == "pre_coverage_listing"}
         else:
             ids = set()
         if len(ids) != 1:
