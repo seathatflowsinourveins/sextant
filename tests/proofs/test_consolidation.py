@@ -71,7 +71,8 @@ def test_the_report_runs_only_from_the_default_branch_on_a_hosted_runner() -> No
     job = workflow["jobs"]["report"]
     assert job["permissions"] == {"contents": "read", "issues": "write"}
     assert job["if"] == (
-        "${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}"
+        "${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && "
+        "(github.event_name == 'schedule' || github.actor == github.repository_owner) }}"
     )
     assert job["runs-on"] == HOSTED
     assert "secrets." not in WORKFLOW.read_text()
@@ -80,7 +81,10 @@ def test_the_report_runs_only_from_the_default_branch_on_a_hosted_runner() -> No
             assert re.fullmatch(r"[\w.-]+/[\w.-]+@[0-9a-f]{40}", step["uses"]), step["uses"]
     checkout = next(step for step in job["steps"] if step["uses"].startswith("actions/checkout@"))
     assert checkout["with"]["persist-credentials"] is False
-    assert job["env"]["REPORT_ISSUE"] == "215"
+    text = WORKFLOW.read_text()
+    assert "refs/heads/main" not in text
+    assert "Find or create the consolidation issue" in text
+    assert "Consolidation report" in text
 
 
 def test_the_consolidation_group_is_locked_with_exact_pins() -> None:
