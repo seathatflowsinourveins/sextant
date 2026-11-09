@@ -169,6 +169,29 @@ def test_landing_standard_and_fail_on_error_are_wired_into_the_verdict() -> None
     assert ".github/workflows/shared/review-rules.md" in adapter
 
 
+def test_paper_carveout_keeps_only_the_hard_lines_blocking() -> None:
+    rules = (WORKFLOWS / "shared/review-rules.md").read_text()
+    owner = (
+        "it is only paper and i can reset them anytime,never gate the e2e and sota workflow , "
+        "we need full automation on paper lane rather than so afraid of touch the order, "
+        "they meant to be automated with sota stratiges, exit, reentry etc"
+    )
+    assert owner in rules
+    carveout = rules.split("paper carve-out", 1)[1]
+    for required in (
+        "lanes/paper/",
+        "src/sextant/paper/",
+        "secret",
+        "live",
+        "one writer per account",
+        "Decimal",
+        "never cancelled, sold back or resized",
+        "ONE follow-up issue",
+    ):
+        assert required in carveout
+    assert "source" in carveout and "ci" in carveout
+
+
 def test_key_policy_and_failure_paths_execute_against_the_actual_adapter() -> None:
     done = subprocess.run(
         ["node", "--test", "tests/proofs/public-gate.test.cjs"],
