@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
+from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 import pytest
+from alpaca.trading.models import Order, Position, TradeAccount
 
 from sextant.data.catalog import equity
 from sextant.execution.custody import AccountScope, WriterLease
@@ -24,6 +28,8 @@ from sextant.paper.sessions import Session
 NS = 1_000_000_000
 START = 1_700_000_000 * NS
 EQUITY = "1000000 USD"
+ET = ZoneInfo("America/New_York")
+NOW_NS = int(datetime(2026, 11, 9, 10, 0, tzinfo=ET).timestamp()) * NS
 
 
 def profiles():
@@ -100,8 +106,9 @@ def test_c_sizes_on_current_equity_under_the_owners_compounding_ruling():
     assert base.accepted, base.refusal
     assert higher.accepted, higher.refusal
     assert base.quantity is not None and higher.quantity is not None
-    assert base.quantity.as_decimal() == 8000
-    assert higher.quantity.as_decimal() == 8320
+    assert base.quantity.as_decimal() == 4000
+    assert higher.quantity.as_decimal() == 4160
+    assert base.planned_risk is not None and base.planned_risk.as_decimal() == Decimal("10000")
     assert c.risk_scope == "REVIEWED"
     assert c.risk_per_trade == a.risk_per_trade == Decimal("0.01")
     assert c.rank_ceilings == a.rank_ceilings == (Decimal("2"), Decimal("1.5"), Decimal("1"))
@@ -171,13 +178,13 @@ def test_first_leg_buys_the_fifth_print_at_the_ask_never_market():
     assert plan is not None and plan.accepted
     assert plan.quantity is not None and plan.limit is not None and plan.stop is not None
     assert plan.setup == "FIRST_LEG" and plan.rank == 2
-    assert plan.quantity.as_decimal() == 3964
+    assert plan.quantity.as_decimal() == 1982
     assert plan.limit.as_decimal() == Decimal("100.9")
     assert plan.stop.as_decimal() == Decimal("98.3775")
     assert plan.trail_fraction == ac_node.TRAIL_FRACTION
 
 
-def test_rank_ceiling_doubles_the_top_five_and_halves_outside_rth():
+def test_rank_ceiling_caps_exposure_while_risk_halves_outside_rth():
     profile = profiles()["a"]
 
     def sized(regular_hours: bool) -> ac_node.EntryPlan:
@@ -197,8 +204,12 @@ def test_rank_ceiling_doubles_the_top_five_and_halves_outside_rth():
     rth = sized(True)
     pre = sized(False)
     assert rth.quantity is not None and pre.quantity is not None
-    assert rth.quantity.as_decimal() == 8000
-    assert pre.quantity.as_decimal() == 4000
+    assert rth.quantity.as_decimal() == 4000
+    assert pre.quantity.as_decimal() == 2000
+    assert rth.planned_risk is not None and rth.planned_risk.as_decimal() == Decimal("10000")
+    assert pre.planned_risk is not None and pre.planned_risk.as_decimal() == Decimal("5000")
+    assert rth.notional is not None and rth.notional.as_decimal() == Decimal("400000")
+    assert pre.notional is not None and pre.notional.as_decimal() == Decimal("200000")
 
 
 def test_stale_ask_refuses_instead_of_reaching_for_a_print():
@@ -343,3 +354,210 @@ def test_ac_parameters_are_a_registry_file_not_an_invented_number():
         assert row["scope"] in {"REVIEWED", "FIXTURE_ONLY"}
         assert row["calibration"] == "UNCALIBRATED"
         assert row["source"]
+
+
+def _c_account() -> PaperAccount:
+    return PaperAccount(
+        lane="alpaca-paper-c",
+        account_id="PA3TEST",
+        client_id="c3test",
+        namespace="c3",
+        sessions=(Session.RTH,),
+    )
+
+
+class _HeldWriter:
+    """The minimum writer seam: a held lease admits one pacer."""
+
+    def __init__(self) -> None:
+        self.held = False
+        self.pacers: list[object] = []
+
+    def acquire(self) -> None:
+        self.held = True
+
+    def bind_pacer(self, pacer: object) -> None:
+        self.pacers.append(pacer)
+
+
+class _Guard:
+    def entry_allowed(self) -> bool:
+        return True
+
+
+class _RecordingProtector:
+    def __init__(self) -> None:
+        self.account = _c_account()
+        self.bound = 0
+        self.reconciled = 0
+
+    def bind(self) -> None:
+        self.bound += 1
+
+    def reconcile(self) -> None:
+        self.reconciled += 1
+
+
+class _EntryClient:
+    """Serves the partial-fill case: 500 of a 1,000-share entry filled."""
+
+    def __init__(self) -> None:
+        self.submitted: list[Any] = []
+        self.cancelled: list[object] = []
+
+    def get_account(self) -> TradeAccount:
+        return TradeAccount.model_validate(
+            {
+                "id": str(uuid4()),
+                "account_number": "PA3TEST",
+                "status": "ACTIVE",
+                "currency": "USD",
+                "buying_power": "100000",
+                "cash": "100000",
+                "portfolio_value": "100000",
+                "equity": "100000",
+            }
+        )
+
+    def get_all_positions(self) -> list[Position]:
+        return [
+            Position.model_validate(
+                {
+                    "asset_id": str(uuid4()),
+                    "symbol": "AAPL",
+                    "exchange": "NASDAQ",
+                    "asset_class": "us_equity",
+                    "avg_entry_price": "100",
+                    "qty": "500",
+                    "side": "long",
+                    "cost_basis": "50000",
+                    "qty_available": "500",
+                }
+            )
+        ]
+
+    def get_orders(self, filter=None) -> list[Order]:
+        return [
+            Order.model_validate(
+                {
+                    "id": str(uuid4()),
+                    "client_order_id": "c3-entry-AAPL-1",
+                    "created_at": "2026-11-09T14:59:00Z",
+                    "updated_at": "2026-11-09T14:59:00Z",
+                    "submitted_at": "2026-11-09T14:59:00Z",
+                    "order_class": "simple",
+                    "time_in_force": "day",
+                    "status": "partially_filled",
+                    "extended_hours": False,
+                    "symbol": "AAPL",
+                    "qty": "1000",
+                    "filled_qty": "500",
+                    "side": "buy",
+                    "type": "limit",
+                }
+            )
+        ]
+
+    def submit_order(self, order_data):
+        self.submitted.append(order_data)
+        return order_data
+
+    def cancel_order_by_id(self, order_id) -> None:
+        self.cancelled.append(order_id)
+
+
+def test_protecting_needs_an_open_held_lease():
+    protector = _RecordingProtector()
+    deployment = ac_node.Deployment(
+        writer=_HeldWriter(),
+        pacer=object(),
+        guard=_Guard(),
+        protector=cast(Protector, protector),
+    )
+    node = ac_node.AcNode(
+        profile=profiles()["c"],
+        params=ac_node.entry_parameters(),
+        start_equity=ac_node.Money.from_str(EQUITY),
+        enabled=True,
+        deployment=deployment,
+    )
+    with pytest.raises(ac_node.NodeDisabled, match="no writer lease is held"):
+        node.protect_account()
+    assert protector.bound == protector.reconciled == 0
+
+    node.open()
+    assert deployment.writer.held is True
+    node.protect_account()
+    assert protector.bound == 1
+    assert protector.reconciled == 1
+
+
+def test_a_house_entry_buy_is_not_mistaken_for_a_protective_exit():
+    client = _EntryClient()
+    protector = Protector(
+        client,
+        _c_account(),
+        load_b_parameters(ac_node.B_PARAMETERS),
+        lane=ac_node.C_LANE,
+        now_ns=lambda: NOW_NS,
+    )
+    positions = protector.reconcile()
+    assert positions["AAPL"].qty == "500"
+    assert client.cancelled == []
+    assert len(client.submitted) == 1
+    submitted = client.submitted[0]
+    assert submitted.side.value == "sell"
+    assert Decimal(str(submitted.qty)) == Decimal("500")
+    assert str(submitted.trail_percent) == "2.5"
+
+
+def test_catalyst_refuses_a_stale_ask_before_sizing():
+    entry = ac_node.AcEntry(
+        instrument=equity("TEST"),
+        params=ac_node.entry_parameters(),
+        profile=profiles()["c"],
+        start_ns=START,
+        segment="PRE",
+        equity=ac_node.Money.from_str(EQUITY),
+        fixture=True,
+    )
+    assert entry.observe_catalyst(
+        knowable_at_ns=START + 5 * NS, quiet_price=Decimal("100"), source="recorded EDGAR 8-K"
+    )
+    plan = entry.observe_print(
+        ts_ns=START + 6 * NS,
+        price=Decimal("101.25"),
+        size=100,
+        regular_hours=False,
+        ask=Decimal("101.25"),
+        ask_ts_ns=START - 4 * NS,
+    )
+    assert plan is not None and not plan.accepted
+    assert plan.refusal == "no fresh ask at the catalyst print"
+
+
+def test_catalyst_sizes_on_equity_re_read_at_the_decision():
+    node = ac_node.AcNode(
+        profile=profiles()["c"],
+        params=ac_node.entry_parameters(),
+        start_equity=ac_node.Money.from_str(EQUITY),
+    )
+    entry = node.entry(instrument=equity("TEST"), start_ns=START, segment="PRE")
+    assert entry.observe_catalyst(
+        knowable_at_ns=START + 5 * NS, quiet_price=Decimal("100"), source="recorded EDGAR 8-K"
+    )
+    node.ledger.record(entry=Decimal("100"), exit_price=Decimal("110"), quantity=Decimal("4000"))
+    plan = entry.observe_print(
+        ts_ns=START + 6 * NS,
+        price=Decimal("101"),
+        size=100,
+        regular_hours=False,
+        ask=Decimal("100"),
+        ask_ts_ns=START + 6 * NS,
+    )
+    assert plan is not None, "the catalyst print produced no plan"
+    assert plan.accepted, plan.refusal
+    assert plan.quantity is not None
+    assert plan.quantity.as_decimal() == 2080
+    assert plan.planned_risk is not None
+    assert plan.planned_risk.as_decimal() == Decimal("5200")

@@ -246,6 +246,10 @@ class Protector:
             if not order.symbol:
                 continue
             if self._is_ours(order):
+                if _event_name(order.side).lower() == "buy":
+                    # An entry is not an exit. Protection follows the position the fill
+                    # creates; the protector never cancels or counts an entry as a trail.
+                    continue
                 house.setdefault(order.symbol, []).append(order)
                 continue
             side = _event_name(order.side).lower()

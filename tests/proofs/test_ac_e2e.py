@@ -1,11 +1,14 @@
 """Proof that the A/C node's recorded-session e2e decides and protects by rule."""
 
+import json
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 
-from sextant.backtest.ac_e2e import Point, load_tape, run, run_case, trail
+from sextant.backtest.ac_e2e import Point, append_trials, load_tape, run, run_case, trail
 from sextant.paper.ac_node import entry_parameters, profiles
+from sextant.validation.trials import TrialLog
 
 
 @pytest.fixture(scope="module")
@@ -122,3 +125,23 @@ def test_trail_is_the_25_percent_level_rule():
     assert outcome.level == Decimal("10.2375")
     assert outcome.exit_price == Decimal("10.23")
     assert outcome.protected == Decimal("0.023")
+
+
+def test_e2e_rows_append_to_the_cumulative_trial_log(tmp_path: Path):
+    report = run()
+    path = tmp_path / "trials.parquet"
+    assert append_trials(report, path) == 14
+    log = TrialLog(path)
+    assert len(log.records) == 14
+    assert {record["state"] for record in log.records} == {"COMPLETE", "FAIL"}
+    identities = []
+    for record in log.records:
+        config = json.loads(record["config"])
+        assert config["tier"] == "MODELED"
+        assert config["factor_mask"]
+        assert len(config["implementation_sha"]) == 40
+        identities.append(config["arm_run_id"])
+    assert len(set(identities)) == 14
+    # A rerun is a fresh attempt: the ledger only grows, never rewrites.
+    assert append_trials(report, path) == 14
+    assert TrialLog(path).n_trials == 28

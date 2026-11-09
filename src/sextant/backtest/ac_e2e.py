@@ -20,11 +20,13 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import subprocess
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from nautilus_trader.model import Money
@@ -356,20 +358,41 @@ def _witness(witness: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def _params_hash(profile: Profile) -> str:
-    payload = json.dumps(
-        {
-            "profile": profile.key,
-            "risk": str(profile.risk_per_trade),
-            "ceilings": [str(value) for value in profile.rank_ceilings],
-            "mover_slots": profile.mover_slots,
-            "equity_mode": profile.equity_mode,
-            "trail": str(TRAIL_FRACTION),
-        },
-        sort_keys=True,
-        separators=(",", ":"),
-    )
-    return hashlib.sha256(payload.encode()).hexdigest()
+def _snapshot_hash(value: Any) -> str:
+    raw = json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def _trial_params(profile: Profile, setup: str) -> dict[str, Any]:
+    params = entry_parameters(fixture=True)
+    return {
+        "profile": profile.key,
+        "setup": setup,
+        "risk_per_trade": str(profile.risk_per_trade),
+        "rank_ceilings": [str(value) for value in profile.rank_ceilings],
+        "mover_slots": profile.mover_slots,
+        "equity_mode": profile.equity_mode,
+        "trail_fraction": str(TRAIL_FRACTION),
+        "entry_rule": {name: str(value) for name, value in sorted(params.values.items())},
+    }
+
+
+def _implementation_sha() -> str:
+    """A concrete 40-hex code identity: the checkout's HEAD, else this file's digest."""
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(REPOSITORY), "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        sha = result.stdout.strip()
+        if len(sha) == 40 and all(character in "0123456789abcdef" for character in sha):
+            return sha
+    except (OSError, subprocess.CalledProcessError):
+        pass
+    digest = hashlib.sha256((REPOSITORY / "src/sextant/backtest/ac_e2e.py").read_bytes())
+    return digest.hexdigest()[:40]
 
 
 def run(path: Path = TAPE_PATH) -> dict[str, Any]:
@@ -428,6 +451,7 @@ def run(path: Path = TAPE_PATH) -> dict[str, Any]:
     for result in runs:
         for decision in result.decisions:
             outcome = outcomes.get((result.case.symbol, decision.profile))
+            params = _trial_params(registry[decision.profile], decision.plan.setup)
             trial_rows.append(
                 {
                     "arm": f"paper-ac-{result.case.symbol.lower()}-"
@@ -442,7 +466,8 @@ def run(path: Path = TAPE_PATH) -> dict[str, Any]:
                     "quantity": str(decision.plan.quantity) if decision.plan.quantity else None,
                     "protected": f"{outcome.protected:.6f}" if outcome else None,
                     "hold_flat": f"{outcome.hold_flat:.6f}" if outcome else None,
-                    "params_hash": _params_hash(registry[decision.profile]),
+                    "params": params,
+                    "params_hash": _snapshot_hash(params),
                     "tier": "MODELED",
                 }
             )
@@ -508,34 +533,64 @@ def run(path: Path = TAPE_PATH) -> dict[str, Any]:
 
 
 def append_trials(report: dict[str, Any], log_path: Path) -> int:
-    """Append the MODELED rows to the cumulative trial ledger (row 8's TrialLog)."""
+    """Append the MODELED rows to the cumulative trial ledger (row 8's TrialLog).
+
+    Every arm is one row, refused ones included. The rows carry TrialLog's full
+    identity contract (a concrete code SHA, an explicit factor mask, frozen
+    sandbox/evidence/params payloads and the hash of each), a terminal state
+    and a fresh ``arm_run_id`` so a rerun appends a new attempt instead of
+    rewriting history.
+    """
     from sextant.validation.trials import TrialLog
 
     log = TrialLog(log_path)
     rows = report["trial_rows"]
+    implementation_sha = _implementation_sha()
+    sandbox_config = {
+        "tape": "ac-e2e-session.json",
+        "recorded_at": str(report.get("recorded_at") or "recorded-session"),
+        "starting_equity": STARTING_CASH,
+        "source": "src/sextant/backtest/ac_e2e.py",
+    }
+    evidence_weights = {
+        "k2_generation": "recorded e2e-omh generations",
+        "first_leg": "lanes/sim/entry-parameters.json",
+        "catalyst": "recorded SPCX EDGAR knowable_at",
+        "protection": "native 2.5% trail, PR-3 agreement",
+    }
     for row in rows:
+        params = row["params"]
+        params_hash = _snapshot_hash(params)
+        if params_hash != row["params_hash"]:
+            raise ValueError("trial params drifted from the frozen report identity")
         config = {
             "arm_id": row["arm"],
-            "arm_run_id": f"ac-e2e-{report['recorded_at']}",
-            "implementation_sha": "0" * 40,
-            "factor_mask": "first_leg,catalyst,native_trail_2p5",
-            "sandbox_config": {"tape": "ac-e2e-session.json"},
-            "sandbox_config_hash": hashlib.sha256(b"ac-e2e-session.json").hexdigest(),
-            "evidence_weights": {},
-            "evidence_weights_hash": hashlib.sha256(b"{}").hexdigest(),
-            "params_hash": row["params_hash"],
+            "arm_run_id": f"{row['arm']}-{uuid4().hex[:12]}",
+            "implementation_sha": implementation_sha,
+            "factor_mask": [
+                "k2_generation",
+                "first_leg",
+                "catalyst",
+                "fixed_risk_sizing",
+                "native_trail_2p5",
+            ],
+            "sandbox_config": sandbox_config,
+            "sandbox_config_hash": _snapshot_hash(sandbox_config),
+            "evidence_weights": evidence_weights,
+            "evidence_weights_hash": _snapshot_hash(evidence_weights),
+            "params_hash": params_hash,
             "tier": "MODELED",
-            "block_set_id": "ac-e2e-2026-11-09",
-            "funding_divergent_session_count": 0,
-            "funding_unverified_session_count": 0,
+            "block_set_id": "ac-e2e-recorded-session",
+            "funding_divergent_session_count": None,
+            "funding_unverified_session_count": None,
             "condition_returns": {},
         }
         log.append(
             strategy="paper-ac-node",
-            params={"profile": row["profile"], "setup": row["setup"]},
+            params=params,
             config=config,
             seed=0,
-            state=row["state"],
+            state="COMPLETE" if row["state"] == "ACCEPTED" else "FAIL",
             error=row["reason"],
         )
     return len(rows)

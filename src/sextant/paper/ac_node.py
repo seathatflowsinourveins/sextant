@@ -15,16 +15,16 @@ single REST allocation with the TV-HOST writer through one ``AccountPacer``
 (``WriterLease.bind_pacer`` admits one), never a second pacer.
 
 The profile rows in ``lanes/paper/ac-parameters.json`` are the sizing
-authority. C's row is ``FIXTURE_ONLY``: the owner removed the conservative
-profile and has not decided the replacement risk, leverage or name count
-(``docs/design.md`` "The superseded paper slot has no risk number"), so a
-deployment refuses C sizing and only the e2e's fixture scope carries the
-lead's recommended 1.0% as a modeled, uncalibrated value.
+authority. C's row carries the owner's 2026-11-09 ruling: 1.0% of current
+equity, re-read before each entry, with A's leverage row; it is UNCALIBRATED,
+and the optimizer proposes while adoption happens between sessions
+(ADR-0015/0018). A has no writable slot and runs replay and sim only.
 """
 
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from decimal import ROUND_FLOOR, Decimal
 from pathlib import Path
@@ -294,7 +294,9 @@ def plan_entry(
         return refused_plan(
             profile, symbol=symbol, ts_ns=ts_ns, setup=setup, rank=rank, reason="invalid ask"
         )
-    risk = profile.risk_per_trade * rank_multiple(profile, rank)
+    # ADR-0002 sizes every trade at the profile's risk fraction; the rank ceiling is
+    # an exposure cap on the position, never a multiplier of the planned loss.
+    risk = profile.risk_per_trade
     if not regular_hours:
         risk *= HALF_RISK
     ceiling = rank_multiple(profile, rank)
@@ -364,7 +366,7 @@ def plan_entry(
         trail_fraction=TRAIL_FRACTION,
         planned_risk=Money.from_str(f"{planned} {instrument.quote_currency}"),
         notional=Money.from_str(f"{whole * ask} {instrument.quote_currency}"),
-        binding="risk" if whole * instrument.price_increment.as_decimal() else "cap",
+        binding="cap" if whole >= cap else "risk",
     )
 
 
@@ -388,6 +390,7 @@ class AcEntry:
         segment: str,
         equity: Money,
         fixture: bool = False,
+        equity_source: Callable[[], Money] | None = None,
     ) -> None:
         self.instrument = instrument
         self.profile = profile
@@ -395,9 +398,16 @@ class AcEntry:
         self.segment_start_ns = start_ns
         self.equity = equity
         self.fixture = fixture
+        self._equity_source = equity_source
         self.armed_rank: int | None = None
         self.catalyst: Catalyst | None = None
         self._sequence = 0
+
+    def _sizing_equity(self) -> Money:
+        """Read the live basis at the decision point; C compounds on this value."""
+        if self._equity_source is not None:
+            return self._equity_source()
+        return self.equity
 
     def observe_rank(
         self,
@@ -454,9 +464,14 @@ class AcEntry:
     ) -> EntryPlan | None:
         """Feed one recorded print; return a plan only when the setup is ready."""
         self.state.on_trade(self._tick(ts_ns, price, size), now=ts_ns)
+        max_age = self.state.params.ns("max_data_age_s")
+        usable = ask is not None and ask_ts_ns is not None
+        fresh = False
+        if ask is not None and ask_ts_ns is not None:
+            fresh = 0 <= ts_ns - ask_ts_ns <= max_age
         if self.catalyst is not None and ts_ns >= self.catalyst.knowable_at_ns:
-            if ask is None or ask_ts_ns is None:
-                self.catalyst = None
+            self.catalyst = None
+            if not fresh:
                 return refused_plan(
                     self.profile,
                     symbol=str(self.instrument.id.symbol),
@@ -465,22 +480,23 @@ class AcEntry:
                     rank=None,
                     reason="no fresh ask at the catalyst print",
                 )
-            self.catalyst = None
+            assert ask is not None
             return plan_entry(
                 self.profile,
                 instrument=self.instrument,
                 symbol=str(self.instrument.id.symbol),
                 ts_ns=ts_ns,
                 ask=ask,
-                equity=self.equity,
+                equity=self._sizing_equity(),
                 setup="CATALYST",
                 rank=None,
                 regular_hours=regular_hours,
                 fixture=self.fixture,
             )
-        if ask is None or ask_ts_ns is None:
+        if not usable:
             return None
-        if ts_ns - ask_ts_ns > self.state.params.ns("max_data_age_s"):
+        assert ask is not None
+        if not fresh:
             return refused_plan(
                 self.profile,
                 symbol=str(self.instrument.id.symbol),
@@ -496,7 +512,7 @@ class AcEntry:
                 symbol=str(self.instrument.id.symbol),
                 ts_ns=ts_ns,
                 ask=ask,
-                equity=self.equity,
+                equity=self._sizing_equity(),
                 setup="FIRST_LEG",
                 rank=self.armed_rank,
                 regular_hours=regular_hours,
@@ -540,6 +556,9 @@ class GuardLike(Protocol):
 class WriterLike(Protocol):
     """The one-writer lease seam; C shares slot 3's single pacer through it."""
 
+    @property
+    def held(self) -> bool: ...
+
     def acquire(self) -> None: ...
 
     def bind_pacer(self, pacer: object) -> None: ...
@@ -572,6 +591,7 @@ class AcNode:
         self.ledger = AcLedger(start_equity, profile.equity_mode)
         self.enabled = enabled
         self.deployment = deployment
+        self._opened = False
 
     def entry(self, *, instrument: Equity, start_ns: int, segment: str) -> AcEntry:
         return AcEntry(
@@ -581,6 +601,7 @@ class AcNode:
             start_ns=start_ns,
             segment=segment,
             equity=self.ledger.sizing_equity(),
+            equity_source=self.ledger.sizing_equity,
         )
 
     def open(self) -> None:
@@ -597,6 +618,7 @@ class AcNode:
         writer = self.deployment.writer
         writer.acquire()
         writer.bind_pacer(self.deployment.pacer)
+        self._opened = True
 
     def protector_for(self, client: TradingClientLike, account: PaperAccount) -> Protector:
         """B's merged protector, admitted for slot 3's lane by its lane seam."""
@@ -611,8 +633,15 @@ class AcNode:
     def protect_account(self) -> None:
         if not self.enabled or self.deployment is None:
             raise NodeDisabled("the A/C node ships disabled (enabled=0)")
-        self.deployment.protector.bind()
-        self.deployment.protector.reconcile(strict_custody=True)
+        if not self._opened:
+            raise NodeDisabled("no writer lease is held: refusing broker protection")
+        if not getattr(self.deployment.writer, "held", False):
+            raise NodeDisabled("the writer lease is not held: refusing broker protection")
+        protector = self.deployment.protector
+        if protector.account.lane != self.profile.lane:
+            raise NodeDisabled("the protector is not bound to this profile's lane")
+        protector.bind()
+        protector.reconcile()
 
 
 def profiles() -> dict[str, Profile]:
