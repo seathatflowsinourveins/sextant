@@ -93,16 +93,19 @@ args=(
   -c 'otel.exporter={otlp-grpc={endpoint="http://127.0.0.1:4317"}}'
   -c 'otel.trace_exporter={otlp-grpc={endpoint="http://127.0.0.1:4317"}}'
   -c 'otel.metrics_exporter={otlp-grpc={endpoint="http://127.0.0.1:4317"}}'
-  -c 'otel.span_attributes."sextant.runtime"="codex"'
 )
-# TOML strings use JSON's quoting here, as parity.py does for the native config.
+# Codex 086ccc833bc9cf01024ad2dd6af7dbd421b6bf9a: codex-rs/utils/cli/src/config_override.rs
+# parses the value as TOML; config/src/overrides.rs splits every dot in the key.
+# Keep dotted attribute names inside one table value, never in an override key.
+span_attributes='"sextant.runtime"="codex"'
 for field in LANE PR; do
   name="SEXTANT_$field"
   if [[ -n "${!name-}" ]]; then
     attribute=$(jq -nr --arg value "${!name}" '$value | tojson')
-    args+=(-c "otel.span_attributes.\"sextant.${field,,}\"=$attribute")
+    span_attributes+=",\"sextant.${field,,}\"=$attribute"
   fi
 done
+args+=(-c "otel.span_attributes={$span_attributes}")
 [[ -z "$projects" ]] || args+=(-c "projects={$projects}")
 ((chosen)) || args+=(-s "$sandbox")
 

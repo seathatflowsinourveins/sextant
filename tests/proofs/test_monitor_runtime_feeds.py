@@ -1,4 +1,4 @@
-"""PR-M2: real launchers with inert children; no runtime, collector or home is activated."""
+"""PR-M2: inert launcher children and a native offline Codex config-load regression."""
 
 import importlib.util
 import json
@@ -59,11 +59,14 @@ def _child(path: Path) -> None:
     )
 
 
-def _run(command: list[str], home: Path, inherited: dict | None = None) -> dict:
-    result = subprocess.run(
+def _run_process(
+    command: list[str], home: Path, inherited: dict | None = None
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
         command,
         env={
             "HOME": str(home),
+            "TMPDIR": str(home),
             "PATH": f"{home / 'bin'}:{Path(sys.executable).parent}:/usr/bin:/bin",
             **(inherited or {}),
         },
@@ -74,6 +77,10 @@ def _run(command: list[str], home: Path, inherited: dict | None = None) -> dict:
         timeout=15,
         check=False,
     )
+
+
+def _run(command: list[str], home: Path, inherited: dict | None = None) -> dict:
+    result = _run_process(command, home, inherited)
     assert result.returncode == 0, result.stderr
     return json.loads(result.stdout)
 
@@ -119,8 +126,7 @@ def _config(home: Path) -> dict:
     return tomllib.loads(parity.codex_toml(home))
 
 
-@pytest.mark.parametrize("name", ("sextant-codex", "sextant-codex-review"))
-def test_codex_config_and_launch_override_statsig_and_content(tmp_path: Path, name: str) -> None:
+def _codex_lane(tmp_path: Path, name: str) -> Path:
     prefix = tmp_path / ".local/share/sextant-lane-runtimes"
     prefix.mkdir(parents=True)
     launcher = prefix / "codex-launch.sh"
@@ -142,8 +148,14 @@ def test_codex_config_and_launch_override_statsig_and_content(tmp_path: Path, na
     lane.mkdir()
     retained = '[analytics]\nenabled=true\n[otel]\nmetrics_exporter="statsig"\n'
     (lane / "config.toml").write_text(retained)
+    return tmp_path / "bin" / name
+
+
+@pytest.mark.parametrize("name", ("sextant-codex", "sextant-codex-review"))
+def test_codex_config_and_launch_override_statsig_and_content(tmp_path: Path, name: str) -> None:
+    launcher = _codex_lane(tmp_path, name)
     result = _run(
-        [str(tmp_path / "bin" / name), "exec"],
+        [str(launcher), "exec"],
         tmp_path,
         {"SEXTANT_LANE": "research", "SEXTANT_PR": "42"},
     )
@@ -169,11 +181,59 @@ def test_codex_config_and_launch_override_statsig_and_content(tmp_path: Path, na
         assert config["otel"][key] == {"otlp-grpc": {"endpoint": ENDPOINT}}
         assert overrides[f"otel.{key}"] == config["otel"][key]
     assert config["otel"]["span_attributes"] == {"sextant.runtime": "codex"}
-    for key, value in (("runtime", "codex"), ("lane", "research"), ("pr", "42")):
-        assert overrides[f'otel.span_attributes."sextant.{key}"'] == value
-    assert (lane / "config.toml").read_text() == retained
+    assert overrides["otel.span_attributes"] == {
+        "sextant.runtime": "codex",
+        "sextant.lane": "research",
+        "sextant.pr": "42",
+    }
+    assert sum(arg.startswith("otel.span_attributes=") for arg in argv) == 1, (
+        "emit a single table-valued override"
+    )
+    assert not any(arg.startswith("otel.span_attributes.") for arg in argv)
+    lane = tmp_path / ".local/share/sextant-lane-runtimes/codex-home"
+    assert (lane / "config.toml").read_text() == (
+        '[analytics]\nenabled=true\n[otel]\nmetrics_exporter="statsig"\n'
+    )
     assert not (tmp_path / ".codex").exists()
     assert not (tmp_path / ".config/orca").exists()
+
+
+@pytest.mark.local
+@pytest.mark.parametrize("name", ("sextant-codex", "sextant-codex-review"))
+@pytest.mark.parametrize(
+    "metadata",
+    (
+        {},
+        {"SEXTANT_LANE": "research", "SEXTANT_PR": "42"},
+        {"SEXTANT_LANE": 'research "quoted"\\branch', "SEXTANT_PR": "42,=value"},
+    ),
+    ids=("runtime-only", "lane-and-pr", "quoted-values"),
+)
+def test_codex_launch_loads_with_pinned_native_config_parser(
+    tmp_path: Path, name: str, metadata: dict
+) -> None:
+    # Installed rust-v0.167.0 package's native binary; no download or inference session.
+    native = Path.home() / (
+        ".local/share/sextant-agents/node_modules/@openai/codex-linux-x64/"
+        "vendor/x86_64-unknown-linux-musl/bin/codex"
+    )
+    assert native.is_file(), "this local proof requires the installed Codex 0.167.0 pin"
+    launcher = _codex_lane(tmp_path, name)
+    child = tmp_path / ".local/share/sextant-agents/node_modules/.bin/codex"
+    child.unlink()
+    child.symlink_to(native)
+    version = _run_process([str(child), "--version"], tmp_path)
+    assert version.returncode == 0, version.stderr
+    assert version.stdout.strip() == "codex-cli 0.167.0"
+    # A leading config flag takes the real launch path, including all telemetry -c args.
+    # `features list` then loads bootstrap + typed config and exits without an API call.
+    loaded = _run_process(
+        [str(launcher), "-c", 'approval_policy="never"', "features", "list"],
+        tmp_path,
+        metadata,
+    )
+    assert loaded.returncode == 0, loaded.stderr
+    assert loaded.stdout.strip(), "the native command must reach the feature listing"
 
 
 @pytest.mark.parametrize("arguments", ([], ["--version"], ["--profile", "acp"]))
