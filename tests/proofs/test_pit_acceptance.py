@@ -95,7 +95,16 @@ def _capture(tmp_path: Path, *, years: str = "10") -> Path:
         *_rename("2025-08-29", "NXH", "OSTK", "BBBY"),
         *_rename("2026-08-17", "NXH", "BBBY", "NXH"),
     ]
-    root = tmp_path / "capture"
+    return _write_capture(tmp_path / "capture", tickers, actions, years=years)
+
+
+def _write_capture(
+    root: Path,
+    tickers: list[dict[str, str]],
+    actions: list[dict[str, str]],
+    *,
+    years: str = "10",
+) -> Path:
     (root / "raw").mkdir(parents=True)
     queries = []
     for index, (table, name, fields, rows, filters) in enumerate(
@@ -231,6 +240,78 @@ def test_the_registered_sample_counts_an_exit_by_its_effective_date(tmp_path: Pa
     )
     assert miss["reason"] == "no Sharadar CIK match"
     assert result["registration_sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _ten_exit_capture(tmp_path: Path) -> Path:
+    """All ten probes resolve; TWTR is only a later recycled issuer with no dated member."""
+    plan = {
+        "LNKD": ("1101", "2010-01-01", "2016-12-16", "acquisitionby"),
+        "YHOO": ("1102", "2017-01-03", "2017-06-01", "acquisitionby"),
+        "CELG": ("1103", "2018-01-03", "2019-12-01", "acquisitionby"),
+        "LK": ("1104", "2019-01-03", "2020-06-01", "regulatorydelisting"),
+        "TWTR": ("1105", "2024-01-02", "2024-10-31", "regulatorydelisting"),
+        "SIVB": ("1106", "2022-01-03", "2023-03-15", "regulatorydelisting"),
+        "BBBY": ("1107", "2022-01-03", "2023-05-02", "bankruptcyliquidation"),
+        "FRC": ("1108", "2022-01-03", "2023-05-02", "bankruptcyliquidation"),
+        "ATVI": ("1109", "2022-01-03", "2023-10-13", "acquisitionby"),
+        "XLNX": ("1110", "2021-01-03", "2022-02-14", "acquisitionby"),
+    }
+    tickers = []
+    actions = [_action("2016-09-30", "listed", "DUMMY")]  # ACTIONS coverage floor.
+    for name, (pt, listed, exited, kind) in plan.items():
+        tickers.append(_ticker("SEP", pt, name, "Domestic Common Stock", "Y"))
+        if name != "LNKD":
+            actions.append(_action(listed, "listed", name))
+        actions.append(_action(exited, kind, name))
+    # LNKD has no listing action: its sole interval starts at the floor, after its 2016-06-15 probe.
+    tickers[0]["firstpricedate"] = "2010-01-01"
+    return _write_capture(tmp_path / "ten-exits", tickers, actions)
+
+
+def test_the_sole_holder_fallback_stays_before_actions_coverage(tmp_path: Path) -> None:
+    report, _ = acceptance.evaluate(
+        _ten_exit_capture(tmp_path), start=date(2016, 1, 1), end=date(2026, 11, 5)
+    )
+    exits = report["acceptance"]["ten_exits"]
+    assert exits["names"]["TWTR"] == {"covered": False, "reason": "0 share classes held TWTR"}
+    assert exits["names"]["LNKD"]["covered"] is True  # Pre-coverage probe: the fallback is legal.
+    assert (exits["status"], exits["covered"]) == ("FAIL", 9)
+
+
+def _preferred_capture(tmp_path: Path) -> Path:
+    tickers = [_ticker("SEP", "77", "PFDA", "Domestic Preferred Stock", "Y")]
+    actions = [
+        _action("2017-01-03", "listed", "PFDA"),
+        _action("2018-06-01", "regulatorydelisting", "PFDA"),
+    ]
+    return _write_capture(tmp_path / "preferred", tickers, actions)
+
+
+def test_a_preferred_exit_never_credits_a_registered_common_stock_filing(tmp_path: Path) -> None:
+    registration = {
+        "pass_at_least": 1,
+        "sample": [
+            {
+                "accession": "a-77",
+                "issuer_cik": "77",
+                "filed": "2025-02-17",
+                "class": "Common Stock",
+            }
+        ],
+    }
+    path = tmp_path / "registration.json"
+    path.write_text(json.dumps(registration))
+    report, _ = acceptance.evaluate(
+        _preferred_capture(tmp_path),
+        start=date(2016, 1, 1),
+        end=date(2026, 11, 5),
+        registration=path,
+    )
+    result = report["acceptance"]["independent_delisted_sample"]
+    assert (result["status"], result["covered"]) == ("FAIL", 0)
+    row = result["rows"][0]
+    assert row["covered"] is False and row["security_id"] is None
+    assert "preferred" in row["reason"]
 
 
 def _registered(tmp_path: Path) -> Path:

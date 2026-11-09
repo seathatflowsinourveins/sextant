@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from sextant.data.sharadar_master import IntervalCoverage, SharadarMember, interval_coverage
+from sextant.research.delisted_sample import is_common
 from sextant.research.sharadar_coverage import _read_capture as read_capture
 
 # ADR-0002 E16; the 08u.1 probe JSON (sha256 3f759c29...) records each name trading on this asof.
@@ -103,13 +104,20 @@ def ten_exits(cov: IntervalCoverage) -> dict[str, Any]:
     """The probe saw each name trading on its asof; that day picks the issuer under test.
 
     A probe day before ACTIONS coverage falls back to a sole holder of the name, and says so.
+    An empty dated lookup inside coverage stays uncovered: a later recycled issuer is not the
+    issuer that traded on the probe day.
     """
     result = {}
     for name, seen in TEN_EXITS.items():
         on = date.fromisoformat(seen)
         held = [m for m in cov.intervals if m.symbol == name]
         dated = {m.security_id for m in held if m.first_date <= on <= (m.last_date or date.max)}
-        ids = dated or {m.security_id for m in held}
+        if dated:
+            ids = dated
+        elif cov.actions_start is not None and on < cov.actions_start:
+            ids = {m.security_id for m in held}
+        else:
+            ids = set()
         if len(ids) != 1:
             result[name] = {"covered": False, "reason": f"{len(ids)} share classes held {name}"}
             continue
@@ -174,11 +182,18 @@ def independent_sample(
     for entry in registration["sample"]:
         filed = date.fromisoformat(entry["filed"])
         dataset = sorted(by_cik.get(str(entry["issuer_cik"]).lstrip("0"), set()))
+        # The draw admitted common stock only; a legacy entry without a class keeps that rule.
+        # Sharadar keeps one class per issuer, so identity is the CIK plus the class family: a
+        # preferred or unknown class is not the common security the filing covers, while
+        # fund/ETF/ETN shares are their issuers' common equity.
+        common_sample = entry.get("class") is None or is_common(entry["class"])
 
         def exit_by_effective(ticker: str, filed: date = filed) -> date | None:
             final = finals.get(ticker)
             if (
                 final is None
+                or not common_sample
+                or final.instrument_type in {"preferred", "unsupported"}
                 or final.exit_reason is None
                 or final.end_evidence != "explicit_action"
             ):
@@ -192,9 +207,17 @@ def independent_sample(
         def why(ticker: str) -> str:
             if ticker in cov.exclusions:
                 return cov.exclusions[ticker]
-            return (
-                "outside window" if ticker not in finals else "no explicit exit by filing + 10 days"
-            )
+            final = finals.get(ticker)
+            if final is None:
+                return "outside window"
+            if not common_sample:
+                return "sample class is not common stock"
+            if final.instrument_type in {"preferred", "unsupported"}:
+                return (
+                    f"{final.instrument_type} share class ({final.security_class}) "
+                    "is not the sampled common stock"
+                )
+            return "no explicit exit by filing + 10 days"
 
         exits = [finals[t] for t in dataset if exit_by_effective(t) is not None]
         best = max(exits, key=lambda m: m.last_date or date.min, default=None)
