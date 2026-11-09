@@ -168,6 +168,20 @@ production list capacity, official result envelopes and session persistence
 have not been accepted here. No paper handover or order action follows.
 
 
+## J5 to display-lists bridge
+
+`tradingview/bridge.py` is one pure projection from a fresh
+`sextant.j5-ranked/1` document to the three-document unit above
+(`top100.json`, `focus.json`, `display-lists.json`). It performs no I/O and
+reads no clock: the caller supplies sourced `DisplayBounds` (the j5 document
+carries no legacy bounds and there is no default), writes the returned
+documents, and still lets `read_research_inputs` judge freshness, bounding
+`max_age` by the j5 `expires_at_ns` because the target contract has no expiry
+field. Movers pair ranked rows with `NS Ranked` in rank order; focus is
+exactly the paired `focus_eligible` rows, with no armed name invented. A
+refused, unavailable or tampered j5 document raises `BridgeError` with no
+documents, never an empty list, and more than 100 members refuse untruncated.
+
 ## Slot-3 ranked J5 producer
 
 `tradingview/producer.py` adapts the existing `tv-display-producer@ea95075` to
