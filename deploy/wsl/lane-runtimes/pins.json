@@ -73,7 +73,7 @@
       "version": "1.58.1",
       "retired_on": "2026-11-08",
       "authority": "Lead ruling on the OpenHands re-evaluation, 2026-11-08; ADR-0030, Retired from routing (docs/adr/0030-latest-sota-models.md:35)",
-      "reason": "REJECT: AO 0.14.10's openhands adapter launches only the unmaintained OpenHands CLI, with no headless or ACP worker; report sha256 f91990d0b2b5bfd4843d09c68693c50fb47747bd339b5e2d4d1afa084f32eb9b",
+      "reason": "REJECT: AO 0.14.10's openhands adapter launches only the unmaintained OpenHands CLI's interactive TUI, not the CLI's headless or ACP modes, and offers no max-effort control; report sha256 f91990d0b2b5bfd4843d09c68693c50fb47747bd339b5e2d4d1afa084f32eb9b",
       "reopen": "a maintained OpenHands headless or ACP worker with max-effort control and a release at least 14 days old; then a fresh census leg"
     }
   },
