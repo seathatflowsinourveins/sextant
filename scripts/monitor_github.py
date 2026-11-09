@@ -451,18 +451,36 @@ def run_metrics(run: Mapping[str, Any]) -> list[Metric]:
 
 
 def forecast_metrics(forecast: Mapping[str, Any]) -> list[Metric]:
+    """Read the ForecastResult wrapper: each workflow owns its AIC fields.
+
+    `gh aw forecast --json` marshals `ForecastResult{period, as_of, eval_mode,
+    workflows}`; the per-run and projected AIC values live on each
+    `ForecastWorkflowResult` inside `workflows` (gh-aw v1.0.1
+    `pkg/cli/forecast_types.go:19-67,129-134`, `pkg/cli/forecast_render.go:17-24`).
+    Tag every series with its workflow so two workflows never collapse into one.
+    """
     metrics: list[Metric] = []
-    for field_name, metric_name in (
-        ("avg_aic", "sextant_gh_aw_aic_average"),
-        ("p50_aic_per_run", "sextant_gh_aw_aic_p50"),
-        ("p95_aic_per_run", "sextant_gh_aw_aic_p95"),
-        ("projected_aic", "sextant_gh_aw_aic_projected"),
-        ("weekly_projected_aic", "sextant_gh_aw_aic_weekly_projected"),
-        ("monthly_projected_aic", "sextant_gh_aw_aic_monthly_projected"),
-    ):
-        value = _number(forecast.get(field_name))
-        if value is not None:
-            metrics.append(Metric(metric_name, "AIC", Decimal(str(value))))
+    workflows = forecast.get("workflows")
+    if not isinstance(workflows, list):
+        return metrics
+    for workflow in workflows:
+        if not isinstance(workflow, Mapping):
+            continue
+        attrs = {"workflow": _text(workflow.get("workflow_id")) or "unknown"}
+        path = _text(workflow.get("workflow_path"))
+        if path:
+            attrs["workflow_path"] = path
+        for field_name, metric_name in (
+            ("avg_aic", "sextant_gh_aw_aic_average"),
+            ("p50_aic_per_run", "sextant_gh_aw_aic_p50"),
+            ("p95_aic_per_run", "sextant_gh_aw_aic_p95"),
+            ("projected_aic", "sextant_gh_aw_aic_projected"),
+            ("weekly_projected_aic", "sextant_gh_aw_aic_weekly_projected"),
+            ("monthly_projected_aic", "sextant_gh_aw_aic_monthly_projected"),
+        ):
+            value = _number(workflow.get(field_name))
+            if value is not None:
+                metrics.append(Metric(metric_name, "AIC", Decimal(str(value)), dict(attrs)))
     return metrics
 
 
