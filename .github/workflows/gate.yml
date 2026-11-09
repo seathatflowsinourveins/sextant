@@ -43,8 +43,8 @@ jobs:
         if: steps.prepare.outputs.pr != ''
         env:
           DANGER_GITHUB_API_TOKEN: ${{ github.token }}
-          GITHUB_EVENT_PATH: ${{ steps.prepare.outputs.danger_event }}
-        run: npx --yes "danger@$(node -p "require('./.devcontainer/agents/package.json').dependencies.danger")" ci --dangerfile dangerfile.js --failOnErrors
+          DANGER_EVENT_PATH: ${{ steps.prepare.outputs.danger_event }}
+        run: GITHUB_EVENT_PATH="$DANGER_EVENT_PATH" npx --yes "danger@$(node -p "require('./.devcontainer/agents/package.json').dependencies.danger")" ci --dangerfile dangerfile.js --failOnErrors
       - id: source
         if: always() && steps.prepare.outputs.head != ''
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
@@ -109,6 +109,21 @@ jobs:
           github-token: ${{ github.token }}
           max-diff-chars: '1000000'
           check-name: dsh-github-review-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Report a redacted native failure
+        if: failure() && steps.review.outcome == 'failure'
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          DSH_GITHUB_TOKEN: ${{ github.token }}
+        with:
+          script: |
+            const fs = require('node:fs');
+            const file = `${process.env.RUNNER_TEMP}/dsh-github/dsh-github-stderr.log`;
+            let diagnostic = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : 'Native stderr file was not produced.';
+            for (const key of ['DEEPSEEK_API_KEY', 'DSH_GITHUB_TOKEN']) {
+              if (process.env[key]) diagnostic = diagnostic.split(process.env[key]).join('[redacted]');
+            }
+            core.info(diagnostic);
       - name: Verify the report belongs to this head and contains a complete review
         id: verdict
         if: always() && steps.review.outputs.report-json != ''
