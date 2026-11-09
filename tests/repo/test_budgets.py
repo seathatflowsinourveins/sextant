@@ -38,12 +38,16 @@ def test_src_stays_under_budget() -> None:
     # host and #83's B replay merged back to back: each CI passed against a base without the
     # other, so the combined tree reached 23,020 against 21,550. The weekly report (#90,
     # 6750396545) shows only three safe dead lines and four duplicate blocks, so the raise
-    # leaves 980 lines of headroom and the safe deletions stay a follow-up. Growth is paired
-    # with consolidation: each PR
+    # leaves 980 lines of headroom and the safe deletions stay a follow-up. Then to 26,500 the
+    # same day under the owner's ruling ("those limit exit not for throtting but sota self
+    # maintanced consolidation, please don't ask again but consolidate and raise if truly
+    # needed"): the open PRs that fit alone plus the TradingView diagnostics fix need 26,059.
+    # After each consolidation merge the cap ratchets back to the measured size plus a stated
+    # headroom. Growth is paired with consolidation: each PR
     # shows its native replacements, a weekly report from maintained tools proposes deletions,
     # and a later raise must cite that report. One-off study code stays on tagged research
     # branches. The owner: "it can be grow but with sota sustainable consolidation".
-    assert sum(_lines(path) for path in (ROOT / "src").rglob("*.py")) < 24000
+    assert sum(_lines(path) for path in (ROOT / "src").rglob("*.py")) < 26500
 
 
 def test_design_stays_short() -> None:
