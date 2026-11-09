@@ -18,7 +18,7 @@ publication comes from
 [northstar's key-systemd.sh](https://github.com/seathatflowsinourveins/northstar/blob/b384d298d217d3f8d9aa83356994629536a34795/scripts/key-systemd.sh),
 carried here unchanged apart from its store name.
 
-[PR #100's P1](https://github.com/seathatflowsinourveins/sextant/pull/100#discussion_r4495068497)
+[PR #100's P1](https://github.com/seathatflowsinourveins/sextant-archive/pull/100#discussion_r4495068497)
 exposed a test that asserted only the surviving router IDs. The regression
 `test_failed_replacement_probe_preserves_the_old_sealed_value` uses distinct
 previous and candidate values and checks the previous bytes as well as its ID
@@ -65,7 +65,7 @@ script containing a live endpoint is still rejected. Reproduce CI with bytecode
 enabled when the container normally disables it.
 
 Inspect the checkout commit when CI reports older test code. On a conflicted PR,
-[this run](https://github.com/seathatflowsinourveins/sextant/actions/runs/42271089972)
+[this run](https://github.com/seathatflowsinourveins/sextant-archive/actions/runs/42271089972)
 checked out a merge of `11c1d51` while the published head was `9209eb4`.
 Confirm that the merge checkout includes the published head before attributing
 its test results to that head.

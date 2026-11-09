@@ -1,6 +1,6 @@
 # Options and Jev: source revisions survive replay
 
-Row 13, [#75](https://github.com/seathatflowsinourveins/sextant/issues/75), carries
+Row 13, [#75](https://github.com/seathatflowsinourveins/sextant-archive/issues/75), carries
 [ADR-0016](../adr/0016-options.md) and [ADR-0017](../adr/0017-jev-judgments.md).
 The options lane's [rules](../../lanes/options/README.md) apply this lesson.
 

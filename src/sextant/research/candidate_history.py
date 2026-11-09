@@ -24,7 +24,7 @@ from typing import Any
 from zipfile import ZipFile
 
 SEED_SHA256 = "f581ca7f771bf20ef05e212ce88aaaacda7325c640500d63926b23a0516d0577"
-RELEASE = "https://github.com/seathatflowsinourveins/sextant/releases/tag/seed-research-2026-10-09"
+RELEASE = "https://github.com/seathatflowsinourveins/sextant-archive/releases/tag/seed-research-2026-10-09"
 PACKAGE = "extreme-gainer-research-package/"
 DATASETS = PACKAGE + "datasets/"
 CALENDAR = PACKAGE + "harness/research/regime-gate-backtest/lane-A-supplement-spx.csv"
