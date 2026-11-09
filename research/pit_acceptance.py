@@ -25,8 +25,8 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+from research.delisted_sample import is_common
 from sextant.data.sharadar_master import IntervalCoverage, SharadarMember, interval_coverage
-from sextant.research.delisted_sample import is_common
 from sextant.research.sharadar_coverage import _read_capture as read_capture
 
 # ADR-0002 E16; the 08u.1 probe JSON (sha256 3f759c29...) records each name trading on this asof.

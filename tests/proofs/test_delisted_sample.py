@@ -3,11 +3,15 @@
 import hashlib
 import json
 import socket
+import sys
 from pathlib import Path
 
 import pytest
 
-from sextant.research import delisted_sample as sample
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+
+from research import delisted_sample as sample  # noqa: E402
 
 HEADER = b"Form Type   Company Name   CIK   Date Filed   File Name\n" + b"-" * 40 + b"\n"
 IDENTITY = "Sextant proof offline@example.invalid"  # Public test identity; transport is mocked.

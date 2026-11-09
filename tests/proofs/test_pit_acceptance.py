@@ -4,6 +4,7 @@ import csv
 import hashlib
 import io
 import json
+import sys
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
@@ -12,8 +13,12 @@ from zipfile import ZipFile, ZipInfo
 import pytest
 
 from sextant.data.universe import manifest_universe
-from sextant.research import pit_acceptance as acceptance
 from sextant.research.sharadar_client import SOURCE
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+
+from research import pit_acceptance as acceptance  # noqa: E402
 
 TICKERS = (
     "table",
