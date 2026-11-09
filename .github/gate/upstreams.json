@@ -112,7 +112,7 @@
       "sha": "72540533c4f99bad772ba303be0eb4af6eddbdc4",
       "reuse": ".devcontainer/agents/package.json:11",
       "paths": [
-        "source/ci_source/providers/GitHubActions.ts, constructor/pullRequestID/repoSlug",
+        "source/ci_source/providers/GitHubActions.ts:219-267, constructor/useEventDSL/pullRequestID/repoSlug",
         "source/platforms/github/GitHubUtils.ts, fileContents"
       ]
     },
@@ -187,7 +187,8 @@
     "https://learn.chatgpt.com/docs/github-action",
     "https://developers.openai.com/api/docs/models/gpt-6.1-sol",
     "https://pnpm.io/settings",
-    "https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#pull_request"
+    "https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#pull_request",
+    "https://docs.github.com/en/actions/reference/workflows-and-actions/variables#default-environment-variables"
   ],
   "vendored_scripts": {
     "action-patch.mjs": "a897b80da6c1a42f32261e54a92e2bd1163dd075e0574edc4c336b96ceb3e797",
