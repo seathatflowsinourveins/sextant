@@ -324,6 +324,16 @@ itself; the lease, the atomic writer and the two-clock rule are T1's, unchanged.
   missing/invalid/late; any failed symbol sets `DEGRADED` with the explicit
   missing count. A degraded poll never clears the list: `publish_unit` writes an
   explicit unavailable document with `watchlists: null`.
+- **Clocks and corrections.** `poll` decides publication at
+  `max(market_ns, received_ns)`, so a heartbeat receipt even one nanosecond
+  after the market clock cannot make a fresh unit look stale. A failed or
+  unrequested symbol records its unverified minute; the prefix never advances
+  past that hole (`ingest` refuses the newer bar) until the missing bar, or a
+  complete poll of that same minute, verifies it, so coverage stays `DEGRADED`
+  and no understated cumulative is published. An identical duplicate poll is
+  skipped; a changed bar for an already-ingested minute invalidates the epoch
+  and raises, following the correction policy above: a new publisher is
+  required for a revised history.
 - **Mappings.** The host takes an operator-supplied exact
   `SYMBOL -> EXCHANGE:SYMBOL` JSON map. It never invents a venue; a missing
   mapping makes the unit unavailable rather than dropping the row.

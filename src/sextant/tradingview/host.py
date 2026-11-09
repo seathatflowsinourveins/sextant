@@ -84,6 +84,8 @@ class BarFidelityHost:
         self._universe = frozenset(publisher.universe)
         self._anchored: set[str] = set()
         self.last_close: dict[str, int] = {}
+        self._last_bar: dict[str, tuple[int, Decimal, int, int]] = {}
+        self._gaps: dict[str, int] = {}
         registry = publisher.registry
         self.keep_s = (
             max(
@@ -105,24 +107,35 @@ class BarFidelityHost:
         if unknown:
             raise ValueError(f"bar poll names symbols outside the universe: {sorted(unknown)}")
         missing = (self._universe - requested) | set(poll.failed)
+        for symbol in missing:
+            # A failed or unrequested symbol leaves its bar unverified.  The
+            # prefix may not advance past that minute until the bar (or a
+            # complete poll of that same minute) recovers it.
+            self._gaps[symbol] = min(self._gaps.get(symbol, market_ns), market_ns)
+        ingested = 0
+        for item in sorted(poll.bars, key=lambda bar: (bar.close_ns, bar.symbol)):
+            if self._feed(item, market_ns=market_ns, received_ns=received_ns):
+                ingested += 1
+        if not missing:
+            # A complete poll of this minute also verifies that a symbol with
+            # no bar simply had no trades in it.
+            for symbol in [name for name, gap in self._gaps.items() if gap == market_ns]:
+                del self._gaps[symbol]
+        unverified = missing | set(self._gaps)
         coverage = (
             Coverage(CoverageState.READY, True, len(self._universe), len(self._universe), 0, 0, 0)
-            if not missing
+            if not unverified
             else Coverage(
                 CoverageState.DEGRADED,
                 False,
                 len(self._universe),
-                len(self._universe) - len(missing),
-                len(missing),
+                len(self._universe) - len(unverified),
+                len(unverified),
                 0,
                 0,
             )
         )
         self.publisher.set_coverage(coverage)
-        ingested = 0
-        for item in sorted(poll.bars, key=lambda bar: (bar.close_ns, bar.symbol)):
-            if self._feed(item, market_ns=market_ns, received_ns=received_ns):
-                ingested += 1
         return ingested
 
     def heartbeat(self, *, at: int, received_ns: int) -> bool:
@@ -146,7 +159,10 @@ class BarFidelityHost:
         ingested = self.ingest(poll, market_ns=market_ns, received_ns=received_ns)
         if not self.heartbeat(at=market_ns, received_ns=received_ns):
             raise ValueError("the heartbeat was refused")
-        return ingested, self.publish(path, now=market_ns, mapping_clocks=mapping_clocks)
+        # The heartbeat receipt can trail the market clock by a few nanoseconds;
+        # the publication decision clock must not precede the receipt it uses.
+        decision_ns = max(market_ns, received_ns)
+        return ingested, self.publish(path, now=decision_ns, mapping_clocks=mapping_clocks)
 
     def _feed(self, item: Bar, *, market_ns: int, received_ns: int) -> bool:
         symbol = item.symbol
@@ -160,9 +176,23 @@ class BarFidelityHost:
             return False
         if item.close_ns > market_ns:
             raise ValueError(f"bar close is after the market clock: {symbol}")
-        if self.last_close.get(symbol, item.close_ns - 1) >= item.close_ns:
-            return False
+        gap = self._gaps.get(symbol)
+        if gap is not None:
+            if item.close_ns != gap:
+                # Older than the hole or trying to advance past it: the prefix
+                # stays understated, so refuse until the missing bar arrives.
+                return False
+            del self._gaps[symbol]
+        previous = self._last_bar.get(symbol)
+        if previous is not None and item.close_ns <= previous[0]:
+            if item.close_ns < previous[0]:
+                return False
+            if (item.close, item.volume, item.trades) == previous[1:]:
+                return False
+            self.producer.invalidate("a revised bar requires a new publisher epoch")
+            raise ValueError(f"revised bar requires a new epoch: {symbol}")
         self.last_close[symbol] = item.close_ns
+        self._last_bar[symbol] = (item.close_ns, item.close, item.volume, item.trades)
         if item.volume == 0:
             return False
         reference = self.publisher.references.get(symbol)

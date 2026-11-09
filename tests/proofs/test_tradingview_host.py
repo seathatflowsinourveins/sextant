@@ -611,6 +611,126 @@ def prime_two_minutes(host: BarFidelityHost) -> int:
     return DAY_START + 120 * NS
 
 
+def test_publish_uses_the_heartbeat_receipt_clock(tmp_path: Path) -> None:
+    """A receive clock after the market clock still publishes at the receipt."""
+    with reserve_stream(
+        tmp_path / "leases", paper_slot=3, existing_streams=0, source="fixture"
+    ) as lease:
+        host = BarFidelityHost(
+            publisher(),
+            lease=lease,
+            sip_authority="fixture SIP authority",
+            symbol_map={name: f"NASDAQ:{name}" for name in ("AAA", "BBB", "CCC")},
+        )
+        close_ns = prime_two_minutes(host)
+        ingested, unit = host.poll(
+            BarPoll(bars=(), requested=("AAA", "BBB", "CCC")),
+            market_ns=close_ns,
+            received_ns=close_ns + 1,
+            path=tmp_path / "unit.json",
+        )
+        assert ingested == 0
+        assert unit["status"] == "fresh", unit
+
+
+def test_history_gap_stays_degraded_until_backfilled(tmp_path: Path) -> None:
+    """A failed minute is never skipped silently: the prefix waits for its bar."""
+    with reserve_stream(
+        tmp_path / "leases", paper_slot=3, existing_streams=0, source="fixture"
+    ) as lease:
+        host = BarFidelityHost(
+            publisher(),
+            lease=lease,
+            sip_authority="fixture SIP authority",
+            symbol_map={name: f"NASDAQ:{name}" for name in ("AAA", "BBB", "CCC")},
+        )
+        close_ns = prime_two_minutes(host)
+        assert host.publisher.states["CCC"].segment_dollar_volume == D("211")
+        minute_two = close_ns + 60 * NS
+        assert (
+            host.ingest(
+                BarPoll(bars=(), requested=("AAA", "BBB", "CCC"), failed=("CCC",)),
+                market_ns=minute_two,
+                received_ns=minute_two,
+            )
+            == 0
+        )
+        minute_three = minute_two + 60 * NS
+        # CCC's minute-2 bar is still missing: its later bar must not advance
+        # the prefix past the hole.
+        assert (
+            host.ingest(
+                BarPoll(bars=(bar("CCC", 3, "10.80", 10, 2),), requested=("AAA", "BBB", "CCC")),
+                market_ns=minute_three,
+                received_ns=minute_three,
+            )
+            == 0
+        )
+        assert host.publisher.states["CCC"].segment_dollar_volume == D("211")
+        assert host.heartbeat(at=minute_three, received_ns=minute_three)
+        unit = host.publish(
+            tmp_path / "unit.json",
+            now=minute_three,
+            mapping_clocks=Clocks(minute_three, minute_three, "fixture receipt"),
+        )
+        assert unit["status"] == "unavailable" and unit["watchlists"] is None
+        # Verified backfill: the missed bar and the later bar arrive together.
+        assert (
+            host.ingest(
+                BarPoll(
+                    bars=(
+                        bar("CCC", 2, "10.70", 100, 2),
+                        bar("AAA", 3, "11.60", 10, 3),
+                        bar("BBB", 3, "11.10", 20, 4),
+                        bar("CCC", 3, "10.80", 10, 2),
+                    ),
+                    requested=("AAA", "BBB", "CCC"),
+                ),
+                market_ns=minute_three,
+                received_ns=minute_three,
+            )
+            == 4
+        )
+        assert host.publisher.states["CCC"].segment_dollar_volume == D("1389")
+        # The fixture registry throttles publications to one per second, so the
+        # recovered unit is published on the next second.
+        later = minute_three + NS
+        assert host.heartbeat(at=later, received_ns=later)
+        unit = host.publish(
+            tmp_path / "unit.json",
+            now=later,
+            mapping_clocks=Clocks(later, later, "fixture receipt"),
+        )
+        assert unit["status"] == "fresh", unit
+
+
+def test_revised_bar_invalidates_the_epoch(tmp_path: Path) -> None:
+    """An identical duplicate is skipped; a changed bar needs a new epoch."""
+    with reserve_stream(
+        tmp_path / "leases", paper_slot=3, existing_streams=0, source="fixture"
+    ) as lease:
+        host = BarFidelityHost(
+            publisher(),
+            lease=lease,
+            sip_authority="fixture SIP authority",
+            symbol_map={name: f"NASDAQ:{name}" for name in ("AAA", "BBB", "CCC")},
+        )
+        close_ns = prime_two_minutes(host)
+        duplicate = BarPoll(bars=(bar("AAA", 1, "11.50", 10, 3),), requested=("AAA", "BBB", "CCC"))
+        assert host.ingest(duplicate, market_ns=close_ns, received_ns=close_ns) == 0
+        assert host.producer.error is None
+        revised = BarPoll(bars=(bar("AAA", 1, "11.75", 20, 5),), requested=("AAA", "BBB", "CCC"))
+        with pytest.raises(ValueError, match="revised"):
+            host.ingest(revised, market_ns=close_ns, received_ns=close_ns)
+        assert host.producer.error is not None
+        unit = host.publish(
+            tmp_path / "unit.json",
+            now=close_ns,
+            mapping_clocks=Clocks(close_ns, close_ns, "fixture receipt"),
+        )
+        assert unit["status"] == "unavailable" and unit["watchlists"] is None
+
+
 def test_partial_poll_never_clears_the_list(tmp_path: Path) -> None:
     with reserve_stream(
         tmp_path / "leases", paper_slot=3, existing_streams=0, source="fixture"
