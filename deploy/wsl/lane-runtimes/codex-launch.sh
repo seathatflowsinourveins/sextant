@@ -82,7 +82,30 @@ args=(
   -c "model=\"$pool\""
   -c "model_reasoning_effort=\"$effort\""
   -c 'check_for_update_on_startup=false'
+  # codex-rs/config/src/types.rs:250-261,640-672 at 086ccc83. Explicit metrics
+  # override Statsig; disabling analytics does not disable our own OTLP exporters.
+  -c 'analytics.enabled=false'
+  -c 'feedback.enabled=false'
+  -c 'otel.log_user_prompt=false'
+  -c 'otel.log_agent_responses=false'
+  -c 'otel.log_guardian_assessments=false'
+  -c 'otel.log_sse_deltas=false'
+  -c 'otel.exporter={otlp-grpc={endpoint="http://127.0.0.1:4317"}}'
+  -c 'otel.trace_exporter={otlp-grpc={endpoint="http://127.0.0.1:4317"}}'
+  -c 'otel.metrics_exporter={otlp-grpc={endpoint="http://127.0.0.1:4317"}}'
 )
+# Codex 086ccc833bc9cf01024ad2dd6af7dbd421b6bf9a: codex-rs/utils/cli/src/config_override.rs
+# parses the value as TOML; config/src/overrides.rs splits every dot in the key.
+# Keep dotted attribute names inside one table value, never in an override key.
+span_attributes='"sextant.runtime"="codex"'
+for field in LANE PR; do
+  name="SEXTANT_$field"
+  if [[ -n "${!name-}" ]]; then
+    attribute=$(jq -nr --arg value "${!name}" '$value | tojson')
+    span_attributes+=",\"sextant.${field,,}\"=$attribute"
+  fi
+done
+args+=(-c "otel.span_attributes={$span_attributes}")
 [[ -z "$projects" ]] || args+=(-c "projects={$projects}")
 ((chosen)) || args+=(-s "$sandbox")
 
