@@ -6,12 +6,10 @@ bursts, and no proof here starts a service, a container or a collector.
 
 import json
 import re
-import shutil
 import stat
 from pathlib import Path
 from typing import Any
 
-import pytest
 import yaml
 
 ROOT = Path(__file__).parents[2]
@@ -273,13 +271,13 @@ def test_tunables_are_registered_uncalibrated_and_match_compose() -> None:
     assert "LGTM_CONTAINER_MEMORY:-2G" in _read(f"{LGTM}/compose.yaml")
 
 
-def test_host_meets_the_registered_ram_and_disk_floors() -> None:
-    meminfo = Path("/proc/meminfo")
-    if not meminfo.is_file():
-        pytest.skip("host RAM undeterminable without /proc/meminfo")
-    total_kb = int(re.search(r"MemTotal:\s+(\d+)", meminfo.read_text()).group(1))  # type: ignore[union-attr]
-    assert total_kb * 1024 / 1e9 > 20
-    assert shutil.disk_usage(ROOT).free / 1e9 > 20
+def test_host_floor_check_lives_with_the_host_acceptance_tests() -> None:
+    # The live 20 GB floors are a host acceptance check (`just accept`),
+    # never a CI proof: the hosted runner is smaller than the floor.
+    assert "test_host_meets_the_registered_ram_and_disk_floors" not in globals()
+    host = _read("tests/host/test_monitor_lgtm_host.py")
+    assert "def test_host_meets_the_registered_ram_and_disk_floors" in host
+    assert "/proc/meminfo" in host and "disk_usage" in host
 
 
 def test_upstream_ui_map_keeps_grafana_to_the_live_layer() -> None:
