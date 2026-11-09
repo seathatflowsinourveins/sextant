@@ -6,6 +6,7 @@ import hashlib
 import io
 import json
 import subprocess
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -13,7 +14,10 @@ from zipfile import ZipFile
 
 import pytest
 
-from sextant.research import sharadar_coverage as coverage
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+
+from research import sharadar_coverage as coverage  # noqa: E402
 
 FIXTURE = Path(__file__).parents[1] / "fixtures/sharadar/tables.json"
 NOW = datetime(2026, 11, 6, 16, 0, tzinfo=UTC)

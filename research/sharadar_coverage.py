@@ -21,6 +21,7 @@ from zipfile import ZipFile, is_zipfile
 from zoneinfo import ZoneInfo
 
 from sextant.research import candidate_history as seed
+from sextant.research import sharadar_client
 from sextant.research.sharadar_client import (
     PIN,
     SOURCE,
@@ -166,9 +167,7 @@ def capture(
         "client": SOURCE,
         "implementation_sha": implementation_sha,
         "implementation_source_sha256": seed._sha(Path(__file__).read_bytes()),
-        "transport_source_sha256": seed._sha(
-            Path(__file__).with_name("sharadar_client.py").read_bytes()
-        ),
+        "transport_source_sha256": seed._sha(Path(sharadar_client.__file__).read_bytes()),
         "queries": queries,
     }
     seed._publish_once(output / "capture.json", seed._json(result))
