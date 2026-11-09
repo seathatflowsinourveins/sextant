@@ -268,7 +268,7 @@ The manifest retains every gate row and adds only the three rank-live rows.
 Gate's instructions, review rules, workflows and size tests remain unchanged.
 
 Measured Python source is **16,129 + 589 = 16,718 lines**, below gate's cap of
-**21,550**. The +589 is the 299-line producer plus 290-line cadence module;
+**24,000**. The +589 is the 299-line producer plus 290-line cadence module;
 there is no new dependency, scorer, controller or running service. The earlier
 <20,800 receipt above describes the original carry, not gate's current cap.
 

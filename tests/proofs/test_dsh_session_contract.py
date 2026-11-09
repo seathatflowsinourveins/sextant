@@ -222,7 +222,7 @@ def test_relative_live_link_resolves_against_the_profile_directory(tmp_path: Pat
     assert "OK" in result.stdout
 
 
-def test_external_live_link_warns_but_passes(tmp_path: Path) -> None:
+def test_external_live_link_is_compared_byte_for_byte(tmp_path: Path) -> None:
     root, lock, profile, gate = _fixture(tmp_path, with_link=True)
     live = root / "live" / "pkg-link"
     external = tmp_path / "external" / "pkg-link"
@@ -230,9 +230,11 @@ def test_external_live_link_warns_but_passes(tmp_path: Path) -> None:
     data = json.loads(profile.read_text(encoding="utf-8"))
     data["dependencies"]["pkg-link"] = f"link:{external}"
     profile.write_text(json.dumps(data), encoding="utf-8")
+    assert _doctor(root, lock, profile, gate).returncode == 0
+    (external / "patch.yml").write_text("id: changed\n", encoding="utf-8")
     result = _doctor(root, lock, profile, gate)
-    assert result.returncode == 0, result.stderr
-    assert "outside the validated checkout" in result.stderr
+    assert result.returncode == 2
+    assert "differs" in result.stderr.lower()
 
 
 def test_link_content_drift_fails(tmp_path: Path) -> None:
@@ -244,13 +246,25 @@ def test_link_content_drift_fails(tmp_path: Path) -> None:
     assert "differs" in result.stderr.lower() or "drift" in result.stderr.lower()
 
 
-def test_extra_live_file_is_a_warning(tmp_path: Path) -> None:
+def test_extra_live_file_fails(tmp_path: Path) -> None:
     root, lock, profile, gate = _fixture(tmp_path, with_link=True)
     live = Path(json.loads(profile.read_text(encoding="utf-8"))["dependencies"]["pkg-link"][5:])
     (live / "extra.yml").write_text("id: extra\n", encoding="utf-8")
     result = _doctor(root, lock, profile, gate)
+    assert result.returncode == 2
+    assert "extra live file" in result.stderr.lower()
+
+
+def test_declared_extra_live_file_passes(tmp_path: Path) -> None:
+    root, lock, profile, gate = _fixture(tmp_path, with_link=True)
+    data = json.loads(lock.read_text(encoding="utf-8"))
+    entry = next(item for item in data["interactive"]["dependencies"] if item.get("link"))
+    entry["extra_live"] = ["extra.yml"]
+    lock.write_text(json.dumps(data), encoding="utf-8")
+    live = Path(json.loads(profile.read_text(encoding="utf-8"))["dependencies"]["pkg-link"][5:])
+    (live / "extra.yml").write_text("id: extra\n", encoding="utf-8")
+    result = _doctor(root, lock, profile, gate)
     assert result.returncode == 0, result.stderr
-    assert "warning" in result.stderr.lower()
 
 
 def test_absolute_link_is_rejected(tmp_path: Path) -> None:
