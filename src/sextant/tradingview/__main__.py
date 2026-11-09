@@ -11,7 +11,13 @@ from pathlib import Path
 from sextant.tradingview.auth import official_client
 from sextant.tradingview.inputs import InputError, read_research_inputs
 from sextant.tradingview.presets import preset_receipt
-from sextant.tradingview.sync import OfficialTools, sync_research
+from sextant.tradingview.sync import OfficialTools, SyncError, sync_research
+
+STOP = (
+    "Display sync stopped. Re-inventory before retry; earlier writes may have succeeded. "
+    "Owner browser consent is required each session (--authorize); "
+    "no authorization is saved."
+)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -52,13 +58,15 @@ def main(argv: list[str] | None = None) -> int:
     except InputError:
         print("Research input unavailable; no session opened and lists unchanged.")
         return 2
+    except SyncError as error:
+        # Only fixed literals; the message and any upstream text never reach stdout.
+        label = error.label or type(error).__name__
+        stage = error.stage or "sync"
+        print(f"{STOP} Safe diagnostic: {label} at {stage}.")
+        return 2
     except Exception:
         # SDK/HTTP exceptions may embed credentials; never emit their args/tracebacks.
-        print(
-            "Display sync stopped. Re-inventory before retry; earlier writes may have succeeded. "
-            "Owner browser consent is required each session (--authorize); "
-            "no authorization is saved."
-        )
+        print(STOP)
         return 2
 
 
