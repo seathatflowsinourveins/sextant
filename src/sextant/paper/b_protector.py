@@ -178,7 +178,6 @@ class Protector:
         self.frozen: set[str] = set()
         self._cancelling: set[str] = set()
         self._last_position: dict[str, Decimal] = {}
-        self._last_reserved: dict[str, Decimal] = {}
         self._sequence = 0
 
     def page(self, reason: str, symbol: str | None = None, detail: str = "") -> None:
@@ -238,23 +237,16 @@ class Protector:
                 )
                 continue
             reserved = owner_sells.get(symbol, Decimal(0))
-            previous = self._last_reserved.get(symbol)
-            freed = symbol not in self._last_position or (
-                previous is not None and reserved < previous
-            )
             self._reconcile_symbol(
                 symbol,
                 position,
                 house.pop(symbol, []),
                 reserved,
                 symbol in unrecognized,
-                freed,
             )
-            self._last_position[symbol] = _decimal(position.qty, "position.qty")
-            self._last_reserved[symbol] = reserved
+            self._last_position[symbol] = quantity
         for symbol in set(self._last_position) - set(positions):
             self._last_position.pop(symbol, None)
-            self._last_reserved.pop(symbol, None)
         for symbol, ours in house.items():
             if symbol not in positions:
                 for order in ours:
@@ -424,7 +416,6 @@ class Protector:
         ours: list[Order],
         owner_sell_reserved: Decimal,
         unrecognized_open_order: bool,
-        freed: bool,
     ) -> None:
         quantity = _decimal(position.qty, "position.qty")
         if quantity < 0:
@@ -491,14 +482,9 @@ class Protector:
                 if not in_rth:
                     self.page("unprotected_outside_rth_until_pr2", symbol)
                 return
-            if freed:
-                if in_rth and self._cancel(ours[0], "arm_freed_quantity"):
-                    self._submit_trail(symbol, protective)
-                elif not in_rth:
-                    self.page("unprotected_outside_rth_until_pr2", symbol)
-                return
-            self.page("owner_add_unprotected", symbol)
-            if not in_rth:
+            if in_rth and self._cancel(ours[0], "arm_protective_quantity"):
+                self._submit_trail(symbol, protective)
+            elif not in_rth:
                 self.page("unprotected_outside_rth_until_pr2", symbol)
             return
         if not in_rth:
