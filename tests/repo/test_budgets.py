@@ -43,11 +43,13 @@ def test_src_stays_under_budget() -> None:
     # maintanced consolidation, please don't ask again but consolidate and raise if truly
     # needed"): the open PRs that fit alone plus the TradingView diagnostics fix need 26,059.
     # After each consolidation merge the cap ratchets back to the measured size plus a stated
-    # headroom. Growth is paired with consolidation: each PR
+    # headroom. Then to 28,000 the same day for the owner's 24/5 end to end ("we are using the
+    # 24/5 so please e2e it now"): 26,498 measured, less the retirement in flight, plus the
+    # 24/5 items is about 27,650 to 27,950. Growth is paired with consolidation: each PR
     # shows its native replacements, a weekly report from maintained tools proposes deletions,
     # and a later raise must cite that report. One-off study code stays on tagged research
     # branches. The owner: "it can be grow but with sota sustainable consolidation".
-    assert sum(_lines(path) for path in (ROOT / "src").rglob("*.py")) < 26500
+    assert sum(_lines(path) for path in (ROOT / "src").rglob("*.py")) < 28000
 
 
 def test_design_stays_short() -> None:

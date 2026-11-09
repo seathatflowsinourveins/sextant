@@ -3,7 +3,7 @@
 Read date: **2026-11-06**. Public documentation and pinned recorded reports only;
 no stream, broker call, purchase or new strategy research trial. Account rights,
 local throughput and original historical availability are not inferred from
-vendor documentation. [#42](https://github.com/seathatflowsinourveins/sextant/issues/42)
+vendor documentation. [#42](https://github.com/seathatflowsinourveins/sextant-archive/issues/42)
 remains open on its data/protocol/ledger blockers.
 
 ## Near-second onset: coverage and message rate

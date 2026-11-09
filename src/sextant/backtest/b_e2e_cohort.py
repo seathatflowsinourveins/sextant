@@ -275,16 +275,18 @@ def _quote_at(case: CaseData, at_ns: int) -> Quote | None:
     return best
 
 
-def _entry_at(case: CaseData, run: Run, rule: EntryRule) -> tuple[Entry | None, str]:
+def _entry_at(
+    case: CaseData, run: Run, rule: EntryRule, *, max_age_ns: int = MAX_AGE_NS
+) -> tuple[Entry | None, str]:
     """The first-leg ask once the run is confirmed; the fill is never retrospective."""
     quote = _quote_at(case, run.confirm_ns)
     if quote is None:
         return None, "thin quote: no fresh ask at run completion (no quote at or before completion)"
     age = run.confirm_ns - quote.ts_ns
-    if age > MAX_AGE_NS:
+    if age > max_age_ns:
         return None, (
             "thin quote: no fresh ask at run completion "
-            f"(last quote {age / 1e9:.1f}s old at completion, max 5s)"
+            f"(last quote {age / 1e9:.1f}s old at completion, max {max_age_ns / 1e9:g}s)"
         )
     if quote.bid >= quote.ask:
         return None, "crossed quote: no fresh two-sided ask at run completion"
@@ -297,27 +299,34 @@ def _entry_at(case: CaseData, run: Run, rule: EntryRule) -> tuple[Entry | None, 
     return Entry(ts_ns=run.confirm_ns, price=quote.ask, quote_ts_ns=quote.ts_ns), ""
 
 
-def _quote_entry(case: CaseData, at_ns: int) -> tuple[Entry | None, str]:
+def _quote_entry(
+    case: CaseData, at_ns: int, *, max_age_ns: int = MAX_AGE_NS
+) -> tuple[Entry | None, str]:
     """The rotation's entry: a fresh two-sided ask at the freed slot's moment."""
     quote = _quote_at(case, at_ns)
     if quote is None:
         return None, "thin quote: no fresh ask at the freed slot"
     age = at_ns - quote.ts_ns
-    if age > MAX_AGE_NS:
-        return None, f"thin quote: no fresh ask at the freed slot ({age / 1e9:.1f}s old, max 5s)"
+    if age > max_age_ns:
+        return None, (
+            f"thin quote: no fresh ask at the freed slot "
+            f"({age / 1e9:.1f}s old, max {max_age_ns / 1e9:g}s)"
+        )
     if quote.bid >= quote.ask:
         return None, "crossed quote: no fresh two-sided ask at the freed slot"
     return Entry(ts_ns=at_ns, price=quote.ask, quote_ts_ns=quote.ts_ns), ""
 
 
-def entry(case: CaseData, run: Run, rule: EntryRule) -> tuple[Entry | None, str]:
-    return _entry_at(case, run, rule)
+def entry(
+    case: CaseData, run: Run, rule: EntryRule, *, max_age_ns: int = MAX_AGE_NS
+) -> tuple[Entry | None, str]:
+    return _entry_at(case, run, rule, max_age_ns=max_age_ns)
 
 
-def trail(case: CaseData, filled: Entry) -> Trail:
-    """B's 2.5% broker-held trail, modeled at the triggering print (the PR-3 witness)."""
+def trail(case: CaseData, filled: Entry, *, trail_fraction: Decimal = TRAIL_FRACTION) -> Trail:
+    """B's 2.5% broker-held trail (default), modeled at the triggering print."""
     high = filled.price
-    level = high * (1 - TRAIL_FRACTION)
+    level = high * (1 - trail_fraction)
     path: list[TracePoint] = []
     exit_ts_ns: int | None = None
     exit_price: Decimal | None = None
@@ -327,7 +336,7 @@ def trail(case: CaseData, filled: Entry) -> Trail:
             continue
         if print_.price > high:
             high = print_.price
-        level = high * (1 - TRAIL_FRACTION)
+        level = high * (1 - trail_fraction)
         path.append(TracePoint(print_.ts_ns, print_.price, high, level))
         if print_.price <= level:
             exit_ts_ns = print_.ts_ns
@@ -374,6 +383,8 @@ def _rotate(
     capacity: int,
     rotation: bool,
     rule: EntryRule,
+    max_age_ns: int,
+    trail_fraction: Decimal,
 ) -> bool:
     candidates = [
         item
@@ -382,14 +393,14 @@ def _rotate(
     ]
     candidates.sort(key=lambda item: (item.rank == 0, item.rank, item.run.flag_ns, item.case.case))
     for item in candidates:
-        filled, _ = _quote_entry(item.case, at_ns)
+        filled, _ = _quote_entry(item.case, at_ns, max_age_ns=max_age_ns)
         if filled is None:
             continue
         ceiling = item.run.quiet * (1 + rule.max_move)
         if filled.price < item.run.quiet or max(item.run.last, filled.price) > ceiling:
             continue
         filled = Entry(filled.ts_ns, filled.price, filled.quote_ts_ns, rotated=True)
-        walked = trail(item.case, filled)
+        walked = trail(item.case, filled, trail_fraction=trail_fraction)
         row = ArmRow(
             case=item.case,
             arm=arm,
@@ -421,6 +432,8 @@ def _process_exits(
     capacity: int,
     rotation: bool,
     rule: EntryRule,
+    max_age_ns: int,
+    trail_fraction: Decimal,
 ) -> None:
     while True:
         exits: list[tuple[int, int]] = []
@@ -445,6 +458,8 @@ def _process_exits(
                 capacity=capacity,
                 rotation=rotation,
                 rule=rule,
+                max_age_ns=max_age_ns,
+                trail_fraction=trail_fraction,
             )
 
 
@@ -455,9 +470,12 @@ def run_arms(
     rotation: bool,
     arm: str | None = None,
     rule: EntryRule | None = None,
+    trail_fraction: Decimal = TRAIL_FRACTION,
+    max_age_s: int = 5,
 ) -> tuple[ArmRow, ...]:
     """Allocate one arm's slots and replay each case's entry, trail and exit."""
     rule = rule or reviewed_rule()
+    max_age_ns = int(Decimal(str(max_age_s)) * 1_000_000_000)
     label = arm or f"{capacity}-slot" + ("-rotation" if rotation else "")
     rows: dict[str, ArmRow] = {}
     slots: list[ArmRow | None] = [None] * capacity
@@ -498,8 +516,10 @@ def run_arms(
                 capacity=capacity,
                 rotation=rotation,
                 rule=rule,
+                max_age_ns=max_age_ns,
+                trail_fraction=trail_fraction,
             )
-        filled, reason = entry(case, run, rule)
+        filled, reason = entry(case, run, rule, max_age_ns=max_age_ns)
         if filled is None:
             rows[case.case] = ArmRow(
                 case=case,
@@ -535,7 +555,7 @@ def run_arms(
             if rotation:
                 pending.append(_Pending(case, run, rank))
             continue
-        walked = trail(case, filled)
+        walked = trail(case, filled, trail_fraction=trail_fraction)
         row = ArmRow(
             case=case,
             arm=label,
@@ -566,6 +586,8 @@ def run_arms(
             capacity=capacity,
             rotation=rotation,
             rule=rule,
+            max_age_ns=max_age_ns,
+            trail_fraction=trail_fraction,
         )
     return tuple(rows[case.case] for case in ordered)
 

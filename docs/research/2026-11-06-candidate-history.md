@@ -1,6 +1,6 @@
 # Candidate history: seed reconciliation and the blocked PIT extension
 
-Issue [#42](https://github.com/seathatflowsinourveins/sextant/issues/42), design row 4. Research only; no orders, endpoint calls, streams or broker-key use. This completes the seed audit, **not** the all-stock candidate history. #42 stays open.
+Issue [#42](https://github.com/seathatflowsinourveins/sextant-archive/issues/42), design row 4. Research only; no orders, endpoint calls, streams or broker-key use. This completes the seed audit, **not** the all-stock candidate history. #42 stays open.
 
 ## Sources and minimal slice
 
@@ -48,7 +48,7 @@ Forward status remains **686 OK / 265 NO_DATA / 6 EVENT_BAR_MISSING**. Eight exc
 
 ## Why the extension stops
 
-The [issue progress/blocker record](https://github.com/seathatflowsinourveins/sextant/issues/42#issuecomment-6687528843) records the source/input check. No master/actions export, transferred Sharadar scope/rights receipt, independent delisting-sample manifest, scanner-day archive or canonical TrialLog was found in this clean checkout. GitHub's `ledger` tree lookup returned 404 on 2026-11-06. This does not inspect or assume anything about the old lanes' disks/services.
+The [issue progress/blocker record](https://github.com/seathatflowsinourveins/sextant-archive/issues/42#issuecomment-6687528843) records the source/input check. No master/actions export, transferred Sharadar scope/rights receipt, independent delisting-sample manifest, scanner-day archive or canonical TrialLog was found in this clean checkout. GitHub's `ledger` tree lookup returned 404 on 2026-11-06. This does not inspect or assume anything about the old lanes' disks/services.
 
 [Alpaca's historical-bars API](https://docs.alpaca.markets/us/reference/stockbars), read 2026-11-06, exposes raw adjustments, pagination and a symbol `asof` date. It does not supply the non-Alpaca dated master required by [ADR-0013](../adr/0013-us-equity-data-stack.md). Price queries against today's symbols cannot settle the missing all-stock membership, delisted denominator or ordinary controls. No keyed REST call is useful for that missing prerequisite, so none was made. No vendor is selected or bought; the owner must resolve owned Sharadar scope/rights versus purchase under #29 §5.
 

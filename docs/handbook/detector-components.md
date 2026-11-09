@@ -1,6 +1,6 @@
 # Detector components: parity is not admission or alarm authority
 
-Lesson from [#130](https://github.com/seathatflowsinourveins/sextant/issues/130),
+Lesson from [#130](https://github.com/seathatflowsinourveins/sextant-archive/issues/130),
 serving the ranking/onset step and applying [ADR-0015](../adr/0015-research-lane-and-strategy-sourcing.md)
 and [ADR-0018 L3/L9](../adr/0018-evidence-and-learning-loop.md). The changed rule is
 in [practices](practices.md#evidence-and-learning); implementation, exact pins and

@@ -124,8 +124,8 @@
       "enum": ["none", "shadow", "stage-1", "stage-2", "stage-3", "stage-a", "stage-b", null]
     },
     "origin_lane": {
-      "$comment": "Optional, not nullable. paper-a/b/c and ibkr-paper identify paper profiles. alpaca and ibkr are legacy coarse values retained for existing records; new profile lessons use the precise paper lane.",
-      "enum": ["research", "alpaca", "ibkr", "live", "lead", "owner", "paper-a", "paper-b", "paper-c", "ibkr-paper"]
+      "$comment": "Optional, not nullable. research and sim name lanes that are not broker profiles; paper-a/b/c and ibkr-paper identify paper profiles. alpaca and ibkr are legacy coarse values retained for existing records; new profile lessons use the precise paper lane.",
+      "enum": ["research", "sim", "alpaca", "ibkr", "live", "lead", "owner", "paper-a", "paper-b", "paper-c", "ibkr-paper"]
     },
     "bead": {
       "$comment": "DESIGN.md:30: source accepts nullable trimmed text, not a stricter northstar-trading prefix.",

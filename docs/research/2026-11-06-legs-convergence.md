@@ -4,7 +4,7 @@ Read date for every source: **2026-11-06**. Reconciled by a Claude worker (Claud
 
 ## Inputs
 
-All on release [`research-legs-2026-11-06`](https://github.com/seathatflowsinourveins/sextant/releases/tag/research-legs-2026-11-06), SHA-256 of the bytes reconciled:
+All on release [`research-legs-2026-11-06`](https://github.com/seathatflowsinourveins/sextant-archive/releases/tag/research-legs-2026-11-06), SHA-256 of the bytes reconciled:
 
 | Leg | Runtime, effort | SHA-256 |
 |---|---|---|

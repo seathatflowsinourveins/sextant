@@ -156,6 +156,10 @@ def _print_page(page: Page) -> None:
     print(f"page {page.reason}{symbol}{detail}", flush=True)
 
 
+def _print_state(line: str) -> None:
+    print(line, flush=True)
+
+
 def _check_expected_account(client: TradingClientLike, on_page: Callable[[Page], None]) -> None:
     """Compare the fetched account number to the local expectation; never print it."""
 
@@ -189,6 +193,7 @@ def main(
     *,
     client_factory: Callable[..., TradingClientLike] = DEFAULT_CLIENT_FACTORY,
     on_page: Callable[[Page], None] = _print_page,
+    on_state: Callable[[str], None] = _print_state,
 ) -> int:
     """Read the slot-2 config and keys, then run the protector stream in the foreground."""
 
@@ -240,6 +245,7 @@ def main(
             secret_key=secret_key,
             paper=True,
             on_page=on_page,
+            on_state=on_state,
         )
         _check_expected_account(client, on_page)
         previous = signal.signal(signal.SIGTERM, _sigterm_handler(stream))
