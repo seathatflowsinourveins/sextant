@@ -393,24 +393,34 @@ def _coverage_hours(
     return hours
 
 
-def _strata(onsets: Mapping[str, int], session: date) -> dict[str, list[str]]:
-    bounds = [
-        ("pre_open_30", _at(session, 4, 0), _at(session, 4, 30)),
-        ("pre_rest", _at(session, 4, 30), _at(session, 9, 30)),
-        ("rth_open_30", _at(session, 9, 30), _at(session, 10, 0)),
-        ("rth_rest", _at(session, 10, 0), _at(session, 11, 35)),
-    ]
-    out = {name: [] for name, _, _ in bounds}
+def _strata(
+    onsets: Mapping[str, int], segments: Mapping[str, str], session: date
+) -> dict[str, list[str]]:
+    """Opening-minute strata inside each onset's own segment.
+
+    A PRE onset is in its first 30 minutes (onset before 04:30) or the rest of
+    PRE (through its 09:30 close); an RTH onset in its first 30 minutes (before
+    10:00) or the rest of the replay (through 11:35).  Every onset in the
+    replay window falls in exactly one stratum.
+    """
+    out: dict[str, list[str]] = {
+        "pre_open_30": [],
+        "pre_rest": [],
+        "rth_open_30": [],
+        "rth_rest": [],
+    }
     for symbol, onset in onsets.items():
-        for name, lo, hi in bounds:
-            if lo <= onset < hi:
-                out[name].append(symbol)
-                break
+        if segments[symbol] == "PRE":
+            name = "pre_open_30" if onset < _at(session, 4, 30) else "pre_rest"
+        else:
+            name = "rth_open_30" if onset < _at(session, 10, 0) else "rth_rest"
+        out[name].append(symbol)
     return out
 
 
 def _stratum_metrics(
     onsets: Mapping[str, int],
+    segments: Mapping[str, str],
     k2_rank: Mapping[str, int | None],
     mean_rank: Mapping[str, int | None],
     gap_flags: Mapping[str, Mapping[str, object]],
@@ -419,7 +429,7 @@ def _stratum_metrics(
     ranking_estimable: bool,
 ) -> dict[str, dict[str, object]]:
     out: dict[str, dict[str, object]] = {}
-    for name, members in _strata(onsets, session).items():
+    for name, members in _strata(onsets, segments, session).items():
         total = len(members)
 
         def recall(
@@ -490,14 +500,47 @@ def run_session(
     symbols = sealed.symbols
     prior = sealed.prior_sessions
     today = bars.load_raw_day(Path(bars_root), sealed.session, symbols=set(symbols))
+    # Bar fidelity: the 09:29-09:30 bar (and the 11:34-11:35 bar) closes at the
+    # segment boundary.  Widen the engine's half-open end by one nanosecond so
+    # that boundary close is accepted while every reported timestamp stays at
+    # 09:30 / 11:35.  The prior curves carry one extra slot (offset == minutes)
+    # for exactly this final bar.
+    pre = Segment(
+        "PRE",
+        sealed.session,
+        _at(sealed.session, 4, 0),
+        _at(sealed.session, 9, 30) + 1,
+        "XNYS regular session, Alpaca SIP bars",
+    )
+    rth = Segment(
+        "RTH",
+        sealed.session,
+        _at(sealed.session, 9, 30),
+        _at(sealed.session, 11, 35) + 1,
+        "XNYS regular session truncated at the cohort's 11:35 ET data end",
+    )
+    # Price-path labels read only the replayed path: bars from 04:00 that have
+    # closed by 11:35 (K3.4's window).  The recording runs to 11:40, but a later
+    # bar is never replayed, so it can neither set an onset nor move a control.
+    replayed = {
+        symbol: tuple(
+            bar for bar in rows if pre.start_ns <= bar.ts_ns and bar.close_ns < rth.end_ns
+        )
+        for symbol, rows in today.items()
+    }
+    # An onset keeps its bar's own segment: the 09:29 bar is a PRE bar whose
+    # close at 09:30 is judged by PRE's 09:30 generation, never by RTH, whose
+    # first generation is 09:31 (K2 section 5: rank in the onset's segment).
     onsets: dict[str, int] = {}
+    onset_segment: dict[str, str] = {}
     for candidate in sealed.truth:
         if candidate.prior_close is None:
             continue
         threshold = candidate.prior_close * (1 + HALF_DECADE)
-        for bar in today.get(candidate.symbol, ()):
+        for bar in replayed.get(candidate.symbol, ()):
             if bar.close >= threshold:
                 onsets[candidate.symbol] = bar.close_ns
+                onset_segment[candidate.symbol] = pre.name if bar.ts_ns < rth.start_ns else rth.name
                 break
     refs: dict[str, ReferencePrices] = {}
     missing_today: list[str] = []
@@ -545,25 +588,6 @@ def run_session(
         known_at=known_at,
         provenance="mean of prior-session cumulative curves",
         latest_session=latest,
-    )
-    # Bar fidelity: the 09:29-09:30 bar (and the 11:34-11:35 bar) closes at the
-    # segment boundary.  Widen the engine's half-open end by one nanosecond so
-    # that boundary close is accepted while every reported timestamp stays at
-    # 09:30 / 11:35.  The prior curves carry one extra slot (offset == minutes)
-    # for exactly this final bar.
-    pre = Segment(
-        "PRE",
-        sealed.session,
-        _at(sealed.session, 4, 0),
-        _at(sealed.session, 9, 30) + 1,
-        "XNYS regular session, Alpaca SIP bars",
-    )
-    rth = Segment(
-        "RTH",
-        sealed.session,
-        _at(sealed.session, 9, 30),
-        _at(sealed.session, 11, 35) + 1,
-        "XNYS regular session truncated at the cohort's 11:35 ET data end",
     )
     if prefix is not None:
         for segment in (pre, rth):
@@ -631,11 +655,8 @@ def run_session(
     truth_symbols = {c.symbol for c in sealed.truth}
     truth_onsets = {symbol: ts for symbol, ts in onsets.items() if symbol in truth_symbols}
 
-    def segment_for(ts: int) -> str:
-        return "PRE" if ts < rth.start_ns else "RTH"
-
     def own(replays: Mapping[str, SegmentReplay], symbol: str) -> SegmentReplay:
-        return replays[segment_for(truth_onsets[symbol])]
+        return replays[onset_segment[symbol]]
 
     no_row = _onset_record(None)
     k2_rank = {s: own(k2, s).rank_at_onset.get(s) for s in truth_onsets}
@@ -648,14 +669,14 @@ def run_session(
     mean_state = {s: own(mean, s).onset_state.get(s, no_row) for s in truth_onsets}
     ka_first = {s: own(k2, s).member_first.get(s) for s in truth_onsets}
     ka_members = {s: own(k2, s).member_at_onset.get(s, False) for s in truth_onsets}
-    # A control is never-crossed when no bar-close on the same path reaches
+    # A control is never-crossed when no bar-close on the replayed path reaches
     # +5% over its prior close.  The cohort's close move alone cannot answer
-    # this, so replay the sealed intraday bars rather than imputing.
+    # this, so read the sealed intraday bars of the window rather than imputing.
     never_crossed: list[str] = []
     for control in sealed.controls:
         if control.prior_close is None:
             continue
-        control_bars = today.get(control.symbol, ())
+        control_bars = replayed.get(control.symbol, ())
         if not control_bars:
             continue
         peak = max(bar.close / control.prior_close - 1 for bar in control_bars)
@@ -800,7 +821,7 @@ def run_session(
     rows_out = {
         symbol: {
             "onset_ts": tau,
-            "onset_segment": segment_for(tau),
+            "onset_segment": onset_segment[symbol],
             "prefix_covered": covered,
             "k2_rank_at_onset": k2_rank.get(symbol),
             "k2_first_top100": k2_first100.get(symbol),
@@ -927,10 +948,12 @@ def run_session(
             "denominator_status": metrics.DENOMINATOR_STATUS,
         },
         "strata": {
-            name: len(members) for name, members in _strata(truth_onsets, sealed.session).items()
+            name: len(members)
+            for name, members in _strata(truth_onsets, onset_segment, sealed.session).items()
         },
         "strata_metrics": _stratum_metrics(
             truth_onsets,
+            onset_segment,
             k2_rank,
             mean_rank,
             gap_flags,

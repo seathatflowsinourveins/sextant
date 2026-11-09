@@ -12,7 +12,9 @@ a CLI that skips protocol verification by default. Round 2 (fail at 53b9e8a,
 rebased as e80f6ee): keep-alive that never retains, a structural-zero ranking
 false-flag rate, baseline availability read from the rank, late flags counted
 as recall, segment coverage conferred by a synthetic opening tick, arm (a)
-wearing the full rule's name, and a verified run from a dirty tree.
+wearing the full rule's name, and a verified run from a dirty tree. Hosted
+review (fail at 1e95678): an onset from the 09:29 PRE bar judged in RTH, and
+price-path labels read past the replay window's last close.
 """
 
 from __future__ import annotations
@@ -840,3 +842,115 @@ def test_verified_run_refuses_a_dirty_tree_and_binds_a_clean_one(
         list((ROOT / "research" / "ranking_e2e").glob("*.py"))
     )
     assert result.report["label"] == "DEVELOPMENT_TABLE_NOT_A_TRIAL"
+
+
+# ------------------------------------- hosted-review witnesses (fail at 1e95678)
+EDGE_DAY = "2026-11-09"
+EDGE_PRIOR = ("2026-11-05", "2026-11-06")
+
+
+def _edge_tree(tmp_path: Path) -> Path:
+    """The replay window's edges; prior close 10.00 for every name.
+
+    BOUND first closes at +5% in the 09:29 bar, a PRE bar, so its onset is
+    09:30 and PRE's 09:30 generation judges it. WEND first crosses in the
+    11:34 bar, the replay's last close (onset 11:35). WLATE (truth) and WCTRL
+    (control) cross only in the 11:35 bar, which closes at 11:36, after the
+    replay window ends.
+    """
+    root = tmp_path / "edge"
+    prior = {
+        "BOUND": [(9, m, "10.00", "10.00", 1000) for m in range(20, 30)],
+        **{
+            symbol: [(11, m, "10.00", "10.00", 1000) for m in range(28, 35)]
+            for symbol in ("WEND", "WLATE", "WCTRL")
+        },
+    }
+    for day in EDGE_PRIOR:
+        _write_day(root, day, prior)
+    flat = [(11, m, "10.00", "10.10", 3000) for m in range(28, 34)]
+    late = [(11, 34, "10.10", "10.10", 3000), (11, 35, "10.10", "10.60", 3000)]
+    _write_day(
+        root,
+        EDGE_DAY,
+        {
+            "BOUND": [(9, m, "10.00", "10.10", 3000) for m in range(20, 29)]
+            + [(9, 29, "10.10", "10.60", 3000)],
+            "WEND": [*flat, (11, 34, "10.10", "10.60", 3000)],
+            "WLATE": [*flat, *late],
+            "WCTRL": [*flat, *late],
+        },
+    )
+    return root
+
+
+def _edge_cohort(tmp_path: Path) -> Path:
+    path = tmp_path / "edge-cohort.json"
+
+    def candidate(symbol: str, move: str) -> dict[str, str]:
+        return {
+            "symbol": symbol,
+            "move": move,
+            "premarket_dollar_volume": "1000000",
+            "full_dollar_volume": "1000000",
+            "prior_close": "10.00",
+            "prior_close_source": "official_prior_daily_close",
+        }
+
+    truth = ["BOUND", "WEND", "WLATE"]
+    path.write_text(
+        json.dumps(
+            {
+                "schema": "ranking-e2e.cohort/1",
+                "session": EDGE_DAY,
+                "prior_sessions": list(EDGE_PRIOR),
+                "labels": {
+                    "survivor_only": True,
+                    "pit_verified": False,
+                    "inference_eligible": False,
+                },
+                "candidates": [candidate(s, "0.06") for s in truth] + [candidate("WCTRL", "0.01")],
+                "truth": truth,
+                "controls": ["WCTRL"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+@pytest.fixture(scope="module")
+def edge_run(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, runner.SessionResult]:
+    tmp_path = tmp_path_factory.mktemp("edge")
+    result = _run(tmp_path, _edge_tree(tmp_path), _edge_cohort(tmp_path), out="edge-out")
+    return tmp_path / "edge-out", result
+
+
+def test_a_boundary_bar_onset_keeps_its_pre_segment(
+    edge_run: tuple[Path, runner.SessionResult],
+) -> None:  # WITNESS (hosted P1: onset segment)
+    _, result = edge_run
+    bound = result.rows["BOUND"]
+    # The 09:29 bar is a PRE bar: PRE publishes at its 09:30 close and ranks
+    # BOUND first there; RTH has no generation before 09:31 (K2 section 5).
+    assert bound["k2_rank_at_onset"] == 1 and bound["mean_rank_at_onset"] == 1
+    assert bound["onset_ts"] == _ns(EDGE_DAY, 9, 30) and bound["onset_segment"] == "PRE"
+    assert bound["k2_baseline_available"] is True and bound["k2_universe_at_onset"] == 1
+    assert result.report["strata"]["pre_rest"] == 1
+    assert result.report["strata"]["rth_open_30"] == 0
+
+
+def test_price_path_labels_stay_inside_the_replay_window(
+    edge_run: tuple[Path, runner.SessionResult],
+) -> None:  # WITNESS (hosted P1: replay window)
+    _, result = edge_run
+    counts = result.report["counts"]
+    # WCTRL and WLATE cross only in the bar closing at 11:36, after the
+    # 04:00-11:35 window (K3.4); neither crossing is part of the replayed path.
+    assert counts["never_crossed_controls"] == 1
+    assert "WLATE" not in result.onsets and counts["unobserved_truth"] == 1
+    assert result.onsets["WEND"] == _ns(EDGE_DAY, 11, 35)
+    assert result.rows["WEND"]["onset_segment"] == "RTH"
+    assert result.arms["k2"]["false_flags"]["never_crossed"]["controls"] == 1
+    # Every onset in the window falls in exactly one stratum.
+    assert counts["onsets"] == sum(result.report["strata"].values()) == 2

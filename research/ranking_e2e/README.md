@@ -40,6 +40,11 @@ refuses to run if either moves.
 - Every generation ranks the full K2 section 5 universe: all computable
   `state.latest` rows, not only the minute-active subset, and respects
   `publish_min_interval_s`. `universe` is recorded per generation.
+- Labels read the replayed path only: onsets and never-crossed controls
+  use bars from 04:00 that have closed by 11:35 (K3.4's window), so a bar
+  closing after 11:35 neither sets an onset nor moves a control. An onset
+  keeps its bar's segment: the 09:29 bar's 09:30 onset is judged by PRE's
+  09:30 generation (K2 section 5), and the strata follow that segment.
 - Arms: K2 (`move x dvol_ratio`); the mean baseline (one discrete change);
   keep-alive on K2 top-100 membership; the premarket gap rule; Page CUSUM.
   Arm (a), ADR-0024's gap rule exactly as recorded, is `NOT_RUN`: its
@@ -155,8 +160,17 @@ rebased as `e80f6ee`):
    `tree_clean`; the table is the clean rerun at the landing head. Witness:
    `test_verified_run_refuses_a_dirty_tree_and_binds_a_clean_one`.
 
-The round-2 P2 and P3 findings not subsumed here are in one follow-up
-issue, including the seal items' derivation and the arm tier labels.
+Hosted review of `1e95678`, two P1s (witnesses fail there): an onset from
+the 09:29 PRE bar was judged in RTH, which has no generation before 09:31
+(`test_a_boundary_bar_onset_keeps_its_pre_segment`); onsets and
+never-crossed controls read bars past 11:35
+(`test_price_path_labels_stay_inside_the_replay_window`). With strata
+following the onset's segment, an 11:35 onset now lands in the last
+stratum too.
+
+The round-2 P2 and P3 findings not subsumed here, and the hosted review's
+P2s, are in the follow-up issue #199, including the seal items'
+derivation and the arm tier labels.
 
 ## Seal and ledger
 
@@ -179,19 +193,21 @@ task under its own frozen, costed protocol (K3.7).
   sensitivity, not K3's trade-tape primary; `primary_estimand` is
   `NOT_RUN`.
 - Freshness ages are not applied to a historical replay.
-- RTH ends at 11:35 ET because that is the fetched data end, not the
-  16:00 close.
+- RTH ends at 11:35 ET, the cohort's evaluation window (K3.4), not the
+  16:00 close; the recording runs to 11:40, and bars closing after 11:35
+  are not replayed.
 - No PIT membership is available, so the W1 1,436-session cohort and its
   K2 run stay NOT_RUN; the 2026-11-09 e2e cohort is the only intraday
   cohort with bars and controls today.
 
 ## Tests
 
-`tests/proofs/test_ranking_e2e.py` has 29 tests: protocol hashes and the
+`tests/proofs/test_ranking_e2e.py` has 31 tests: protocol hashes and the
 K3 presence gate, cohort labels/validation/hashing, mean/median curves,
 the fixed gap window, the CUSUM recurrence, keep-alive retention and
 quota order, percentiles, signed latency and recall at onset, the false
 flag table, the full-generation witness, the CLI verification default,
 no detection-only ledger row, the missing-close witness, and a
-three-prior-session run that witnesses each round-2 P1. Run
+three-prior-session run that witnesses each round-2 P1, and a
+window-edge run for the onset segment and the replayed path. Run
 `pytest tests/proofs/test_ranking_e2e.py -q` under the local memory scope.
