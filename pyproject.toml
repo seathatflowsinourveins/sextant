@@ -8,7 +8,7 @@ dependencies = [
     "exchange-calendars==4.13.2",
     "nautilus-trader[visualization]==2.0.0rc8",
     "pandas==3.0.6",
-    "pyarrow==26.0.0",
+    "pyarrow==26.0.1",
     "pyyaml==6.0.3",
     "typesafe-sdk==0.7.5",
     "requests==2.34.2",
