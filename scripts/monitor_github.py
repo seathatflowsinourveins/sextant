@@ -214,9 +214,16 @@ def review_rounds(reviews: Iterable[Mapping[str, Any]]) -> list[ReviewRound]:
         submitted = _text(review.get("submittedAt"))
         found.append((match.group(1), submitted))
     found.sort(key=lambda item: item[1])
+    seen: set[str] = set()
+    unique: list[tuple[str, str]] = []
+    for sha, submitted in found:
+        if sha in seen:
+            continue
+        seen.add(sha)
+        unique.append((sha, submitted))
     return [
         ReviewRound(number=index, sha=sha, submitted_at=submitted)
-        for index, (sha, submitted) in enumerate(found, start=1)
+        for index, (sha, submitted) in enumerate(unique, start=1)
     ]
 
 
@@ -474,6 +481,8 @@ def run_metrics(run: Mapping[str, Any]) -> list[Metric]:
     errors = _number(run.get("error_count"))
     turns = _number(run.get("turns"))
     if errors is not None and turns is not None and turns > 0:
+        metrics.append(Metric("sextant_gh_aw_errors", "errors", errors, attrs))
+        metrics.append(Metric("sextant_gh_aw_turns", "turns", turns, attrs))
         ratio = Decimal(str(errors)) / Decimal(str(turns))
         metrics.append(Metric("sextant_gh_aw_error_ratio", "ratio", ratio, attrs))
     working_set = run.get("working_set")

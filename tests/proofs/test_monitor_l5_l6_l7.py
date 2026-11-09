@@ -68,6 +68,10 @@ def test_review_rounds_only_count_review_of_markers_in_time_order() -> None:
         {"body": "Looks fine to me", "submittedAt": "2026-11-01T09:00:00Z"},
         {"body": "Review of abc123", "submittedAt": "2026-11-01T10:00:00Z"},
         {"body": "Review of " + "a" * 40, "submittedAt": "2026-11-01T10:00:00Z"},
+        {
+            "body": "Review of " + "a" * 40 + "\nsecond pass",
+            "submittedAt": "2026-11-01T11:00:00Z",
+        },
     ]
     rounds = github.review_rounds(reviews)
     assert [round_.sha for round_ in rounds] == ["a" * 40, "b" * 40]
@@ -233,12 +237,41 @@ def test_every_manifest_proof_reference_resolves() -> None:
     assert set(summary["by_suite"]) == {"proofs", "repo", "host"}
 
 
+def test_resolve_rejects_an_unknown_parametrize_id(tmp_path: Path) -> None:
+    tests = tmp_path / "tests" / "proofs"
+    tests.mkdir(parents=True)
+    (tests / "test_param.py").write_text(
+        "import pytest\n"
+        "\n"
+        "@pytest.mark.parametrize('value', ['good'])\n"
+        "def test_param(value):\n"
+        "    assert value\n",
+        encoding="utf-8",
+    )
+    manifest = tmp_path / "docs" / "manifest.md"
+    manifest.parent.mkdir()
+    manifest.write_text(
+        "| Row | Source | Applied | Proof |\n"
+        "| --- | --- | --- | --- |\n"
+        "| row | source | applied | `test_param.py::test_param[bogus]` |\n",
+        encoding="utf-8",
+    )
+    summary = evidence.resolve(manifest, tmp_path / "tests")
+    assert summary["missing_functions"] == 1
+    assert "[bogus]" in summary["problems"][0]["ref"]
+
+
 def test_manifest_antigravity_row_names_the_retained_runtime_proof() -> None:
     rows = evidence.parse_manifest(ROOT / "docs" / "manifest.md")
     row = next(row for row in rows if row.name.startswith("Antigravity CLI"))
     assert "test_retained_runtime_has_an_eligible_pinned_artifact[antigravity]" in row.proof
     stale = "test_runtime_has_an_eligible_pinned_artifact_and_an_honest_launch_scope"
     assert stale not in row.proof
+
+
+def test_agent_error_ratio_weights_runs_by_turns() -> None:
+    rules = RULES.read_text(encoding="utf-8")
+    assert "sum(sextant_gh_aw_errors) / clamp_min(sum(sextant_gh_aw_turns), 1)" in rules
 
 
 def test_alert_thresholds_are_registered_uncalibrated_and_informational() -> None:
@@ -430,6 +463,9 @@ def test_l5_emits_heartbeat_and_run_error_ratio() -> None:
     ratios = [metric for metric in run if metric.name == "sextant_gh_aw_error_ratio"]
     assert len(ratios) == 1
     assert Decimal(str(ratios[0].value)) == Decimal("0.2")
+    run_by_name = {metric.name: metric for metric in run}
+    assert Decimal(str(run_by_name["sextant_gh_aw_errors"].value)) == 2
+    assert Decimal(str(run_by_name["sextant_gh_aw_turns"].value)) == 10
 
 
 def test_every_l7_alert_series_has_a_registered_producer() -> None:

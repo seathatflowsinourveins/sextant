@@ -33,7 +33,7 @@ groups:
           clamp_min(sum(rate(gen_ai_client_inference_usage_cache_read_input_tokens_total[5m])), 0.000001)
 
       - record: sextant_agent_error_ratio
-        expr: avg(sextant_gh_aw_error_ratio)
+        expr: sum(sextant_gh_aw_errors) / clamp_min(sum(sextant_gh_aw_turns), 1)
 
   - name: sextant-monitor-recording
     interval: 15s

@@ -335,7 +335,8 @@ def resolve(manifest: Path, tests_root: Path) -> dict[str, Any]:
         if ref.function is None:
             resolved += 1
             continue
-        if module_path is not None and ref.function not in modules[module_path].functions:
+        qualified = f"{ref.function}[{ref.param}]" if ref.param else ref.function
+        if module_path is not None and qualified not in modules[module_path].functions:
             global_candidates = by_function.get(ref.function, [])
             if len(global_candidates) == 1:
                 module_path = global_candidates[0]
@@ -361,7 +362,7 @@ def resolve(manifest: Path, tests_root: Path) -> dict[str, Any]:
         except ValueError:
             pass
         by_suite[suite] = by_suite.get(suite, 0) + 1
-        if ref.function not in modules[module_path].functions:
+        if qualified not in modules[module_path].functions:
             missing_functions += 1
             problems.append({"line": ref.row_line, "ref": ref.raw, "problem": "function not found"})
             continue
