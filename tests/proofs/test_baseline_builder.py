@@ -3,6 +3,7 @@
 Hand-built minute bars only: no vendor call, no network, no clock.
 """
 
+import json
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Any
@@ -20,6 +21,8 @@ from sextant.ranking.baseline import (
     BaselineTable,
     MinuteBarRow,
     build_baseline,
+    dump_baseline,
+    load_baseline,
     segment_start,
 )
 
@@ -253,6 +256,29 @@ def fetch(client: FakeClient) -> BaselineTable:
         known_at=FETCH_KNOWN_AT,
         feed="sip",
     )
+
+
+def test_dump_and_load_roundtrip_preserves_the_table() -> None:
+    table = build(
+        [
+            bar(SESSIONS[0], 4, 0, vwap="2", trades=1),
+            bar(SESSIONS[1], 4, 0, vwap="4", trades=2),
+            bar(SESSIONS[2], 4, 1, vwap="6", trades=3),
+        ],
+        [pre(day) for day in SESSIONS],
+    )
+    text = dump_baseline(table)
+    payload = json.loads(text)
+
+    assert set(payload) == {"samples", "provenance", "known_at", "feed"}
+    restored = load_baseline(text)
+    assert restored.samples == table.samples
+    assert restored.provenance == table.provenance
+    assert restored.known_at == table.known_at
+    assert restored.feed == table.feed
+    assert restored.identity == table.identity
+    assert restored.latest_session == table.latest_session
+    assert restored.window("SPY", "PRE", 120, 60) == table.window("SPY", "PRE", 120, 60)
 
 
 def test_fetcher_builds_the_table_from_a_complete_raw_response() -> None:

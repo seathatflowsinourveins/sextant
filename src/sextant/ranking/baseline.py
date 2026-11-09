@@ -16,7 +16,7 @@ from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, date, datetime, time, timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from functools import cache
 from statistics import median
 from types import MappingProxyType
@@ -35,6 +35,10 @@ MINUTE_NS = 60 * NS
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 _PROVENANCE_SUFFIX = (
     "; v*vw, n; explicit complete coverage; linear within minute; first POST minute omitted"
+)
+_BASELINE_KEYS = frozenset({"samples", "provenance", "known_at", "feed"})
+_SAMPLE_KEYS = frozenset(
+    {"symbol", "segment", "session", "offset_s", "dollar_volume", "trade_count"}
 )
 
 
@@ -234,6 +238,83 @@ class BaselineTable:
             self.known_at,
             self.provenance,
         )
+
+
+def dump_baseline(table: BaselineTable) -> str:
+    """Serialize one table to JSON; :func:`load_baseline` is its inverse."""
+    return json.dumps(
+        {
+            "samples": [
+                {
+                    "symbol": sample.symbol,
+                    "segment": sample.segment,
+                    "session": sample.session,
+                    "offset_s": sample.offset_s,
+                    "dollar_volume": str(sample.dollar_volume),
+                    "trade_count": str(sample.trade_count),
+                }
+                for sample in table.samples
+            ],
+            "provenance": table.provenance,
+            "known_at": table.known_at,
+            "feed": table.feed,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def _json_decimal(value: object, field: str) -> Decimal:
+    if isinstance(value, bool) or not isinstance(value, (str, int)):
+        raise ValueError(f"baseline JSON {field} must be a decimal string")
+    try:
+        return Decimal(value)
+    except InvalidOperation as exc:
+        raise ValueError(f"baseline JSON {field} must be a decimal string") from exc
+
+
+def _json_sample(entry: object) -> BaselineSample:
+    if not isinstance(entry, Mapping) or set(entry) != _SAMPLE_KEYS:
+        raise ValueError(f"baseline JSON samples must have {sorted(_SAMPLE_KEYS)}")
+    symbol, segment, session = entry["symbol"], entry["segment"], entry["session"]
+    if not all(isinstance(value, str) for value in (symbol, segment, session)):
+        raise ValueError("baseline JSON symbol, segment and session must be strings")
+    offset_s = entry["offset_s"]
+    if type(offset_s) is not int:
+        raise ValueError("baseline JSON offset must be an integer")
+    return BaselineSample(
+        symbol,
+        segment,
+        session,
+        offset_s,
+        _json_decimal(entry["dollar_volume"], "dollar_volume"),
+        _json_decimal(entry["trade_count"], "trade_count"),
+    )
+
+
+def load_baseline(text: str) -> BaselineTable:
+    """Read the JSON :func:`dump_baseline` writes; any other shape is refused."""
+    payload = json.loads(text)
+    if not isinstance(payload, Mapping) or set(payload) != _BASELINE_KEYS:
+        raise ValueError(f"baseline JSON must have {sorted(_BASELINE_KEYS)}")
+    samples = payload["samples"]
+    provenance = payload["provenance"]
+    known_at = payload["known_at"]
+    feed = payload["feed"]
+    if not isinstance(samples, list):
+        raise ValueError("baseline JSON samples must be a list")
+    if not isinstance(provenance, str):
+        raise ValueError("baseline JSON provenance must be a string")
+    if type(known_at) is not int:
+        raise ValueError("baseline JSON known_at must be an integer")
+    if not isinstance(feed, str):
+        raise ValueError("baseline JSON feed must be a string")
+    return BaselineTable(
+        tuple(_json_sample(entry) for entry in samples),
+        provenance,
+        known_at,
+        feed,
+    )
 
 
 def _nanos(value: datetime) -> int:
