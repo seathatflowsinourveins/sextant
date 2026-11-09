@@ -4,6 +4,7 @@ Sources: .github/gate/upstreams.json and google/eng-practices@3bb3ec25:
 review/reviewer/standard.md:31-34,72,88-90; review/developer/small-cls.md:175.
 """
 
+import fnmatch
 import hashlib
 import json
 import re
@@ -190,6 +191,48 @@ def test_paper_carveout_keeps_only_the_hard_lines_blocking() -> None:
     ):
         assert required in carveout
     assert "source" in carveout and "ci" in carveout
+
+
+def test_paper_and_e2e_carveout_is_finding_level() -> None:
+    """One fixture per class of the finding-level scope widening #99."""
+    rules = (WORKFLOWS / "shared/review-rules.md").read_text()
+    carveout = rules.split("paper carve-out", 1)[1].split("\n\n", 1)[0]
+    # Finding-level, not PR-level: #99's all-or-nothing diff rule is gone.
+    assert "A diff is paper-only" not in rules
+    assert "On a paper-only diff" not in rules
+    for required in ("per finding", "located in", "mixed PR", "same PR", "blocks `review` ONLY"):
+        assert required in carveout
+    paper_e2e = (
+        ("lanes/paper/README.md", "lanes/paper/**"),
+        ("src/sextant/paper/b_protector.py", "src/sextant/paper/**"),
+        ("src/sextant/backtest/replay.py", "src/sextant/backtest/**"),
+        ("tests/proofs/test_paper_node.py", "test_paper*"),
+        ("tests/proofs/test_b_protector.py", "test_b_*"),
+        ("tests/proofs/test_ac_node.py", "test_ac_*"),
+        ("tests/proofs/test_outside_rth_trail.py", "test_outside_rth*"),
+        ("tests/proofs/entry/test_replay.py", "test_replay*"),
+    )
+    for example, pattern in paper_e2e:
+        assert pattern in carveout, pattern
+        assert fnmatch.fnmatch(example, pattern) or fnmatch.fnmatch(Path(example).name, pattern), (
+            example
+        )
+    # The manifest-hunk class: judged by its hunk, not by the whole file.
+    assert "docs/manifest.md` hunks whose row source names" in carveout
+    stay_normal = carveout.split("stay normal", 1)[1]
+    for example, pattern in (
+        ("docs/adr/0007-custody-and-order-writing.md", "docs/adr/**"),
+        ("src/sextant/execution/custody.py", "src/sextant/execution/**"),
+        (".github/workflows/gate.yml", ".github/**"),
+    ):
+        assert pattern in stay_normal, pattern
+        assert fnmatch.fnmatch(example, pattern), example
+        assert not any(
+            fnmatch.fnmatch(example, other) or fnmatch.fnmatch(Path(example).name, other)
+            for _, other in paper_e2e
+        ), example
+    for required in ("both a paper or e2e path", "no paper or e2e location"):
+        assert required in carveout
 
 
 def test_key_policy_and_failure_paths_execute_against_the_actual_adapter() -> None:
