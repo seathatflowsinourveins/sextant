@@ -1,509 +1,426 @@
-"""Offline producer proofs: real publisher -> immutable unit -> existing reader."""
+"""Synthetic live seam proofs; fixtures grant no stream or deployment authority.
 
-import copy
-import importlib
+Adapted from ea95075's producer proofs and main's actual ranking fixture.
+M2@abe8432's two-clock witnesses supply the archive/market counterfactual.
+"""
+
+import builtins
 import json
+import os
+import socket
+import subprocess
+import sys
 from dataclasses import replace
-from datetime import UTC, datetime
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
-from nautilus_trader.common import MessageBus
-from nautilus_trader.model import (
-    AggressorSide,
-    InstrumentId,
-    Price,
-    Quantity,
-    TradeId,
-    TraderId,
-    TradeTick,
+from alpaca.data.historical import StockHistoricalDataClient
+from alpaca.data.live import StockDataStream
+from alpaca.trading.client import TradingClient
+from nautilus_trader.model import TradeTick
+from test_ranking import DAY, NS, START, publisher, tick
+
+from sextant.data import alpaca_history
+from sextant.execution import state
+from sextant.execution.custody import CustodyError
+from sextant.ranking.generation import Coverage, CoverageState, RankingGeneration, generation_digest
+from sextant.ranking.registry import RegistryRow
+from sextant.tradingview.producer import (
+    Clocks,
+    LiveProducer,
+    reserve_stream,
+    snapshot_pacer,
+    snapshot_request,
 )
-from test_ranking import DAY, NS, START, registry
 
-from sextant.ranking.baseline import BaselineSample, BaselineTable
-from sextant.ranking.engine import ReferencePrices, Segment
-from sextant.ranking.generation import Coverage, CoverageState, RankingFeature, RankingGeneration
-from sextant.ranking.publisher import AssetState, RankingPublisher
-from sextant.tradingview.inputs import InputError, read_research_inputs
+AT = START + 360 * NS + 1
+ACQUIRED = START + 80 * 86400 * NS
+MAPPING = Clocks(START - NS, ACQUIRED, "synthetic verified listing map")
+ROOT = Path(__file__).parents[2]
 
 
-def ready(count):
-    return Coverage(CoverageState.READY, True, count, count, 0, 0, 0)
+@pytest.fixture(autouse=True)
+def no_online_or_credentials(monkeypatch):
+    def refuse(*args, **kwargs):
+        raise AssertionError("offline proof attempted a client, credential lookup or connection")
+
+    for client in (StockDataStream, StockHistoricalDataClient, TradingClient):
+        monkeypatch.setattr(client, "__init__", refuse)
+    monkeypatch.setattr(alpaca_history, "environment_credentials", refuse)
+    monkeypatch.setattr(socket.socket, "connect", refuse)
+    monkeypatch.setattr(socket, "create_connection", refuse)
+    original_open = builtins.open
+
+    def guarded_open(file, *args, **kwargs):
+        if isinstance(file, (str, Path)) and any(
+            name in str(file) for name in ("with-keys.sh", "/.aws/", "credentials.json", "keys.sh")
+        ):
+            refuse()
+        return original_open(file, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "open", guarded_open)
 
 
-NOW = datetime(2026, 10, 27, 8, 0, 3, tzinfo=UTC)
-METHOD = "MOVER-v2@00203275944a22655b3e14b221cfde9a265d549a"
+@pytest.fixture
+def live(tmp_path):
+    with reserve_stream(
+        tmp_path / "leases", paper_slot=3, existing_streams=0, source="synthetic stop receipt"
+    ) as lease:
+        yield LiveProducer(publisher(), lease, sip_authority="synthetic SIP entitlement only")
 
 
-def api():
-    try:
-        return importlib.import_module("sextant.tradingview.producer")
-    except ModuleNotFoundError:
-        pytest.fail("The offline TradingView display producer is not implemented")
-
-
-def generation(symbols=("AAA", "BBB"), *, start=START, day=DAY, feed="sip", segment="PRE"):
-    times = Segment(segment, day, start - 400 * NS, start + 100 * NS, "fixture:official-session")
-    samples = BaselineTable(
-        tuple(
-            BaselineSample(symbol, segment, "2026-10-26", offset, Decimal(amount), Decimal(amount))
-            for symbol in symbols
-            for offset, amount in ((0, 0), (600, 100))
-        ),
-        "fixture:complete-curves",
-        start - 500 * NS,
-        feed,
+def observation(live, second, price="0.50", name="PENNY", *, acquired=ACQUIRED, **facts):
+    raw = tick(second, price, name)
+    archived = TradeTick(
+        raw.instrument_id,
+        raw.price,
+        raw.size,
+        raw.aggressor_side,
+        raw.trade_id,
+        raw.ts_event,
+        acquired,
     )
-    publisher = RankingPublisher(
-        bus=MessageBus(trader_id=TraderId("TVP-001")),
-        epoch="fixture-display",
-        feed=feed,
-        segment=times,
-        registry=registry(),
-        universe=symbols,
-        universe_source="fixture:universe",
-        baseline=samples,
-    )
-    publisher.set_coverage(ready(len(symbols)))
-    for symbol in symbols:
-        publisher.set_symbol(
-            symbol,
-            references=ReferencePrices(Decimal(10), start - 500 * NS, "fixture:official-close"),
-            asset=AssetState(
-                start - 500 * NS, start + 100 * NS, False, "common", "fixture:security-master"
-            ),
-        )
-        for second in (-400, -300, -200, -100, 0, 1, 2):
-            at = start + second * NS
-            publisher.on_trade(
-                TradeTick(
-                    InstrumentId.from_str(symbol + ".NASDAQ"),
-                    Price.from_str("12.000000000"),
-                    Quantity.from_int(100),
-                    AggressorSide.BUY,
-                    TradeId(str(at)),
-                    at,
-                    at,
-                )
-            )
-    result = publisher.publish(now=start + 3 * NS)
-    assert result is not None
-    return result
-
-
-def mapping(record):
-    return {row.symbol: f"NASDAQ:{row.symbol}" for row in record.rows}
-
-
-def documents(record=None, **kwargs):
-    record = generation() if record is None else record
-    return api().build_unit(
-        record,
-        generated_at=kwargs.pop("generated_at", NOW.isoformat()),
-        ranking_path="inputs/ranking.json",
-        symbol_map=kwargs.pop("symbol_map", mapping(record)),
-        **kwargs,
+    clocks = facts.pop("clocks", Clocks(raw.ts_init, acquired, "synthetic stream receipt"))
+    return live.on_trade(
+        archived,
+        clocks=clocks,
+        now=facts.pop("now", raw.ts_init),
+        price_eligible=facts.pop("price_eligible", True),
+        volume_eligible=facts.pop("volume_eligible", True),
+        conditions=facts.pop("conditions", ()),
+        mask_source=facts.pop("mask_source", "synthetic masks"),
+        **facts,
     )
 
 
-def test_real_generation_maps_truthfully_without_making_unknowns_clean(tmp_path):
-    record = generation()
-    before = record.to_json()
-    docs = documents(record)
-    top, focus, display = (
-        docs[name] for name in ("top100.json", "focus.json", "display-lists.json")
+def warm(live, *, acquired=ACQUIRED):
+    for second in (0, 60, 120, 180, 240, 300, 310, 320, 330, 340, 350, 360):
+        for name in live.publisher.universe:
+            observation(live, second, "0.55" if second > 300 else "0.50", name, acquired=acquired)
+
+
+def unit(live, *, now=AT, symbol_map=None, mapping_clocks=MAPPING):
+    return live.build_unit(
+        now=now,
+        mapping_clocks=mapping_clocks,
+        symbol_map=symbol_map
+        if symbol_map is not None
+        else {name: f"NASDAQ:{name}" for name in live.publisher.universe},
     )
-    assert top["schema"] == "morning-pack.candidates/1"
-    assert focus["schema"] == "top100.focus/1"
-    assert top["as_of_snapshot"] == "2026-10-27T08:00:02+00:00"
-    assert top["as_of"] == top["generated_at"] == "2026-10-27T08:00:03+00:00"
-    assert docs["inputs/display-snapshot.json"]["weights_version"] == METHOD
-    assert top["ranking_policy"]["method_version"] == METHOD
-    assert display["counts"] == {"ns_movers": 2, "ns_focus": 0}
-    assert display["excluded_unknown"] == 2
-    assert display["armed"] == "UNVERIFIED"
-    assert focus["candidates"] == []  # focus_eligible is not proof of absent sell pressure.
-    assert {item["reason"] for item in focus["excluded"]} == {"unverified_sell_pressure"}
-    first = top["candidates"][0]
-    assert first["score"] == str(record.rows[0].score)
-    assert first["potential2_score"] is None
-    assert first["signals"]["rvol"] is None
-    assert first["price"] == "12.000000000"
-    assert {flag["status"] for flag in first["sell_pressure_flags"]} == {"UNVERIFIED"}
-    assert first["ticket"] is None
-    assert first["daily_metrics"]["atr22"] is None
-    assert docs["inputs/display-snapshot.json"]["symbols"][0]["inputs"]["previous_close"] is None
-    assert record.to_json() == before
-    unit = api().publish_unit(
-        record, tmp_path / "published", generated_at=NOW.isoformat(), symbol_map=mapping(record)
-    )
-    loaded = read_research_inputs(unit, now=NOW)
-    assert loaded.memberships == {
-        "NS movers": frozenset({"NASDAQ:AAA", "NASDAQ:BBB"}),
-        "NS focus": frozenset(),
-    }
-    assert loaded.generation == top["generation"]
-    assert (tmp_path / "published/latest").resolve() == unit
 
 
-def test_snapshot_hash_binds_the_entire_generation_not_just_top100(tmp_path):
-    from hashlib import sha256
-
-    record = generation(tuple(f"SYM{i:04}" for i in range(101)))
-    rows = list(record.rows)
-    # Explicit independently clocked inputs, not dvol_ratio masquerading as RVOL.
-    rows[-1] = replace(
-        rows[-1],
-        features=(
-            *rows[-1].features,
-            RankingFeature("previous_close", Decimal(1), START, START),
-            RankingFeature("rvol", Decimal(2), START + 2 * NS, START + 2 * NS),
-        ),
-    )
-    record = replace(record, rows=tuple(rows))
-    unit = api().publish_unit(
-        record, tmp_path, generated_at=NOW.isoformat(), symbol_map=mapping(record)
-    )
-    top = json.loads((unit / "top100.json").read_text())
-    display = json.loads((unit / "display-lists.json").read_text())
-    source = unit / display["sources"]["snapshot"]["path"]
-    assert len(top["candidates"]) == 100
-    assert len(json.loads(source.read_text())["symbols"]) == 101
-    assert display["ns_movers"][-1] == {
-        "symbol": "SYM0100",
-        "tradingview_symbol": "NASDAQ:SYM0100",
-        "labels": ["extreme:≥20%"],
-    }
-    assert display["generation"]["sha256"] == sha256(source.read_bytes()).hexdigest()
-    frozen = RankingGeneration.from_json((unit / "inputs/ranking.json").read_bytes())
-    assert frozen == record
-
-
-@pytest.mark.parametrize(
-    "fault",
-    [
-        "partial",
-        "missing",
-        "unknown-coverage",
-        "top-only",
-        "truncated-universe",
-        "stale",
-        "future",
-        "method",
-        "rank",
-        "rank-score",
-        "feature-future",
-        "feature-partial",
-        "feature-no-clock",
-        "source",
-        "mixed-source",
-        "empty",
-        "session",
-    ],
-)
-def test_unavailable_generations_cannot_publish_or_replace_latest(tmp_path, fault):
-    record = generation()
-    producer = api()
-    original = producer.publish_unit(
-        record, tmp_path, generated_at=NOW.isoformat(), symbol_map=mapping(record)
-    )
-    before = {p.relative_to(original): p.read_bytes() for p in original.rglob("*") if p.is_file()}
-    rows = list(record.rows)
-    if fault == "partial":
-        rows[0] = replace(rows[0], partial=True)
-    elif fault == "missing":
-        record = replace(record, coverage=replace(record.coverage, missing_symbols=1))
-    elif fault == "unknown-coverage":
-        record = replace(record, coverage=Coverage(CoverageState.UNKNOWN, False))
-    elif fault == "top-only":
-        record = replace(record, coverage=replace(record.coverage, complete=False))
-    elif fault == "truncated-universe":
-        rows = rows[:1]
-        record = replace(record, coverage=ready(1))
-    elif fault == "stale":
-        record = replace(record, input_cutoff=START - 601 * NS)
-    elif fault == "future":
-        record = replace(record, known_at=START + 3 * NS + 1)
-    elif fault == "method":
-        record = replace(record, method_version=METHOD + "-new")
-    elif fault == "rank":
-        rows[1] = replace(rows[1], rank=rows[0].rank)
-    elif fault == "rank-score":
-        rows[1] = replace(rows[1], score=None)
-    elif fault.startswith("feature-"):
-        changes = {
-            "feature-future": {"known_at": START + 3 * NS},
-            "feature-partial": {"partial": True},
-            "feature-no-clock": {"known_at": None},
-        }[fault]
-        rows[0] = replace(
-            rows[0], features=(replace(rows[0].features[0], **changes), *rows[0].features[1:])
-        )
-    elif fault in {"source", "mixed-source"}:
-        reasons = tuple(r for r in rows[0].reasons if r.code != "SOURCE")
-        if fault == "mixed-source":
-            source = next(r for r in rows[0].reasons if r.code == "SOURCE")
-            reasons += (replace(source, detail=(source.detail or "").replace('"sip"', '"boats"')),)
-        rows[0] = replace(rows[0], reasons=reasons)
-    elif fault == "empty":
-        rows = []
-        record = replace(record, coverage=ready(0))
-    elif fault == "session":
-        record = replace(record, session_date=DAY.replace(day=26))
-    record = replace(record, rows=tuple(rows))
-    with pytest.raises((ValueError, InputError)):
-        producer.publish_unit(
-            record, tmp_path, generated_at=NOW.isoformat(), symbol_map=mapping(record)
-        )
-    assert (tmp_path / "latest").resolve() == original
-    assert {
-        p.relative_to(original): p.read_bytes() for p in original.rglob("*") if p.is_file()
-    } == before
-
-
-def test_missing_listing_identity_is_null_not_synthetic_alpaca_venue(tmp_path):
-    record = generation()
-    docs = documents(record, symbol_map={})
-    assert [row["tradingview_symbol"] for row in docs["top100.json"]["candidates"]] == [None, None]
-    assert [row["exchange"] for row in docs["inputs/display-snapshot.json"]["symbols"]] == [
-        None,
-        None,
-    ]
-    with pytest.raises(InputError, match=r"unmapped|empty"):
-        api().publish_unit(record, tmp_path, generated_at=NOW.isoformat())
-    assert not (tmp_path / "latest").exists()
-
-
-@pytest.mark.parametrize(
-    "bad",
-    [
-        {"AAA": "ALPACA:AAA"},
-        {"AAA": "SMART:AAA"},
-        {"AAA": "AAA"},
-        {"AAA": "NASDAQ:BBB", "BBB": "NASDAQ:BBB"},
-    ],
-)
-def test_bad_explicit_symbol_map_cannot_publish(tmp_path, bad):
-    with pytest.raises(ValueError):
-        api().publish_unit(generation(), tmp_path, generated_at=NOW.isoformat(), symbol_map=bad)
-    assert not (tmp_path / "latest").exists()
-
-
-@pytest.mark.parametrize(
-    "name",
-    [
-        "top100.json",
-        "focus.json",
-        "display-lists.json",
-        "inputs/display-snapshot.json",
-        "inputs/ranking.json",
-    ],
-)
-def test_each_publication_write_failure_keeps_previous_complete_unit(tmp_path, monkeypatch, name):
-    producer = api()
-    record = generation()
-    original = producer.publish_unit(
-        record, tmp_path, generated_at=NOW.isoformat(), symbol_map=mapping(record)
-    )
-    previous = (original / "display-lists.json").read_bytes()
-    write = producer._write_json
-
-    def fail(path, doc):
-        write(path, doc)
-        if str(path).endswith("/" + name):
-            raise OSError("fixture: disk full after write")
-
-    monkeypatch.setattr(producer, "_write_json", fail)
-    with pytest.raises(OSError):
-        producer.publish_unit(
-            record, tmp_path, generated_at=NOW.isoformat(), symbol_map=mapping(record)
-        )
-    assert (tmp_path / "latest").resolve() == original
-    assert (original / "display-lists.json").read_bytes() == previous
-    assert read_research_inputs(tmp_path / "latest", now=NOW).memberships["NS movers"]
-
-
-def test_nanosecond_cutoff_is_exact_and_generation_digest_changes(tmp_path):
-    producer = api()
-    record = generation()
-    left = documents(replace(record, input_cutoff=START + 2 * NS + 1))
-    right = documents(replace(record, input_cutoff=START + 2 * NS + 2))
-    assert left["top100.json"]["as_of_snapshot"] == "2026-10-27T08:00:02.000000001+00:00"
-    assert left["top100.json"]["generation"] != right["top100.json"]["generation"]
-    with pytest.raises(ValueError):
-        producer.publish_unit(
-            record,
-            tmp_path,
-            generated_at="2026-10-27T08:00:02.999999999+00:00",
-            symbol_map=mapping(record),
-        )
-
-
-def test_sunday_overnight_keeps_explicit_boats_and_sip_separate(tmp_path):
-    from datetime import date
-
-    from sextant.tradingview.display_support import timestamp_ns
-
-    now = datetime(2026, 11, 9, 1, 0, 3, tzinfo=UTC)
-    record = generation(
-        start=timestamp_ns("2026-11-09T01:00:00+00:00"),
-        day=date(2026, 11, 9),
-        feed="boats",
-        segment="OVERNIGHT",
-    )
-    unit = api().publish_unit(
-        record, tmp_path, generated_at=now.isoformat(), symbol_map=mapping(record)
-    )
-    expected = {
-        "session": "overnight",
-        "session_date": "2026-11-09",
-        "intraday_feed": "boats",
-        "daily_history_feed": "sip",
-        "daily_history_scope": "prior completed XNYS sessions; not BOATS intraday evidence",
-    }
-    for name in ("top100.json", "focus.json", "display-lists.json"):
-        doc = json.loads((unit / name).read_text())
-        assert doc["ranking_context"] == expected
-        assert doc["research_inputs"]["ranking"]["feed"] == "boats"
-    assert read_research_inputs(unit, now=now).memberships["NS movers"]
-    # The publisher itself refuses this feed/segment pairing; alter its wire receipt
-    # to witness the independent display boundary's refusal of a forged source.
-    rows = tuple(
-        replace(
-            row,
-            reasons=tuple(
-                replace(reason, detail=(reason.detail or "").replace('"boats"', '"sip"'))
-                if reason.code == "SOURCE"
-                else reason
-                for reason in row.reasons
-            ),
-        )
-        for row in record.rows
-    )
-    with pytest.raises(ValueError):
-        documents(replace(record, rows=rows), generated_at=now.isoformat())
-
-
-def test_submicrosecond_generated_at_survives_publication_without_rounding(tmp_path):
-    record = generation()
-    unit = api().publish_unit(
-        record,
-        tmp_path,
-        generated_at="2026-10-27T08:00:03.000000001+00:00",
-        symbol_map=mapping(record),
-    )
-    top = json.loads((unit / "top100.json").read_bytes())
-    assert top["generated_at"] == "2026-10-27T08:00:03.000000001+00:00"
-    read_research_inputs(unit, now=datetime(2026, 10, 27, 8, 0, 3, 1, tzinfo=UTC))
-
-
-def test_missing_security_type_never_enters_movers_even_with_an_explicit_map(tmp_path):
-    record = generation()
-    rows = tuple(
-        replace(row, reasons=tuple(r for r in row.reasons if r.code != "ASSET"))
-        for row in record.rows
-    )
-    record = replace(record, rows=rows)
-    doc = documents(record)
-    assert doc["display-lists.json"]["ns_movers"] == []
-    with pytest.raises(InputError):
-        api().publish_unit(
-            record, tmp_path, generated_at=NOW.isoformat(), symbol_map=mapping(record)
-        )
-    assert not (tmp_path / "latest").exists()
-
-
-def test_newer_latest_refuses_older_generation_without_overwriting(tmp_path):
-    record = generation()
-    newest = replace(record, input_cutoff=START + 2 * NS + 1)
-    original = api().publish_unit(
-        newest, tmp_path, generated_at=NOW.isoformat(), symbol_map=mapping(record)
-    )
-    with pytest.raises(ValueError, match="older"):
-        api().publish_unit(
-            record, tmp_path, generated_at=NOW.isoformat(), symbol_map=mapping(record)
-        )
-    assert (tmp_path / "latest").resolve() == original
-
-
-def test_armed_journal_is_captured_once_and_keeps_unknown_pressure_label(tmp_path):
-    from sextant.tradingview.display_lists import ArmedSet
-
-    record = generation()
-    text = json.dumps(
-        {
-            "kind": "premarket_gap_scanner_refresh",
-            "version": 1,
-            "ts_event": START + 3 * NS,
-            "snapshot_reason": "fresh",
-            "snapshot_as_of": "2026-10-27T08:00:02+00:00",
-            "armed": ["AAA.ALPACA"],
-        }
-    )
-    unit = api().publish_unit(
-        record,
-        tmp_path,
-        generated_at=NOW.isoformat(),
-        symbol_map=mapping(record),
-        armed_sets=(ArmedSet("fixture-arm", "captured.jsonl", text),),
-    )
-    doc = json.loads((unit / "display-lists.json").read_bytes())
-    assert doc["ns_focus"] == [
-        {
-            "symbol": "AAA",
-            "tradingview_symbol": "NASDAQ:AAA",
-            "labels": ["arm:fixture-arm", "phase:pre", "sell_pressure:UNVERIFIED"],
-        }
-    ]
-    assert doc["armed"] == "observed"
-    assert read_research_inputs(unit, now=NOW).memberships["NS focus"] == frozenset({"NASDAQ:AAA"})
-
-
-def test_cli_missing_input_is_explicit_and_does_not_create_a_unit(tmp_path, capsys):
-    producer = api()
-    missing = tmp_path / "missing-ranking.json"
-    assert producer.main(["--ranking", str(missing), "--out", str(tmp_path / "out")]) == 2
-    output = json.loads(capsys.readouterr().out)
-    assert output["status"] == "unavailable"
-    assert str(missing) in output["reason"]
-    assert not (tmp_path / "out").exists()
-
-
-def test_cli_emits_counts_and_clocks_without_auth_or_network(tmp_path, capsys):
-    producer = api()
-    record = generation()
-    source = tmp_path / "ranking.json"
-    source.write_text(record.to_json())
-    symbols = tmp_path / "symbols.json"
-    symbols.write_text(json.dumps(mapping(record)))
-    before = copy.deepcopy((source.read_bytes(), symbols.read_bytes()))
+def test_real_generation_keeps_scores_unknowns_full_universe_and_display_only(live, tmp_path):
+    warm(live)
+    assert live.heartbeat(at=AT, received_ns=AT)
+    result = unit(live)
+    assert result["status"] == "fresh", result
+    native = RankingGeneration.from_json(result["ranking_generation"])
+    assert len(native.rows) == 3
+    assert result["watchlists"] == {"NS Ranked": ["NASDAQ:ADR", "NASDAQ:LARGE"]}
+    assert all(row.score == Decimal("0.105") for row in native.rows)
+    assert all(
+        row.focus_eligible is False for row in native.rows
+    )  # Entry flags never filter display.
+    assert generation_digest(native) == result["generation_sha256"]
+    assert result["params_hash"] == live.publisher.registry.params_hash
+    assert result["display_only"] is True and result["paper_slot"] == 3
+    assert "NS B-protected" not in result["watchlists"]
     assert (
-        producer.main(
-            [
-                "--ranking",
-                str(source),
-                "--out",
-                str(tmp_path / "out"),
-                "--symbol-map",
-                str(symbols),
-                "--generated-at",
-                NOW.isoformat(),
-            ]
+        live.publish_unit(
+            tmp_path / "latest.json",
+            now=AT,
+            symbol_map={name: f"NASDAQ:{name}" for name in live.publisher.universe},
+            mapping_clocks=MAPPING,
         )
-        == 0
+        == result
     )
-    report = json.loads(capsys.readouterr().out)
-    assert report["status"] == "published"
-    assert report["lists"] == {
-        "NS movers": {
-            "count": 2,
-            "as_of": "2026-10-27T08:00:03+00:00",
-            "generated_at": "2026-10-27T08:00:03+00:00",
-        },
-        "NS focus": {
-            "count": 0,
-            "as_of": "2026-10-27T08:00:03+00:00",
-            "generated_at": "2026-10-27T08:00:03+00:00",
-        },
-    }
-    assert before == (source.read_bytes(), symbols.read_bytes())
+    assert json.loads((tmp_path / "latest.json").read_text()) == result
+
+
+def test_two_clocks_use_market_availability_not_archive_initialization(live):
+    warm(live)
+    live.heartbeat(at=AT, received_ns=AT)
+    result = unit(live)
+    control = publisher()
+    for second in (0, 60, 120, 180, 240, 300, 310, 320, 330, 340, 350, 360):
+        for name in control.universe:
+            control.on_trade(tick(second, "0.55" if second > 300 else "0.50", name))
+    expected = control.publish(now=AT)
+    assert expected and result["generation_sha256"] == generation_digest(expected)
+    clocks = result["provenance"]["trades"]["ADR"]
+    assert clocks["ACQUIRED_AT"] == clocks["native_ts_init"] == ACQUIRED > AT
+    assert clocks["MARKET_AVAILABLE_AT"] == AT
+    before = json.dumps(result, sort_keys=True)
+    observation(live, 361, "0.56")
+    assert json.dumps(result, sort_keys=True) == before  # A captured unit cannot drift in memory.
+
+
+def test_future_market_input_cannot_change_an_earlier_publication(live):
+    warm(live)
+    before = live.publisher.states.copy()
+    assert not observation(live, 361, "9.00", now=AT)
+    assert live.publisher.states == before and live.error is None
+    live.heartbeat(at=AT, received_ns=AT)
+    assert unit(live)["status"] == "fresh"
+
+
+@pytest.mark.parametrize("condition", ("G", "U", "Z", "6", "M", "9"))
+def test_late_and_closing_conditions_update_neither_measure(live, condition):
+    observation(live, 0)
+    before = live.publisher.states["PENNY"]
+    observation(live, 1, "9.00", conditions=(condition,))
+    assert live.publisher.states["PENNY"] == before
+
+
+def test_odd_lot_masks_are_separate_and_out_of_order_poisoning_has_no_fallback(live):
+    observation(live, 0)
+    observation(live, 1, "9.00", price_eligible=False, volume_eligible=True, conditions=("I",))
+    row = live.publisher.states["PENNY"].latest
+    assert row and row.observations["price"] == Decimal("0.50")
+    assert row.observations["dollar_volume"] == Decimal("95.00")
+    with pytest.raises(ValueError, match="market clocks"):
+        observation(live, 0)
+    assert unit(live)["watchlists"] is None
+
+
+@pytest.mark.parametrize("field,value", [("mask_source", ""), ("price_eligible", 1)])
+def test_unknown_condition_authority_refuses_and_invalidates(live, field, value):
+    with pytest.raises(ValueError):
+        observation(live, 0, **{field: value})
+    assert live.error and unit(live)["watchlists"] is None
+
+
+def test_snapshot_preserves_decimal_bytes_without_counting_volume_or_inventing_close(live):
+    warm(live)
+    before = live.publisher.states.copy()
+    raw = (
+        '{"ADR":{"latestTrade":{"p":999.999999999,"s":900},'
+        '"dailyBar":{"v":9000,"vw":1.234567891,"n":37},"prevDailyBar":{"c":999}}}'
+    )
+    assert live.on_snapshot(raw, clocks=Clocks(AT, ACQUIRED, "synthetic REST receipt"), now=AT)
+    assert live.snapshot and live.snapshot["response_json"] == raw
+    assert live.publisher.states == before
+    assert live.publisher.references["ADR"].prior_close == Decimal("0.50")
+    future = Clocks(AT + 1, ACQUIRED, "future synthetic snapshot")
+    assert not live.on_snapshot(raw, clocks=future, now=AT)
+    assert live.snapshot["MARKET_AVAILABLE_AT"] == AT
+
+
+@pytest.mark.parametrize("raw", ["{}", '{"FOREIGN":{}}', '{"ADR":{"p":NaN}}', "[]"])
+def test_invalid_snapshot_does_not_leave_a_valid_fallback(live, raw):
+    with pytest.raises(ValueError):
+        live.on_snapshot(raw, clocks=Clocks(AT, ACQUIRED, "fixture"), now=AT)
+    assert unit(live)["watchlists"] is None
+
+
+def test_missing_heartbeat_and_stale_inputs_never_clear_or_reuse_a_list(live, tmp_path):
+    warm(live)
+    assert unit(live)["reason"] == "heartbeat_missing"
+    live.heartbeat(at=AT, received_ns=AT)
+    first = unit(live)
+    assert first["status"] == "fresh"
+    throttled = unit(live, now=AT + NS // 2)
+    assert throttled["generation_sha256"] == first["generation_sha256"]
+    assert throttled["generated_at_ns"] == first["generated_at_ns"]
+    assert throttled["expires_at_ns"] == first["expires_at_ns"]
+    later = AT + 3 * NS
+    live.heartbeat(at=later, received_ns=later)
+    result = live.publish_unit(
+        tmp_path / "latest.json",
+        now=later,
+        mapping_clocks=MAPPING,
+        symbol_map={name: f"NASDAQ:{name}" for name in live.publisher.universe},
+    )
+    assert result["status"] == "unavailable" and result["watchlists"] is None
+    assert json.loads((tmp_path / "latest.json").read_text())["watchlists"] is None
+
+
+def test_one_busy_symbol_cannot_refresh_another_projected_symbols_price(live):
+    warm(live)
+    live.heartbeat(at=AT, received_ns=AT)
+    assert unit(live)["status"] == "fresh"
+    observation(live, 363, "0.56", "PENNY")
+    now = START + 363 * NS + 1
+    live.heartbeat(at=now, received_ns=now)
+    assert unit(live, now=now)["reason"] == "projected symbol input stale"
+
+
+@pytest.mark.parametrize("cause", ("disconnect", "correction", "cancel_error", "missing_prefix"))
+def test_data_gap_or_revision_requires_recovered_epoch(live, cause):
+    warm(live)
+    live.heartbeat(at=AT, received_ns=AT)
+    assert unit(live)["status"] == "fresh"
+    live.invalidate(cause)
+    assert unit(live)["watchlists"] is None
+    with pytest.raises(ValueError):
+        observation(live, 361)
+
+
+@pytest.mark.parametrize(
+    "kind", ("unknown", "degraded", "missing", "mixed_source", "score", "partial")
+)
+def test_main_reader_refuses_incomplete_or_fabricated_generations(live, monkeypatch, kind):
+    warm(live)
+    live.heartbeat(at=AT, received_ns=AT)
+    if kind in {"unknown", "degraded"}:
+        live.publisher.set_coverage(Coverage(CoverageState(kind.upper()), False))
+    elif kind == "missing":
+        live.publisher.states = {
+            name: replace(s, latest=None) for name, s in live.publisher.states.items()
+        }
+    else:
+        original = live.publisher.publish
+
+        def altered(*, now):
+            record = original(now=now)
+            assert record
+            first = record.rows[0]
+            if kind == "score":
+                first = replace(first, score=Decimal("999"))
+            elif kind == "partial":
+                first = replace(first, partial=True)
+            else:
+                reasons = list(first.reasons)
+                reasons[0] = replace(reasons[0], detail='{"feed":"boats"}')
+                first = replace(first, reasons=tuple(reasons))
+            return replace(record, rows=(first, *record.rows[1:]))
+
+        monkeypatch.setattr(live.publisher, "publish", altered)
+    assert unit(live)["watchlists"] is None
+
+
+@pytest.mark.parametrize(
+    "mapping", [{}, {"ADR": "ALPACA:ADR"}, {"ADR": "NASDAQ:X", "LARGE": "NASDAQ:X"}]
+)
+def test_missing_routing_or_alias_mapping_never_guesses_a_listing(live, mapping):
+    warm(live)
+    live.heartbeat(at=AT, received_ns=AT)
+    assert unit(live, symbol_map=mapping)["watchlists"] is None
+
+
+def test_future_mapping_and_bad_heartbeat_cannot_authorize_a_display(live):
+    warm(live)
+    live.heartbeat(at=AT, received_ns=AT)
+    assert unit(live, mapping_clocks=Clocks(AT + 1, ACQUIRED, "future"))["watchlists"] is None
+    assert not live.heartbeat(at=AT + 1, received_ns=AT)
+    assert unit(live)["watchlists"] is None
+
+
+def test_durable_publication_failure_preserves_the_previous_complete_file(
+    live, tmp_path, monkeypatch
+):
+    warm(live)
+    live.heartbeat(at=AT, received_ns=AT)
+    path = tmp_path / "latest.json"
+    kwargs = dict(
+        now=AT,
+        symbol_map={s: f"NASDAQ:{s}" for s in live.publisher.universe},
+        mapping_clocks=MAPPING,
+    )
+    live.publish_unit(path, **kwargs)
+    before = path.read_bytes()
+
+    def fail(*args):
+        raise OSError("synthetic replace failure")
+
+    monkeypatch.setattr(state.os, "replace", fail)
+    with pytest.raises(OSError, match="synthetic"):
+        live.publish_unit(path, **kwargs)
+    assert path.read_bytes() == before
+    assert set(tmp_path.iterdir()) == {tmp_path / "leases", path}
+
+
+@pytest.mark.parametrize("slot", (1, 2, 4, True, "3"))
+def test_slot_two_and_every_other_slot_refuse_before_a_lease(tmp_path, slot):
+    with pytest.raises(ValueError, match="slot 3"):
+        with reserve_stream(
+            tmp_path / "absent", paper_slot=slot, existing_streams=0, source="fixture"
+        ):
+            pytest.fail("wrong slot admitted")
+    assert not (tmp_path / "absent").exists()
+
+
+def test_existing_external_stream_and_concurrent_process_refuse_a_second_stream(tmp_path):
+    with pytest.raises(ValueError, match="second stream"):
+        with reserve_stream(tmp_path, paper_slot=3, existing_streams=1, source="fixture"):
+            pytest.fail("second stream admitted")
+    with reserve_stream(tmp_path, paper_slot=3, existing_streams=0, source="fixture"):
+        script = """
+from pathlib import Path
+import sys
+from sextant.execution.custody import CustodyError
+from sextant.tradingview.producer import reserve_stream
+try:
+    with reserve_stream(Path(sys.argv[1]), paper_slot=3, existing_streams=0, source='fixture'):
+        raise AssertionError('second reservation admitted')
+except CustodyError:
+    print('second_stream_refused')
+"""
+        done = subprocess.run(
+            [sys.executable, "-c", script, str(tmp_path)],
+            capture_output=True,
+            text=True,
+            env={"PATH": os.defpath, "PYTHONPATH": str(ROOT / "src")},
+            timeout=30,
+        )
+        assert done.returncode == 0, done.stderr
+        assert done.stdout.strip() == "second_stream_refused"
+    with reserve_stream(tmp_path, paper_slot=3, existing_streams=0, source="fixture") as lease:
+        assert lease.held
+
+
+def test_release_and_unknown_entitlement_revoke_the_seam(live):
+    with pytest.raises(ValueError, match="entitlement"):
+        LiveProducer(publisher(), live.lease, sip_authority="")
+    live.lease.close()
+    assert unit(live)["watchlists"] is None
+    assert not live.heartbeat(at=AT, received_ns=AT)
+    with pytest.raises(ValueError):
+        snapshot_request(live.lease, ("ADR",))
+
+
+def rate(value=200):
+    return RegistryRow(
+        "snapshot_requests_per_minute",
+        "requests/minute",
+        value,
+        "synthetic shared allocation; official Basic ceiling",
+        "UNCALIBRATED",
+        DAY,
+    )
+
+
+def test_native_snapshot_request_and_shared_pacer_stay_inside_documented_budget(live):
+    clock = [0.0]
+    sent = []
+
+    def sleep(delay):
+        clock[0] = round(clock[0] + delay, 9)
+
+    snapshot_pacer(live.lease, rate(), clock=lambda: clock[0], sleep=sleep)
+    for _ in range(201):
+        request = snapshot_request(live.lease, ("ADR", "PENNY"))
+        sent.append(clock[0])
+        assert request.feed and request.feed.value == "sip"
+        assert request.symbol_or_symbols == ["ADR", "PENNY"]
+    assert sum(at < 60 for at in sent) == 200 and sent[-1] >= 60
+    with pytest.raises(CustodyError, match="one shared pacer"):
+        snapshot_pacer(live.lease, rate(), clock=lambda: clock[0], sleep=sleep)
+    with pytest.raises(ValueError):
+        snapshot_request(live.lease, ("ADR", "ADR"))
+
+
+@pytest.mark.parametrize("value", (0, 201, 10000, True, 2.5))
+def test_snapshot_allocation_cannot_borrow_an_unverified_higher_quota(live, value):
+    with pytest.raises(ValueError, match="allocation"):
+        snapshot_pacer(live.lease, rate(value), clock=lambda: 0.0, sleep=lambda _: None)
+
+
+def test_no_deployment_registry_or_cadence_scheduler_is_created():
+    source = (ROOT / "src/sextant/tradingview/producer.py").read_text()
+    assert "StockDataStream(" not in source and "StockHistoricalDataClient(" not in source
+    assert "TradingClient(" not in source and "environ" not in source
+    assert not (ROOT / "src/sextant/ranking/live.py").exists()
+    assert not (ROOT / "src/sextant/tradingview/display_lists.py").exists()
+    assert not (ROOT / "src/sextant/tradingview/display_support.py").exists()
