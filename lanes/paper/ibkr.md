@@ -1,6 +1,6 @@
 # IBKR paper: offline adapter slice
 
-Issue [#81](https://github.com/seathatflowsinourveins/sextant/issues/81). This supplies configuration
+Issue [#81](https://github.com/seathatflowsinourveins/sextant-archive/issues/81). This supplies configuration
 for broker-portability evidence. It is OFF and establishes no readiness, custody or trading result.
 The shared paper node belongs to #84 and custody/pacer/guard/halt to #51; no node is duplicated here.
 

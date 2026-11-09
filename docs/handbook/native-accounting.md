@@ -1,6 +1,6 @@
 # Native accounting: consume Money, not report display strings
 
-[#129 R98](https://github.com/seathatflowsinourveins/sextant/issues/129) replaces
+[#129 R98](https://github.com/seathatflowsinourveins/sextant-archive/issues/129) replaces
 the thin slice's report-string realized-P&L sum with native `Portfolio.realized_pnls`.
 The API returns `dict[Currency, Money]`; the one-venue thin slice requests USDT,
 reads that currency's Money as Decimal, and keeps the empty hold-flat result zero.

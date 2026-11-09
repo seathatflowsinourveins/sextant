@@ -1,6 +1,6 @@
 # Native lane runtimes and a fresh Sextant router
 
-Issue [#62](https://github.com/seathatflowsinourveins/sextant/issues/62), read 2026-11-06. The owner asks for parallel native Orca lanes and fit/quota routing, without the old `srt` jail. Later direction requests a fresh **current** OmniRoute and owner-only provider/Google browser sign-ins, then removes Gemini CLI, verbatim: **"drop gemini, it was not working"** (owner, 2026-11-06, relayed by the lead). The retained six-runtime roster is below. [The lead's sign-in handoff](https://github.com/seathatflowsinourveins/sextant/issues/58#issuecomment-6689307337) records the original tabs and GPT/Codex scope; no Claude subscription connection is authorized.
+Issue [#62](https://github.com/seathatflowsinourveins/sextant-archive/issues/62), read 2026-11-06. The owner asks for parallel native Orca lanes and fit/quota routing, without the old `srt` jail. Later direction requests a fresh **current** OmniRoute and owner-only provider/Google browser sign-ins, then removes Gemini CLI, verbatim: **"drop gemini, it was not working"** (owner, 2026-11-06, relayed by the lead). The retained six-runtime roster is below. [The lead's sign-in handoff](https://github.com/seathatflowsinourveins/sextant-archive/issues/58#issuecomment-6689307337) records the original tabs and GPT/Codex scope; no Claude subscription connection is authorized.
 
 ## Adoption authority
 
