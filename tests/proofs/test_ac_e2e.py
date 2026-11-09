@@ -17,7 +17,7 @@ def report():
 
 
 def test_tape_is_todays_six_movers_and_the_recorded_catalyst():
-    _, cases, witnesses = load_tape()
+    cases, witnesses = load_tape()
     assert [case.symbol for case in cases] == ["ONDS", "NWGL", "TTD", "MF", "OMH", "CKX", "SPCX"]
     assert {row["symbol"] for row in witnesses} == {"OMH", "PARA"}
     spcx = cases[-1]
@@ -43,10 +43,12 @@ def test_only_the_catalyst_places_orders(report):
 
 
 def test_the_catalyst_reproduces_pr3(report):
-    by_symbol = {case["symbol"]: case for case in report["cases"]}
-    spcx = by_symbol["SPCX"]
-    assert spcx["pr3"]["entry"] == "161.21"
-    assert spcx["decisions"][0]["accepted"] is True
+    cases, _ = load_tape()
+    spcx = cases[-1]
+    assert spcx.pr3 is not None
+    assert spcx.pr3["entry"] == "161.21"
+    result = run_case(spcx, profiles()["a"], entry_parameters(fixture=True))
+    assert result.accepted[0].accepted
     for order in report["orders"]:
         assert abs(Decimal(order["protected"]) - Decimal("-0.008312")) <= Decimal("0.0002")
         # PR-3's hold-flat is the 16:00 ET 1-minute close (159.27), not the exit print.
@@ -54,7 +56,7 @@ def test_the_catalyst_reproduces_pr3(report):
 
 
 def test_pre_risk_uses_the_half_risk_rule():
-    _, cases, _ = load_tape()
+    cases, _ = load_tape()
     spcx = cases[-1]
     params = entry_parameters(fixture=True)
     result = run_case(spcx, profiles()["a"], params)

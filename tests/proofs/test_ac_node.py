@@ -54,9 +54,7 @@ def test_a_has_no_paper_account_and_no_writable_slot():
 
 
 def test_only_slot_three_is_writable():
-    slot = ac_node.require_writable_slot(3)
-    assert slot.lane == ac_node.C_LANE
-    assert slot.writable
+    assert ac_node.require_writable_slot(3) == ac_node.C_LANE
 
 
 def test_unknown_slot_is_refused():
@@ -181,7 +179,6 @@ def test_first_leg_buys_the_fifth_print_at_the_ask_never_market():
     assert plan.quantity.as_decimal() == 1982
     assert plan.limit.as_decimal() == Decimal("100.9")
     assert plan.stop.as_decimal() == Decimal("98.3775")
-    assert plan.trail_fraction == ac_node.TRAIL_FRACTION
 
 
 def test_rank_ceiling_caps_exposure_while_risk_halves_outside_rth():

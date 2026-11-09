@@ -1,21 +1,16 @@
 """A/C recorded-session e2e: the node's own decisions, B's level, no broker.
 
-The Rule 1 rows are in ``docs/manifest.md``: NautilusTrader's trailing-stop
-example at ``v1.231.0`` and this repo's PR-3 recorded run (``2047d46``), whose
-OMH/PARA/SPCX values this tape must reproduce. The tape is today's recorded
-session: the e2e-omh 1-minute K2 generations for ONDS, NWGL, TTD, MF, OMH and
-CKX plus SPCX's 2026-10-21 catalyst print and new-high path. One-minute closes
-are not a 5-print run, so rank-armed cases refuse; SPCX's catalyst is the one
-recorded auto-entry. Every row is MODELED: no broker client or live endpoint.
+Rule 1 rows: ``docs/manifest.md`` (NautilusTrader v1.231.0 trailing stop, PR-3).
+One-minute closes are not a 5-print run, so rank-armed cases refuse; SPCX's
+catalyst is the one recorded auto-entry.
 """
 
 from __future__ import annotations
 
-import argparse
 import hashlib
 import json
 import subprocess
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
@@ -65,7 +60,6 @@ class TapeCase:
     session: str
     segment: str
     prior_close: Decimal
-    tape: str
     prints: tuple[Point, ...]
     ranks: tuple[Rank, ...] = ()
     catalyst_at: int | None = None
@@ -76,7 +70,6 @@ class TapeCase:
 
 @dataclass(frozen=True)
 class Decision:
-    profile: str
     plan: EntryPlan
 
     @property
@@ -88,7 +81,6 @@ class Decision:
 class CaseRun:
     case: TapeCase
     decisions: tuple[Decision, ...]
-    reason: str = ""
 
     @property
     def accepted(self) -> tuple[Decision, ...]:
@@ -97,13 +89,11 @@ class CaseRun:
 
 @dataclass(frozen=True)
 class Outcome:
-    symbol: str
     entry: Decimal
     high: Decimal
     level: Decimal
     exit_ts_ns: int
     exit_price: Decimal
-    prints: int
     protected: Decimal
     hold_flat: Decimal
 
@@ -118,10 +108,7 @@ def _points(rows: list[dict[str, Any]]) -> tuple[Point, ...]:
     )
 
 
-def load_tape(
-    path: Path = TAPE_PATH,
-) -> tuple[dict[str, Any], list[TapeCase], list[dict[str, Any]]]:
-    """Read the committed tape; every Decimal and every ns is explicit."""
+def load_tape(path: Path = TAPE_PATH) -> tuple[list[TapeCase], list[dict[str, Any]]]:
     document = json.loads(path.read_text())
     cases = []
     for row in document["cases"]:
@@ -132,7 +119,6 @@ def load_tape(
                 session=str(row["session"]),
                 segment=str(row["segment"]),
                 prior_close=Decimal(str(row["prior_close"])),
-                tape=str(row["tape"]),
                 prints=_points(row["prints"]),
                 ranks=tuple(
                     Rank(
@@ -149,22 +135,16 @@ def load_tape(
                 pr3=row.get("pr3"),
             )
         )
-    return document, cases, list(document.get("witnesses") or ())
+    return cases, list(document.get("witnesses") or ())
 
 
 def session_start_ns(session: str, segment: str) -> int:
     day = datetime.fromisoformat(session).replace(tzinfo=EASTERN)
-    hour = 9 if segment == "RTH" else 4
-    return int(day.replace(hour=hour, minute=30 if segment == "RTH" else 0).timestamp() * NS)
+    return int(day.replace(hour=9 if segment == "RTH" else 4).timestamp() * NS)
 
 
 def trail(entry: Decimal, points: tuple[Point, ...], *, entry_ts_ns: int = 0) -> Outcome:
-    """The 2.5% level trail exactly as PR-3's Nautilus run filled it.
-
-    A new high lifts the level to ``high * (1 - fraction)``; the first print at
-    or below the level is the exit fill. This is the same rule the live owner-B
-    protector submits, so it is not a second protection model.
-    """
+    # A new high lifts the level to high*(1-fraction); the first crossing fills.
     high, level = entry, entry * (1 - TRAIL_FRACTION)
     path = tuple(point for point in points if point.ts_ns >= entry_ts_ns)
     for point in path:
@@ -172,27 +152,24 @@ def trail(entry: Decimal, points: tuple[Point, ...], *, entry_ts_ns: int = 0) ->
             high, level = point.price, point.price * (1 - TRAIL_FRACTION)
         elif point.price <= level:
             return Outcome(
-                "",
                 entry,
                 high,
                 level,
                 point.ts_ns,
                 point.price,
-                len(path),
                 (point.price - entry) / entry,
                 (path[-1].price - entry) / entry,
             )
-    last = path[-1].price if path else entry
+    last = path[-1] if path else None
+    price = last.price if last else entry
     return Outcome(
-        "",
         entry,
         high,
         level,
-        path[-1].ts_ns if path else 0,
-        last,
-        len(path),
-        (last - entry) / entry,
-        (last - entry) / entry,
+        last.ts_ns if last else 0,
+        price,
+        (price - entry) / entry,
+        (price - entry) / entry,
     )
 
 
@@ -201,33 +178,22 @@ def _diagnose(case: TapeCase, entry: AcEntry, window_end: int) -> str:
         return "no K2 generation recorded (rank 1-2) and no scheduled catalyst"
     rank_ts = entry.state.surge.known_at if entry.state.surge else case.ranks[0].ts_ns
     window = tuple(point for point in case.prints if rank_ts <= point.ts_ns <= window_end)
-    if not window:
-        return "no print after the K2 generation"
-    peak = max(max(point.price, case.prior_close) for point in window)
+    peak = max((max(point.price, case.prior_close) for point in window), default=case.prior_close)
     cap = case.prior_close * (1 + entry.state.params["first_leg_max_move"])
     if peak > cap:
         return (
-            "move beyond first_leg_max_move: "
-            f"{peak} > {cap} above the quiet price {case.prior_close}"
-        )
-    if len(window) < int(entry.state.params["first_leg_trades_count"]):
-        window_s = int(entry.state.params["first_leg_window_s"])
-        return (
-            "coverage below first_leg_trades_count: "
-            f"{len(window)} prints inside the {window_s}s window"
+            f"move beyond first_leg_max_move: {peak} > {cap} above the quiet price "
+            f"{case.prior_close}"
         )
     return "the first-leg run did not hold"
 
 
 def run_case(case: TapeCase, profile: Profile, params) -> CaseRun:
-    """Feed one recorded case through the node's own decision code."""
-    instrument = equity(case.symbol)
-    start_ns = session_start_ns(case.session, case.segment)
     entry = AcEntry(
-        instrument=instrument,
+        instrument=equity(case.symbol),
         params=params,
         profile=profile,
-        start_ns=start_ns,
+        start_ns=session_start_ns(case.session, case.segment),
         segment=case.segment,
         equity=Money.from_str(STARTING_CASH),
         fixture=True,
@@ -240,8 +206,7 @@ def run_case(case: TapeCase, profile: Profile, params) -> CaseRun:
         )
     decisions: list[Decision] = []
     ranks = iter(case.ranks)
-    next_rank = next(ranks, None)
-    latest_rank: Rank | None = None
+    next_rank, latest_rank = next(ranks, None), None
     for point in sorted(case.prints, key=lambda p: p.ts_ns):
         while next_rank is not None and next_rank.ts_ns <= point.ts_ns:
             entry.observe_rank(
@@ -250,32 +215,29 @@ def run_case(case: TapeCase, profile: Profile, params) -> CaseRun:
                 quiet_price=next_rank.quiet_price,
                 first_print_ts=next_rank.first_print_ts,
             )
-            latest_rank = next_rank
-            next_rank = next(ranks, None)
-        regular = case.segment == "RTH"
+            latest_rank, next_rank = next_rank, next(ranks, None)
         plan = entry.observe_print(
             ts_ns=point.ts_ns,
             price=point.price,
             size=point.size,
-            regular_hours=regular,
+            regular_hours=case.segment == "RTH",
             ask=point.price,
             ask_ts_ns=point.ts_ns,
         )
         if plan is not None:
-            decisions.append(Decision(profile.key, plan))
+            decisions.append(Decision(plan))
             if plan.accepted:
                 break
     if not decisions:
-        window_end = (latest_rank.ts_ns if latest_rank else start_ns) + int(
-            params["first_leg_window_s"]
-        )
+        window_end = (
+            latest_rank.ts_ns if latest_rank else session_start_ns(case.session, case.segment)
+        ) + int(params["first_leg_window_s"])
         decisions.append(
             Decision(
-                profile.key,
                 refused_plan(
                     profile,
                     symbol=case.symbol,
-                    ts_ns=case.prints[-1].ts_ns if case.prints else start_ns,
+                    ts_ns=case.prints[-1].ts_ns if case.prints else 0,
                     setup="FIRST_LEG" if case.ranks else "CATALYST",
                     rank=latest_rank.rank if latest_rank else None,
                     reason=_diagnose(case, entry, window_end),
@@ -287,21 +249,18 @@ def run_case(case: TapeCase, profile: Profile, params) -> CaseRun:
 
 def _outcome(case: TapeCase, plan: EntryPlan) -> Outcome:
     entry_price = plan.limit.as_decimal() if plan.limit is not None else case.prior_close
-    points = case.path if case.path is not None else case.prints
-    return replace(trail(entry_price, points, entry_ts_ns=plan.ts_ns), symbol=case.symbol)
+    return trail(
+        entry_price, case.path if case.path is not None else case.prints, entry_ts_ns=plan.ts_ns
+    )
 
 
 def _witness(witness: dict[str, Any]) -> dict[str, Any]:
     entry = Decimal(str(witness["entry"]))
     path = _points(witness["path"]) if witness.get("path") else ()
     cited = dict(witness.get("pr3") or {})
-    result = {
+    result: dict[str, Any] = {
         "symbol": witness["symbol"],
-        "tape": witness["tape"],
-        "entry": str(entry),
-        "entry_ts": witness.get("entry_ts"),
         "path_points": len(path),
-        "pr3": cited,
         "agrees": None,
     }
     if not path:
@@ -312,9 +271,6 @@ def _witness(witness: dict[str, Any]) -> dict[str, Any]:
             "high": str(outcome.high),
             "level": str(outcome.level),
             "exit": str(outcome.exit_price),
-            "exit_ts": datetime.fromtimestamp(outcome.exit_ts_ns / NS, tz=EASTERN).isoformat()
-            if outcome.exit_ts_ns
-            else None,
             "protected": f"{outcome.protected:.6f}",
             "hold_flat": f"{outcome.hold_flat:.6f}",
             "agrees": (
@@ -349,177 +305,105 @@ def _trial_params(profile: Profile, setup: str) -> dict[str, Any]:
 
 
 def _implementation_sha() -> str:
-    """A concrete 40-hex code identity: the checkout's HEAD, else this file's digest."""
-    try:
-        result = subprocess.run(
-            ["git", "-C", str(REPOSITORY), "rev-parse", "HEAD"],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-        sha = result.stdout.strip()
-        if len(sha) == 40 and all(character in "0123456789abcdef" for character in sha):
-            return sha
-    except (OSError, subprocess.CalledProcessError):
-        pass
-    digest = hashlib.sha256((REPOSITORY / "src/sextant/backtest/ac_e2e.py").read_bytes())
-    return digest.hexdigest()[:40]
+    sha = subprocess.run(
+        ["git", "-C", str(REPOSITORY), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    if len(sha) == 40:
+        return sha
+    return hashlib.sha256((REPOSITORY / "src/sextant/backtest/ac_e2e.py").read_bytes()).hexdigest()[
+        :40
+    ]
 
 
 def run(path: Path = TAPE_PATH) -> dict[str, Any]:
-    document, cases, witnesses = load_tape(path)
+    cases, witnesses = load_tape(path)
     params = entry_parameters(fixture=True)
     registry = profiles()
-    runs: list[CaseRun] = []
-    outcomes: dict[tuple[str, str], Outcome] = {}
+    runs = [
+        (case, key, run_case(case, registry[key], params)) for case in cases for key in ("a", "c")
+    ]
     ledgers = {
-        key: AcLedger(Money.from_str(STARTING_CASH), value.equity_mode)
-        for key, value in registry.items()
+        key: AcLedger(Money.from_str(STARTING_CASH), profile.equity_mode)
+        for key, profile in registry.items()
     }
-    for case in cases:
-        for key in ("a", "c"):
-            profile = registry[key]
-            result = run_case(case, profile, params)
-            runs.append(result)
-            for decision in result.accepted:
-                outcome = _outcome(case, decision.plan)
-                outcomes[(case.symbol, key)] = outcome
-                assert decision.plan.quantity is not None
-                quantity = decision.plan.quantity.as_decimal()
-                ledgers[key].record(
-                    entry=outcome.entry,
-                    exit_price=outcome.exit_price,
-                    quantity=quantity,
-                )
+    outcomes: dict[tuple[str, str], Outcome] = {}
+    for case, key, result in runs:
+        for decision in result.accepted:
+            outcome = _outcome(case, decision.plan)
+            outcomes[(case.symbol, key)] = outcome
+            assert decision.plan.quantity is not None
+            ledgers[key].record(
+                entry=outcome.entry,
+                exit_price=outcome.exit_price,
+                quantity=decision.plan.quantity.as_decimal(),
+            )
     orders = []
-    for symbol, key in sorted(outcomes):
-        decision = next(
-            d for r in runs if r.case.symbol == symbol for d in r.accepted if d.profile == key
-        )
-        outcome = outcomes[(symbol, key)]
-        profile = registry[key]
+    for (symbol, key), outcome in sorted(outcomes.items()):
+        _, _, result = next(row for row in runs if row[0].symbol == symbol and row[1] == key)
+        plan = result.accepted[0].plan
         orders.append(
             {
                 "profile": key,
-                "lane": profile.lane,
                 "mode": "replay" if key == "a" else "paper-slot-3",
                 "symbol": symbol,
-                "setup": decision.plan.setup,
-                "ts": datetime.fromtimestamp(decision.plan.ts_ns / NS, tz=EASTERN).isoformat(),
+                "setup": plan.setup,
                 "side": "BUY",
                 "order_type": "LIMIT",
                 "time_in_force": "DAY",
-                "limit": str(decision.plan.limit),
-                "quantity": str(decision.plan.quantity),
-                "stop": str(decision.plan.stop),
-                "trail_fraction": str(TRAIL_FRACTION),
+                "limit": str(plan.limit),
+                "quantity": str(plan.quantity),
+                "stop": str(plan.stop),
                 "protected": f"{outcome.protected:.6f}",
                 "hold_flat": f"{outcome.hold_flat:.6f}",
                 "tier": "MODELED",
             }
         )
     trial_rows = []
-    for result in runs:
+    for case, key, result in runs:
         for decision in result.decisions:
-            outcome = outcomes.get((result.case.symbol, decision.profile))
-            params = _trial_params(registry[decision.profile], decision.plan.setup)
+            outcome = outcomes.get((case.symbol, key))
+            plan = decision.plan
+            trial_params = _trial_params(registry[key], plan.setup)
             trial_rows.append(
                 {
-                    "arm": f"paper-ac-{result.case.symbol.lower()}-"
-                    f"{decision.plan.setup.lower()}-{decision.profile}",
-                    "profile": decision.profile,
-                    "symbol": result.case.symbol,
-                    "setup": decision.plan.setup,
-                    "rank": decision.plan.rank,
+                    "arm": f"paper-ac-{case.symbol.lower()}-{plan.setup.lower()}-{key}",
+                    "profile": key,
+                    "symbol": case.symbol,
                     "state": "ACCEPTED" if decision.accepted else "REFUSED",
-                    "reason": decision.plan.refusal,
-                    "limit": str(decision.plan.limit) if decision.plan.limit else None,
-                    "quantity": str(decision.plan.quantity) if decision.plan.quantity else None,
-                    "protected": f"{outcome.protected:.6f}" if outcome else None,
-                    "hold_flat": f"{outcome.hold_flat:.6f}" if outcome else None,
-                    "params": params,
-                    "params_hash": _snapshot_hash(params),
+                    "reason": plan.refusal,
+                    "params": trial_params,
+                    "params_hash": _snapshot_hash(trial_params),
                     "tier": "MODELED",
                 }
             )
-    account_path = {
-        key: {
-            "mode": value.equity_mode,
-            "start_equity": STARTING_CASH,
-            "end_equity": str(ledgers[key].end_equity()),
-            "realized": str(ledgers[key].realized),
-            "fills": ledgers[key].fills,
-            "next_sizing_equity": str(ledgers[key].sizing_equity()),
-            "next_risk_budget": str(
-                ledgers[key].sizing_equity().as_decimal() * value.risk_per_trade
-            ),
-        }
-        for key, value in registry.items()
-    }
     return {
-        "schema": 1,
-        "tape": document.get("source"),
-        "recorded_at": document.get("recorded_at"),
-        "starting_equity": STARTING_CASH,
-        "profiles": {
-            key: {
-                "lane": value.lane,
-                "slot": value.slot,
-                "risk_per_trade": str(value.risk_per_trade),
-                "risk_scope": value.risk_scope,
-                "target_names": value.target_names,
-                "mover_slots": value.mover_slots,
-                "rank_ceilings": [str(item) for item in value.rank_ceilings],
-                "equity_mode": value.equity_mode,
-            }
-            for key, value in registry.items()
-        },
-        "cases": [
-            {
-                "symbol": result.case.symbol,
-                "segment": result.case.segment,
-                "tape": result.case.tape,
-                "pr3": result.case.pr3,
-                "decisions": [
-                    {
-                        "profile": decision.profile,
-                        "setup": decision.plan.setup,
-                        "accepted": decision.accepted,
-                        "rank": decision.plan.rank,
-                        "limit": str(decision.plan.limit) if decision.plan.limit else None,
-                        "quantity": str(decision.plan.quantity) if decision.plan.quantity else None,
-                        "reason": decision.plan.refusal,
-                    }
-                    for decision in result.decisions
-                ],
-                "orders": [row for row in orders if row["symbol"] == result.case.symbol],
-            }
-            for result in runs
-        ],
         "orders": orders,
-        "accounts": account_path,
+        "accounts": {
+            key: {
+                "mode": profile.equity_mode,
+                "end_equity": str(ledgers[key].end_equity()),
+                "next_sizing_equity": str(ledgers[key].sizing_equity()),
+                "next_risk_budget": str(
+                    ledgers[key].sizing_equity().as_decimal() * profile.risk_per_trade
+                ),
+            }
+            for key, profile in registry.items()
+        },
         "witnesses": [_witness(witness) for witness in witnesses],
         "trial_rows": trial_rows,
     }
 
 
 def append_trials(report: dict[str, Any], log_path: Path) -> int:
-    """Append the MODELED rows to the cumulative trial ledger (row 8's TrialLog).
-
-    Every arm is one row, refused ones included. The rows carry TrialLog's full
-    identity contract (a concrete code SHA, an explicit factor mask, frozen
-    sandbox/evidence/params payloads and the hash of each), a terminal state
-    and a fresh ``arm_run_id`` so a rerun appends a new attempt instead of
-    rewriting history.
-    """
     from sextant.validation.trials import TrialLog
 
-    log = TrialLog(log_path)
-    rows = report["trial_rows"]
     implementation_sha = _implementation_sha()
     sandbox_config = {
         "tape": "ac-e2e-session.json",
-        "recorded_at": str(report.get("recorded_at") or "recorded-session"),
+        "recorded_at": "2026-11-09/2026-10-21",
         "starting_equity": STARTING_CASH,
         "source": "src/sextant/backtest/ac_e2e.py",
     }
@@ -529,33 +413,38 @@ def append_trials(report: dict[str, Any], log_path: Path) -> int:
         "catalyst": "recorded SPCX EDGAR knowable_at",
         "protection": "native 2.5% trail, PR-3 agreement",
     }
+    log = TrialLog(log_path)
+    rows = report["trial_rows"]
+    base = {
+        "implementation_sha": implementation_sha,
+        "factor_mask": [
+            "k2_generation",
+            "first_leg",
+            "catalyst",
+            "fixed_risk_sizing",
+            "native_trail_2p5",
+        ],
+        "sandbox_config": sandbox_config,
+        "sandbox_config_hash": _snapshot_hash(sandbox_config),
+        "evidence_weights": evidence_weights,
+        "evidence_weights_hash": _snapshot_hash(evidence_weights),
+        "tier": "MODELED",
+        "block_set_id": "ac-e2e-recorded-session",
+        "funding_divergent_session_count": None,
+        "funding_unverified_session_count": None,
+        "condition_returns": {},
+    }
     for row in rows:
         params = row["params"]
         params_hash = _snapshot_hash(params)
         if params_hash != row["params_hash"]:
             raise ValueError("trial params drifted from the frozen report identity")
-        config = {
-            "arm_id": row["arm"],
-            "arm_run_id": f"{row['arm']}-{uuid4().hex[:12]}",
-            "implementation_sha": implementation_sha,
-            "factor_mask": [
-                "k2_generation",
-                "first_leg",
-                "catalyst",
-                "fixed_risk_sizing",
-                "native_trail_2p5",
-            ],
-            "sandbox_config": sandbox_config,
-            "sandbox_config_hash": _snapshot_hash(sandbox_config),
-            "evidence_weights": evidence_weights,
-            "evidence_weights_hash": _snapshot_hash(evidence_weights),
-            "params_hash": params_hash,
-            "tier": "MODELED",
-            "block_set_id": "ac-e2e-recorded-session",
-            "funding_divergent_session_count": None,
-            "funding_unverified_session_count": None,
-            "condition_returns": {},
-        }
+        config = dict(
+            base,
+            arm_id=row["arm"],
+            arm_run_id=f"{row['arm']}-{uuid4().hex[:12]}",
+            params_hash=params_hash,
+        )
         log.append(
             strategy="paper-ac-node",
             params=params,
@@ -565,36 +454,3 @@ def append_trials(report: dict[str, Any], log_path: Path) -> int:
             error=row["reason"],
         )
     return len(rows)
-
-
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--tape", type=Path, default=TAPE_PATH)
-    parser.add_argument("--out", type=Path, default=None, help="write report.json here")
-    parser.add_argument("--log", type=Path, default=None, help="append MODELED trial rows")
-    args = parser.parse_args(argv)
-    report = run(args.tape)
-    if args.out is not None:
-        args.out.mkdir(parents=True, exist_ok=True)
-        (args.out / "report.json").write_text(json.dumps(report, indent=1) + "\n")
-    if args.log is not None:
-        append_trials(report, args.log)
-    print(
-        json.dumps(
-            {
-                "orders": len(report["orders"]),
-                "accepted": [
-                    row["arm"] for row in report["trial_rows"] if row["state"] == "ACCEPTED"
-                ],
-                "refused": len([row for row in report["trial_rows"] if row["state"] == "REFUSED"]),
-                "accounts": report["accounts"],
-                "witnesses": {row["symbol"]: row["agrees"] for row in report["witnesses"]},
-            },
-            indent=1,
-        )
-    )
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
