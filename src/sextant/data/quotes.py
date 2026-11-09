@@ -269,8 +269,10 @@ class ReceiptTimeOfi:
         receipt = tick.ts_init
         if type(receipt) is not int or receipt < 0:
             raise ValueError(f"quote receipt must be a non-negative int: {receipt!r}")
-        if self._last_receipt is not None and receipt <= self._last_receipt:
+        if self._last_receipt is not None and receipt < self._last_receipt:
             return ()
+
+        _book(tick, "current")
 
         emitted: list[OfiWindow] = []
         start = receipt // self._window_ns * self._window_ns

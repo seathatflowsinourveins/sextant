@@ -383,6 +383,35 @@ def test_stale_receipt_is_ignored_even_with_a_newer_vendor_time() -> None:
     )
 
 
+def test_receipt_time_ofi_keeps_tied_receipts_in_arrival_order() -> None:
+    book = ReceiptTimeOfi("AAPL", window_ns=OFI_WINDOW_NS)
+    first = _quote(bid="10.00", bid_size="100", ask_size="200", ts_init=1)
+    second = _quote(bid="10.01", bid_size="150", ask_size="200", ts_init=1)
+    third = _quote(bid="10.00", bid_size="120", ask_size="210", ts_init=2)
+
+    assert book.update(first) == ()
+    assert book.update(second) == ()
+    assert book.update(third) == ()
+
+    window = book.flush()
+    assert window is not None
+    assert window.updates == 3
+    assert window.imbalance == Decimal("-10")
+
+
+def test_receipt_time_ofi_validates_the_first_book_before_storing_it() -> None:
+    book = ReceiptTimeOfi("AAPL", window_ns=OFI_WINDOW_NS)
+    with pytest.raises(ValueError, match="locked"):
+        book.update(_quote(bid="10.00", ask="10.00", ts_init=1))
+    assert book.update(_quote(bid_size="120", ts_init=2_000_000_000)) == ()
+    assert book.update(_quote(bid_size="150", ts_init=3_000_000_000)) == ()
+
+    window = book.flush()
+    assert window is not None
+    assert window.updates == 2
+    assert window.imbalance == Decimal("30")
+
+
 def test_quote_event_imbalance_refuses_two_instruments() -> None:
     with pytest.raises(ValueError, match="instrument"):
         quote_event_imbalance(_quote(), _quote(instrument_id=InstrumentId.from_str("MSFT.ALPACA")))
