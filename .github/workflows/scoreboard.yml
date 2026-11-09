@@ -51,8 +51,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh pr list --state merged --limit 20 --json createdAt,mergedAt \
-            --jq '.[] | ((.mergedAt | fromdateiso8601) - (.createdAt | fromdateiso8601)) / 3600' \
+          gh pr list --state merged --limit 100 --search 'sort:updated-desc' \
+            --json createdAt,mergedAt \
+            --jq '[.[] | select(.mergedAt != null)] | sort_by(.mergedAt) | reverse | .[0:20] | .[] | ((.mergedAt | fromdateiso8601) - (.createdAt | fromdateiso8601)) / 3600' \
             > merge-hours.txt
           count=$(wc -l < merge-hours.txt)
           median=$(sort -n merge-hours.txt | awk '{a[NR]=$1} END {if (NR==0) {print "n/a"} else if (NR%2) printf "%.2f", a[(NR+1)/2]; else printf "%.2f", (a[NR/2]+a[NR/2+1])/2}')
