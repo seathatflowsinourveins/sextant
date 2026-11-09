@@ -63,3 +63,43 @@ The full TICKERS snapshot contains 74,543 rows across tables; the stock-price su
 Offline reconstruction was idempotent. Independent checks matched all **1,887 raw-response hashes**, **1,438 report-artifact hashes** and **1,436 per-session event hashes**. All 1,172 original selected events survive. Coverage remains `survivor_only: true`; the independent fixed delisted sample, identity/asof and replacement-backtest acceptance, historical float, controls/onset and cumulative ledger binding remain unavailable/NOT_RUN. The proof suite has 21 offline cases; the 21 coverage plus two key proofs passed together, and `just ci` passed 132 tests after metadata/main integration.
 
 Lesson: establish the credential's issuing service before selecting a client/store name. Access/schema observations and exact-date prices have distinct denominators; malformed/denied queries are unknown, and present-day metadata cannot supply historical knowledge. Keep those boundaries in fixtures before a keyed run.
+
+## Row 4 dated-master acceptance, first run (#42)
+
+**Survivor-only stays true.** ADR-0002 §6's universe tests ran over #107's raw Sharadar capture.
+The ten exits and the `asof` bars pass, and BBBY is corrected to the measured 2 issuers. **The
+pre-registered independent sample fails, 27 of 40 against 38.** The replacement backtest has not
+run. [Receipt](2026-11-06-pit-acceptance-receipt.json),
+[sample registration](2026-11-06-delisted-sample-registration.json).
+
+- **Tests:** ADR-0013 (Universe) carrying northstar-trading@`8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa`:`docs/adr/0002-data-api-stack.md:96`.
+- **Dated identities:** the share-class interval core of the same pin's `data/sharadar.py`
+  (lines 62–101, 470–956) with its 71 pure-interval tests, in `src/sextant/data/sharadar_master.py`.
+- **Inputs:** #107's complete `TICKERS` (full) and `ACTIONS` (`years=10`) bulks, verified against
+  their receipt hashes. `ACTIONS` starts 2016-09-30, which is the coverage floor upstream's
+  `_bulk_actions_start` rule sets. Scope `SEP+SFP`, window 2016-01-01 to 2026-11-05.
+
+| ADR-0002 §6 test | Result |
+|---|---|
+| All ten probed exits | **PASS, 10/10.** Each issuer chosen by 08u.1's own probe `asof` ends on an explicit exit action: LNKD, CELG, TWTR (`acquisitioncash`), XLNX (`acquisitionstock`), YHOO, ATVI, FRC (`delisted`), LK (`regulatorydelisting`), SIVB, BBBY (`bankruptcyliquidation`). LNKD's probe day, 2016-06-15, precedes the 10-year floor. |
+| ≥95% of a fixed independent random delisted sample | **FAIL, 27/40 (38 needed).** The sample was pre-registered on #42 before any check: SEC EDGAR Form 25-NSE common-stock filings 2016-10 to 2025-12, 8,327 unique filings, seed 20261106, N=40, registration sha256 `ba970d72…`. The match criterion was amended there before any check (CIK match; explicit exit on or before filing + 10 days, 12d2-2(d)(1)). The 13 misses: 6 have no Sharadar CIK match; 5 are excluded by the carried code's own fail-closed rules (4 `tickerchange_target_mismatch`, 1 `ended_before_actions_coverage`); 4 (TLF, CCUR, SEII, GIGAQ) left the exchange through an `exchangeto OTC` move 57 days to 6 months before the filing, with no exit action by filing + 10 days. Whether a venue exit counts is the lead's call, and it needs a new draw, not a rescore. |
+| Recycled ticker: distinct master ids | `META` on 2021-12-01 is the Roundhill ETF (`sharadar:635599`, now `METV`) and `FB` is Meta (`sharadar:194817`): **distinct.** `BBBY` has **2** master issuers, Bed Bath & Beyond (`197799`, to 2023-05-02) and Overstock/Beyond (`195902`, 2025-08-29 to 2026-08-16, then `NXH`). The ADR expects 3. Sharadar's dated `namechange` rows make Beyond Inc., the 2025 "Bed Bath & Beyond Inc." and Neighborhood Intelligence one permaticker. **The source decides (lead, #42): 2 measured, the ADR's "3" UNVERIFIED,** amended in ADR-0013. |
+| Recycled ticker: `asof` bars match the master's issuer | **PASS, 4/4.** Alpaca SIP daily RAW with `asof` equals Sharadar's unadjusted close for the master's issuer, to the cent: META and FB on 2021-12-01, BBBY on 2022-06-01 and 2025-10-01. |
+| Replacement backtest | **NOT_RUN.** |
+| Float history | **UNVERIFIED.** #107 found no float field in the subscription's schemas. |
+
+**Members manifest.** 24,503 dated intervals, sha256 `e8394fb2…`, are outside git under
+`~/sextant-data/pit-42/`. The manifest is identical across three builds and loads in row 11's
+`manifest_universe` at its hash. It omits the venue, so OTC tail days (SIVBQ on 2023-03-28) are
+members, and a consumer that ranks listed names must filter them. Exclusions are named per
+security, with 10,273 `ended_before_actions_coverage` out of 31,079 inputs.
+
+**Run** (run-3, with `--sample <registration.json>`): `scripts/with-keys.sh --strict -k ALPACA_PAPER_1_API_KEY:APCA_API_KEY_ID -k ALPACA_PAPER_1_SECRET_KEY:APCA_API_SECRET_KEY -k SHARADAR_API_KEY -- uv run --frozen python -m sextant.research.pit_acceptance <capture> <out> --end 2026-11-05 --asof-prices`.
+That is 4 Alpaca historical bar requests and 4 Sharadar price reads, with no stream, order or account call.
+
+**Reader swaps, zero difference (#133).** The capture is now read by #107's own `sharadar_coverage`
+reader, and the sample's quarters, `form.idx` reader and SEC client are EdgarTools'. Rerun offline
+over the same capture and registration, both readers give byte-identical output: acceptance
+sha256 `1636a3c8…` and the members manifest `e8394fb2…`, as run-3 recorded. Only the 37 indexes'
+hashes were archived, not their bytes, so a re-draw needs the owner's `EDGAR_IDENTITY` contact.
+The offline proofs pin the replaced code's output.
