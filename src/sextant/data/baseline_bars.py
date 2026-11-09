@@ -115,7 +115,13 @@ def _day_coverage(symbol: str, day: date) -> list[BaselineCoverage]:
     ]
 
 
-def _refuse_incomplete(rows: dict[str, list[MinuteBarRow]], sessions: tuple[date, ...]) -> None:
+def _refuse_incomplete(
+    rows: dict[str, list[MinuteBarRow]], sessions: tuple[date, ...], symbols: tuple[str, ...]
+) -> None:
+    if rows:
+        missing_symbols = [symbol for symbol in symbols if symbol not in rows]
+        if missing_symbols:
+            raise ValueError(f"vendor bars are missing requested symbol {missing_symbols[0]}")
     present: dict[str, set[date]] = defaultdict(set)
     for symbol, bars in rows.items():
         for bar in bars:
@@ -162,7 +168,7 @@ def fetch_baseline(
         asof=as_of.isoformat(),
     )
     rows = _raw_rows(client.get_stock_bars(request))
-    _refuse_incomplete(rows, sessions)
+    _refuse_incomplete(rows, sessions, names)
     coverage = [
         receipt for symbol in names for day in sessions for receipt in _day_coverage(symbol, day)
     ]

@@ -336,3 +336,16 @@ def test_fetcher_treats_a_complete_empty_response_as_a_quiet_window() -> None:
     assert value is not None
     assert value.dollar_volume == D(0)
     assert value.sessions == 3
+
+
+def test_fetcher_refuses_a_response_missing_a_requested_symbol() -> None:
+    response = {"SPY": [raw_bar(day, 4, 0) for day in FETCH_DAYS]}
+    with pytest.raises(ValueError, match="missing requested symbol"):
+        fetch_baseline(
+            FakeClient(response),
+            ("SPY", "QQQ"),
+            as_of=FETCH_AS_OF,
+            prior_sessions=3,
+            known_at=FETCH_KNOWN_AT,
+            feed="sip",
+        )
