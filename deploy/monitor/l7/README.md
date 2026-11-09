@@ -3,7 +3,7 @@
 Informational, proposal-only alerting for the agent/LLM monitor. The rules are
 Prometheus recording and alerting rules for the local
 [grafana/docker-otel-lgtm](https://github.com/grafana/docker-otel-lgtm) backend
-at v0.38.0 (`9ffc7e00c639be7712e544e3e54331e885dccf84`). They normalize to the
+at v0.38.0 (`9c57b1400ccdb8920e1a2b6083134cc5ef244a8f`). They normalize to the
 OTel GenAI conventions and the signal set in Balusu (2026)
 (`doi:10.1145/3805760.3814931`) and IBM XPerf (`arXiv:2608.20370v1`), read
 2026-11-08.

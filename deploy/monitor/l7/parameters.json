@@ -1,7 +1,7 @@
 {
   "version": 1,
   "schema": "sextant.monitor.parameters/1",
-  "source": "docs/research/monitor-convergence/RECONCILE.md L7; Balusu (2026) doi:10.1145/3805760.3814931; IBM XPerf arXiv:2608.20370v1; grafana/docker-otel-lgtm@v0.38.0 9ffc7e00c639be7712e544e3e54331e885dccf84; read 2026-11-08",
+  "source": "docs/research/monitor-convergence/RECONCILE.md L7; Balusu (2026) doi:10.1145/3805760.3814931; IBM XPerf arXiv:2608.20370v1; grafana/docker-otel-lgtm@v0.38.0 9c57b1400ccdb8920e1a2b6083134cc5ef244a8f; read 2026-11-08",
   "rows": [
     {
       "name": "cache_hit_ratio_min",
@@ -129,7 +129,7 @@
       "value": 30,
       "unit": "days",
       "status": "UNCALIBRATED",
-      "source": "grafana/docker-otel-lgtm@v0.38.0 9ffc7e00c639be7712e544e3e54331e885dccf84; read 2026-11-08",
+      "source": "grafana/docker-otel-lgtm@v0.38.0 9c57b1400ccdb8920e1a2b6083134cc5ef244a8f; read 2026-11-08",
       "last_change": "2026-11-08",
       "applies_to": "local Prometheus"
     },
@@ -139,7 +139,7 @@
       "value": 720,
       "unit": "hours",
       "status": "UNCALIBRATED",
-      "source": "grafana/docker-otel-lgtm@v0.38.0 9ffc7e00c639be7712e544e3e54331e885dccf84; read 2026-11-08",
+      "source": "grafana/docker-otel-lgtm@v0.38.0 9c57b1400ccdb8920e1a2b6083134cc5ef244a8f; read 2026-11-08",
       "last_change": "2026-11-08",
       "applies_to": "local Loki"
     },
@@ -149,7 +149,7 @@
       "value": 15,
       "unit": "seconds",
       "status": "UNCALIBRATED",
-      "source": "grafana/docker-otel-lgtm@v0.38.0 9ffc7e00c639be7712e544e3e54331e885dccf84; read 2026-11-08",
+      "source": "grafana/docker-otel-lgtm@v0.38.0 9c57b1400ccdb8920e1a2b6083134cc5ef244a8f; read 2026-11-08",
       "last_change": "2026-11-08",
       "applies_to": "local Prometheus"
     }

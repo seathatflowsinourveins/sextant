@@ -1,7 +1,7 @@
 # L7 monitor rules: informational, proposal-only.
 #
 # Source: grafana/docker-otel-lgtm@v0.38.0
-# (`9ffc7e00c639be7712e544e3e54331e885dccf84`) for the local backend and its
+# (`9c57b1400ccdb8920e1a2b6083134cc5ef244a8f`) for the local backend and its
 # OTLP/Prometheus contract; Balusu (2026) AgentTelemetry,
 # doi:10.1145/3805760.3814931, and IBM XPerf, arXiv:2608.20370v1, read
 # 2026-11-08, for the GenAI signal set. Every threshold is registered

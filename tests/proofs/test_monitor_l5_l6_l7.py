@@ -7,7 +7,7 @@ rounds; `.github/workflows/shared/review-rules.md:16-19` and
 github/issue-metrics@v5.0.3
 (`671528652402b9b8a33da44b5c693b3161bc090f`) for the scoreboard contract;
 grafana/docker-otel-lgtm@v0.38.0
-(`9ffc7e00c639be7712e544e3e54331e885dccf84`) for the local rules backend; and
+(`9c57b1400ccdb8920e1a2b6083134cc5ef244a8f`) for the local rules backend; and
 ADR-0018 for every threshold's `UNCALIBRATED` status.
 """
 
