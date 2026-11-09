@@ -1,0 +1,51 @@
+# Receipt-only CR-Bench-style evaluation: no model, PR trigger or required status.
+# Sources: docs/manifest.md, "Receipt-only known-defect review evaluation";
+# the existing consolidation workflow's weekly schedule and trusted-code job shape.
+name: review-eval
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 7 * * 1"
+permissions: {}
+concurrency:
+  group: review-eval-receipts
+  cancel-in-progress: false
+jobs:
+  receipt:
+    if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Validate corpus and score committed receipts offline
+        run: >-
+          python3 scripts/review_eval.py --check
+          --json-output review-eval.json --markdown-output review-eval.md
+      - name: Update the receipt issue even when validation fails
+        if: ${{ !cancelled() }}
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        with:
+          script: |
+            const fs = require('node:fs');
+            const marker = '<!-- review-eval-receipt -->';
+            const title = 'Review evaluation receipts';
+            const {owner, repo} = context.repo;
+            const report = fs.readFileSync('review-eval.md', 'utf8');
+            const body = report + `\n\nDefault-branch head: ${context.sha}. ` +
+              `Run: https://github.com/${owner}/${repo}/actions/runs/${context.runId}\n`;
+            const issues = await github.paginate(github.rest.issues.listForRepo,
+              {owner, repo, state: 'all', per_page: 100});
+            const previous = issues.find(issue => !issue.pull_request &&
+              issue.title === title && issue.user?.login === 'github-actions[bot]' &&
+              issue.body?.startsWith(marker));
+            if (previous) {
+              await github.rest.issues.update({owner, repo, issue_number: previous.number, body});
+            } else {
+              await github.rest.issues.create({owner, repo, title, body});
+            }

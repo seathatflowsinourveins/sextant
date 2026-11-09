@@ -1,0 +1,36 @@
+{
+  "schema_version": "1.1",
+  "id": "control-exact-family-marker",
+  "tags": [
+    "false-block-control"
+  ],
+  "source": {
+    "repository": "seathatflowsinourveins/sextant-next",
+    "pr": null,
+    "commit": "531011ff5314ccd656ca1110bffb2c4d3502a31f",
+    "fix_commit": "531011ff5314ccd656ca1110bffb2c4d3502a31f",
+    "citations": [
+      "https://github.com/seathatflowsinourveins/sextant-next/commit/531011ff5314ccd656ca1110bffb2c4d3502a31f",
+      "https://github.com/seathatflowsinourveins/sextant-next/blob/531011ff5314ccd656ca1110bffb2c4d3502a31f/.github/gate/gate.cjs#L12"
+    ]
+  },
+  "input": {
+    "format": "bounded-file-excerpts",
+    "context": "Recognized family choices are codex, claude and dsh. Review the marker parser and report concrete correctness defects.",
+    "excerpts": [
+      {
+        "path": ".github/gate/gate.cjs",
+        "start_line": 10,
+        "end_line": 19,
+        "text": "function marker(body, prefix, choices) {\n  if (!body.includes(prefix)) return '';\n  const matches = [...body.matchAll(new RegExp(`${prefix} ([a-z]+)(?![A-Za-z0-9_-])`, 'g'))];\n  const values = [...new Set(matches.map(match => match[1]))];\n  if (values.length !== 1 || !choices.includes(values[0])) throw Error(`Invalid ${prefix} marker`);\n  // A valid marker elsewhere must not hide an unfilled or unsupported marker.\n  const remainder = body.replace(new RegExp(`${prefix} (${choices.join('|')})(?![A-Za-z0-9_-])`, 'g'), '');\n  if (remainder.includes(prefix)) throw Error(`Conflicting ${prefix} markers`);\n  return values[0];\n}\n",
+        "sha256": "864ebe702a143c6fd28af59fb9646743bb709c5af12e60cc010b261f4a70d26f"
+      }
+    ]
+  },
+  "expected": {
+    "severity": "none",
+    "false_block_control": true,
+    "defects": [],
+    "control_rationale": "This is the fixed exact-token parser. The regression proof in the cited commit exercises unsupported uppercase, digit and underscore suffixes as well as valid family markers."
+  }
+}

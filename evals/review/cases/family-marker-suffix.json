@@ -1,0 +1,47 @@
+{
+  "schema_version": "1.1",
+  "id": "family-marker-suffix",
+  "tags": [
+    "known-defect"
+  ],
+  "source": {
+    "repository": "seathatflowsinourveins/sextant-next",
+    "pr": null,
+    "commit": "8f841ca7642fdc80b1b16f623871d2c03e96d288",
+    "fix_commit": "531011ff5314ccd656ca1110bffb2c4d3502a31f",
+    "citations": [
+      "https://github.com/seathatflowsinourveins/sextant-next/commit/531011ff5314ccd656ca1110bffb2c4d3502a31f",
+      "https://github.com/seathatflowsinourveins/sextant-next/blob/8f841ca7642fdc80b1b16f623871d2c03e96d288/.github/gate/gate.cjs#L12"
+    ]
+  },
+  "input": {
+    "format": "bounded-file-excerpts",
+    "context": "Author and reviewer markers must contain an exact recognized family; unsupported or conflicting selections must fail closed.",
+    "excerpts": [
+      {
+        "path": ".github/gate/gate.cjs",
+        "start_line": 3,
+        "end_line": 19,
+        "text": "// Source paths, pins, REST pages and the Google landing-standard ruling: upstreams.json.\nconst fs = require('node:fs');\nconst path = require('node:path');\n\nconst FAMILIES = ['codex', 'claude', 'dsh', 'muse', 'agy'];\nconst RISK = /^(\\.github\\/|dangerfile\\.js$|REVIEW_GUIDELINES\\.md$|review\\/rubric\\.md$|shared\\/review-rules\\.md$|src\\/sextant\\/(execution|exits|paper|risk|alpaca)\\/|lanes\\/(paper|live)\\/|deploy\\/live\\/)/;\n\nfunction marker(body, prefix, choices) {\n  if (!body.includes(prefix)) return '';\n  const matches = [...body.matchAll(new RegExp(`${prefix} ([a-z]+)(?![a-z-])`, 'g'))];\n  const values = [...new Set(matches.map(match => match[1]))];\n  if (values.length !== 1 || !choices.includes(values[0])) throw Error(`Invalid ${prefix} marker`);\n  // A valid marker elsewhere must not hide an unfilled or unsupported marker.\n  const remainder = body.replace(new RegExp(`${prefix} (${choices.join('|')})(?![a-z-])`, 'g'), '');\n  if (remainder.includes(prefix)) throw Error(`Conflicting ${prefix} markers`);\n  return values[0];\n}\n",
+        "sha256": "7b6ad5734167034e4bb0f2d371e1286ced2908939bc573d0adb7844375cf0e2f"
+      }
+    ]
+  },
+  "expected": {
+    "severity": "P1",
+    "false_block_control": false,
+    "defects": [
+      {
+        "id": "D1",
+        "path": ".github/gate/gate.cjs",
+        "line": 12,
+        "claim": "The marker regex accepts unsupported suffixes such as codex2, codex_ or codexA as the recognized codex family.",
+        "severity": "P1",
+        "citations": [
+          "https://github.com/seathatflowsinourveins/sextant-next/commit/531011ff5314ccd656ca1110bffb2c4d3502a31f",
+          "https://github.com/seathatflowsinourveins/sextant-next/blob/8f841ca7642fdc80b1b16f623871d2c03e96d288/.github/gate/gate.cjs#L12"
+        ]
+      }
+    ]
+  }
+}

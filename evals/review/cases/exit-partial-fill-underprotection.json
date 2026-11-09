@@ -1,0 +1,54 @@
+{
+  "schema_version": "1.1",
+  "id": "exit-partial-fill-underprotection",
+  "tags": [
+    "known-defect"
+  ],
+  "source": {
+    "repository": "seathatflowsinourveins/sextant",
+    "pr": "https://github.com/seathatflowsinourveins/sextant/pull/166",
+    "commit": "df752790ae2f29819cfad24ca5a361fdb385c166",
+    "fix_commit": "00dc62f684da0522730d0b50b8273c734f8e65e1",
+    "citations": [
+      "https://github.com/seathatflowsinourveins/sextant/commit/00dc62f684da0522730d0b50b8273c734f8e65e1",
+      "https://github.com/seathatflowsinourveins/sextant/blob/df752790ae2f29819cfad24ca5a361fdb385c166/src/sextant/exits/engine.py#L148"
+    ]
+  },
+  "input": {
+    "format": "bounded-file-excerpts",
+    "context": "One house entry can fill in parts. Protect the native position quantity and weighted basis; only another order\u2019s add should trigger the owner-add pause.",
+    "excerpts": [
+      {
+        "path": "src/sextant/exits/engine.py",
+        "start_line": 140,
+        "end_line": 152,
+        "text": "    def on_order_filled(self, event: OrderFilled) -> None:\n        px, qty = event.last_px.as_decimal(), event.last_qty.as_decimal()\n        if event.order_side == OrderSide.BUY:\n            if self.protection is None:\n                self.protection = Protection(entry=px, qty=qty, high=px)\n                self._record(event.ts_event, \"protected_from_fill\", entry=px)\n                ok = self.bid is not None and self._quote_ok(event.ts_event)\n                self._step(event.ts_event, (self.bid if ok else None) if self.rth else self.last)\n            else:  # ADR-0007: an add to a managed symbol pauses it; custody is row 8\n                self.paused = True\n                self._record(event.ts_event, \"add_paused\", qty=qty)\n        else:\n            self._record(event.ts_event, \"sell_fill\", price=px, qty=qty)\n",
+        "sha256": "fa487128984dc486f5538c892c48c3e1a41b55df06d3860bb48e96eaa1702cb4"
+      },
+      {
+        "path": "src/sextant/exits/engine.py",
+        "start_line": 196,
+        "end_line": 214,
+        "text": "    def _sell(self, ts: int, p: Protection) -> None:\n        assert self.bid is not None and p.trigger is not None\n        # With either chase row unavailable (#98) the fast sell rests at the bid: chase off.\n        last = self.last if self.p.chase_on else None\n        order = self.order_factory.limit(\n            instrument_id=self.instrument_id,\n            order_side=OrderSide.SELL,\n            quantity=Quantity.from_str(str(p.qty)),\n            price=self._price(policy.chase_limit(self.bid, last, self.p)),\n            time_in_force=TimeInForce.GTC,\n            reduce_only=True,\n        )\n        self.sell_id = order.client_order_id\n        self.amended_ns = ts\n        self.submit_order(order)\n        kind = \"breach_sell_gain_lock\" if self.arming.armed else \"breach_sell_prearm\"\n        self._record(ts, kind, trigger=p.trigger, limit=order.price.as_decimal())\n\n    def _chase(self, ts: int) -> None:\n",
+        "sha256": "dbde86cb0c025ba64bf9b43fb2db1aa6a193f4084c846b02e5661a32266d6091"
+      }
+    ]
+  },
+  "expected": {
+    "severity": "P1",
+    "false_block_control": false,
+    "defects": [
+      {
+        "id": "D1",
+        "path": "src/sextant/exits/engine.py",
+        "line": 148,
+        "claim": "A second fill of the same entry is mistaken for an owner add, pausing protection and retaining only the first-fill quantity.",
+        "severity": "P1",
+        "citations": [
+          "https://github.com/seathatflowsinourveins/sextant/commit/00dc62f684da0522730d0b50b8273c734f8e65e1",
+          "https://github.com/seathatflowsinourveins/sextant/blob/df752790ae2f29819cfad24ca5a361fdb385c166/src/sextant/exits/engine.py#L148"
+        ]
+      }
+    ]
+  }
+}

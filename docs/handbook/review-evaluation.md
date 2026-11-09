@@ -1,0 +1,7 @@
+# Review quality needs recorded defect evidence
+
+The [#55 coverage review](https://github.com/seathatflowsinourveins/sextant-next/pull/55#pullrequestreview-5829693820) refused a 60,492-character diff because one region could not be retrieved. Preserve that failure as coverage evidence, with its observed blocking decision; do not relabel it a code defect. The same head had [separate real findings](https://github.com/seathatflowsinourveins/sextant-next/pull/55#pullrequestreview-5829652217), so it is not a clean whole-PR control. Define every clean control's actual scope before scoring.
+
+[#79's P1](https://github.com/seathatflowsinourveins/sextant-next/pull/79#discussion_r4516655850) identifies a concrete failure: profile-relative links were resolved from the caller's CWD. This is a known-defect target with a faulty SHA, exact file line, observed review and subsequent fix. Measure detection of that mechanism, rather than word overlap or tool use.
+
+The [receipt-only evaluator](../../evals/review/README.md) implements the defect-centric method from [CR-Bench](https://arxiv.org/abs/2603.11078) and [CR-Bench-v2](https://arxiv.org/abs/2611.02566), read 2026-11-09. Preserve misses, timeouts, unknown metadata and rejected attempts; keep historical source-review matches distinct from blind evaluations. Stop interpreting results with fewer than 20 cases or a Wilson half-width above 15 percentage points. Reviewer quality remains unmeasured until independent, adequately covered receipts support it; the scheduled report does not gate merges.

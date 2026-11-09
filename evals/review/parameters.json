@@ -1,0 +1,22 @@
+{
+  "min_cases": {
+    "value": 20,
+    "source": "Lead PR2 plan, 2026-11-09: stop interpretation below 20 cases; README operational registry. Starting evidence bound, not measured success."
+  },
+  "min_defect_cases": {
+    "value": 20,
+    "source": "Lead PR2 dispatch, 2026-11-09: at least 20 real known-defect cases, plus clean controls."
+  },
+  "min_controls": {
+    "value": 3,
+    "source": "Lead PR2 dispatch, 2026-11-09: at least three clean/no-defect controls."
+  },
+  "confidence": {
+    "value": 0.95,
+    "source": "Lead PR2 plan, 2026-11-09; statsmodels proportion_confint(method=wilson, alpha=0.05), https://www.statsmodels.org/stable/generated/statsmodels.stats.proportion.proportion_confint.html, read 2026-11-09."
+  },
+  "max_wilson_half_width": {
+    "value": 0.15,
+    "source": "Lead PR2 plan, 2026-11-09: stop interpretation when Wilson half-width exceeds 15 percentage points. An uncalibrated reporting bound, never a merge gate."
+  }
+}

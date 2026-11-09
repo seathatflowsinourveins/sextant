@@ -1,0 +1,56 @@
+{
+  "schema_version": "1.1",
+  "id": "pr79-relative-profile-link",
+  "tags": [
+    "known-defect"
+  ],
+  "source": {
+    "repository": "seathatflowsinourveins/sextant-next",
+    "pr": "https://github.com/seathatflowsinourveins/sextant-next/pull/79",
+    "commit": "69ef6887b7b977dd91e0e48ee32188f31b1b4b8e",
+    "fix_commit": "a4d04e69fe515d0399d083fc82ebf1d506c9f48b",
+    "citations": [
+      "https://github.com/seathatflowsinourveins/sextant-next/commit/a4d04e69fe515d0399d083fc82ebf1d506c9f48b",
+      "https://github.com/seathatflowsinourveins/sextant-next/blob/69ef6887b7b977dd91e0e48ee32188f31b1b4b8e/scripts/dsh_profile_doctor.py#L226",
+      "https://github.com/seathatflowsinourveins/sextant-next/pull/79#discussion_r4516655850"
+    ]
+  },
+  "input": {
+    "format": "bounded-file-excerpts",
+    "context": "Review the profile drift check. The native plugin manager resolves link: paths relative to the profile package directory; a session can start from another CWD.",
+    "excerpts": [
+      {
+        "path": "scripts/dsh_profile_doctor.py",
+        "start_line": 159,
+        "end_line": 189,
+        "text": "def _check_link(\n    name: str,\n    entry: dict[str, Any],\n    live_target: Path,\n    root: Path,\n    errors: list[str],\n    warnings: list[str],\n) -> None:\n    link = entry[\"link\"]\n    version = entry[\"version\"]\n    repo_target = (root / link).resolve()\n    _require(repo_target.is_dir(), f\"{name}: repo link target {link} is missing\")\n    repo_manifest = _package_manifest(repo_target)\n    if repo_manifest.get(\"name\") != name:\n        errors.append(f\"{name}: repo target names {repo_manifest.get('name')!r}\")\n    if repo_manifest.get(\"version\") != version:\n        errors.append(\n            f\"{name}: repo target version {repo_manifest.get('version')!r}, lock expects {version}\"\n        )\n\n    live_target = live_target.expanduser().resolve()\n    if not live_target.is_dir():\n        errors.append(f\"{name}: live link target {live_target} is missing\")\n        return\n    live_manifest = _package_manifest(live_target)\n    if live_manifest.get(\"name\") != name:\n        errors.append(f\"{name}: live target names {live_manifest.get('name')!r}\")\n    if live_manifest.get(\"version\") != version:\n        errors.append(\n            f\"{name}: live target version {live_manifest.get('version')!r}, lock expects {version}\"\n        )\n",
+        "sha256": "7f2d91b5602d942e1533fcf0193ac8d0bc4c6c709122683ceef17d5bb476f7da"
+      },
+      {
+        "path": "scripts/dsh_profile_doctor.py",
+        "start_line": 207,
+        "end_line": 230,
+        "text": "def _check_dependencies(\n    lock: dict[str, Any],\n    profile: dict[str, Any],\n    root: Path,\n    errors: list[str],\n    warnings: list[str],\n) -> None:\n    expected = {entry[\"package\"]: entry for entry in lock[\"interactive\"][\"dependencies\"]}\n    live = profile[\"dependencies\"]\n    for name, entry in expected.items():\n        if name not in live:\n            errors.append(f\"missing dependency {name}\")\n            continue\n        spec = entry[\"spec\"]\n        live_spec = live[name]\n        if spec.startswith(\"link:\"):\n            if not isinstance(live_spec, str) or not live_spec.startswith(\"link:\"):\n                errors.append(f\"{name}: expected a link, got {live_spec!r}\")\n                continue\n            _check_link(name, entry, Path(live_spec[5:]), root, errors, warnings)\n        elif live_spec != spec:\n            errors.append(f\"{name}: expected {spec}, got {live_spec!r}\")\n    for name in sorted(set(live) - set(expected)):\n        errors.append(f\"unexpected dependency {name}\")\n",
+        "sha256": "a96374c1a2145abfd9c0c4e72a47f58f5dd7138201eb5c4d26a239df099d54ae"
+      }
+    ]
+  },
+  "expected": {
+    "severity": "P1",
+    "false_block_control": false,
+    "defects": [
+      {
+        "id": "D1",
+        "path": "scripts/dsh_profile_doctor.py",
+        "line": 226,
+        "claim": "Relative live link targets resolve against the process CWD instead of the profile directory, falsely refusing valid dsh profiles.",
+        "severity": "P1",
+        "citations": [
+          "https://github.com/seathatflowsinourveins/sextant-next/commit/a4d04e69fe515d0399d083fc82ebf1d506c9f48b",
+          "https://github.com/seathatflowsinourveins/sextant-next/blob/69ef6887b7b977dd91e0e48ee32188f31b1b4b8e/scripts/dsh_profile_doctor.py#L226",
+          "https://github.com/seathatflowsinourveins/sextant-next/pull/79#discussion_r4516655850"
+        ]
+      }
+    ]
+  }
+}

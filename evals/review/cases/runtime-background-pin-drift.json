@@ -1,0 +1,47 @@
+{
+  "schema_version": "1.1",
+  "id": "runtime-background-pin-drift",
+  "tags": [
+    "known-defect"
+  ],
+  "source": {
+    "repository": "seathatflowsinourveins/sextant",
+    "pr": "https://github.com/seathatflowsinourveins/sextant/pull/125",
+    "commit": "65a6a7bb4ac434cc38d05c66f17ddb1bf79ecc66",
+    "fix_commit": "74147b1f1bb8159873a2513f34daa8dd4a4571e8",
+    "citations": [
+      "https://github.com/seathatflowsinourveins/sextant/commit/74147b1f1bb8159873a2513f34daa8dd4a4571e8",
+      "https://github.com/seathatflowsinourveins/sextant/blob/65a6a7bb4ac434cc38d05c66f17ddb1bf79ecc66/deploy/wsl/setup.sh#L131"
+    ]
+  },
+  "input": {
+    "format": "bounded-file-excerpts",
+    "context": "Rule 2 requires runtime pin changes through reviewed PRs. Review the persistent settings applied to native Claude and managed accounts.",
+    "excerpts": [
+      {
+        "path": "deploy/wsl/setup.sh",
+        "start_line": 123,
+        "end_line": 135,
+        "text": "install_tools 2>&1 | tee -a \"$log\"\n\n# No prompt anywhere in this distro. Orca already launches every agent with its bypass flag\n# (stablyai/orca@a162e08b29b2883b02d8a0dfcc99e26c80b2cfe7:docs/site/content/docs/agents/supported.mdx). These answer Claude's own\n# dialog up front, for plain tabs and for Orca's managed accounts, whose settings live apart.\nno_prompts() {\n  mkdir -p \"$1\"\n  [ -f \"$1/settings.json\" ] || echo '{}' > \"$1/settings.json\"\n  jq '.permissions.defaultMode = \"bypassPermissions\" | .skipDangerousModePermissionPrompt = true' \\\n    \"$1/settings.json\" > \"$1/settings.json.new\"\n  mv \"$1/settings.json.new\" \"$1/settings.json\"\n}\nno_prompts \"$HOME/.claude\"\n",
+        "sha256": "f31ab9e586c3d2be3c4c43bf9f6d427c0228c8de19a30406b6832255d18cd923"
+      }
+    ]
+  },
+  "expected": {
+    "severity": "P2",
+    "false_block_control": false,
+    "defects": [
+      {
+        "id": "D1",
+        "path": "deploy/wsl/setup.sh",
+        "line": 131,
+        "claim": "Setup leaves Claude\u2019s background updater enabled, so the installed runtime can drift from the reviewed pin without a PR.",
+        "severity": "P2",
+        "citations": [
+          "https://github.com/seathatflowsinourveins/sextant/commit/74147b1f1bb8159873a2513f34daa8dd4a4571e8",
+          "https://github.com/seathatflowsinourveins/sextant/blob/65a6a7bb4ac434cc38d05c66f17ddb1bf79ecc66/deploy/wsl/setup.sh#L131"
+        ]
+      }
+    ]
+  }
+}

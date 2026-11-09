@@ -1,0 +1,47 @@
+{
+  "schema_version": "1.1",
+  "id": "native-quantity-bounds-after-token",
+  "tags": [
+    "known-defect"
+  ],
+  "source": {
+    "repository": "seathatflowsinourveins/sextant",
+    "pr": "https://github.com/seathatflowsinourveins/sextant/pull/190",
+    "commit": "b65b41e36fe2c5b83e0a0c8b7347d91be74fed9a",
+    "fix_commit": "3d326acc0e7bbb5ac47f07fc75cce8a8e368d242",
+    "citations": [
+      "https://github.com/seathatflowsinourveins/sextant/commit/3d326acc0e7bbb5ac47f07fc75cce8a8e368d242",
+      "https://github.com/seathatflowsinourveins/sextant/blob/b65b41e36fe2c5b83e0a0c8b7347d91be74fed9a/src/sextant/paper/native.py#L128"
+    ]
+  },
+  "input": {
+    "format": "bounded-file-excerpts",
+    "context": "The pinned rc8 RiskEngine validates instrument min_quantity/max_quantity after the token boundary. Deterministic validation belongs in _prepare before pacing and wire accounting; the node config sets no full_position_exit_venues.",
+    "excerpts": [
+      {
+        "path": "src/sextant/paper/native.py",
+        "start_line": 108,
+        "end_line": 159,
+        "text": "        instrument = self.cache.instrument(iid)\n        if not isinstance(instrument, Equity):\n            raise NativeRefusal(\"shared paper slice supports cached US equities only\")\n        client = ClientId.from_str(self.account.client_id)\n        outside = session_at(self.clock.timestamp_ns()) is not Session.RTH\n        params = {\"extended_hours\": outside} if self.account.broker == \"ALPACA\" else {}\n        if intent.action in {\"CANCEL\", \"MODIFY\"}:\n            order = self.cache.order(cid)\n            if order is None or order.instrument_id != iid:\n                raise NativeRefusal(\"native order identity is unavailable or mismatched\")\n            if intent.action == \"CANCEL\":\n                return lambda: self.cancel_order(cid, client_id=client)\n            if outside and order.order_type.name != \"LIMIT\":\n                raise NativeRefusal(\"outside RTH cannot amend a non-LIMIT native order\")\n            price = _exact(intent.price, instrument.price_precision, Price.from_str)\n            return lambda: self.modify_order(cid, price=price, client_id=client, params=params)\n        kwargs: dict[str, Any] = dict(\n            instrument_id=iid,\n            client_order_id=cid,\n            order_side=OrderSide.BUY if intent.action == \"ENTRY\" else OrderSide.SELL,\n            quantity=_exact(intent.quantity, instrument.size_precision, Quantity.from_str),\n            time_in_force=TimeInForce.DAY if intent.time_in_force == \"DAY\" else TimeInForce.GTC,\n        )\n        if self.account.broker == \"INTERACTIVE_BROKERS\" and outside:\n            overnight = session_at(self.clock.timestamp_ns()) is Session.OVERNIGHT\n            kwargs[\"tags\"] = [\n                'IBOrderTags:{\"outside_rth\":true,\"include_overnight\":'\n                + (\"true\" if overnight else \"false\")\n                + \"}\"\n            ]\n        if intent.order_type in {\"LIMIT\", \"STOP_LIMIT\"}:\n            kwargs[\"price\"] = _exact(intent.price, instrument.price_precision, Price.from_str)\n        if intent.order_type in {\"STOP_MARKET\", \"STOP_LIMIT\"}:\n            trigger = _exact(intent.trigger_price, instrument.price_precision, Price.from_str)\n            kwargs[\"trigger_price\"] = trigger\n        if intent.order_type == \"TRAILING_STOP_MARKET\":\n            kwargs[\"trailing_offset\"] = intent.trailing_offset\n            kwargs[\"trailing_offset_type\"] = TrailingOffsetType.PRICE\n        try:\n            order = getattr(self.order_factory, intent.order_type.lower())(**kwargs)\n        except ValueError as error:  # a native shape refusal, before the hook\n            raise NativeRefusal(str(error)) from error\n        return lambda: self.submit_order(order, client_id=client, params=params)\n\n    def on_order_denied(self, event) -> None:\n        \"\"\"rc7 denies on this node, before any venue: custody releases the registration.\"\"\"\n        self.runtime.denied(str(event.client_order_id), str(event.reason))\n\n\ndef _exact(value, precision: int, make):\n    \"\"\"rc7's RiskEngine denies a finer precision after submit; refuse it before the hook.\n\n",
+        "sha256": "c06d64c991af455b4db7f64a5e92ec712cd9068726f6b0199d4cb594f7a6b331"
+      }
+    ]
+  },
+  "expected": {
+    "severity": "P1",
+    "false_block_control": false,
+    "defects": [
+      {
+        "id": "D1",
+        "path": "src/sextant/paper/native.py",
+        "line": 128,
+        "claim": "Preparation does not reject quantity outside the instrument bounds, so deterministic RiskEngine denials occur after request-budget accounting.",
+        "severity": "P1",
+        "citations": [
+          "https://github.com/seathatflowsinourveins/sextant/commit/3d326acc0e7bbb5ac47f07fc75cce8a8e368d242",
+          "https://github.com/seathatflowsinourveins/sextant/blob/b65b41e36fe2c5b83e0a0c8b7347d91be74fed9a/src/sextant/paper/native.py#L128"
+        ]
+      }
+    ]
+  }
+}

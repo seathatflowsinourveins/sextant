@@ -1,0 +1,47 @@
+{
+  "schema_version": "1.1",
+  "id": "b-native-trail-wrong-trigger",
+  "tags": [
+    "known-defect"
+  ],
+  "source": {
+    "repository": "seathatflowsinourveins/sextant",
+    "pr": "https://github.com/seathatflowsinourveins/sextant/pull/191",
+    "commit": "02c7cbe9a7317543f097224417c9abcd677cb0db",
+    "fix_commit": "58815e8a80a30eefd9e1e79245362aa7d87c3ce2",
+    "citations": [
+      "https://github.com/seathatflowsinourveins/sextant/commit/58815e8a80a30eefd9e1e79245362aa7d87c3ce2",
+      "https://github.com/seathatflowsinourveins/sextant/blob/02c7cbe9a7317543f097224417c9abcd677cb0db/src/sextant/exits/owner_b_sim.py#L192"
+    ]
+  },
+  "input": {
+    "format": "bounded-file-excerpts",
+    "context": "The RTH branch models an Alpaca broker-held native trail, while the outside-RTH trail is locally emulated. The fixing PR cites Alpaca\u2019s trade-election contract and remeasures the witness.",
+    "excerpts": [
+      {
+        "path": "src/sextant/exits/owner_b_sim.py",
+        "start_line": 178,
+        "end_line": 207,
+        "text": "                time_in_force=TimeInForce.DAY,\n                price=self._price(policy.chase_limit(self.bid, self.last, self.p)),\n            )\n            self.sell_id, self.amended_ns = order.client_order_id, ts\n            self.limit_started_ns = ts\n        else:\n            if self.rth:\n                order = self.order_factory.trailing_stop_market(\n                    instrument_id=self.instrument_id,\n                    order_side=OrderSide.SELL,\n                    quantity=qty,\n                    time_in_force=TimeInForce.DAY,\n                    trailing_offset=self.b.native_trail_fraction * 10_000,\n                    trailing_offset_type=TrailingOffsetType.BASIS_POINTS,\n                    trigger_type=TriggerType.BID_ASK,\n                )\n            else:\n                order = self.order_factory.trailing_stop_limit(\n                    instrument_id=self.instrument_id,\n                    order_side=OrderSide.SELL,\n                    quantity=qty,\n                    time_in_force=TimeInForce.DAY,\n                    trailing_offset=self.b.native_trail_fraction * 10_000,\n                    trailing_offset_type=TrailingOffsetType.BASIS_POINTS,\n                    trigger_type=TriggerType.BID_ASK,\n                    price=None,\n                    limit_offset=self._chase_cap_fraction * 10_000,\n                    emulation_trigger=TriggerType.BID_ASK,\n                )\n        cid = str(order.client_order_id)\n",
+        "sha256": "02678099693c1476206be58294373f2cd01d08098d6e9f58ee6a1b2111d0d741"
+      }
+    ]
+  },
+  "expected": {
+    "severity": "P1",
+    "false_block_control": false,
+    "defects": [
+      {
+        "id": "D1",
+        "path": "src/sextant/exits/owner_b_sim.py",
+        "line": 192,
+        "claim": "The RTH native trailing stop elects on BID_ASK although Alpaca elects it on the consolidated last trade.",
+        "severity": "P1",
+        "citations": [
+          "https://github.com/seathatflowsinourveins/sextant/commit/58815e8a80a30eefd9e1e79245362aa7d87c3ce2",
+          "https://github.com/seathatflowsinourveins/sextant/blob/02c7cbe9a7317543f097224417c9abcd677cb0db/src/sextant/exits/owner_b_sim.py#L192"
+        ]
+      }
+    ]
+  }
+}

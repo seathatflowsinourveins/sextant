@@ -1,0 +1,47 @@
+{
+  "schema_version": "1.1",
+  "id": "cancel-audit-write-stops-flatten",
+  "tags": [
+    "known-defect"
+  ],
+  "source": {
+    "repository": "seathatflowsinourveins/sextant",
+    "pr": "https://github.com/seathatflowsinourveins/sextant/pull/250",
+    "commit": "3d326acc0e7bbb5ac47f07fc75cce8a8e368d242",
+    "fix_commit": "8c38c0797ce05df01ad731f2c42c1320e985098b",
+    "citations": [
+      "https://github.com/seathatflowsinourveins/sextant/commit/8c38c0797ce05df01ad731f2c42c1320e985098b",
+      "https://github.com/seathatflowsinourveins/sextant/blob/3d326acc0e7bbb5ac47f07fc75cce8a8e368d242/src/sextant/paper/runtime.py#L387"
+    ]
+  },
+  "input": {
+    "format": "bounded-file-excerpts",
+    "context": "Custody._save unloads custody on persistence failure. The fixing commit records an ENOSPC witness stopping kill EXITs from 38 seconds until manual reopen at 300 seconds; an audit failure must not stop flattening.",
+    "excerpts": [
+      {
+        "path": "src/sextant/paper/runtime.py",
+        "start_line": 375,
+        "end_line": 410,
+        "text": "        symbols need, as P1-A did. It is treated like an rc8 denial (#163 #88 review of 512660b).\n        \"\"\"\n        s = self.services\n        if isinstance(error, PendingCancel) and (\n            s.custody.snapshot.known_at - error.since_ns >= s.pacer.controls.ns(\"cancel_timeout_s\")\n        ):\n            # rc8 sends no second cancel while one is pending, so a lost cancel left the order\n            # live with nothing recorded (#195). Row 8's bridge re-cancels on each read that\n            # still shows the order open and marks it UNKNOWN at its cap (alpaca.py:355-360,\n            # 630-631). Here a read taken cancel_timeout_s after rc8's stamp that still shows it\n            # open (_admit's may_cancel) reaches that outcome, marked durably per order.\n            try:\n                s.custody.record_unanswered(intent.client_order_id)\n                return self._cancel_exhausted(intent.client_order_id, \"cancel unanswered\")\n            except Exception as failure:  # admission must stay total (#163 P1-2)\n                return self._halt_on(failure, \"admission error halts\")\n        self._refuse(f\"native validation refused: {error}\")\n        epoch = getattr(s.custody.snapshot, \"epoch\", None)\n        if epoch is not None and intent.client_order_id in self._kill_cids:\n            self._denied_epochs[intent.instrument] = epoch\n        return False\n\n    def _cancel_exhausted(self, cid: str, why: str = \"cancel retries exhausted\") -> bool:\n        \"\"\"After max_cancel_retries + 1 CANCELs, row 8's bridge stops and marks that order's\n        outcome UNKNOWN (alpaca.py:357-360); an unanswered cancel reaches the same outcome\n        (#195). The runtime stops too and records the unknown outcome once through its existing\n        halt, keeping an earlier halting cause. Unlike the bridge it freezes no symbol, so every\n        other position keeps flattening. Custody names the order durably: cancel_sends above\n        the cap, or its cancel_unanswered mark; `last_error` names the first (#187, #195).\"\"\"\n        s = self.services\n        if self.last_error is None:\n            self.last_error = f\"{why} for {cid}\"\n        if \"unknown_execution_outcome\" not in getattr(s.guard, \"reasons\", ()):\n            s.guard.kill(\"unknown_execution_outcome\", now=self.now_ns())\n        return self._refuse(f\"{why} for {cid}\")\n\n",
+        "sha256": "3367cdb6c4395d50fd8ccdde0d6d7eb6c03b40c80e59ac2a8419f56e58468cb7"
+      }
+    ]
+  },
+  "expected": {
+    "severity": "P2",
+    "false_block_control": false,
+    "defects": [
+      {
+        "id": "D1",
+        "path": "src/sextant/paper/runtime.py",
+        "line": 387,
+        "claim": "A failed audit-only unanswered-cancel write unloads custody and stops kill-to-flat for other positions until reopen.",
+        "severity": "P2",
+        "citations": [
+          "https://github.com/seathatflowsinourveins/sextant/commit/8c38c0797ce05df01ad731f2c42c1320e985098b",
+          "https://github.com/seathatflowsinourveins/sextant/blob/3d326acc0e7bbb5ac47f07fc75cce8a8e368d242/src/sextant/paper/runtime.py#L387"
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,72 @@
+{
+  "schema_version": "1.1",
+  "id": "historical-pr55-codex",
+  "kind": "historical",
+  "reviewer": {
+    "family": "codex",
+    "runtime": "Codex quality review signature; runtime version unavailable",
+    "model": "unavailable",
+    "effort": "unavailable"
+  },
+  "adjudicator": {
+    "name": "Codex corpus curator, 2026-11-09",
+    "method": "semantic-manual",
+    "reference": "evals/review/README.md: retrospective source-review matching; metadata not attested by original review stays unavailable"
+  },
+  "attempts": [
+    {
+      "case_id": "pr55-proposal-workflow-permission",
+      "case_sha256": "e8c9e9cdcd0f7e1d87d7fa85e590253faa1243470661c9225fd2ce5a91f30070",
+      "status": "completed",
+      "error": null,
+      "blocked": null,
+      "review_reference": "https://github.com/seathatflowsinourveins/sextant-next/pull/55#pullrequestreview-5829652217",
+      "review_text": "Review of 1e4848e5046cb1b5c4c4826a1998a87c762e31a6 (codex quality review)\n\nReview of 1e4848e5046cb1b5c4c4826a1998a87c762e31a6: workflow-file proposals fail because the proposal token lacks workflow-write permission. Assessment used the supplied API snapshot; additional GitHub API and upstream-source reads were unavailable.\n\n[P1] Grant workflow-write permission to the proposal token\nAt head `1e4848e5046cb1b5c4c4826a1998a87c762e31a6`, a model proposal that edits `.github/workflows/gate.yml` and supplies both outcome files reaches `create-pull-request` with a token restricted to contents and pull-request permissions. GitHub rejects workflow-file pushes without `workflows: write`, so this supported proposal fails instead of opening a PR. Request `permission-workflows: write` on this PR-only token and ensure the App installation grants it.\n\n[P2] Select the previous receipt for the same upkeep brief\nWhen Monday's panel follows a successful morning model receipt, `.comments[-1]` contains that model receipt rather than the previous week's panel receipt. This supplies the wrong baseline to `upkeep-panel`, causing it to omit the preceding week's upstream changes or mark its comparison unavailable. Filter receipt history by the selected brief before choosing the latest receipt.",
+      "findings": [
+        {
+          "id": "F1",
+          "path": ".github/workflows/upkeep.yml",
+          "line": 286,
+          "claim": "[P1] Grant workflow-write permission to the proposal token\nAt head `1e4848e5046cb1b5c4c4826a1998a87c762e31a6`, a model proposal that edits `.github/workflows/gate.yml` and supplies both outcome files reaches `create-pull-request` with a token restricted to contents and pull-request permissions. GitHub rejects workflow-file pushes without `workflows: write`, so this supported proposal fails instead of opening a PR. Request `permission-workflows: write` on this PR-only token and ensure the App installation grants it."
+        }
+      ],
+      "judgments": [
+        {
+          "defect_id": "D1",
+          "detected": true,
+          "finding_ids": [
+            "F1"
+          ],
+          "reason": "The cited review names this exact root cause and its consequence; the evidence is retrospective, not an independent blind test."
+        }
+      ]
+    },
+    {
+      "case_id": "pr55-receipt-brief-baseline",
+      "case_sha256": "0aac893a93e941f278499119e87566833dbcf5016e7eaa66ccff44864bb02e0a",
+      "status": "completed",
+      "error": null,
+      "blocked": null,
+      "review_reference": "https://github.com/seathatflowsinourveins/sextant-next/pull/55#pullrequestreview-5829652217",
+      "review_text": "Review of 1e4848e5046cb1b5c4c4826a1998a87c762e31a6 (codex quality review)\n\nReview of 1e4848e5046cb1b5c4c4826a1998a87c762e31a6: workflow-file proposals fail because the proposal token lacks workflow-write permission. Assessment used the supplied API snapshot; additional GitHub API and upstream-source reads were unavailable.\n\n[P1] Grant workflow-write permission to the proposal token\nAt head `1e4848e5046cb1b5c4c4826a1998a87c762e31a6`, a model proposal that edits `.github/workflows/gate.yml` and supplies both outcome files reaches `create-pull-request` with a token restricted to contents and pull-request permissions. GitHub rejects workflow-file pushes without `workflows: write`, so this supported proposal fails instead of opening a PR. Request `permission-workflows: write` on this PR-only token and ensure the App installation grants it.\n\n[P2] Select the previous receipt for the same upkeep brief\nWhen Monday's panel follows a successful morning model receipt, `.comments[-1]` contains that model receipt rather than the previous week's panel receipt. This supplies the wrong baseline to `upkeep-panel`, causing it to omit the preceding week's upstream changes or mark its comparison unavailable. Filter receipt history by the selected brief before choosing the latest receipt.",
+      "findings": [
+        {
+          "id": "F1",
+          "path": ".github/workflows/upkeep.yml",
+          "line": 195,
+          "claim": "[P2] Select the previous receipt for the same upkeep brief\nWhen Monday's panel follows a successful morning model receipt, `.comments[-1]` contains that model receipt rather than the previous week's panel receipt. This supplies the wrong baseline to `upkeep-panel`, causing it to omit the preceding week's upstream changes or mark its comparison unavailable. Filter receipt history by the selected brief before choosing the latest receipt."
+        }
+      ],
+      "judgments": [
+        {
+          "defect_id": "D1",
+          "detected": true,
+          "finding_ids": [
+            "F1"
+          ],
+          "reason": "The cited review names this exact root cause and its consequence; the evidence is retrospective, not an independent blind test."
+        }
+      ]
+    }
+  ]
+}

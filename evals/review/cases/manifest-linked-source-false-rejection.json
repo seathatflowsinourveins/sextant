@@ -1,0 +1,47 @@
+{
+  "schema_version": "1.1",
+  "id": "manifest-linked-source-false-rejection",
+  "tags": [
+    "known-defect"
+  ],
+  "source": {
+    "repository": "seathatflowsinourveins/sextant",
+    "pr": "https://github.com/seathatflowsinourveins/sextant/pull/48",
+    "commit": "0b9ee8f78c05053cfff9acd23c48292b3c918b74",
+    "fix_commit": "b61b1aacc016fabc6ae554da6519b02610cffe29",
+    "citations": [
+      "https://github.com/seathatflowsinourveins/sextant/commit/b61b1aacc016fabc6ae554da6519b02610cffe29",
+      "https://github.com/seathatflowsinourveins/sextant/blob/0b9ee8f78c05053cfff9acd23c48292b3c918b74/dangerfile.js#L13"
+    ]
+  },
+  "input": {
+    "format": "bounded-file-excerpts",
+    "context": "A source such as [owner/repo](https://github.com/owner/repo)@v1 followed by a full SHA is valid under the manifest\u2019s own format; short SHAs remain invalid.",
+    "excerpts": [
+      {
+        "path": "dangerfile.js",
+        "start_line": 12,
+        "end_line": 27,
+        "text": "const sources = section(\"Upstream references\");\nconst repoAtCommit = /[\\w.-]+\\/[\\w.-]+@\\S*[\\s\\S]*?\\b[0-9a-f]{40}\\b/;\nconst docsWithDate = /https?:\\/\\/\\S+[\\s\\S]*?read 20\\d\\d-\\d\\d-\\d\\d/;\nconst paper = /(doi\\.org\\/10\\.|\\bdoi:10\\.|arxiv\\.org\\/abs\\/|\\barXiv:\\d)/i;\n\n// Dependabot's generated body cites the upstream's own release notes, and it changes pins only.\nif (pr.user.login !== \"dependabot[bot]\") {\n  for (const name of [\"What changed\", \"Manifest row\", \"Upstream references\", \"How verified\", \"How to revert\"]) {\n    if (!section(name)) fail(`PR body: \"${name}\" is empty.`);\n  }\n\n  if (!repoAtCommit.test(sources) && !docsWithDate.test(sources) && !paper.test(sources)) {\n    fail(\n      \"Never self-invent: Upstream references must name a source repo@tag with its full commit SHA, \" +\n        \"a docs page with `read YYYY-MM-DD`, or a paper (DOI or arXiv).\",\n    );\n",
+        "sha256": "067622b5aac60b92b95c420fb5791efa7866de757c4865bfcd39759d5cc9bb89"
+      }
+    ]
+  },
+  "expected": {
+    "severity": "P2",
+    "false_block_control": false,
+    "defects": [
+      {
+        "id": "D1",
+        "path": "dangerfile.js",
+        "line": 13,
+        "claim": "The source regex rejects the manifest\u2019s valid Markdown-linked owner/repo@tag plus full-SHA form.",
+        "severity": "P2",
+        "citations": [
+          "https://github.com/seathatflowsinourveins/sextant/commit/b61b1aacc016fabc6ae554da6519b02610cffe29",
+          "https://github.com/seathatflowsinourveins/sextant/blob/0b9ee8f78c05053cfff9acd23c48292b3c918b74/dangerfile.js#L13"
+        ]
+      }
+    ]
+  }
+}

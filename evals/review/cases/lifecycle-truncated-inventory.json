@@ -1,0 +1,47 @@
+{
+  "schema_version": "1.1",
+  "id": "lifecycle-truncated-inventory",
+  "tags": [
+    "known-defect"
+  ],
+  "source": {
+    "repository": "seathatflowsinourveins/sextant",
+    "pr": "https://github.com/seathatflowsinourveins/sextant/pull/177",
+    "commit": "43831154f51f5ed16b43b391e76d812dd4eb890f",
+    "fix_commit": "6c11fcd409d2823c6f79c47677b690a5f00b4c3f",
+    "citations": [
+      "https://github.com/seathatflowsinourveins/sextant/commit/6c11fcd409d2823c6f79c47677b690a5f00b4c3f",
+      "https://github.com/seathatflowsinourveins/sextant/blob/43831154f51f5ed16b43b391e76d812dd4eb890f/deploy/wsl/lifecycle-prompt.md#L4"
+    ]
+  },
+  "input": {
+    "format": "bounded-file-excerpts",
+    "context": "Orca terminal list is bounded by default. An inventory used to authorize deletion must be complete, including when the response reaches its requested limit.",
+    "excerpts": [
+      {
+        "path": "deploy/wsl/lifecycle-prompt.md",
+        "start_line": 1,
+        "end_line": 5,
+        "text": "Lifecycle sweep for this repository, run by Orca's daily automation in its main checkout. Don't switch this checkout's branch: the lead works here.\n\n1. Run `git fetch --prune origin`.\n2. For each worktree in `orca worktree list --json` other than this checkout, find its branch's pull request: `gh pr list --head <branch> --state all --json number,state`. If it is `MERGED`, remove the worktree with `orca worktree rm --worktree branch:<branch> --delete-branch`. Keep a worktree that has an open pull request, has no pull request, has uncommitted changes or has commits that aren't on GitHub, and note why. Also keep a worktree that live work still uses, even after its PR merged: any terminal in `orca terminal list --json` whose `worktreePath` is that worktree, or any running process whose current directory is inside it (`readlink /proc/<pid>/cwd`, proc(5)). An agent can keep working in a merged PR's worktree, and removing the directory under it kills it, as the 2026-11-06 first run did to two lane agents.\n3. For each local branch whose upstream is gone, and each branch git kept in step 2, first try `git branch -d <branch>`. This repo merges by squash, and git deletes with `-d` only a branch \"fully merged in its upstream branch, or in `HEAD`\" (git-branch(1)), so it refuses every squash-merged branch. Then read `gh pr list --head <branch> --state merged --json headRefOid`. Use `git branch -D <branch>` only when that PR is `MERGED` and its `headRefOid` equals `git rev-parse <branch>`, so nothing on the branch is left unlanded. Otherwise keep the branch and note why.\n",
+        "sha256": "6c2c9f49c4c3939e58c0ffbd20b38a47523720d85cfc8b4b8aeb634747447d64"
+      }
+    ]
+  },
+  "expected": {
+    "severity": "P1",
+    "false_block_control": false,
+    "defects": [
+      {
+        "id": "D1",
+        "path": "deploy/wsl/lifecycle-prompt.md",
+        "line": 4,
+        "claim": "The default terminal-list limit can omit a busy worktree, causing its active directory to be removed despite the liveness check.",
+        "severity": "P1",
+        "citations": [
+          "https://github.com/seathatflowsinourveins/sextant/commit/6c11fcd409d2823c6f79c47677b690a5f00b4c3f",
+          "https://github.com/seathatflowsinourveins/sextant/blob/43831154f51f5ed16b43b391e76d812dd4eb890f/deploy/wsl/lifecycle-prompt.md#L4"
+        ]
+      }
+    ]
+  }
+}

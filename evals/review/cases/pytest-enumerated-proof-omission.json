@@ -1,0 +1,47 @@
+{
+  "schema_version": "1.1",
+  "id": "pytest-enumerated-proof-omission",
+  "tags": [
+    "known-defect"
+  ],
+  "source": {
+    "repository": "seathatflowsinourveins/sextant",
+    "pr": "https://github.com/seathatflowsinourveins/sextant/pull/92",
+    "commit": "4832ec9684f69236e506b00d6389cf8d94cfd271",
+    "fix_commit": "8ccf6934cdba20d7cd30c0e99129b24026ec462f",
+    "citations": [
+      "https://github.com/seathatflowsinourveins/sextant/commit/8ccf6934cdba20d7cd30c0e99129b24026ec462f",
+      "https://github.com/seathatflowsinourveins/sextant/blob/4832ec9684f69236e506b00d6389cf8d94cfd271/pyproject.toml#L35"
+    ]
+  },
+  "input": {
+    "format": "bounded-file-excerpts",
+    "context": "Lanes add independent proof modules under tests/proofs. The default suite must discover that directory while container-only and maintainer-only tests use registered markers.",
+    "excerpts": [
+      {
+        "path": "pyproject.toml",
+        "start_line": 34,
+        "end_line": 43,
+        "text": "[tool.pytest.ini_options]\ntestpaths = [\"tests/repo\", \"tests/proofs/test_thin_slice.py\", \"tests/proofs/test_exit_engine.py\", \"tests/proofs/test_claude_shelf.py\", \"tests/proofs/test_workflows.py\", \"tests/proofs/test_candidate_history.py\", \"tests/proofs/test_exit_study_41.py\", \"tests/proofs/test_research_sources.py\", \"tests/proofs/test_options_jev.py\", \"tests/proofs/test_replay.py\", \"tests/proofs/test_reentry.py\", \"tests/proofs/test_sharadar_coverage.py\"]\npythonpath = [\"src\"]\naddopts = \"-q\"\n\n[tool.pyright]\ninclude = [\"src\", \"tests\"]\nignore = [\"src/sextant/strategies/ema_cross.py\", \"src/sextant/research/b_exit_replay.py\"]\npythonVersion = \"3.13\"\ntypeCheckingMode = \"standard\"\n",
+        "sha256": "3d82dcc795b3329b51f5dae8cc9dd13b1382dfc4cb03050a259d7b1360fa7df3"
+      }
+    ]
+  },
+  "expected": {
+    "severity": "P2",
+    "false_block_control": false,
+    "defects": [
+      {
+        "id": "D1",
+        "path": "pyproject.toml",
+        "line": 35,
+        "claim": "Enumerating individual proof files in testpaths silently omits newly added proofs from the default suite.",
+        "severity": "P2",
+        "citations": [
+          "https://github.com/seathatflowsinourveins/sextant/commit/8ccf6934cdba20d7cd30c0e99129b24026ec462f",
+          "https://github.com/seathatflowsinourveins/sextant/blob/4832ec9684f69236e506b00d6389cf8d94cfd271/pyproject.toml#L35"
+        ]
+      }
+    ]
+  }
+}

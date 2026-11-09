@@ -1,0 +1,61 @@
+{
+  "schema_version": "1.1",
+  "id": "b-limit-handover-wait-state",
+  "tags": [
+    "known-defect"
+  ],
+  "source": {
+    "repository": "seathatflowsinourveins/sextant",
+    "pr": "https://github.com/seathatflowsinourveins/sextant/pull/251",
+    "commit": "8c38c0797ce05df01ad731f2c42c1320e985098b",
+    "fix_commit": "f2c1206e35a2c6044a8bfb115fdd7d16e4f2e178",
+    "citations": [
+      "https://github.com/seathatflowsinourveins/sextant/commit/f2c1206e35a2c6044a8bfb115fdd7d16e4f2e178",
+      "https://github.com/seathatflowsinourveins/sextant/blob/8c38c0797ce05df01ad731f2c42c1320e985098b/src/sextant/exits/owner_b_sim.py#L185"
+    ]
+  },
+  "input": {
+    "format": "bounded-file-excerpts",
+    "context": "The manager can wait for a cached trade before native trail activation. A persisted breach can replace that protection attempt with a managed LIMIT; the previous wait must end.",
+    "excerpts": [
+      {
+        "path": "src/sextant/exits/owner_b_sim.py",
+        "start_line": 169,
+        "end_line": 197,
+        "text": "            self._submit(intent.action, intent.quantity)\n\n    def _submit(self, kind: Literal[\"trail\", \"limit\"], quantity: Decimal) -> None:\n        ts = self.clock.timestamp_ns()\n        qty = Quantity.from_str(str(quantity))\n        if kind == \"limit\":\n            if self.bid is None:\n                return\n            order = self.order_factory.limit(\n                instrument_id=self.instrument_id,\n                order_side=OrderSide.SELL,\n                quantity=qty,\n                time_in_force=TimeInForce.DAY,\n                price=self._price(policy.chase_limit(self.bid, self.last, self.p)),\n            )\n            self.sell_id, self.amended_ns = order.client_order_id, ts\n            self.limit_started_ns = ts\n        else:\n            if self.rth:\n                if self.cache.trade(self.instrument_id) is None:\n                    # rc8's RiskEngine prices an untriggered LAST_PRICE trail from the cached\n                    # trade and denies it without one (crates/risk/src/engine/mod.rs:2364-2417,\n                    # :2137-2146). Wait for the first print, which re-drives, instead of pausing.\n                    # Outside RTH the emulated trail goes to the OrderEmulator, which arms it on\n                    # the first quote.\n                    self._wait(ts)\n                    return\n                self.awaiting_trade = False\n                order = self.order_factory.trailing_stop_market(\n",
+        "sha256": "4534821b59e7cc856557925b5f678abc85642cc8a6693009ce8113dbdcba8294"
+      },
+      {
+        "path": "src/sextant/exits/owner_b_sim.py",
+        "start_line": 230,
+        "end_line": 235,
+        "text": "    def _wait(self, ts: int) -> None:\n        \"\"\"The broker trail is unarmed: alert once without pausing, so X2-X5 keeps running.\"\"\"\n        if not self.awaiting_trade:\n            self.awaiting_trade = True\n            self._record(ts, \"awaiting_trade\")\n            self._alert(\"awaiting_trade\")\n",
+        "sha256": "f7d9f5b89d0886a167cf917eff9c88e49930518a0523991796e7a30825d01353"
+      },
+      {
+        "path": "src/sextant/exits/owner_b_sim.py",
+        "start_line": 266,
+        "end_line": 271,
+        "text": "        self._drive()\n\n    def on_trade(self, trade) -> None:\n        super().on_trade(trade)\n        if self.awaiting_trade:\n            self._drive()  # the first cached print arms the in-hours trail\n",
+        "sha256": "c665e3e4bddfb641edff8cbc5b05f5ec11de3ff9a683dfc57c15ed01eb2b0cff"
+      }
+    ]
+  },
+  "expected": {
+    "severity": "P2",
+    "false_block_control": false,
+    "defects": [
+      {
+        "id": "D1",
+        "path": "src/sextant/exits/owner_b_sim.py",
+        "line": 185,
+        "claim": "The LIMIT handover leaves awaiting_trade true, retaining the obsolete unarmed-trail wait after an exit has replaced it.",
+        "severity": "P2",
+        "citations": [
+          "https://github.com/seathatflowsinourveins/sextant/commit/f2c1206e35a2c6044a8bfb115fdd7d16e4f2e178",
+          "https://github.com/seathatflowsinourveins/sextant/blob/8c38c0797ce05df01ad731f2c42c1320e985098b/src/sextant/exits/owner_b_sim.py#L185"
+        ]
+      }
+    ]
+  }
+}

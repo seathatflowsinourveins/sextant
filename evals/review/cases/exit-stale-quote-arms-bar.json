@@ -1,0 +1,47 @@
+{
+  "schema_version": "1.1",
+  "id": "exit-stale-quote-arms-bar",
+  "tags": [
+    "known-defect"
+  ],
+  "source": {
+    "repository": "seathatflowsinourveins/sextant",
+    "pr": "https://github.com/seathatflowsinourveins/sextant/pull/231",
+    "commit": "3ddfe480f3bb1d9842a5046afb3b80e6af449c4a",
+    "fix_commit": "064cf2876b0e64bb1adb38b8ebcb55e051b491d0",
+    "citations": [
+      "https://github.com/seathatflowsinourveins/sextant/commit/064cf2876b0e64bb1adb38b8ebcb55e051b491d0",
+      "https://github.com/seathatflowsinourveins/sextant/blob/3ddfe480f3bb1d9842a5046afb3b80e6af449c4a/src/sextant/exits/engine.py#L194"
+    ]
+  },
+  "input": {
+    "format": "bounded-file-excerpts",
+    "context": "ADR-0005 X3 leaves unknown or stale quotes unarmed. A completed bar cannot confirm gain protection from an old spread; the fix resets confirmation when a fresh executable quote is unavailable.",
+    "excerpts": [
+      {
+        "path": "src/sextant/exits/engine.py",
+        "start_line": 177,
+        "end_line": 197,
+        "text": "    def on_quote(self, quote: QuoteTick) -> None:\n        self.bid, self.ask = quote.bid_price.as_decimal(), quote.ask_price.as_decimal()\n        self.quote_ns = quote.ts_event\n        self._flat(quote.ts_event)\n        if self.rth:\n            self._step(quote.ts_event, self.bid if self._quote_ok(quote.ts_event) else None)\n\n    def on_trade(self, trade: TradeTick) -> None:\n        price = trade.price.as_decimal()\n        self.last = price\n        self.trades.append((trade.ts_event, price))\n        if self.protection is not None:\n            self.protection.high = max(self.protection.high, price)\n        if not self.rth:\n            self._step(trade.ts_event, price)\n\n    def on_bar(self, bar: Bar) -> None:\n        if self.protection is not None and self.bid is not None and self.ask is not None:\n            floor = policy.noise_floor(self.one_tick, self.ask - self.bid)\n            level = self.protection.entry + self.c_rt + floor\n            self.arming.on_bar_close(bar.close.as_decimal(), level)\n",
+        "sha256": "c4fe870a7e03909a344f1b79e15347b4323a6e04af380655c215e71bd4f98c95"
+      }
+    ]
+  },
+  "expected": {
+    "severity": "P1",
+    "false_block_control": false,
+    "defects": [
+      {
+        "id": "D1",
+        "path": "src/sextant/exits/engine.py",
+        "line": 194,
+        "claim": "Bar confirmation arms from any cached bid/ask without a freshness check, retaining confirmation when its quote is unavailable.",
+        "severity": "P1",
+        "citations": [
+          "https://github.com/seathatflowsinourveins/sextant/commit/064cf2876b0e64bb1adb38b8ebcb55e051b491d0",
+          "https://github.com/seathatflowsinourveins/sextant/blob/3ddfe480f3bb1d9842a5046afb3b80e6af449c4a/src/sextant/exits/engine.py#L194"
+        ]
+      }
+    ]
+  }
+}

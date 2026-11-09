@@ -1,0 +1,49 @@
+{
+  "schema_version": "1.1",
+  "id": "pr55-proposal-workflow-permission",
+  "tags": [
+    "known-defect"
+  ],
+  "source": {
+    "repository": "seathatflowsinourveins/sextant-next",
+    "pr": "https://github.com/seathatflowsinourveins/sextant-next/pull/55",
+    "commit": "1e4848e5046cb1b5c4c4826a1998a87c762e31a6",
+    "fix_commit": "9b5039272c476fbe410776503bb9abc82322863a",
+    "citations": [
+      "https://github.com/seathatflowsinourveins/sextant-next/commit/9b5039272c476fbe410776503bb9abc82322863a",
+      "https://github.com/seathatflowsinourveins/sextant-next/blob/1e4848e5046cb1b5c4c4826a1998a87c762e31a6/.github/workflows/upkeep.yml#L286",
+      "https://github.com/seathatflowsinourveins/sextant-next/pull/55#pullrequestreview-5829652217"
+    ]
+  },
+  "input": {
+    "format": "bounded-file-excerpts",
+    "context": "The model upkeep brief supports proposing workflow pin updates. Review the PR-only write-token and create-pull-request path; the App must request workflow write permission as well as contents and PR permissions.",
+    "excerpts": [
+      {
+        "path": ".github/workflows/upkeep.yml",
+        "start_line": 276,
+        "end_line": 299,
+        "text": "      - name: Mint the pull-request app token\n        if: ${{ steps.outcome.outputs.path == 'pr' }}\n        id: app-token\n        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0\n        with:\n          app-id: ${{ vars.SEXTANT_APP_ID }}\n          private-key: ${{ secrets.SEXTANT_APP_PRIVATE_KEY }}\n          owner: seathatflowsinourveins\n          repositories: sextant-next\n          permission-contents: write\n          permission-pull-requests: write\n\n      - name: Open or update the upkeep pull request\n        id: cpr\n        if: ${{ steps.outcome.outputs.path == 'pr' }}\n        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1\n        with:\n          token: ${{ steps.app-token.outputs.token }}\n          branch: upkeep/${{ steps.brief.outputs.brief }}\n          base: ${{ github.event.repository.default_branch }}\n          title: 'upkeep: ${{ steps.brief.outputs.brief }}'\n          body: ${{ steps.outcome.outputs.pr_body }}\n          commit-message: 'upkeep: ${{ steps.brief.outputs.brief }}'\n          delete-branch: true\n",
+        "sha256": "040f25b7004f4f6209242e9e87590dafc8a16a39e1150c9c4e00129b98e0a106"
+      }
+    ]
+  },
+  "expected": {
+    "severity": "P1",
+    "false_block_control": false,
+    "defects": [
+      {
+        "id": "D1",
+        "path": ".github/workflows/upkeep.yml",
+        "line": 286,
+        "claim": "The proposal App token omits workflows:write, so a supported proposal editing a workflow cannot be pushed.",
+        "severity": "P1",
+        "citations": [
+          "https://github.com/seathatflowsinourveins/sextant-next/commit/9b5039272c476fbe410776503bb9abc82322863a",
+          "https://github.com/seathatflowsinourveins/sextant-next/blob/1e4848e5046cb1b5c4c4826a1998a87c762e31a6/.github/workflows/upkeep.yml#L286",
+          "https://github.com/seathatflowsinourveins/sextant-next/pull/55#pullrequestreview-5829652217"
+        ]
+      }
+    ]
+  }
+}

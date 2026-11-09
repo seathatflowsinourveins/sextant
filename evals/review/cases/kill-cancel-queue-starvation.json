@@ -1,0 +1,61 @@
+{
+  "schema_version": "1.1",
+  "id": "kill-cancel-queue-starvation",
+  "tags": [
+    "known-defect"
+  ],
+  "source": {
+    "repository": "seathatflowsinourveins/sextant",
+    "pr": "https://github.com/seathatflowsinourveins/sextant/pull/190",
+    "commit": "b65b41e36fe2c5b83e0a0c8b7347d91be74fed9a",
+    "fix_commit": "3d326acc0e7bbb5ac47f07fc75cce8a8e368d242",
+    "citations": [
+      "https://github.com/seathatflowsinourveins/sextant/commit/3d326acc0e7bbb5ac47f07fc75cce8a8e368d242",
+      "https://github.com/seathatflowsinourveins/sextant/blob/b65b41e36fe2c5b83e0a0c8b7347d91be74fed9a/src/sextant/paper/runtime.py#L435"
+    ]
+  },
+  "input": {
+    "format": "bounded-file-excerpts",
+    "context": "The pacer prioritizes CANCEL above EXIT. The guard re-emits cancel requests each retry interval; permit at most one queued cancel per order and bound durable sends.",
+    "excerpts": [
+      {
+        "path": "src/sextant/paper/runtime.py",
+        "start_line": 173,
+        "end_line": 188,
+        "text": "                or not allowed(intent.client_order_id)\n            ):\n                return self._refuse(\"no current house lineage for this action\")\n            if intent.action == \"CANCEL\":\n                return True\n            entry = row[\"side\"] == \"BUY\"\n        else:\n            row = book.registrations.get(intent.client_order_id)\n            if row is not None and not registered_here:\n                return self._refuse(\n                    \"submission client ID already registered; reconcile its outcome\"\n                )\n            entry = intent.action == \"ENTRY\"\n            side = \"BUY\" if entry else \"SELL\"\n            assert intent.quantity is not None\n            if registered_here and (\n",
+        "sha256": "6ab83a35aa8485bc107f91cd6cd223b2c890319435266b16fb9a8c6d8aed837a"
+      },
+      {
+        "path": "src/sextant/paper/runtime.py",
+        "start_line": 217,
+        "end_line": 231,
+        "text": "    def request(self, intent: PaperIntent) -> bool:\n        \"\"\"True means queued, never ACK/fill. Recheck before and inside paced send.\"\"\"\n        s, cid = self.services, intent.client_order_id\n        try:\n            if not self._admit(intent):\n                return False\n        except Exception as error:  # admission errors halt and never escape (#163 P1-2)\n            self._halt_on(error, \"admission error halts\")\n            return False\n        registers = intent.action in {\"ENTRY\", \"EXIT\", \"PROTECT\"}\n        registered_here = False\n        lease_token = s.writer.token\n        prepared: list[Callable[[], Any]] = []  # the native command, built before the token\n\n        def gates() -> bool:\n",
+        "sha256": "53af23f9483b522aa93da43754bd4097bbb7afb0a1c0754d4bd54dbf57ea8031"
+      },
+      {
+        "path": "src/sextant/paper/runtime.py",
+        "start_line": 432,
+        "end_line": 436,
+        "text": "    def _kill_intent(self, intent: Any, now: int) -> None:\n        s = self.services\n        if intent.kind == \"CANCEL_ENTRY\":\n            self.request(PaperIntent(\"CANCEL\", intent.client_order_id, intent.instrument))\n        elif intent.kind == \"FLATTEN\":\n",
+        "sha256": "7fdab706e4d8b6900dc460a2008463f2220bca2bbe9ab96b4bfba6550c7e7f34"
+      }
+    ]
+  },
+  "expected": {
+    "severity": "P1",
+    "false_block_control": false,
+    "defects": [
+      {
+        "id": "D1",
+        "path": "src/sextant/paper/runtime.py",
+        "line": 435,
+        "claim": "Repeated kill pulses enqueue uncapped duplicate CANCELs for one order, consuming priority ahead of flatten EXITs.",
+        "severity": "P1",
+        "citations": [
+          "https://github.com/seathatflowsinourveins/sextant/commit/3d326acc0e7bbb5ac47f07fc75cce8a8e368d242",
+          "https://github.com/seathatflowsinourveins/sextant/blob/b65b41e36fe2c5b83e0a0c8b7347d91be74fed9a/src/sextant/paper/runtime.py#L435"
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,49 @@
+{
+  "schema_version": "1.1",
+  "id": "pr55-receipt-brief-baseline",
+  "tags": [
+    "known-defect"
+  ],
+  "source": {
+    "repository": "seathatflowsinourveins/sextant-next",
+    "pr": "https://github.com/seathatflowsinourveins/sextant-next/pull/55",
+    "commit": "1e4848e5046cb1b5c4c4826a1998a87c762e31a6",
+    "fix_commit": "9b5039272c476fbe410776503bb9abc82322863a",
+    "citations": [
+      "https://github.com/seathatflowsinourveins/sextant-next/commit/9b5039272c476fbe410776503bb9abc82322863a",
+      "https://github.com/seathatflowsinourveins/sextant-next/blob/1e4848e5046cb1b5c4c4826a1998a87c762e31a6/.github/workflows/upkeep.yml#L195",
+      "https://github.com/seathatflowsinourveins/sextant-next/pull/55#pullrequestreview-5829652217"
+    ]
+  },
+  "input": {
+    "format": "bounded-file-excerpts",
+    "context": "Models, dependencies and panel jobs share one receipt issue. The panel must compare with its previous panel receipt even if a model receipt was posted more recently.",
+    "excerpts": [
+      {
+        "path": ".github/workflows/upkeep.yml",
+        "start_line": 184,
+        "end_line": 196,
+        "text": "      - name: Fetch the previous run receipt\n        shell: bash\n        env:\n          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}\n          GH_REPO: ${{ github.repository }}\n        run: |\n          set -euo pipefail\n          mkdir -p .upkeep\n          touch .upkeep/previous-receipt.md\n          note=\"$(gh issue list --repo \"$GH_REPO\" --state all --search '\"Hosted upkeep receipts\" in:title' --json number,title --jq '.[] | select(.title == \"Hosted upkeep receipts\") | .number' | head -n 1)\"\n          if [[ -n \"$note\" ]]; then\n            gh issue view \"$note\" --repo \"$GH_REPO\" --json body,comments --jq 'if (.comments | length) == 0 then .body else .comments[-1].body end' >> .upkeep/previous-receipt.md\n          fi\n",
+        "sha256": "af172dbbc5270d626754e4712ecb04674f94741377dba45642306dfd35e3cb62"
+      }
+    ]
+  },
+  "expected": {
+    "severity": "P2",
+    "false_block_control": false,
+    "defects": [
+      {
+        "id": "D1",
+        "path": ".github/workflows/upkeep.yml",
+        "line": 195,
+        "claim": "Selecting the latest receipt without filtering its upkeep brief supplies another job\u2019s baseline to the weekly panel.",
+        "severity": "P2",
+        "citations": [
+          "https://github.com/seathatflowsinourveins/sextant-next/commit/9b5039272c476fbe410776503bb9abc82322863a",
+          "https://github.com/seathatflowsinourveins/sextant-next/blob/1e4848e5046cb1b5c4c4826a1998a87c762e31a6/.github/workflows/upkeep.yml#L195",
+          "https://github.com/seathatflowsinourveins/sextant-next/pull/55#pullrequestreview-5829652217"
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,47 @@
+{
+  "schema_version": "1.1",
+  "id": "workflow-lint-enumeration-gap",
+  "tags": [
+    "known-defect"
+  ],
+  "source": {
+    "repository": "seathatflowsinourveins/sextant",
+    "pr": "https://github.com/seathatflowsinourveins/sextant/pull/238",
+    "commit": "8bf3d9f0d8727d9a9ab568ce4794b52e37991a93",
+    "fix_commit": "b65b41e36fe2c5b83e0a0c8b7347d91be74fed9a",
+    "citations": [
+      "https://github.com/seathatflowsinourveins/sextant/commit/b65b41e36fe2c5b83e0a0c8b7347d91be74fed9a",
+      "https://github.com/seathatflowsinourveins/sextant/blob/8bf3d9f0d8727d9a9ab568ce4794b52e37991a93/justfile#L19"
+    ]
+  },
+  "input": {
+    "format": "bounded-file-excerpts",
+    "context": "just lint is the local CI entrypoint. It must discover every non-lock yml/yaml workflow and invoke shellcheck; generated gh-aw lock files retain their native compiler check.",
+    "excerpts": [
+      {
+        "path": "justfile",
+        "start_line": 12,
+        "end_line": 19,
+        "text": "ci: sync lint test secrets\n\nlint:\n    uv run --frozen ruff check .\n    uv run --frozen ruff format --check .\n    uv run --frozen pyright\n    uv run --frozen zizmor --offline .github/workflows\n    actionlint .github/workflows/ci.yml .github/workflows/source.yml .github/workflows/scoreboard.yml .github/workflows/dependabot-automerge.yml .github/workflows/consolidation.yml\n",
+        "sha256": "7ef723073e6848da0663010b0f559868bf6da8ce1cc49fb67afa4c1656cd50c1"
+      }
+    ]
+  },
+  "expected": {
+    "severity": "P2",
+    "false_block_control": false,
+    "defects": [
+      {
+        "id": "D1",
+        "path": "justfile",
+        "line": 19,
+        "claim": "The explicit actionlint file list omits newly added non-lock workflows, allowing invalid workflow or shell syntax to escape lint.",
+        "severity": "P2",
+        "citations": [
+          "https://github.com/seathatflowsinourveins/sextant/commit/b65b41e36fe2c5b83e0a0c8b7347d91be74fed9a",
+          "https://github.com/seathatflowsinourveins/sextant/blob/8bf3d9f0d8727d9a9ab568ce4794b52e37991a93/justfile#L19"
+        ]
+      }
+    ]
+  }
+}

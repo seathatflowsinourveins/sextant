@@ -1,0 +1,47 @@
+{
+  "schema_version": "1.1",
+  "id": "chase-unsourced-start",
+  "tags": [
+    "known-defect"
+  ],
+  "source": {
+    "repository": "seathatflowsinourveins/sextant",
+    "pr": "https://github.com/seathatflowsinourveins/sextant/pull/145",
+    "commit": "604f2066892d52d9b89394ff915f52df27d77e47",
+    "fix_commit": "fb7da9b24e3522203f9e56212295c41ec06e7264",
+    "citations": [
+      "https://github.com/seathatflowsinourveins/sextant/commit/fb7da9b24e3522203f9e56212295c41ec06e7264",
+      "https://github.com/seathatflowsinourveins/sextant/blob/604f2066892d52d9b89394ff915f52df27d77e47/src/sextant/exits/policy.py#L52"
+    ]
+  },
+  "input": {
+    "format": "bounded-file-excerpts",
+    "context": "Rule 2 requires missing parameter authority to remain unavailable. The fix records the lead\u2019s #98 ruling and disables chase when either required row is unavailable.",
+    "excerpts": [
+      {
+        "path": "src/sextant/exits/policy.py",
+        "start_line": 48,
+        "end_line": 59,
+        "text": "    Row(\"breach_persist_span_s\", \"seconds\", Decimal(1), f\"{T19}:100\"),\n    Row(\n        \"chase_cap_fraction\",\n        \"fraction of last\",\n        Decimal(\"0.01\"),\n        \"implied by ADR-0019:296 (trading@7c5f852a), not a recorded start (lead ruling, #98)\",\n    ),\n    Row(\"chase_min_interval_s\", \"seconds\", None, f\"{ADR} X5; no value at either pin (#98)\"),\n    Row(\"take_profit_above_h_fraction\", \"fraction of H\", Decimal(\"0.10\"), f\"{ADR} X5\"),\n    Row(\"take_profit_step_fraction\", \"fraction of H\", Decimal(\"0.02\"), f\"{ADR} X5\"),\n    Row(\"backstop_min_separation_fraction\", \"fraction\", Decimal(\"0.05\"), f\"{T19}:107\"),\n    Row(\"quote_max_age_s\", \"seconds (RTH; 2 outside)\", Decimal(1), f\"{LANES}:15\"),\n",
+        "sha256": "dec4f55ad5a73867b1b4d20b0d5a556c02b49a4ca25459b01574377dee42c463"
+      }
+    ]
+  },
+  "expected": {
+    "severity": "P1",
+    "false_block_control": false,
+    "defects": [
+      {
+        "id": "D1",
+        "path": "src/sextant/exits/policy.py",
+        "line": 52,
+        "claim": "An implied 0.01 chase cap is promoted to an authoritative start even though the registry explicitly says no start was recorded.",
+        "severity": "P1",
+        "citations": [
+          "https://github.com/seathatflowsinourveins/sextant/commit/fb7da9b24e3522203f9e56212295c41ec06e7264",
+          "https://github.com/seathatflowsinourveins/sextant/blob/604f2066892d52d9b89394ff915f52df27d77e47/src/sextant/exits/policy.py#L52"
+        ]
+      }
+    ]
+  }
+}

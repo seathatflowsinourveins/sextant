@@ -1,0 +1,36 @@
+{
+  "schema_version": "1.1",
+  "id": "control-linked-manifest-source",
+  "tags": [
+    "false-block-control"
+  ],
+  "source": {
+    "repository": "seathatflowsinourveins/sextant",
+    "pr": "https://github.com/seathatflowsinourveins/sextant/pull/48",
+    "commit": "b61b1aacc016fabc6ae554da6519b02610cffe29",
+    "fix_commit": "b61b1aacc016fabc6ae554da6519b02610cffe29",
+    "citations": [
+      "https://github.com/seathatflowsinourveins/sextant/commit/b61b1aacc016fabc6ae554da6519b02610cffe29",
+      "https://github.com/seathatflowsinourveins/sextant/blob/b61b1aacc016fabc6ae554da6519b02610cffe29/dangerfile.js#L14"
+    ]
+  },
+  "input": {
+    "format": "bounded-file-excerpts",
+    "context": "Upstream references allow owner/repo@tag or its Markdown-linked form followed by a full 40-character SHA. Review source recognition.",
+    "excerpts": [
+      {
+        "path": "dangerfile.js",
+        "start_line": 12,
+        "end_line": 28,
+        "text": "const sources = section(\"Upstream references\");\n// `owner/repo@tag`, or the manifest's own `[owner/repo](url)@tag`, then the full commit SHA.\nconst repoAtCommit = /[\\w.-]+\\/[\\w.-]+(?:\\]\\([^)\\s]*\\))?@\\S*[\\s\\S]*?\\b[0-9a-f]{40}\\b/;\nconst docsWithDate = /https?:\\/\\/\\S+[\\s\\S]*?read 20\\d\\d-\\d\\d-\\d\\d/;\nconst paper = /(doi\\.org\\/10\\.|\\bdoi:10\\.|arxiv\\.org\\/abs\\/|\\barXiv:\\d)/i;\n\n// Dependabot's generated body cites the upstream's own release notes, and it changes pins only.\nif (pr.user.login !== \"dependabot[bot]\") {\n  for (const name of [\"What changed\", \"Manifest row\", \"Upstream references\", \"How verified\", \"How to revert\"]) {\n    if (!section(name)) fail(`PR body: \"${name}\" is empty.`);\n  }\n\n  if (!repoAtCommit.test(sources) && !docsWithDate.test(sources) && !paper.test(sources)) {\n    fail(\n      \"Never self-invent: Upstream references must name a source repo@tag with its full commit SHA, \" +\n        \"a docs page with `read YYYY-MM-DD`, or a paper (DOI or arXiv).\",\n    );\n",
+        "sha256": "4ae4beae18bd1ffa8d3d34cf0723e475915088b9688e146baf5d712051e49991"
+      }
+    ]
+  },
+  "expected": {
+    "severity": "none",
+    "false_block_control": true,
+    "defects": [],
+    "control_rationale": "The cited fix and regression proof explicitly allow the manifest\u2019s existing Markdown-link form without loosening the full-commit requirement."
+  }
+}

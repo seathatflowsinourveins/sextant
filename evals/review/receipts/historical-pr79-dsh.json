@@ -1,0 +1,45 @@
+{
+  "schema_version": "1.1",
+  "id": "historical-pr79-dsh",
+  "kind": "historical",
+  "reviewer": {
+    "family": "dsh",
+    "runtime": "dsh-github review signature; runtime version unavailable",
+    "model": "unavailable",
+    "effort": "unavailable"
+  },
+  "adjudicator": {
+    "name": "Codex corpus curator, 2026-11-09",
+    "method": "semantic-manual",
+    "reference": "evals/review/README.md: retrospective source-review matching; metadata not attested by original review stays unavailable"
+  },
+  "attempts": [
+    {
+      "case_id": "pr79-relative-profile-link",
+      "case_sha256": "b53c14643a5d84cb8518b6d69697f059364e7581cf8d13aaa02f11c85e42c80b",
+      "status": "completed",
+      "error": null,
+      "blocked": true,
+      "review_reference": "https://github.com/seathatflowsinourveins/sextant-next/pull/79#discussion_r4516655850",
+      "review_text": "**error** `correctness/live-link-resolution`: [P1] Resolve a live `link:` dependency against the profile directory, not the process CWD. At 69ef6887b7b977dd91e0e48ee32188f31b1b4b8e, `_check_dependencies` hands `Path(live_spec[5:])` to `_check_link` here, and `live_target.expanduser().resolve()` (line 179) anchors a relative value to the CWD. dsh records a local link relative to the profile, or with `~`, and this repo already states that rule: `deploy/wsl/lane-runtimes/parity.py`'s `_recorded` (dsh-plugin-manager `lib/index.js:214`) resolves `profile / Path(value)`. So a `~/.dsh-full/profiles/dsh-tui/package.json` recording e.g. `sextant-dsh-hard-lines: link:../../../sextant-next/config/dsh/hard-lines` makes `just session-start` (or `pytest tests/proofs/test_dsh_session_contract.py::test_live_profile_passes_the_doctor -m \"\"`) print `error: sextant-dsh-hard-lines: live link target <cwd>/../../../sextant-next/config/dsh/hard-lines is missing` and exit 2, stopping a session on a profile dsh accepts; when the mis-anchored path happens to exist, the byte comparison silently checks the wrong directory instead. The fixtures only ever pass an absolute live link, so CI cannot see it. Join the recorded value to the profile's directory before resolving and comparing, exactly as `_recorded` does.",
+      "findings": [
+        {
+          "id": "F1",
+          "path": "scripts/dsh_profile_doctor.py",
+          "line": 226,
+          "claim": "**error** `correctness/live-link-resolution`: [P1] Resolve a live `link:` dependency against the profile directory, not the process CWD. At 69ef6887b7b977dd91e0e48ee32188f31b1b4b8e, `_check_dependencies` hands `Path(live_spec[5:])` to `_check_link` here, and `live_target.expanduser().resolve()` (line 179) anchors a relative value to the CWD. dsh records a local link relative to the profile, or with `~`, and this repo already states that rule: `deploy/wsl/lane-runtimes/parity.py`'s `_recorded` (dsh-plugin-manager `lib/index.js:214`) resolves `profile / Path(value)`. So a `~/.dsh-full/profiles/dsh-tui/package.json` recording e.g. `sextant-dsh-hard-lines: link:../../../sextant-next/config/dsh/hard-lines` makes `just session-start` (or `pytest tests/proofs/test_dsh_session_contract.py::test_live_profile_passes_the_doctor -m \"\"`) print `error: sextant-dsh-hard-lines: live link target <cwd>/../../../sextant-next/config/dsh/hard-lines is missing` and exit 2, stopping a session on a profile dsh accepts; when the mis-anchored path happens to exist, the byte comparison silently checks the wrong directory instead. The fixtures only ever pass an absolute live link, so CI cannot see it. Join the recorded value to the profile's directory before resolving and comparing, exactly as `_recorded` does."
+        }
+      ],
+      "judgments": [
+        {
+          "defect_id": "D1",
+          "detected": true,
+          "finding_ids": [
+            "F1"
+          ],
+          "reason": "The cited review names this exact root cause and its consequence; the evidence is retrospective, not an independent blind test."
+        }
+      ]
+    }
+  ]
+}

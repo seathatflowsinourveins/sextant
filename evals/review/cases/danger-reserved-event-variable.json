@@ -1,0 +1,47 @@
+{
+  "schema_version": "1.1",
+  "id": "danger-reserved-event-variable",
+  "tags": [
+    "known-defect"
+  ],
+  "source": {
+    "repository": "seathatflowsinourveins/sextant-next",
+    "pr": null,
+    "commit": "531011ff5314ccd656ca1110bffb2c4d3502a31f",
+    "fix_commit": "5cf41fdd876cf9415dd5088777eee523bc6e5604",
+    "citations": [
+      "https://github.com/seathatflowsinourveins/sextant-next/commit/5cf41fdd876cf9415dd5088777eee523bc6e5604",
+      "https://github.com/seathatflowsinourveins/sextant-next/blob/531011ff5314ccd656ca1110bffb2c4d3502a31f/.github/workflows/gate.yml#L46"
+    ]
+  },
+  "input": {
+    "format": "bounded-file-excerpts",
+    "context": "This job runs on workflow_run and prepares a trusted PR event for Danger\u2019s GitHubActions provider. GitHub reserves GITHUB_* workflow variables; the command needs a process-scoped assignment.",
+    "excerpts": [
+      {
+        "path": ".github/workflows/gate.yml",
+        "start_line": 36,
+        "end_line": 47,
+        "text": "          package-manager-cache: false\n      - id: prepare\n        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9\n        with:\n          script: await require('./.github/gate/gate.cjs').prepare({github, context, core})\n      - name: Danger from the default branch, PR data through the API\n        id: danger\n        if: steps.prepare.outputs.pr != ''\n        env:\n          DANGER_GITHUB_API_TOKEN: ${{ github.token }}\n          GITHUB_EVENT_PATH: ${{ steps.prepare.outputs.danger_event }}\n        run: npx --yes \"danger@$(node -p \"require('./.devcontainer/agents/package.json').dependencies.danger\")\" ci --dangerfile dangerfile.js --failOnErrors\n",
+        "sha256": "08efc193ca1c21c1997feafbc544bb40d085496f2511a282f828b80f69858fe6"
+      }
+    ]
+  },
+  "expected": {
+    "severity": "P1",
+    "false_block_control": false,
+    "defects": [
+      {
+        "id": "D1",
+        "path": ".github/workflows/gate.yml",
+        "line": 46,
+        "claim": "A workflow env assignment cannot override reserved GITHUB_EVENT_PATH, so Danger receives the workflow_run event instead of the prepared PR event.",
+        "severity": "P1",
+        "citations": [
+          "https://github.com/seathatflowsinourveins/sextant-next/commit/5cf41fdd876cf9415dd5088777eee523bc6e5604",
+          "https://github.com/seathatflowsinourveins/sextant-next/blob/531011ff5314ccd656ca1110bffb2c4d3502a31f/.github/workflows/gate.yml#L46"
+        ]
+      }
+    ]
+  }
+}

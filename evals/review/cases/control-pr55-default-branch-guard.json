@@ -1,0 +1,37 @@
+{
+  "schema_version": "1.1",
+  "id": "control-pr55-default-branch-guard",
+  "tags": [
+    "false-block-control"
+  ],
+  "source": {
+    "repository": "seathatflowsinourveins/sextant-next",
+    "pr": "https://github.com/seathatflowsinourveins/sextant-next/pull/55",
+    "commit": "1e4848e5046cb1b5c4c4826a1998a87c762e31a6",
+    "fix_commit": "9b5039272c476fbe410776503bb9abc82322863a",
+    "citations": [
+      "https://github.com/seathatflowsinourveins/sextant-next/commit/9b5039272c476fbe410776503bb9abc82322863a",
+      "https://github.com/seathatflowsinourveins/sextant-next/blob/1e4848e5046cb1b5c4c4826a1998a87c762e31a6/.github/workflows/upkeep.yml#L35",
+      "https://github.com/seathatflowsinourveins/sextant-next/pull/55#pullrequestreview-5829693820"
+    ]
+  },
+  "input": {
+    "format": "bounded-file-excerpts",
+    "context": "The repository default branch can change during identity cutover. Scheduled upkeep runs on GitHub-hosted compute and records an issue receipt. Review the shown workflow stanza.",
+    "excerpts": [
+      {
+        "path": ".github/workflows/upkeep.yml",
+        "start_line": 32,
+        "end_line": 44,
+        "text": "permissions: {}\njobs:\n  upkeep:\n    if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'schedule' || github.actor == github.repository_owner) }}\n    runs-on: ubuntu-24.04\n    timeout-minutes: 45\n    environment: hosted-workers\n    permissions:\n      contents: read\n      issues: write\n    concurrency:\n      group: upkeep\n      cancel-in-progress: false\n",
+        "sha256": "5f83bc98dd4600920638af829abdd52fd72ec6512a464ae23ff6d90843038671"
+      }
+    ]
+  },
+  "expected": {
+    "severity": "none",
+    "false_block_control": true,
+    "defects": [],
+    "control_rationale": "The dynamic default-branch guard, hosted runner, read-only contents and issues-write permissions are intentional and supported. A large or incompletely fetched wider diff is a coverage failure, not a defect in this excerpt; this is not a claim that the whole PR55 head was clean."
+  }
+}
