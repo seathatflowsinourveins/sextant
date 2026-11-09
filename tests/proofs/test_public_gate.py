@@ -7,6 +7,7 @@ review/reviewer/standard.md:31-34,72,88-90; review/developer/small-cls.md:175.
 import hashlib
 import json
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -47,8 +48,39 @@ def test_danger_reads_api_data_and_never_checks_out_the_head() -> None:
     source = _gate()["jobs"]["source"]
     danger = next(step for step in source["steps"] if step.get("id") == "danger")
     assert "--dangerfile dangerfile.js --failOnErrors" in danger["run"]
-    assert danger["env"]["GITHUB_EVENT_PATH"] == "${{ steps.prepare.outputs.danger_event }}"
+    assert danger["env"]["DANGER_EVENT_PATH"] == "${{ steps.prepare.outputs.danger_event }}"
+    assert danger["run"].startswith('GITHUB_EVENT_PATH="$DANGER_EVENT_PATH" ')
     assert not any("run" in step and "checkout" in step["run"] for step in source["steps"])
+
+
+def test_dangers_native_provider_accepts_the_api_only_event(tmp_path: Path) -> None:
+    """Danger 14.1.0 GitHubActions constructor/useEventDSL, without network calls."""
+    executable = shutil.which("danger")
+    assert executable is not None
+    event = tmp_path / "danger-event.json"
+    event.write_text(
+        json.dumps({"pull_request": {"number": 7, "base": {"repo": {"full_name": "owner/repo"}}}})
+    )
+    done = subprocess.run(
+        [
+            "node",
+            "-e",
+            "const {createRequire}=require('node:module');"
+            "const load=createRequire(process.argv[1]);"
+            "const {GitHubActions}=load('danger/distribution/ci_source/providers/GitHubActions');"
+            "const source=new GitHubActions({GITHUB_EVENT_PATH:process.argv[2],"
+            "GITHUB_WORKFLOW:'gate'});"
+            "process.stdout.write(JSON.stringify([source.useEventDSL,"
+            "source.pullRequestID,source.repoSlug]));",
+            str(Path(executable).resolve()),
+            str(event),
+        ],
+        text=True,
+        capture_output=True,
+        timeout=30,
+    )
+    assert done.returncode == 0, done.stderr
+    assert json.loads(done.stdout) == [False, 7, "owner/repo"]
 
 
 def test_every_action_in_workflows_and_composites_has_a_full_pin() -> None:
