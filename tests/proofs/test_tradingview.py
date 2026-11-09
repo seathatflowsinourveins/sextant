@@ -562,6 +562,71 @@ def test_preset_receipt_refuses_mismatched_upstream_provenance(tmp_path: Path, c
         presets.preset_receipt(tmp_path)
 
 
+def test_preset_roster_keeps_managed_tickets_plain_limit():
+    """The roster is the owner-manual ticket contract, never a machine order path."""
+    root = Path(__file__).parents[2]
+    docs = (root / "docs/tradingview.md").read_text()
+    rows = [line for line in docs.splitlines() if line.startswith("| `NS ")]
+    assert len(rows) == 3, f"the documented roster is not the three named presets: {rows}"
+    by_name = {
+        row.split("|")[1].strip().strip("`"): [cell.strip() for cell in row.split("|")[2:-1]]
+        for row in rows
+    }
+    assert set(by_name) == {
+        "NS ALPACA DAY LIMIT MANAGED",
+        "NS ALPACA DAY LIMIT BRACKET",
+        "NS IBKR DAY LIMIT BRACKET",
+    }
+    managed = by_name["NS ALPACA DAY LIMIT MANAGED"]
+    assert managed[:2] == ["LIMIT", "0 relative ticks (at the touch, not a fixed price)"]
+    assert managed[2:] == ["DAY", "none", "ON", "managed-paper entries"]
+    for name in ("NS ALPACA DAY LIMIT BRACKET", "NS IBKR DAY LIMIT BRACKET"):
+        bracket = by_name[name]
+        assert bracket[0] == "LIMIT"
+        assert bracket[2] == "DAY"
+        assert bracket[3] == "TP/SL"
+        assert bracket[5] == "owner-managed positions only"
+    assert "TV presets can place brackets without confirmation" in docs
+    assert "managed-paper entries stay plain LIMIT, never a bracket" in docs
+    assert "at the touch, not a fixed price" in docs
+    assert "20:00\u201304:00 ET" in docs
+    assert "20:00 ET if unfilled" in docs
+    assert "extended_hours" in docs and "false/omitted" in docs
+    presets = root / "lanes/tradingview/presets"
+    for pine in sorted(presets.glob("*.pine")):
+        source = pine.read_text()
+        for forbidden in ("strategy(", "alert(", "alertcondition("):
+            assert forbidden not in source, f"{pine.name} carries an order path: {forbidden}"
+    for path in sorted((root / "lanes/tradingview").rglob("*")):
+        if path.is_file() and path.suffix != ".pine":
+            text = path.read_text(errors="ignore").lower()
+            assert '"webhook"' not in text and "autotrade" not in text
+            assert "hooks.slack" not in text and "hooks.discord" not in text
+
+
+def test_preset_import_card_matches_the_reviewed_manifest_hashes():
+    """The owner import card must match the pinned preset manifest exactly."""
+    root = Path(__file__).parents[2]
+    docs = (root / "docs/tradingview.md").read_text()
+    assert "## Owner import card" in docs
+    card = docs.split("## Owner import card", 1)[1].split("\n## ", 1)[0]
+    presets = root / "lanes/tradingview/presets"
+    manifest = json.loads((presets / "manifest.json").read_text())
+    assert len(manifest) == 4
+    for item in manifest:
+        assert f"`{item['file']}`" in card
+        assert f"`{item['script_id']}`" in card
+        assert item["sha256"] in card
+    for phrase in (
+        "NEW",
+        "paste",
+        "add it to the owner's chart",
+        "No install automation",
+        "lanes/tradingview/presets/manifest.json",
+    ):
+        assert phrase in card, f"import card is missing {phrase!r}"
+
+
 def test_oauth_requires_explicit_owner_flag_before_any_transport():
     try:
         auth = importlib.import_module("sextant.tradingview.auth")
