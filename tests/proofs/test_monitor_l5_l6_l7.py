@@ -13,6 +13,7 @@ ADR-0018 for every threshold's `UNCALIBRATED` status.
 
 from __future__ import annotations
 
+import ast
 import importlib.util
 import json
 import re
@@ -40,6 +41,17 @@ def _load(name: str, relative: str):
 
 github = _load("_monitor_github_proof", "scripts/monitor_github.py")
 evidence = _load("_monitor_evidence_proof", "scripts/monitor_evidence.py")
+
+
+def test_parametrize_parser_skips_an_empty_parameter_set() -> None:
+    tree = ast.parse(
+        "import pytest\n"
+        "@pytest.mark.parametrize('value', [()])\n"
+        "def test_empty(value):\n"
+        "    pass\n"
+    )
+    decorator = tree.body[1].decorator_list[0]
+    assert evidence._parametrize_ids(decorator, tree) == []
 
 
 def _fixture() -> dict[int, dict]:

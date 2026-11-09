@@ -243,6 +243,10 @@ def _parametrize_ids(decorator: ast.AST, tree: ast.Module) -> list[str]:
     ids: list[str] = []
     for value in values:
         parts = value if isinstance(value, (list, tuple)) else [value]
+        if not parts:
+            # An empty parameter tuple/list carries no pytest id; skip it
+            # instead of indexing past the end of the value.
+            continue
         if len(names) == 1:
             ids.append(str(parts[0]))
         elif len(parts) == len(names):
