@@ -39,8 +39,8 @@ BUILTIN = re.compile(r"^(?:tests/)?(?:proofs|repo|host)/")
 
 # tests/repo/test_budgets.py hardcodes these; it exposes no constants to import.
 BUDGETS = {
-    "src_lines": ("src/**/*.py", 20_800, "lines"),
-    "justfile_lines": ("justfile", 100, "lines"),
+    "src_lines": ("src/**/*.py", 21_550, "lines"),
+    "justfile_lines": ("justfile", 105, "lines"),
     "agent_docs_lines": (("AGENTS.md", "CLAUDE.md"), 120, "lines"),
     "design_lines": ("docs/design.md", 220, "lines"),
     "practices_lines": ("docs/handbook/practices.md", 80, "lines"),
@@ -49,6 +49,9 @@ BUDGETS = {
     "research_count": ("docs/research/*.md", 30, "files"),
     "lane_readme_lines": ("lanes/*/README.md", 60, "lines"),
 }
+
+# A recursive source budget measures the whole tree; per-file budgets take the max.
+TOTAL_BUDGETS = frozenset({"src_lines"})
 
 
 @dataclass(frozen=True)
@@ -437,6 +440,8 @@ def budget_utilization(root: Path) -> dict[str, Any]:
             paths = _expand(root, pattern)
             if unit == "files":
                 value = len(paths)
+            elif key in TOTAL_BUDGETS:
+                value = sum(_line_count(path) for path in paths)
             else:
                 value = max((_line_count(path) for path in paths), default=0)
         results[key] = {

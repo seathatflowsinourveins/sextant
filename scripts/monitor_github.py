@@ -41,6 +41,13 @@ GH_TELEMETRY_ENV = {
     "DO_NOT_TRACK": "1",
     "GH_SPINNER_DISABLED": "1",
 }
+# gh can log prompts and raw request bodies when these are inherited; drop them.
+OTEL_LOG_ENV = (
+    "OTEL_LOG_USER_PROMPTS",
+    "OTEL_LOG_ASSISTANT_RESPONSES",
+    "OTEL_LOG_RAW_API_BODIES",
+    "OTEL_LOG_TOOL_CONTENT",
+)
 REVIEW_MARKER = re.compile(r"^Review of ([0-9a-f]{40})(?:\s|$)")
 FINDING_MARKER = re.compile(r"^\[(P[0-3])\](?:\s|$)")
 FAILED_CHECKS = frozenset({"FAILURE", "TIMED_OUT", "CANCELLED", "ERROR", "STARTUP_FAILURE"})
@@ -143,6 +150,8 @@ class Finding:
 def gh_environment(base: Mapping[str, str] | None = None) -> dict[str, str]:
     """The gh child environment; telemetry off wins over the user's defaults."""
     env = dict(os.environ if base is None else base)
+    for name in OTEL_LOG_ENV:
+        env.pop(name, None)
     env.update(GH_TELEMETRY_ENV)
     return env
 

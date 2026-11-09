@@ -196,7 +196,17 @@ def test_gh_children_disable_telemetry_and_leave_prompt_logging_unset(
         return subprocess.CompletedProcess(args, 0, "{}", "")
 
     monkeypatch.setattr(github.subprocess, "run", fake_run)
-    monkeypatch.setattr(github.os, "environ", {"PATH": "/usr/bin"})
+    monkeypatch.setattr(
+        github.os,
+        "environ",
+        {
+            "PATH": "/usr/bin",
+            "OTEL_LOG_USER_PROMPTS": "1",
+            "OTEL_LOG_ASSISTANT_RESPONSES": "1",
+            "OTEL_LOG_RAW_API_BODIES": "1",
+            "OTEL_LOG_TOOL_CONTENT": "1",
+        },
+    )
     github.run_gh(["api", "graphql"])
     env = captured["env"]
     assert isinstance(env, dict)
@@ -340,11 +350,24 @@ def test_l6_missing_trial_witness_is_unavailable_not_zero() -> None:
         assert summary["status"] == "UNAVAILABLE"
         assert "rows" not in summary
     budgets = evidence.budget_utilization(ROOT)
-    assert budgets["src_lines"]["limit"] == 20_800
-    assert budgets["src_lines"]["value"] < 20_800
+    assert budgets["src_lines"]["limit"] == 21_550
+    assert budgets["src_lines"]["value"] < 21_550
+    assert budgets["justfile_lines"]["limit"] == 105
+    source = sum(
+        len(path.read_text(encoding="utf-8").splitlines()) for path in (ROOT / "src").rglob("*.py")
+    )
+    assert budgets["src_lines"]["value"] == source
     ages = evidence.doc_ages(ROOT)
     assert ages["status"] == "OK"
     assert ages["files"] > 0
+
+
+def test_l6_src_budget_sums_the_tree_not_its_longest_file(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "a.py").write_text("a\nb\n", encoding="utf-8")
+    (tmp_path / "src" / "b.py").write_text("c\n", encoding="utf-8")
+    budgets = evidence.budget_utilization(tmp_path)
+    assert budgets["src_lines"]["value"] == 3
 
 
 PRODUCERS = ROOT / "deploy" / "monitor" / "l7" / "producers.json"
