@@ -203,6 +203,21 @@ def codex_toml(home: Path) -> str:
     """Codex's native mcp_servers tables: env-sourced bearer and headers, opt-in stdio jobs."""
     lines = [
         "# Rendered by deploy/wsl/lane-runtimes/parity.py from parity.json; an edit is kept.",
+        "# PR-M2: openai/codex@086ccc833bc9cf01024ad2dd6af7dbd421b6bf9a config/src/types.rs.",
+        "# Apply only with PR-M1's redaction collector; B homes wait until after B.",
+        "[analytics]",
+        "enabled = false",
+        "[feedback]",
+        "enabled = false",
+        "[otel]",
+        "log_user_prompt = false",
+        "log_agent_responses = false",
+        "log_guardian_assessments = false",
+        "log_sse_deltas = false",
+        'exporter = { otlp-grpc = { endpoint = "http://127.0.0.1:4317" } }',
+        'trace_exporter = { otlp-grpc = { endpoint = "http://127.0.0.1:4317" } }',
+        'metrics_exporter = { otlp-grpc = { endpoint = "http://127.0.0.1:4317" } }',
+        'span_attributes = { "sextant.runtime" = "codex" }',
         "",
     ]
     for name, server in SPEC["mcp"].items():
@@ -369,7 +384,8 @@ def preflight(home: Path) -> None:
         "bin", "bin/antigravity", "mcp-bridge", "mcp-bridge/node_modules",
         "router", "router/node_modules", "router/node_modules/omniroute/.env", "router-data",
         "pins.json", "model-policy.json", "repository-path", "codex-launch.sh",
-        "antigravity-launch.sh", "dsh-launch.sh", "muse-launch.sh", "router-start.sh",
+        "claude-launch.sh", "antigravity-launch.sh", "dsh-launch.sh", "muse-launch.sh",
+        "router-start.sh",
         "routing.json", "mcp-bridge/package.json", "mcp-bridge/package-lock.json",
         "router/package.json", "router/package-lock.json",
     )  # fmt: skip

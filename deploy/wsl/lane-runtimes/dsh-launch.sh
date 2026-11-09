@@ -10,6 +10,9 @@
 # `dsh --profile acp` and dsh-tui's `dsh --version` probe reach it through ~/.local/bin coming first on PATH.
 set -euo pipefail
 set +x
+# deepseek-harness@66491b05: profile-context.ts:28 and cordis.patch.yml:205-225.
+# Both the launch-time opt-out and the plugin mode are explicit, including version probes.
+export DSH_TELEMETRY_DISABLED=1 DSH_TELEMETRY_MODE=DISABLED
 entry="../sextant-agents/node_modules/@deepseek-ai/dsh/lib/bin.js"
 prefix=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")
 real=$(readlink -f "$prefix/$entry")
