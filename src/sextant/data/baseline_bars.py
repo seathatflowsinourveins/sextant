@@ -139,6 +139,62 @@ def _refuse_incomplete(
             )
 
 
+def fetch_overnight_baseline(
+    client: BarsClient,
+    symbols: Iterable[str],
+    *,
+    as_of: date,
+    known_at: int,
+    feed: str = "boats",
+    prior_sessions: int = 20,
+) -> BaselineTable:
+    """Request the prior overnight sessions' minute bars and build one baseline.
+
+    Each trading day ``D`` owns the overnight window ``[D-1 20:00, D 04:00)`` ET.
+    The bars come from the overnight feed (``boats`` on an Algo Trader Plus
+    plan); the same flat ``{symbol: [bar, ...]}`` response shape is expected.
+    """
+    sessions = _prior_sessions(as_of, prior_sessions)
+    names = tuple(symbol_name(symbol) for symbol in symbols)
+    if not names:
+        raise ValueError("at least one symbol is required")
+    start = datetime.combine(sessions[0] - timedelta(days=1), time(20), tzinfo=ET)
+    end = datetime.combine(sessions[-1], time(4), tzinfo=ET) - timedelta(microseconds=1)
+    request = StockBarsRequest(
+        symbol_or_symbols=list(names),
+        timeframe=TimeFrame(1, TimeFrameUnit("Min")),
+        start=start,
+        end=end,
+        adjustment=Adjustment.RAW,
+        feed=DataFeed(feed),
+        sort=Sort.ASC,
+    )
+    response = client.get_stock_bars(request)
+    rows = _raw_rows(response)
+    bars = [bar for symbol in names for bar in rows.get(symbol, ())]
+    coverage = [
+        BaselineCoverage(
+            symbol,
+            nanos(datetime.combine(day - timedelta(days=1), time(20), tzinfo=ET)),
+            nanos(datetime.combine(day, time(4), tzinfo=ET)),
+        )
+        for symbol in names
+        for day in sessions
+    ]
+    return build_baseline(
+        bars,
+        coverage=coverage,
+        as_of=as_of,
+        known_at=known_at,
+        provenance=(
+            f"alpaca-py {feed} raw 1-minute bars; v*vw, n; explicit complete coverage; "
+            "linear within minute; overnight segment"
+        ),
+        feed=feed,
+        prior_sessions=prior_sessions,
+    )
+
+
 def fetch_baseline(
     client: BarsClient,
     symbols: Iterable[str],
