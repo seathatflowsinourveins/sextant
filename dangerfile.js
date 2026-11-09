@@ -56,3 +56,74 @@ const touchesStrategy = changed.some((path) => path.startsWith("src/sextant/stra
 if (touchesStrategy && !repoAtCommit.test(sources) && !paper.test(sources)) {
   fail("Never self-invent: a strategy starts from an upstream template at a pinned commit or a cited paper.");
 }
+
+// One upstream owns each surface (docs/handbook/sources.md). A governed path must name it,
+// so a fork or a second SDK fails here instead of landing as a quiet second owner.
+const AUTHORITY = {
+  engine: {
+    paths: ["src/sextant/exits/", "src/sextant/execution/", "src/sextant/risk/", "src/sextant/backtest/"],
+    owners: [
+      "nautechsystems/nautilus_trader",
+      "alpacahq/alpaca-py",
+      "docs.alpaca.markets",
+    ],
+  },
+  broker: {
+    paths: ["src/sextant/paper/", "lanes/paper/"],
+    owners: ["alpacahq/alpaca-py", "docs.alpaca.markets", "nautechsystems/nautilus_trader"],
+  },
+  data: {
+    paths: ["src/sextant/data/"],
+    owners: [
+      "alpacahq/alpaca-py",
+      "sharadar.com",
+      "apache/arrow",
+      "psf/requests",
+    ],
+  },
+  tradingview: {
+    paths: ["src/sextant/tradingview/", "lanes/tradingview/"],
+    owners: ["ferroxlabs/tvcontrol", "tradingview.com"],
+  },
+  harness: {
+    paths: ["deploy/wsl/"],
+    owners: [
+      "deepseek-ai/deepseek-harness",
+      "trailofbits/claude-code-devcontainer",
+      "everyinc/compound-engineering-plugin",
+      "obra/superpowers",
+      "typesafe-ai/skills",
+      "ccch1mneyyy/dsh-tui",
+      "anthropics/claude-code",
+      "stablyai/orca",
+      "danger/danger-js",
+    ],
+  },
+  lanes: {
+    paths: ["lanes/"],
+    owners: [
+      "nautechsystems/nautilus_trader",
+      "alpacahq/alpaca-py",
+      "sharadar.com",
+      "tradingview.com",
+    ],
+  },
+};
+if (pr.user.login !== "dependabot[bot]") {
+  const cited = sources.toLowerCase();
+  const escape = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const names = (owner) => {
+    // A repo is cited as owner/repo, in a link's text, or in a URL path; a domain stands alone.
+    return new RegExp(`(^|[^\\w.-])${escape(owner)}(?![\\w.-])`);
+  };
+  for (const [surface, rule] of Object.entries(AUTHORITY)) {
+    const path = changed.find((file) => rule.paths.some((prefix) => file.startsWith(prefix)));
+    if (!path) continue;
+    if (!rule.owners.some((owner) => names(owner).test(cited))) {
+      fail(
+        `Never self-invent: ${path} is governed by the ${surface} surface, but Upstream references ` +
+          `name no authority for it. Cite one of ${rule.owners.join(", ")} (docs/handbook/sources.md).`,
+      );
+    }
+  }
+}
