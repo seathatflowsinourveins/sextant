@@ -271,10 +271,21 @@ def _bundle_installed(profile: Path, bundle: Path) -> bool:
     )
 
 
+def _quality_target(repository: Path, spec: str) -> tuple[str, str]:
+    """A plugin row's `dsh plugin add` argument and the dependency value the profile records.
+    A repository bundle (a config/ or .github/ path, like the review shim) is added by its
+    absolute path and records as a link, like the quality and MCP bundles; a github: spec
+    records verbatim under its package's own name, an npm spec as its exact version."""
+    if spec.startswith(("config/", ".github/")):
+        target = str(repository / spec)
+        return target, f"link:{os.path.realpath(target)}"
+    return spec, (spec if spec.startswith("github:") else spec.rsplit("@", 1)[1])
+
+
 def _quality_missing(profile: Path, name: str, repository: Path) -> list[str]:
     """The quality set's pinned plugin specs and bundle this profile has not recorded. A
     github: spec records verbatim under its package's own name, an npm spec as its exact
-    version (dsh-plugin-manager); the quality bundle records as a link, like the MCP one."""
+    version (dsh-plugin-manager), a repository bundle as a link like the quality one."""
     quality = SPEC["runtimes"]["dsh"]["quality"]
     if name not in quality["profiles"]:
         return []
@@ -283,9 +294,8 @@ def _quality_missing(profile: Path, name: str, repository: Path) -> list[str]:
     wanted = {}
     for entry in quality["plugins"]:
         if name in entry.get("profiles", quality["profiles"]):
-            spec = entry["spec"]
-            recorded = spec if spec.startswith("github:") else spec.rsplit("@", 1)[1]
-            wanted[spec] = (entry["package"], recorded)
+            target, recorded = _quality_target(repository, entry["spec"])
+            wanted[target] = (entry["package"], recorded)
     bundle = repository / SPEC["runtimes"]["dsh"]["quality_bundle"]
     package = json.loads((bundle / "package.json").read_text())["name"]
     wanted[str(bundle)] = (package, f"link:{os.path.realpath(bundle)}")
@@ -398,6 +408,20 @@ def _write_pins(path: Path, source: str, entries: list[tuple[str, str]]) -> str:
     return _publish(path, text + ("" if text.endswith("\n") else "\n") + addition, 0o644)
 
 
+def _install_bundle_dependencies(targets: list[str]) -> list[str]:
+    """A repository bundle's own pinned dependency must live beside it before dsh loads it:
+    the review shim imports @apcamargo/dsh-review from its own node_modules. The gate adapter
+    installs it the same way (.github/gate/parity-entry.py:39-50); a bundle without a lockfile
+    has nothing to install."""
+    states = []
+    for target in targets:
+        path = Path(target)
+        if path.is_dir() and (path / "pnpm-lock.yaml").is_file():
+            _native(["pnpm", "--dir", target, "install", "--frozen-lockfile"])
+            states.append(f"{path.name}: installed its pinned dependency")
+    return states
+
+
 def install_dsh(
     skills: dict[str, Path], dsh_home: Path, dsh: list[str], repository: Path
 ) -> list[str]:
@@ -438,6 +462,7 @@ def install_dsh(
         if missing:
             if name in SPEC["runtimes"]["dsh"]["quality"]["profiles"]:
                 states.append(ensure_workspace(dsh_home / "profiles" / name, repository))
+            states.extend(_install_bundle_dependencies(missing))
             _native([*dsh, "plugin", "--profile", name, "add", "--save-exact", *missing])
             states.append(f"{name}: added {' '.join(missing)}")
     # The profile exists only after the native add initializes it. Write the owner pins

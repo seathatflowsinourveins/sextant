@@ -8,18 +8,10 @@
     "last_change": "2026-11-09"
   },
   {
-    "name": "claim_max_latency_s",
-    "unit": "seconds from an owner fill to B's claim",
-    "value": "11",
-    "source": "docs/adr/0007-custody-and-order-writing.md C1-C2 keeps claim latency UNCALIBRATED; lead decision 2026-11-07: 10 s reconcile interval plus the measured 0.470 ms p99 custody pass, rounded up to whole seconds",
-    "calibration_state": "UNCALIBRATED",
-    "last_change": "2026-11-09"
-  },
-  {
     "name": "reconcile_interval_s",
     "unit": "seconds between scheduled B reconciles",
     "value": "10",
-    "source": "docs/adr/0007-custody-and-order-writing.md C1-C2; lead decision 2026-11-07: 10 s reconcile interval, the cadence behind claim_max_latency_s = 11; UNCALIBRATED until PR-4",
+    "source": "docs/adr/0007-custody-and-order-writing.md C1-C2 (claim and protect immediately); lead decision 2026-11-07: 10 s reconcile interval; UNCALIBRATED until PR-4",
     "calibration_state": "UNCALIBRATED",
     "last_change": "2026-11-09"
   }

@@ -47,7 +47,6 @@ def b_account() -> PaperAccount:
 def b_params() -> BParameters:
     return BParameters(
         native_trail_fraction=Decimal("0.025"),
-        claim_max_latency_s=Decimal("11"),
         reconcile_interval_s=Decimal("10"),
     )
 
@@ -166,7 +165,6 @@ def test_the_registry_carries_the_scheduled_reconcile_interval(tmp_path):
     rows = json.loads(path.read_text())
     assert {row["name"] for row in rows} == {
         "native_trail_fraction",
-        "claim_max_latency_s",
         "reconcile_interval_s",
     }
     assert all(row["calibration_state"] == "UNCALIBRATED" for row in rows)
@@ -176,7 +174,7 @@ def test_the_registry_carries_the_scheduled_reconcile_interval(tmp_path):
     assert interval["last_change"] == "2026-11-09"
 
     with pytest.raises(ValueError):
-        BParameters(Decimal("0.025"), Decimal("11"), Decimal("0"))
+        BParameters(Decimal("0.025"), Decimal("0"))
 
     incomplete = tmp_path / "b-parameters.json"
     incomplete.write_text(
@@ -233,6 +231,24 @@ def test_the_regular_session_open_rearms_before_the_interval_elapses():
     assert protector.reconcile_when_due() is True  # the session flip, not the interval, fires
     assert len(client.submitted) == 1
     assert client.submitted[0].qty == 10
+
+
+def test_the_open_rearms_the_full_net_unreserved_quantity():
+    clock = [ns(datetime(2026, 11, 9, 9, 29, 55, tzinfo=ET))]
+    owner_sell = api_order(
+        client_order_id="owner-sell-1",
+        qty="2",
+        side="sell",
+        order_type="limit",
+        trail_percent=None,
+    )
+    client = FakeTradingClient(positions=[api_position("12")], orders=[owner_sell])
+    protector = Protector(client, b_account(), b_params(), now_ns=lambda: clock[0])
+
+    clock[0] = ns(datetime(2026, 11, 9, 9, 30, 0, tzinfo=ET))
+    assert protector.reconcile_when_due() is True
+    assert [request.qty for request in client.submitted] == [10]  # 12 held, 2 reserved
+    assert str(owner_sell.id) not in client.cancelled
 
 
 def _stream(client, pages) -> ProtectorStream:

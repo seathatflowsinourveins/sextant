@@ -7,6 +7,7 @@ import copy
 import hashlib
 import importlib
 import json
+import socket
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -309,6 +310,119 @@ def test_expiry_before_write_and_non_display_tool_refused(tmp_path: Path):
                 await tools.call("place_order", {})
 
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("namespaced", [False, True])
+def test_official_discovery_ignores_every_non_membership_tool(
+    monkeypatch: pytest.MonkeyPatch, namespaced: bool
+):
+    from mcp.server import Server
+    from mcp.types import CallToolResult, ListToolsResult, Tool
+
+    _, sync = api()
+    documented = (
+        "list_watchlists",
+        "get_watchlist",
+        "get_active_watchlist",
+        "create_watchlist",
+        "delete_watchlist",
+        "add_to_watchlist",
+        "remove_from_watchlist",
+        "update_watchlist",
+        "get_ohlcv",
+        "get_economic_data",
+        "get_economic_symbols",
+        "search_symbols",
+        "get_symbol_data",
+        "run_screener",
+        "get_symbol_data_batch",
+        "get_screener_columns",
+        "get_technicals_rating",
+        "get_news",
+        "get_news_story",
+        "get_forecasts",
+        "get_financials",
+        "get_financial_history",
+        "get_documents",
+        "get_document_view",
+        "get_earnings_calendar",
+        "get_economic_calendar",
+        "get_dividends_calendar",
+        "create_alert",
+        "update_alert",
+        "delete_alert",
+        "stop_alerts",
+        "restart_alerts",
+        "list_alerts",
+        "get_alerts",
+        "get_alerts_log",
+    )
+    membership = {
+        "list_watchlists": {},
+        "get_watchlist": {"watchlist_id": "1"},
+        "create_watchlist": {"name": "NS movers", "symbols": []},
+        "add_to_watchlist": {"watchlist_id": "1", "symbols": []},
+        "remove_from_watchlist": {"watchlist_id": "1", "symbols": []},
+    }
+    wire = {
+        name: "mcp-watchlist-" + name.replace("_", "-") if namespaced else name
+        for name in membership
+    }
+    refused = (set(documented) - membership.keys()) | {
+        "place_order",
+        "mcp-watchlist-delete-watchlist",
+        "mcp-watchlist-update-watchlist",
+        "mcp-watchlist-get-active-watchlist",
+    }
+    requests = []
+
+    def deny_connection(*args, **kwargs):
+        pytest.fail("The official MCP inventory proof must not open a socket connection")
+
+    monkeypatch.setattr(socket.socket, "connect", deny_connection)
+    monkeypatch.setattr(socket.socket, "connect_ex", deny_connection)
+    monkeypatch.setattr(socket, "create_connection", deny_connection)
+
+    async def list_tools(_ctx, _params):
+        requests.append("tools/list")
+        return ListToolsResult(
+            tools=[
+                Tool(
+                    name=wire.get(name, name),
+                    input_schema={"type": "object", "additionalProperties": True},
+                )
+                for name in (*documented, "place_order")
+            ]
+        )
+
+    async def call_tool(_ctx, params):
+        requests.append(params.name)
+        assert params.name == wire["list_watchlists"] and params.arguments == {}
+        return CallToolResult(content=[], structured_content={"watchlists": []})
+
+    server = Server(
+        "2026-11-09 official inventory", on_list_tools=list_tools, on_call_tool=call_tool
+    )
+
+    async def run():
+        async with Client(server) as client:
+            tools = sync.OfficialTools(client, interval=0)
+            await tools.discover()
+            assert tools.schemas.keys() == membership.keys()
+            assert tools.wire == wire
+            for name, arguments in membership.items():
+                tools.validate(name, arguments)
+            for name in sorted(refused):
+                with pytest.raises(sync.SyncError, match="Non-display operation"):
+                    tools.validate(name, {})
+                with pytest.raises(sync.SyncError, match="Non-display operation"):
+                    await tools.call(name, {})
+            assert requests == ["tools/list"]
+            assert await tools.call("list_watchlists", {}) == {"watchlists": []}
+
+    assert len(documented) == len(set(documented)) == 35
+    asyncio.run(run())
+    assert requests == ["tools/list", wire["list_watchlists"]]
 
 
 def test_three_discovery_pages_and_first_tool_share_the_limiter(monkeypatch: pytest.MonkeyPatch):
