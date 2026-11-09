@@ -17,6 +17,7 @@ from typing import Any, Never
 
 from jsonschema import Draft202012Validator
 from mcp import Client
+from mcp.shared.exceptions import MCPError
 
 from sextant.tradingview.inputs import NAMES, ResearchInputs
 
@@ -83,6 +84,37 @@ SAFE_STOP_MESSAGES = (
     REJECTED_TOO_MANY,
 )
 
+_JSON_TYPES = {
+    dict: "object",
+    list: "array",
+    str: "string",
+    bool: "boolean",
+    int: "number",
+    float: "number",
+    Decimal: "number",
+    type(None): "null",
+}
+_ERROR_WORDS = ("quota", "rate", "plan", "permission", "invalid", "unavailable")
+_ERROR_WORD = re.compile(r"\b(?:" + "|".join(_ERROR_WORDS) + r")\b", re.IGNORECASE)
+
+
+def _shape(value: Any) -> str:
+    """JSON type and key/item count only; mapping keys can name owner lists."""
+    if isinstance(value, dict):
+        return f"JSON object, {len(value)} keys"
+    if isinstance(value, list):
+        return f"JSON array, {len(value)} items"
+    return f"JSON {_JSON_TYPES.get(type(value), 'unknown')}"
+
+
+def _error_word(result: Any) -> str:
+    """One fixed word matched in the result text; the text itself is never emitted."""
+    text = " ".join(
+        part.text for part in result.content if part.type == "text" and isinstance(part.text, str)
+    )
+    match = _ERROR_WORD.search(text)
+    return match.group(0).lower() if match else "unclassified"
+
 
 class SyncError(RuntimeError):
     """Re-inventory after refusal: an earlier write may have succeeded.
@@ -122,6 +154,7 @@ def _unwrap(value: Any) -> Any:
             raise SyncError(
                 INCOMPLETE_RESPONSE,
                 stage="tool call",
+                detail=_shape(value),
             )
         if set(value) == {"result"}:
             return _unwrap(value["result"])
@@ -219,6 +252,14 @@ class OfficialTools:
                 result = await self.client.session.call_tool(
                     self.wire[name], arguments, read_timeout_seconds=60.0
                 )
+            except MCPError as error:
+                _sanitized(
+                    SyncError(
+                        SESSION_REFUSED,
+                        stage="tool call",
+                        detail=f"JSON-RPC error {error.code}",
+                    )
+                )
             except Exception:
                 error = SyncError(
                     SESSION_REFUSED,
@@ -229,6 +270,7 @@ class OfficialTools:
             raise SyncError(
                 CALL_FAILED,
                 stage="tool call",
+                detail=f"tool {self.wire[name]}; {_error_word(result)}",
             )
         value = result.structured_content
         if value is None:
@@ -272,7 +314,7 @@ async def _membership(tools: OfficialTools, name: str, key: str) -> set[str]:
         raise SyncError(LIST_READ_ONLY, stage="tool call")
     symbols = row.get("symbols")
     if not isinstance(symbols, list) or any(not isinstance(symbol, str) for symbol in symbols):
-        raise SyncError(UNKNOWN_MEMBERSHIP_ENVELOPE, stage="tool call")
+        raise SyncError(UNKNOWN_MEMBERSHIP_ENVELOPE, stage="tool call", detail=_shape(symbols))
     return set(symbols)
 
 
@@ -280,7 +322,7 @@ async def _inventory(tools: OfficialTools) -> dict[str, tuple[str, set[str]]]:
     rows = await tools.call("list_watchlists", {})
     rows = rows.get("watchlists") if isinstance(rows, dict) else rows
     if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
-        raise SyncError(UNKNOWN_INVENTORY_ENVELOPE, stage="tool call")
+        raise SyncError(UNKNOWN_INVENTORY_ENVELOPE, stage="tool call", detail=_shape(rows))
     result = {}
     for name in NAMES:
         matches = [row for row in rows if row.get("name") == name]

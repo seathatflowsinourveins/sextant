@@ -1234,6 +1234,84 @@ def test_cli_withholds_a_message_outside_the_fixed_sync_literals(
     assert output.err == ""
 
 
+def test_envelope_refusals_name_only_the_json_shape():
+    _, sync = api()
+
+    class Inventory:
+        async def call(self, name, arguments):
+            return {"watchlists": 7}
+
+    with pytest.raises(sync.SyncError) as error:
+        asyncio.run(sync._inventory(Inventory()))
+    assert str(error.value) == sync.UNKNOWN_INVENTORY_ENVELOPE
+    assert error.value.detail == "JSON number"
+
+    class Membership:
+        async def call(self, name, arguments):
+            return {"name": "NS movers", "id": "1", "symbols": 7}
+
+    with pytest.raises(sync.SyncError) as error:
+        asyncio.run(sync._membership(Membership(), "NS movers", "1"))
+    assert str(error.value) == sync.UNKNOWN_MEMBERSHIP_ENVELOPE
+    assert error.value.detail == "JSON number"
+
+    with pytest.raises(sync.SyncError) as error:
+        sync._unwrap({"result": {"stored": True, "has_more": True}})
+    assert str(error.value) == sync.INCOMPLETE_RESPONSE
+    assert error.value.detail == "JSON object, 2 keys"
+
+
+def test_tool_result_error_names_public_tool_and_one_fixed_word():
+    _, sync = api()
+    from mcp.types import CallToolResult, TextContent
+
+    class Session:
+        async def call_tool(self, *args, **kwargs):
+            return CallToolResult(
+                content=[TextContent(type="text", text="Quota exceeded for this SECRET-9 account")],
+                is_error=True,
+            )
+
+    client = SimpleNamespace(session=Session())
+
+    async def run():
+        tools = sync.OfficialTools(client, interval=0)
+        tools.schemas["add_to_watchlist"] = {"type": "object"}
+        tools.wire["add_to_watchlist"] = "mcp-watchlist-add-to-watchlist"
+        with pytest.raises(sync.SyncError) as error:
+            await tools.call("add_to_watchlist", {"watchlist_id": "1", "symbols": ["NASDAQ:AAPL"]})
+        return error.value
+
+    error = asyncio.run(run())
+    assert str(error) == sync.CALL_FAILED
+    assert error.detail == "tool mcp-watchlist-add-to-watchlist; quota"
+    assert "SECRET" not in error.detail
+
+
+def test_jsonrpc_error_names_only_its_integer_code():
+    _, sync = api()
+    from mcp.shared.exceptions import MCPError
+
+    class Session:
+        async def call_tool(self, *args, **kwargs):
+            raise MCPError(code=-32602, message="bad params SECRET-9")
+
+    client = SimpleNamespace(session=Session())
+
+    async def run():
+        tools = sync.OfficialTools(client, interval=0)
+        tools.schemas["add_to_watchlist"] = {"type": "object"}
+        tools.wire["add_to_watchlist"] = "mcp-watchlist-add-to-watchlist"
+        with pytest.raises(sync.SyncError) as error:
+            await tools.call("add_to_watchlist", {"watchlist_id": "1", "symbols": ["NASDAQ:AAPL"]})
+        return error.value
+
+    error = asyncio.run(run())
+    assert str(error) == sync.SESSION_REFUSED
+    assert error.detail == "JSON-RPC error -32602"
+    assert "SECRET" not in error.detail
+
+
 def test_same_owner_session_can_sync_another_cycle(tmp_path: Path):
     inputs, sync = api()
     data = inputs.read_research_inputs(unit(tmp_path), now=NOW)
