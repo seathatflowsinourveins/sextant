@@ -17,6 +17,7 @@ from typing import Any, Literal
 
 from nautilus_trader.model import QuoteTick, TradeTick
 
+from sextant.entry.parameters import EntryParameters
 from sextant.entry.signals import Surge
 from sextant.ranking.baseline import BaselineTable
 from sextant.ranking.engine import Segment
@@ -131,6 +132,8 @@ def advance_surge(
     baseline: BaselineTable,
     *,
     segment: Segment,
+    feed: str,
+    params: EntryParameters,
     quote: QuoteTick | None = None,
     price_eligible: bool = True,
     volume_eligible: bool = True,
@@ -139,31 +142,51 @@ def advance_surge(
     config: SurgeConfig = DEFAULT_CONFIG,
     known_at: int | None = None,
 ) -> tuple[SurgeState, Surge | None]:
+    """Advance one symbol's surge state inside the caller-supplied segment.
+
+    ``feed`` must match the baseline and be a real SIP or BOATS feed; a
+    baseline whose latest session is the current or a later session, or whose
+    ``known_at`` is in the future, is lookahead and refuses. ``params`` is the
+    entry registry authority for the first-leg window and must agree with the
+    config instead of letting a reviewed registry value be silently truncated.
+    """
     if state.params_hash is not None and state.params_hash != config.params_hash:
         raise ValueError("parameters changed; reinitialize surge history")
     symbol = str(tick.instrument_id.symbol)
     if state.symbol is not None and state.symbol != symbol:
         raise ValueError("one SurgeState per symbol")
-    if is_closing_print(conditions) or not (price_eligible or volume_eligible):
-        return state, None
+    if baseline.feed != feed or feed not in {"sip", "boats"}:
+        raise ValueError("baseline feed mismatch")
     key = (segment.name, segment)
+    # The segment transition happens before any ineligible/closing skip, so a
+    # new segment can never inherit the previous run's flag or latch.
     if state.segment_key is not None and state.segment_key != key:
-        state = SurgeState(symbol=symbol)
+        state = SurgeState(symbol=symbol, segment_key=key)
     if not segment.start_ns <= tick.ts_event < segment.end_ns:
         raise ValueError("trade outside supplied segment")
-    latest_quote = quote if quote is not None else state.quote
-    if latest_quote is not None and latest_quote.instrument_id != tick.instrument_id:
-        raise ValueError("quote symbol mismatch")
-    if latest_quote is not None and latest_quote.ts_event > tick.ts_event:
-        raise ValueError("future quote")
-    now = max(
-        state.known_at,
-        tick.ts_event,
-        tick.ts_init,
-        baseline.known_at,
-        known_at or 0,
-        latest_quote.ts_init if latest_quote is not None else 0,
-    )
+    now = max(state.known_at, tick.ts_event, tick.ts_init, known_at or 0)
+    if baseline.known_at > now:
+        raise ValueError("future baseline")
+    if baseline.latest_session is not None and baseline.latest_session >= segment.session_date:
+        raise ValueError("current/future baseline session")
+    window_ns = params.ns("first_leg_window_s")
+    if window_ns != config.first_leg_window_s * NS:
+        raise ValueError("first_leg_window_s disagrees with entry registry")
+    if is_closing_print(conditions) or not (price_eligible or volume_eligible):
+        return state, None
+    # Keep the newest quote watermark: an older update never replaces a newer
+    # one, even when the newer book is crossed or one-sided. Freshness is
+    # measured at availability (``now``), not at the triggering trade's event.
+    latest_quote = state.quote
+    if quote is not None:
+        if quote.instrument_id != tick.instrument_id:
+            raise ValueError("quote symbol mismatch")
+        if max(quote.ts_event, quote.ts_init) > now:
+            raise ValueError("future quote")
+        if latest_quote is None or quote.ts_event > latest_quote.ts_event:
+            latest_quote = quote
+    if latest_quote is not None and latest_quote.ts_event < segment.start_ns:
+        latest_quote = None
     keep_s = max(KEEP_S, config.surge_window_s + 1, config.rising_lookback_s + 1)
     history = state.history.append(tick, keep_s=keep_s) if price_eligible else state.history
     volume_history = (
@@ -201,15 +224,13 @@ def advance_surge(
         and move >= config.surge_move_min
     )
     qualifies = bool(
-        anomaly
-        and rising
-        and common_stock
-        and two_sided(latest_quote, tick.ts_event, segment, config)
+        anomaly and rising and common_stock and two_sided(latest_quote, now, segment, config)
     )
+    expires_ns = tick.ts_event + window_ns  # ADR-0004: 120 s from the flag print
     flag: Surge | None = None
     stored_flag = state.flag
     stored_metrics = state.metrics
-    if qualifies and not state.latched and active_flag(state, now) is None:
+    if qualifies and not state.latched and active_flag(state, now) is None and now < expires_ns:
         assert quiet is not None and earlier is not None and price is not None
         first = history.first_moved(start - 1, quiet.price.as_decimal(), config.surge_move_min)
         assert first is not None
@@ -219,7 +240,7 @@ def advance_surge(
             first.ts_event,
             tick.ts_event,
             now,
-            now + config.first_leg_window_s * NS,
+            expires_ns,
             quiet.price.as_decimal(),
             "surge30",
         )
