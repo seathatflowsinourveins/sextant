@@ -147,6 +147,9 @@ class FakeClient:
         self.calls.append("get_orders")
         return list(self.orders)
 
+    def get_order_by_client_id(self, client_id: str) -> Order:
+        raise AssertionError("the outside-RTH proof never resolves a submit identity")
+
     def submit_order(self, order_data: object) -> object:
         self.calls.append("submit_order")
         assert isinstance(order_data, (TrailingStopOrderRequest, LimitOrderRequest))

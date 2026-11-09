@@ -30,7 +30,8 @@ from typing import Any, cast
 
 from alpaca.trading.client import TradingClient
 
-from sextant.execution.pacer import AccountPacer, ActionKind
+from sextant.execution.custody import AccountScope, WriterLease
+from sextant.execution.pacer import AccountPacer, ActionKind, PacerRefused
 from sextant.paper.b_protector import (
     BParameters,
     Page,
@@ -54,10 +55,6 @@ DEFAULT_CLIENT_FACTORY: Callable[..., TradingClientLike] = cast(
 )
 
 
-class PacerRefused(RuntimeError):
-    """The account pacer did not admit a broker call; the caller must fail closed."""
-
-
 class PacedTradingClient:
     """Route every broker read and write through the repo's existing account pacer."""
 
@@ -78,7 +75,6 @@ class PacedTradingClient:
 
         self._pacer.request(kind, send, admission=admission)
         if not results:
-            state["cancelled"] = True
             raise PacerRefused(f"the account pacer did not admit {method.__name__}")
         return results[0]
 
@@ -90,6 +86,9 @@ class PacedTradingClient:
 
     def get_orders(self, filter: Any = None) -> Any:
         return self._call(ActionKind.QUERY, self._client.get_orders, filter)
+
+    def get_order_by_client_id(self, client_id: str) -> Any:
+        return self._call(ActionKind.QUERY, self._client.get_order_by_client_id, client_id)
 
     def submit_order(self, order_data: Any) -> Any:
         return self._call(ActionKind.REDUCE, self._client.submit_order, order_data)
@@ -207,36 +206,49 @@ def main(
         default=DEFAULT_LIMITS,
         help="shared paper rate-limit rows",
     )
+    parser.add_argument(
+        "--lease-root",
+        type=Path,
+        default=None,
+        help="account writer lease directory (default: <config dir>/locks)",
+    )
     args = parser.parse_args(argv)
 
     account = load_account_config(args.config)
     parameters: BParameters = load_b_parameters(args.parameters)
     budget = load_budget(args.limits, account.lane)
-    api_key = os.environ.get(KEY_NAMES[0])
-    secret_key = os.environ.get(KEY_NAMES[1])
-    if not api_key or not secret_key:
-        raise SystemExit(f"{KEY_NAMES[0]} and {KEY_NAMES[1]} must be set by with-keys")
-
-    pacer = AccountPacer(cast(Controls, BudgetControls(budget)), now_ns=time.time_ns)
-    client = PacedTradingClient(
-        client_factory(api_key=api_key, secret_key=secret_key, paper=True),
-        pacer,
-    )
-    stream = ProtectorStream(
-        client,
-        account,
-        parameters,
-        api_key=api_key,
-        secret_key=secret_key,
-        paper=True,
-        on_page=on_page,
-    )
-    _check_expected_account(client, on_page)
-    previous = signal.signal(signal.SIGTERM, _sigterm_handler(stream))
+    lease_root = args.lease_root or args.config.parent / "locks"
+    lease = WriterLease(AccountScope(account.broker, account.account_id), lease_root, "b-protector")
+    lease.acquire()
     try:
-        stream.run()
+        api_key = os.environ.get(KEY_NAMES[0])
+        secret_key = os.environ.get(KEY_NAMES[1])
+        if not api_key or not secret_key:
+            raise SystemExit(f"{KEY_NAMES[0]} and {KEY_NAMES[1]} must be set by with-keys")
+
+        pacer = AccountPacer(cast(Controls, BudgetControls(budget)), now_ns=time.time_ns)
+        lease.bind_pacer(pacer)
+        client = PacedTradingClient(
+            client_factory(api_key=api_key, secret_key=secret_key, paper=True),
+            pacer,
+        )
+        stream = ProtectorStream(
+            client,
+            account,
+            parameters,
+            api_key=api_key,
+            secret_key=secret_key,
+            paper=True,
+            on_page=on_page,
+        )
+        _check_expected_account(client, on_page)
+        previous = signal.signal(signal.SIGTERM, _sigterm_handler(stream))
+        try:
+            stream.run()
+        finally:
+            signal.signal(signal.SIGTERM, previous)
     finally:
-        signal.signal(signal.SIGTERM, previous)
+        lease.close()
     return 0
 
 
