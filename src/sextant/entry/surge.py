@@ -193,11 +193,7 @@ def advance_surge(
     )
     latest_price = history.price_at(tick.ts_event)
     price = latest_price.price.as_decimal() if latest_price is not None else None
-    move = (
-        price / quiet.price.as_decimal() - 1
-        if quiet is not None and price is not None
-        else ZERO
-    )
+    move = price / quiet.price.as_decimal() - 1 if quiet is not None and price is not None else ZERO
     anomaly = bool(
         quiet is not None
         and trades >= config.surge_min_trades
