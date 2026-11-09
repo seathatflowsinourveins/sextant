@@ -711,10 +711,10 @@ def test_keep_alive_persistence_needs_first_entry_strictly_before_onset(
 ) -> None:  # WITNESS (P1 keep-alive denominator)
     _, result = keep_run
     keep = result.arms["keepalive"]
-    assert result.rows["SAME"]["keepalive_first"] == result.rows["SAME"]["onset_ts"]
-    assert result.rows["LATE"]["keepalive_first"] == result.rows["LATE"]["onset_ts"]
     # Only KEEP entered strictly before its onset; SAME and LATE entered at it.
     assert keep["persistence_denominator"] == 1
+    assert result.rows["SAME"]["keepalive_first"] == result.rows["SAME"]["onset_ts"]
+    assert result.rows["LATE"]["keepalive_first"] == result.rows["LATE"]["onset_ts"]
     assert keep["persistence_at_onset"] == 1
     assert keep["persistence_rate"] == "1"
     assert keep["entered_at_onset_excluded"] == 2
@@ -763,13 +763,13 @@ def test_prefix_receipt_covers_every_recorded_symbol_without_a_synthetic_print(
     out, result = keep_run
     # LATE's first bar starts at 04:02, so no opening tick could cover it; the
     # recording receipt covers every recorded symbol from the segment start.
-    assert result.rows["LATE"]["prefix_covered"] is True
     assert result.rows["LATE"]["k2_rank_at_onset"] is not None
     # No anchor print: CTRL's prior acceleration window is first covered by its
     # own 04:01 trade, so it first ranks at 04:07, not at 04:06.
     lines = _generations(out / "generations-k2-pre.jsonl")
     first_ctrl = next(line["ts_ns"] for line in lines if "CTRL" in line["top100"])
     assert first_ctrl == _ns(KEEP_DAY, 4, 7)
+    assert result.rows["LATE"]["prefix_covered"] is True
     assert result.report["prefix"]["status"] == "RECEIPTED"
 
 
