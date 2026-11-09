@@ -166,3 +166,15 @@ owner-managed presets, with illustrative TP/SL placeholders, not manager exit
 policy. Quantity/risk persistence, account translation, fill visibility,
 production list capacity, official result envelopes and session persistence
 have not been accepted here. No paper handover or order action follows.
+
+
+## Slot-3 ranked J5 producer
+
+`tradingview/producer.py` adapts the existing `tv-display-producer@ea95075` to
+main's native ranking and the J5 `NS Ranked` contract. Supplied stream tapes and
+REST snapshots only; no key, socket, order, TradingView call or scheduler.
+The [design, source registry, verified carry, consolidation and disabled owner cadence](handbook/rank-live.md)
+record the implementation and remaining acceptance. The lead's 2026-11-08
+19:21:44 pivot requires it to land after B, with dsh and Google gates. The
+19:49:24 owner cadence is implemented DISABLED. Stream opening and controller
+activation still require landing and explicit lead enablement.
