@@ -1,0 +1,25 @@
+# AgentsView v0.46.1 (65523169ae016d10112b70ed3410487204764fbc) usage-only archive.
+# Installed as config.toml in the dedicated data directory (docs/configuration.md:9).
+# host and archive_content are upstream keys (docs/configuration.md:248-249); the
+# usage value keeps session metadata and usage values and drops transcript text,
+# thinking text, tool inputs and results (:69). Per-agent roots use upstream's
+# agents.<id>.dirs and homes keys (:514-518, :1481-1511; internal/parser/types.go).
+host = "127.0.0.1"
+disable_update_check = true
+archive_content = "usage"
+
+[agents.claude]
+dirs = ["~/.claude/projects"]
+
+[agents.codex]
+dirs = []
+homes = ["~/.local/share/sextant-lane-runtimes/codex-home"]
+
+[agents.deepseek-harness]
+dirs = ["~/.dsh-enhanced/sessions"]
+
+[agents.antigravity-cli]
+dirs = ["~/.gemini/antigravity-cli"]
+
+[agents.muse]
+dirs = ["~/.local/share/muse/sessions"]
