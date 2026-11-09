@@ -11,6 +11,7 @@ import hashlib
 import json
 import math
 import os
+import sys
 from collections import Counter, defaultdict
 from decimal import Decimal as D
 from pathlib import Path
@@ -20,10 +21,13 @@ import pytest
 
 from sextant.exits.policy import ExitParams
 from sextant.research import exit_econ_98 as x98
-from sextant.research import exit_grid_141 as grid
 from sextant.research.exit_study_41 import DEFAULT_INPUTS, INPUTS
 
 ROOT = Path(__file__).parents[2]
+sys.path.insert(0, str(ROOT))
+
+from research import exit_grid_141 as grid  # noqa: E402
+
 EVIDENCE = ROOT / "docs" / "research" / "2026-11-06-exit-grid-141"
 E98 = ROOT / "docs" / "research" / "2026-11-06-exit-econ-98"
 INPUT_DIR = Path(os.environ.get("SEXTANT_EXIT_STUDY_41", str(DEFAULT_INPUTS)))

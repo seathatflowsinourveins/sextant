@@ -420,8 +420,10 @@ def test_m4_the_committed_dropped_arm_surface_still_reruns(tmp_path: Path) -> No
     the minute-bar close quote (the LOW proxy) is stamped 1 ns before the bar's HIGH print, so
     ``high_bid`` is the low proxy and the raise is refused."""
     from sextant.research import exit_econ_98 as x98
-    from sextant.research import exit_grid_141 as grid
     from sextant.research.exit_study_41 import DEFAULT_INPUTS
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from research import exit_grid_141 as grid
 
     inputs = Path(os.environ.get("SEXTANT_EXIT_STUDY_41", str(DEFAULT_INPUTS)))
     cid = "b0.01-m1-g0.1"
