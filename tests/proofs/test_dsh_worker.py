@@ -3,8 +3,8 @@
 One dispatched ``dsh`` headless job edits the checked-out workspace, then
 ``create-pull-request`` opens a PR into ``gate``. The job is owner-only, has
 minimal write permissions, never receives a broker/paper/live key, loads the
-repository hard-lines bundle, and keeps the pull-request token in one
-switchable step (app token when configured, otherwise ``github.token``).
+repository hard-lines bundle, and mints its pull-request token from the
+``hosted-workers`` environment's App installation.
 
 Sources: GitHub workflow_dispatch/permissions/concurrency documentation, read
 2026-11-09; PerryLink/dsh-github@2fc0009c:action.yml:51-62,118-161 and
@@ -49,6 +49,7 @@ def test_one_hosted_job_per_owner_dispatch_on_gate() -> None:
     assert set(events["workflow_dispatch"]["inputs"]) == {"brief", "slug"}
     job = _job()
     assert job["runs-on"] == "ubuntu-24.04"
+    assert job["environment"] == "hosted-workers"
     assert job["if"] == (
         "${{ github.actor == github.repository_owner && github.ref == 'refs/heads/gate' }}"
     )
@@ -65,7 +66,9 @@ def test_one_hosted_job_per_owner_dispatch_on_gate() -> None:
 def test_worker_never_reaches_main_paper_live_or_broker_keys() -> None:
     text = WORKFLOW.read_text()
     assert "refs/heads/main" not in text
-    assert "environment:" not in text
+    assert "environment: hosted-workers" in text
+    assert "environment: paper" not in text
+    assert "environment: live" not in text
     for forbidden in (
         "ALPACA_API_KEY",
         "ALPACA_SECRET",
@@ -81,7 +84,8 @@ def test_worker_never_reaches_main_paper_live_or_broker_keys() -> None:
         "DEEPSEEK_API_KEY",
         "SEXTANT_APP_PRIVATE_KEY",
     }
-    assert "github.token" in text
+    assert "github.token" not in text
+    assert "vars.SEXTANT_APP_ID" in text
     assert "contents: write" in text
     assert "pull-requests: write" in text
 
@@ -146,19 +150,18 @@ def test_brief_is_repo_local_and_pr_body_is_sibling() -> None:
     }
 
 
-def test_cpr_token_is_one_switch_with_github_token_fallback() -> None:
+def test_cpr_uses_the_app_token() -> None:
     cpr = _step("Open the worker pull request")
-    assert cpr["with"]["token"] == "${{ steps.app-token.outputs.token || github.token }}"  # noqa: S105
+    assert cpr["with"]["token"] == "${{ steps.app-token.outputs.token }}"  # noqa: S105
     assert cpr["with"]["base"] == "gate"
     assert cpr["with"]["branch"] == "dsh-worker/${{ inputs.slug }}"
     assert cpr["with"]["body-path"] == "${{ steps.brief.outputs.pr_body }}"
-    probe = _step("Probe the optional pull-request token source")
-    assert probe["id"] == "token-source"
-    assert "configured=true" in probe["run"]
-    mint = _step("Mint the optional app installation token")
+    mint = _step("Mint the pull-request app token")
     assert mint["id"] == "app-token"
-    assert mint["if"] == "steps.token-source.outputs.configured == 'true'"
+    assert "if" not in mint
+    assert mint["with"]["app-id"] == "${{ vars.SEXTANT_APP_ID }}"
     assert mint["with"]["private-key"] == "${{ secrets.SEXTANT_APP_PRIVATE_KEY }}"
+    assert "github.token" not in WORKFLOW.read_text()
 
 
 def test_noop_brief_and_body_exist() -> None:
@@ -179,5 +182,6 @@ def test_manifest_row_names_the_worker_and_its_proofs() -> None:
     assert f"| {name} |" in manifest
     row = next(line for line in manifest.splitlines() if line.startswith(f"| {name} |"))
     assert "test_dsh_worker.py::test_one_hosted_job_per_owner_dispatch_on_gate" in row
+    assert "test_dsh_worker.py::test_cpr_uses_the_app_token" in row
     assert "PerryLink/dsh-github@v0.7.27" in row
     assert "peter-evans/create-pull-request@v8.1.1" in row

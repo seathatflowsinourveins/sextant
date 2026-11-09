@@ -24,6 +24,7 @@ jobs:
     if: ${{ github.actor == github.repository_owner && github.ref == 'refs/heads/gate' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    environment: hosted-workers
     permissions:
       contents: write
       pull-requests: write
@@ -165,25 +166,11 @@ jobs:
           set -euo pipefail
           dsh --profile headless --patch "$WORKER_OUT/dsh-github-ci.cordis.yml" "$(cat "$WORKER_OUT/task.txt")"
 
-      - name: Probe the optional pull-request token source
-        id: token-source
-        shell: bash
-        env:
-          APP_PRIVATE_KEY: ${{ secrets.SEXTANT_APP_PRIVATE_KEY }}
-        run: |
-          set -euo pipefail
-          if [[ -n "${APP_PRIVATE_KEY:-}" ]]; then
-            echo "configured=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "configured=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Mint the optional app installation token
+      - name: Mint the pull-request app token
         id: app-token
-        if: steps.token-source.outputs.configured == 'true'
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
-          app-id: '5645371'
+          app-id: ${{ vars.SEXTANT_APP_ID }}
           private-key: ${{ secrets.SEXTANT_APP_PRIVATE_KEY }}
           owner: seathatflowsinourveins
           repositories: sextant-next
@@ -194,7 +181,7 @@ jobs:
         id: cpr
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         with:
-          token: ${{ steps.app-token.outputs.token || github.token }}
+          token: ${{ steps.app-token.outputs.token }}
           branch: dsh-worker/${{ inputs.slug }}
           base: gate
           title: 'dsh worker: ${{ inputs.slug }}'
