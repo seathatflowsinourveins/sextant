@@ -262,6 +262,18 @@ def test_scoreboard_measures_the_stop_rule_over_the_last_twenty_merges() -> None
     assert "refs/heads/main" not in text
 
 
+def test_every_lesson_lane_is_in_the_schema() -> None:
+    """The journal's records must be loadable by the schema the writer validates against."""
+    schema = json.loads(_read("docs/handbook/lesson-v1.schema.json"))
+    allowed = set(schema["properties"]["origin_lane"]["enum"])
+    lanes = {
+        record["origin_lane"]
+        for record in map(json.loads, _read("docs/handbook/lessons.jsonl").splitlines())
+        if "origin_lane" in record
+    }
+    assert lanes <= allowed, f"lessons use lanes the schema refuses: {sorted(lanes - allowed)}"
+
+
 def test_lessons_keep_their_seed_and_stay_append_only() -> None:
     lines = _read("docs/handbook/lessons.jsonl").splitlines(True)
     assert _sha("".join(lines[:130])) == (
