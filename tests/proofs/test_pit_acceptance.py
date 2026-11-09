@@ -278,6 +278,24 @@ def test_the_sole_holder_fallback_stays_before_actions_coverage(tmp_path: Path) 
     assert (exits["status"], exits["covered"]) == ("FAIL", 9)
 
 
+def test_a_later_sole_holder_never_satisfies_a_pre_coverage_probe(tmp_path: Path) -> None:
+    tickers = [_ticker("SEP", "1101", "LNKD", "Domestic Common Stock", "Y")]
+    actions = [
+        _action("2016-09-30", "listed", "DUMMY"),
+        _action("2024-01-02", "listed", "LNKD"),
+        _action("2024-10-31", "regulatorydelisting", "LNKD"),
+    ]
+    report, _ = acceptance.evaluate(
+        _write_capture(tmp_path / "later", tickers, actions),
+        start=date(2016, 1, 1),
+        end=date(2026, 11, 5),
+    )
+    assert report["acceptance"]["ten_exits"]["names"]["LNKD"] == {
+        "covered": False,
+        "reason": "0 share classes held LNKD",
+    }
+
+
 def _preferred_capture(tmp_path: Path) -> Path:
     tickers = [_ticker("SEP", "77", "PFDA", "Domestic Preferred Stock", "Y")]
     actions = [
@@ -312,6 +330,38 @@ def test_a_preferred_exit_never_credits_a_registered_common_stock_filing(tmp_pat
     row = result["rows"][0]
     assert row["covered"] is False and row["security_id"] is None
     assert "preferred" in row["reason"]
+
+
+def test_an_etn_exit_never_credits_a_registered_common_stock_filing(tmp_path: Path) -> None:
+    tickers = [_ticker("SFP", "77", "ETN77", "ETN", "Y")]
+    actions = [
+        _action("2017-01-03", "listed", "ETN77"),
+        _action("2025-02-16", "regulatorydelisting", "ETN77"),
+    ]
+    registration = {
+        "pass_at_least": 1,
+        "sample": [
+            {
+                "accession": "a-77",
+                "issuer_cik": "77",
+                "filed": "2025-02-17",
+                "class": "Common Stock",
+            }
+        ],
+    }
+    path = tmp_path / "registration-etn.json"
+    path.write_text(json.dumps(registration))
+    report, _ = acceptance.evaluate(
+        _write_capture(tmp_path / "etn", tickers, actions),
+        start=date(2016, 1, 1),
+        end=date(2026, 11, 5),
+        registration=path,
+    )
+    result = report["acceptance"]["independent_delisted_sample"]
+    assert (result["status"], result["covered"]) == ("FAIL", 0)
+    row = result["rows"][0]
+    assert row["covered"] is False and row["security_id"] is None
+    assert "etn" in row["reason"]
 
 
 def _registered(tmp_path: Path) -> Path:

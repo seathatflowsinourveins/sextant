@@ -115,7 +115,11 @@ def ten_exits(cov: IntervalCoverage) -> dict[str, Any]:
         if dated:
             ids = dated
         elif cov.actions_start is not None and on < cov.actions_start:
-            ids = {m.security_id for m in held}
+            # The fallback exists only for a membership clipped at the coverage floor. An
+            # interval that starts after the probe on explicit evidence arrived later.
+            ids = {
+                m.security_id for m in held if m.start_evidence == "pre_coverage_listing"
+            }
         else:
             ids = set()
         if len(ids) != 1:
@@ -195,7 +199,7 @@ def independent_sample(
             if (
                 final is None
                 or not common_sample
-                or final.instrument_type in {"preferred", "unsupported"}
+                or final.instrument_type in {"preferred", "etn", "unsupported"}
                 or final.exit_reason is None
                 or final.end_evidence != "explicit_action"
             ):
@@ -214,7 +218,7 @@ def independent_sample(
                 return "outside window"
             if not common_sample:
                 return "sample class is not common stock"
-            if final.instrument_type in {"preferred", "unsupported"}:
+            if final.instrument_type in {"preferred", "etn", "unsupported"}:
                 return (
                     f"{final.instrument_type} share class ({final.security_class}) "
                     "is not the sampled common stock"
