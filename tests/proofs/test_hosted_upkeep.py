@@ -141,6 +141,7 @@ def test_pr_path_uses_the_app_token_and_the_default_branch_base() -> None:
     assert mint["with"]["private-key"] == "${{ secrets.SEXTANT_APP_PRIVATE_KEY }}"
     assert mint["with"]["permission-contents"] == "write"
     assert mint["with"]["permission-pull-requests"] == "write"
+    assert mint["with"]["permission-workflows"] == "write"
     assert "permission-issues" not in mint["with"], "the App token never gains issue writes"
     cpr = _step("Open or update the upkeep pull request")
     assert cpr["with"]["token"] == "${{ steps.app-token.outputs.token }}"  # noqa: S105
@@ -214,7 +215,7 @@ def test_pins_are_full_sha_and_renovate_ignores_install_scripts() -> None:
     assert "- id: sextant-gate-api-only" in guards
     assert "- id: dsh-github" in guards
     assert guards.count("disabled: true") == 2
-    assert "GitHub-hosted" not in guards or "upkeep worker" in guards
+    assert "upkeep worker" in guards
 
 
 def test_renovate_runs_the_local_platform_without_credentials(tmp_path: Path) -> None:

@@ -284,6 +284,7 @@ jobs:
           repositories: sextant-next
           permission-contents: write
           permission-pull-requests: write
+          permission-workflows: write
 
       - name: Open or update the upkeep pull request
         id: cpr
