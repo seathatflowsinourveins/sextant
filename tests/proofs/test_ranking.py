@@ -4,6 +4,7 @@ from dataclasses import replace
 from datetime import date
 from decimal import Decimal
 from hashlib import sha256
+from pathlib import Path
 
 import pytest
 from nautilus_trader.common import MessageBus
@@ -32,6 +33,7 @@ from sextant.ranking.publisher import AssetState, RankingPublisher, ranking_data
 from sextant.ranking.reader import GenerationReader
 from sextant.ranking.registry import Registry, RegistryRow
 
+ROOT = Path(__file__).parents[2]
 D = Decimal
 NS = 1_000_000_000
 DAY = date(2026, 10, 27)
@@ -610,3 +612,24 @@ def test_missing_or_invalid_generation_emits_a_refusal_alarm() -> None:
     assert alarms == ["heartbeat_missing"]
     assert not reader.accept_generation(None, now=START)
     assert alarms[-1] == "wrong generation topic"
+
+
+def test_k2_preregistration_stays_frozen_and_not_run() -> None:
+    note = (ROOT / "docs/research/2026-11-06-ranking.md").read_bytes()
+    title = b"# K2 historical ranking evaluation: preregistration (Wave W2)\n"
+    section = note[note.rfind(title) :]
+    digest = "fc019b18602429f0f641588eed45467ca555f4bbc568284327f1a346dd33426f"
+    assert sha256(section).hexdigest() == digest
+    text = section.decode()
+    assert "**Status: frozen protocol; NOT_RUN.**" in text
+    for heading in (
+        "## 3. Point-in-time cohort (frozen)",
+        "## 4. Truth and onset",
+        "## 5. Generations and recall@30/100 per session (frozen)",
+        "## 6. Matched non-mover controls (frozen)",
+        "## 7. Trial count bound to the one TrialLog (frozen)",
+        "## 9. Execution seal",
+    ):
+        assert heading in text
+    folded = "docs/research/2026-11-09-k2-historical-ranking-preregistration.md"
+    assert not (ROOT / folded).exists()
