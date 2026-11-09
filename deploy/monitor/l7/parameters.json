@@ -1,0 +1,157 @@
+{
+  "version": 1,
+  "schema": "sextant.monitor.parameters/1",
+  "source": "docs/research/monitor-convergence/RECONCILE.md L7; Balusu (2026) doi:10.1145/3805760.3814931; IBM XPerf arXiv:2608.20370v1; grafana/docker-otel-lgtm@v0.38.0 9ffc7e00c639be7712e544e3e54331e885dccf84; read 2026-11-08",
+  "rows": [
+    {
+      "name": "cache_hit_ratio_min",
+      "kind": "alert-threshold",
+      "value": 0.75,
+      "unit": "ratio",
+      "status": "UNCALIBRATED",
+      "source": "Balusu (2026) doi:10.1145/3805760.3814931; IBM XPerf arXiv:2608.20370v1; read 2026-11-08",
+      "last_change": "2026-11-08",
+      "applies_to": "sextant:cache_hit_ratio:avg5m"
+    },
+    {
+      "name": "cache_write_waste_ratio_max",
+      "kind": "alert-threshold",
+      "value": 1.0,
+      "unit": "ratio",
+      "status": "UNCALIBRATED",
+      "source": "Balusu (2026) doi:10.1145/3805760.3814931; IBM XPerf arXiv:2608.20370v1; read 2026-11-08",
+      "last_change": "2026-11-08",
+      "applies_to": "sextant:cache_write_waste:avg5m"
+    },
+    {
+      "name": "context_pressure_ratio_max",
+      "kind": "alert-threshold",
+      "value": 0.85,
+      "unit": "ratio",
+      "status": "UNCALIBRATED",
+      "source": "Balusu (2026) doi:10.1145/3805760.3814931; IBM XPerf arXiv:2608.20370v1; read 2026-11-08",
+      "last_change": "2026-11-08",
+      "applies_to": "sextant:context_pressure:avg5m"
+    },
+    {
+      "name": "rebuild_factor_max",
+      "kind": "alert-threshold",
+      "value": 3,
+      "unit": "ratio",
+      "status": "UNCALIBRATED",
+      "source": "github/gh-aw@v1.0.1 0627fdbe4beb5f3b71aa569f8d97150b87f2111a pkg/cli/logs_models.go; read 2026-11-08",
+      "last_change": "2026-11-08",
+      "applies_to": "sextant_gh_aw_rebuild_factor"
+    },
+    {
+      "name": "consecutive_tool_failures_max",
+      "kind": "alert-threshold",
+      "value": 3,
+      "unit": "failures",
+      "status": "UNCALIBRATED",
+      "source": "Balusu (2026) doi:10.1145/3805760.3814931; IBM XPerf arXiv:2608.20370v1; read 2026-11-08",
+      "last_change": "2026-11-08",
+      "applies_to": "sextant:tool_failures:max5m"
+    },
+    {
+      "name": "error_ratio_max",
+      "kind": "alert-threshold",
+      "value": 0.05,
+      "unit": "ratio",
+      "status": "UNCALIBRATED",
+      "source": "Balusu (2026) doi:10.1145/3805760.3814931; IBM XPerf arXiv:2608.20370v1; read 2026-11-08",
+      "last_change": "2026-11-08",
+      "applies_to": "sextant:error_ratio:avg5m"
+    },
+    {
+      "name": "friction_events_per_run_max",
+      "kind": "alert-threshold",
+      "value": 2,
+      "unit": "events",
+      "status": "UNCALIBRATED",
+      "source": "github/gh-aw@v1.0.1 0627fdbe4beb5f3b71aa569f8d97150b87f2111a pkg/cli/audit_report.go; read 2026-11-08",
+      "last_change": "2026-11-08",
+      "applies_to": "sextant:friction:avg5m"
+    },
+    {
+      "name": "quota_burn_ratio_per_hour_max",
+      "kind": "alert-threshold",
+      "value": 0.1,
+      "unit": "ratio/hour",
+      "status": "UNCALIBRATED",
+      "source": "Balusu (2026) doi:10.1145/3805760.3814931; IBM XPerf arXiv:2608.20370v1; read 2026-11-08",
+      "last_change": "2026-11-08",
+      "applies_to": "sextant_llm_quota_burn_ratio_per_hour"
+    },
+    {
+      "name": "quota_time_to_exhaustion_hours_min",
+      "kind": "alert-threshold",
+      "value": 24,
+      "unit": "hours",
+      "status": "UNCALIBRATED",
+      "source": "Balusu (2026) doi:10.1145/3805760.3814931; IBM XPerf arXiv:2608.20370v1; read 2026-11-08",
+      "last_change": "2026-11-08",
+      "applies_to": "sextant:quota_time_to_exhaustion:hours"
+    },
+    {
+      "name": "cost_anomaly_multiplier_max",
+      "kind": "alert-threshold",
+      "value": 2,
+      "unit": "multiple",
+      "status": "UNCALIBRATED",
+      "source": "Balusu (2026) doi:10.1145/3805760.3814931; IBM XPerf arXiv:2608.20370v1; read 2026-11-08",
+      "last_change": "2026-11-08",
+      "applies_to": "sextant_llm_cost_usd"
+    },
+    {
+      "name": "model_effort_compliance_ratio_min",
+      "kind": "alert-threshold",
+      "value": 0.95,
+      "unit": "ratio",
+      "status": "UNCALIBRATED",
+      "source": "docs/adr/0030-latest-sota-models.md; github/gh-aw@v1.0.1 0627fdbe4beb5f3b71aa569f8d97150b87f2111a reference/engines.md; read 2026-11-08",
+      "last_change": "2026-11-08",
+      "applies_to": "sextant:model_effort_compliance:ratio"
+    },
+    {
+      "name": "monitor_staleness_seconds_max",
+      "kind": "alert-threshold",
+      "value": 900,
+      "unit": "seconds",
+      "status": "UNCALIBRATED",
+      "source": "ADR-0018 docs/adr/0018-evidence-and-learning-loop.md; read 2026-11-08",
+      "last_change": "2026-11-08",
+      "applies_to": "sextant:monitor_staleness:seconds"
+    },
+    {
+      "name": "prometheus_retention_days",
+      "kind": "storage",
+      "value": 30,
+      "unit": "days",
+      "status": "UNCALIBRATED",
+      "source": "grafana/docker-otel-lgtm@v0.38.0 9ffc7e00c639be7712e544e3e54331e885dccf84; read 2026-11-08",
+      "last_change": "2026-11-08",
+      "applies_to": "local Prometheus"
+    },
+    {
+      "name": "loki_retention_hours",
+      "kind": "storage",
+      "value": 720,
+      "unit": "hours",
+      "status": "UNCALIBRATED",
+      "source": "grafana/docker-otel-lgtm@v0.38.0 9ffc7e00c639be7712e544e3e54331e885dccf84; read 2026-11-08",
+      "last_change": "2026-11-08",
+      "applies_to": "local Loki"
+    },
+    {
+      "name": "scrape_interval_seconds",
+      "kind": "scrape",
+      "value": 15,
+      "unit": "seconds",
+      "status": "UNCALIBRATED",
+      "source": "grafana/docker-otel-lgtm@v0.38.0 9ffc7e00c639be7712e544e3e54331e885dccf84; read 2026-11-08",
+      "last_change": "2026-11-08",
+      "applies_to": "local Prometheus"
+    }
+  ]
+}

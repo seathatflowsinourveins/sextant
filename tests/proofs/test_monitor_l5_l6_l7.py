@@ -1,0 +1,264 @@
+"""Proof for L5 GitHub quality, L6 evidence integrity and L7 monitor rules.
+
+Sources: github/gh-aw@v1.0.1
+(`0627fdbe4beb5f3b71aa569f8d97150b87f2111a`) for the metric names and PR-quality
+rounds; `.github/workflows/shared/review-rules.md:16-19` and
+`.github/review/rubric.md:56-58` for the `Review of <sha>` and P0-P3 semantics;
+github/issue-metrics@v5.0.3
+(`671528652402b9b8a33da44b5c693b3161bc090f`) for the scoreboard contract;
+grafana/docker-otel-lgtm@v0.38.0
+(`9ffc7e00c639be7712e544e3e54331e885dccf84`) for the local rules backend; and
+ADR-0018 for every threshold's `UNCALIBRATED` status.
+"""
+
+from __future__ import annotations
+
+import importlib.util
+import json
+import re
+import subprocess
+import sys
+from decimal import Decimal
+from pathlib import Path
+
+import pytest
+
+ROOT = Path(__file__).parents[2]
+FIXTURE = Path(__file__).parent / "fixtures" / "monitor_pr_quality.json"
+RULES = ROOT / "deploy" / "monitor" / "l7" / "rules.yaml"
+PARAMETERS = ROOT / "deploy" / "monitor" / "l7" / "parameters.json"
+
+
+def _load(name: str, relative: str):
+    spec = importlib.util.spec_from_file_location(name, ROOT / relative)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+github = _load("_monitor_github_proof", "scripts/monitor_github.py")
+evidence = _load("_monitor_evidence_proof", "scripts/monitor_evidence.py")
+
+
+def _fixture() -> dict[int, dict]:
+    data = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    return {pr["number"]: pr for pr in data["pull_requests"]}
+
+
+def _parameters() -> dict[str, dict]:
+    return {row["name"]: row for row in json.loads(PARAMETERS.read_text())["rows"]}
+
+
+def test_review_rounds_only_count_review_of_markers_in_time_order() -> None:
+    reviews = [
+        {"body": "Review of " + "b" * 40, "submittedAt": "2026-11-01T12:00:00Z"},
+        {"body": "Looks fine to me", "submittedAt": "2026-11-01T09:00:00Z"},
+        {"body": "Review of abc123", "submittedAt": "2026-11-01T10:00:00Z"},
+        {"body": "Review of " + "a" * 40, "submittedAt": "2026-11-01T10:00:00Z"},
+    ]
+    rounds = github.review_rounds(reviews)
+    assert [round_.sha for round_ in rounds] == ["a" * 40, "b" * 40]
+    assert [round_.number for round_ in rounds] == [1, 2]
+
+
+def test_p0_to_p3_classification_and_round_three_mapping() -> None:
+    assert github.classify_finding(1, "P0") == "BLOCKING-CLASS"
+    assert github.classify_finding(3, "P0") == "BLOCKING-CLASS"
+    assert github.classify_finding(1, "P1") == "BLOCKING-CLASS"
+    assert github.classify_finding(2, "P1") == "BLOCKING-CLASS"
+    assert github.classify_finding(3, "P1") == "FOLLOW-UP"
+    assert github.classify_finding(1, "P2") == "FOLLOW-UP"
+    assert github.classify_finding(3, "P3") == "FOLLOW-UP"
+
+    quality = github.pr_quality(_fixture()[102])
+    assert [round_["number"] for round_ in quality["rounds"]] == [1, 2, 3]
+    assert quality["blocking_findings"] == 1
+    assert quality["follow_up_findings"] == 2
+    classes = {
+        (finding["priority"], finding["round"]): finding["class"] for finding in quality["findings"]
+    }
+    assert classes[("P1", 3)] == "FOLLOW-UP"
+    assert classes[("P3", 2)] == "FOLLOW-UP"
+    assert classes[("P0", 3)] == "BLOCKING-CLASS"
+
+
+def test_unresolved_threads_are_counted_by_class_at_merge() -> None:
+    quality = github.pr_quality(_fixture()[101])
+    assert [round_["number"] for round_ in quality["rounds"]] == [1, 2]
+    assert quality["blocking_findings"] == 2
+    assert quality["follow_up_findings"] == 2
+    assert quality["unresolved_blocking_at_merge"] == 2
+    assert quality["unresolved_follow_up_at_merge"] == 1
+    assert quality["check_failures"] == [{"name": "ci", "conclusion": "FAILURE"}]
+    assert quality["review_latency_seconds"] == 1800.0
+    assert quality["time_to_merge_seconds"] == 4 * 3600
+    assert quality["reverted"] is False
+
+    assert github.pr_quality(_fixture()[103])["rounds"] == []
+    assert github.pr_quality(_fixture()[104])["reverted"] is True
+
+
+def test_pr_quality_keeps_review_and_comment_bodies_out_of_its_output() -> None:
+    quality = github.pr_quality(_fixture()[101])
+    encoded = json.dumps(quality)
+    assert "bypasses the required check" not in encoded
+    assert "races the writer" not in encoded
+    assert set(quality["findings"][0]) == {"priority", "class", "round", "sha", "path", "resolved"}
+
+
+def test_aic_and_router_usd_stay_separate_and_never_summed() -> None:
+    metrics = github.cost_metrics(Decimal("2.5"), Decimal("0.42"))
+    assert {metric.name for metric in metrics} == {
+        "sextant_gh_aw_aic",
+        "sextant_router_cost_notional_usd",
+    }
+    assert {metric.unit for metric in metrics} == {"AIC", "USD"}
+    assert github.AIC_USD == Decimal("0.01")
+    aic_only = [metric for metric in metrics if metric.unit == "AIC"]
+    assert github.sum_same_unit(aic_only) == Decimal("2.5")
+    with pytest.raises(ValueError, match="refusing to sum mixed units"):
+        github.sum_same_unit(list(metrics))
+    payload = github.otlp_payload(metrics, "proof")
+    scope = payload["resourceMetrics"][0]["scopeMetrics"][0]
+    names = [metric["name"] for metric in scope["metrics"]]
+    assert "sextant_gh_aw_aic" in names
+    assert "sextant_router_cost_notional_usd" in names
+    assert not any("total" in name and "aic" in name.lower() for name in names)
+
+
+def test_gh_children_disable_telemetry_and_leave_prompt_logging_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run(args, **kwargs):
+        captured["args"] = args
+        captured["env"] = kwargs["env"]
+        return subprocess.CompletedProcess(args, 0, "{}", "")
+
+    monkeypatch.setattr(github.subprocess, "run", fake_run)
+    monkeypatch.setattr(github.os, "environ", {"PATH": "/usr/bin"})
+    github.run_gh(["api", "graphql"])
+    env = captured["env"]
+    assert isinstance(env, dict)
+    assert env["GH_TELEMETRY"] == "false"
+    assert env["DO_NOT_TRACK"] == "1"
+    for unset in (
+        "OTEL_LOG_USER_PROMPTS",
+        "OTEL_LOG_ASSISTANT_RESPONSES",
+        "OTEL_LOG_RAW_API_BODIES",
+        "OTEL_LOG_TOOL_CONTENT",
+    ):
+        assert unset not in env
+    assert captured["args"] == ["gh", "api", "graphql"]
+
+
+def test_every_manifest_proof_reference_resolves() -> None:
+    summary = evidence.resolve(ROOT / "docs" / "manifest.md", ROOT / "tests")
+    assert summary["rows"] == 119
+    assert summary["unparsed"] == 0
+    assert summary["missing_functions"] == 0
+    assert summary["missing_modules"] == 0
+    assert summary["problems"] == []
+    assert set(summary["by_suite"]) == {"proofs", "repo", "host"}
+
+
+def test_manifest_line_139_names_the_retained_runtime_proof() -> None:
+    rows = evidence.parse_manifest(ROOT / "docs" / "manifest.md")
+    row = next(row for row in rows if row.line == 139)
+    assert "test_retained_runtime_has_an_eligible_pinned_artifact[antigravity]" in row.proof
+    stale = "test_runtime_has_an_eligible_pinned_artifact_and_an_honest_launch_scope"
+    assert stale not in row.proof
+
+
+def test_alert_thresholds_are_registered_uncalibrated_and_informational() -> None:
+    rules = RULES.read_text(encoding="utf-8")
+    pairs = re.findall(
+        r"threshold_ref:\s*([A-Za-z0-9_]+)\s*\n\s*threshold_value:\s*\"([^\"]+)\"",
+        rules,
+    )
+    assert len(pairs) == 12
+    parameters = _parameters()
+    assert len(parameters) == 15
+    assert all(row["status"] == "UNCALIBRATED" for row in parameters.values())
+    for name, value in pairs:
+        assert name in parameters
+        assert parameters[name]["status"] == "UNCALIBRATED"
+        assert Decimal(str(parameters[name]["value"])) == Decimal(value)
+    assert rules.count("delivery: informational") == 12
+    assert rules.count("action: proposal-only") == 12
+    assert "action: kill" not in rules
+    assert "action: gate" not in rules
+
+
+def test_l7_rules_cover_the_converged_signals_and_staleness_is_not_zero() -> None:
+    rules = RULES.read_text(encoding="utf-8")
+    alerts = re.findall(r"^\s+- alert:\s*(\w+)", rules, re.MULTILINE)
+    records = re.findall(r"^\s+- record:\s*(\w+)", rules, re.MULTILINE)
+    assert len(alerts) == 12
+    assert len(records) == 10
+    assert "MonitorRetryLoop" in alerts
+    assert "MonitorCostAnomaly" in alerts
+    assert "MonitorModelEffortDrift" in alerts
+    assert "MonitorEvidenceStale" in alerts
+    stale = rules.split("alert: MonitorEvidenceStale", 1)[1]
+    assert "absent(" in stale
+    assert "time()" in stale
+    assert "time() - sextant_monitor_last_success_timestamp_seconds" in rules
+    assert all("for:" in block for block in rules.split("- alert:")[1:])
+
+
+def test_all_endpoints_are_loopback_and_l6_is_offline_by_default() -> None:
+    assert github.OTLP_ENDPOINT == "http://127.0.0.1:4318"
+    assert evidence.OTLP_ENDPOINT == "http://127.0.0.1:4318"
+    assert github.is_loopback_url("http://127.0.0.1:4318")
+    assert github.is_loopback_url("http://localhost:4318")
+    assert github.is_loopback_url("http://[::1]:4318")
+    assert not github.is_loopback_url("http://0.0.0.0:4318")
+    assert not github.is_loopback_url("https://127.0.0.1:4318")
+    assert not github.is_loopback_url("http://user:pass@127.0.0.1:4318")
+    with pytest.raises(ValueError, match="loopback"):
+        evidence.post_otlp("http://192.0.2.10:4318", {})
+    summary = evidence.build_summary(ROOT)
+    assert summary["network"] == "disabled"
+    for relative in (
+        "scripts/monitor_github.py",
+        "scripts/monitor_evidence.py",
+        "deploy/monitor/l7/rules.yaml",
+    ):
+        assert "0.0.0.0" not in (ROOT / relative).read_text(encoding="utf-8")  # noqa: S104
+
+
+def test_l5_commands_are_read_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    commands: list[tuple[str, ...]] = []
+
+    def fake_command(args, *, timeout: int = 180):
+        commands.append(tuple(args))
+        return subprocess.CompletedProcess(["gh", *args], 0, "{}", "")
+
+    monkeypatch.setattr(github, "run_gh", fake_command)
+    monkeypatch.setattr(github, "_systemd_state", lambda: {})
+    records = github.collect_once("seathatflowsinourveins/sextant")
+    assert records[0]["kind"] == "schema"
+    joined = " ".join(part for command in commands for part in command)
+    for mutation in ("DELETE", "PATCH", "PUT", "POST", "--method", "upload"):
+        assert mutation not in joined
+    assert any("graphql" in command for command in commands)
+
+
+def test_l6_missing_trial_witness_is_unavailable_not_zero() -> None:
+    witness = ROOT / "reports" / "research" / "trials.parquet"
+    summary = evidence.trial_ledger(ROOT)
+    if witness.exists():
+        assert summary["status"] == "OK"
+    else:
+        assert summary["status"] == "UNAVAILABLE"
+        assert "rows" not in summary
+    budgets = evidence.budget_utilization(ROOT)
+    assert budgets["src_lines"]["limit"] == 20_800
+    assert budgets["src_lines"]["value"] < 20_800
+    ages = evidence.doc_ages(ROOT)
+    assert ages["status"] == "OK"
+    assert ages["files"] > 0

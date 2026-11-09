@@ -1,0 +1,364 @@
+{
+  "pull_requests": [
+    {
+      "number": 101,
+      "title": "Add gate",
+      "url": "https://example.test/pr/101",
+      "createdAt": "2026-11-01T09:00:00Z",
+      "mergedAt": "2026-11-01T13:00:00Z",
+      "headRefOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "reviews": {
+        "nodes": [
+          {
+            "body": "Review of aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n\nFindings below.",
+            "submittedAt": "2026-11-01T10:00:00Z",
+            "state": "COMMENTED",
+            "author": {
+              "login": "reviewer"
+            }
+          },
+          {
+            "body": "Review of bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n\nFindings below.",
+            "submittedAt": "2026-11-01T12:00:00Z",
+            "state": "COMMENTED",
+            "author": {
+              "login": "reviewer"
+            }
+          },
+          {
+            "body": "Looks fine",
+            "submittedAt": "2026-11-01T11:00:00Z"
+          }
+        ]
+      },
+      "reviewThreads": {
+        "nodes": [
+          {
+            "isResolved": false,
+            "comments": {
+              "nodes": [
+                {
+                  "body": "[P0] bypasses the required check",
+                  "createdAt": "2026-11-01T10:05:00Z",
+                  "path": "src/gate.py",
+                  "originalCommit": {
+                    "oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                  },
+                  "author": {
+                    "login": "reviewer"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "isResolved": false,
+            "comments": {
+              "nodes": [
+                {
+                  "body": "[P1] races the writer",
+                  "createdAt": "2026-11-01T10:06:00Z",
+                  "path": "src/gate.py",
+                  "originalCommit": {
+                    "oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                  },
+                  "author": {
+                    "login": "reviewer"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "isResolved": false,
+            "comments": {
+              "nodes": [
+                {
+                  "body": "[P2] naming",
+                  "createdAt": "2026-11-01T12:05:00Z",
+                  "path": "src/gate.py",
+                  "originalCommit": {
+                    "oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                  },
+                  "author": {
+                    "login": "reviewer"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "isResolved": true,
+            "comments": {
+              "nodes": [
+                {
+                  "body": "[P3] typo",
+                  "createdAt": "2026-11-01T12:06:00Z",
+                  "path": "docs/x.md",
+                  "originalCommit": {
+                    "oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                  },
+                  "author": {
+                    "login": "reviewer"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "isResolved": false,
+            "comments": {
+              "nodes": [
+                {
+                  "body": "plain discussion, not a finding",
+                  "createdAt": "2026-11-01T12:07:00Z",
+                  "path": "src/x.py",
+                  "originalCommit": {
+                    "oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                  },
+                  "author": {
+                    "login": "reviewer"
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "commits": {
+        "nodes": [
+          {
+            "commit": {
+              "oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "committedDate": "2026-11-01T09:30:00Z",
+              "messageHeadline": "first"
+            }
+          },
+          {
+            "commit": {
+              "oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "committedDate": "2026-11-01T11:30:00Z",
+              "messageHeadline": "second"
+            }
+          }
+        ]
+      },
+      "statusCheckRollup": {
+        "contexts": {
+          "nodes": [
+            {
+              "__typename": "CheckRun",
+              "name": "ci",
+              "conclusion": "FAILURE"
+            },
+            {
+              "__typename": "CheckRun",
+              "name": "review",
+              "conclusion": "SUCCESS"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "number": 102,
+      "title": "Third round",
+      "url": "https://example.test/pr/102",
+      "createdAt": "2026-11-02T09:00:00Z",
+      "mergedAt": "2026-11-02T15:00:00Z",
+      "headRefOid": "cccccccccccccccccccccccccccccccccccccccc",
+      "reviews": {
+        "nodes": [
+          {
+            "body": "Review of aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n\nFindings below.",
+            "submittedAt": "2026-11-02T10:00:00Z",
+            "state": "COMMENTED",
+            "author": {
+              "login": "reviewer"
+            }
+          },
+          {
+            "body": "Review of bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n\nFindings below.",
+            "submittedAt": "2026-11-02T11:00:00Z",
+            "state": "COMMENTED",
+            "author": {
+              "login": "reviewer"
+            }
+          },
+          {
+            "body": "Review of cccccccccccccccccccccccccccccccccccccccc\n\nFindings below.",
+            "submittedAt": "2026-11-02T12:00:00Z",
+            "state": "COMMENTED",
+            "author": {
+              "login": "reviewer"
+            }
+          }
+        ]
+      },
+      "reviewThreads": {
+        "nodes": [
+          {
+            "isResolved": false,
+            "comments": {
+              "nodes": [
+                {
+                  "body": "[P1] follow-up after round three",
+                  "createdAt": "2026-11-02T12:05:00Z",
+                  "path": "src/x.py",
+                  "originalCommit": {
+                    "oid": "cccccccccccccccccccccccccccccccccccccccc"
+                  },
+                  "author": {
+                    "login": "reviewer"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "isResolved": true,
+            "comments": {
+              "nodes": [
+                {
+                  "body": "[P3] nit from round two",
+                  "createdAt": "2026-11-02T11:05:00Z",
+                  "path": "src/x.py",
+                  "originalCommit": {
+                    "oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                  },
+                  "author": {
+                    "login": "reviewer"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "isResolved": false,
+            "comments": {
+              "nodes": [
+                {
+                  "body": "[P0] real blocker",
+                  "createdAt": "2026-11-02T12:06:00Z",
+                  "path": "src/x.py",
+                  "originalCommit": {
+                    "oid": "cccccccccccccccccccccccccccccccccccccccc"
+                  },
+                  "author": {
+                    "login": "reviewer"
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "commits": {
+        "nodes": [
+          {
+            "commit": {
+              "oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "committedDate": "2026-11-02T09:30:00Z",
+              "messageHeadline": "one"
+            }
+          },
+          {
+            "commit": {
+              "oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "committedDate": "2026-11-02T10:30:00Z",
+              "messageHeadline": "two"
+            }
+          },
+          {
+            "commit": {
+              "oid": "cccccccccccccccccccccccccccccccccccccccc",
+              "committedDate": "2026-11-02T11:30:00Z",
+              "messageHeadline": "three"
+            }
+          }
+        ]
+      },
+      "statusCheckRollup": {
+        "contexts": {
+          "nodes": []
+        }
+      }
+    },
+    {
+      "number": 103,
+      "title": "No marker",
+      "url": "https://example.test/pr/103",
+      "createdAt": "2026-11-03T09:00:00Z",
+      "mergedAt": "2026-11-03T10:00:00Z",
+      "headRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "reviews": {
+        "nodes": [
+          {
+            "body": "Review of abc123",
+            "submittedAt": "2026-11-03T09:30:00Z"
+          }
+        ]
+      },
+      "reviewThreads": {
+        "nodes": [
+          {
+            "isResolved": false,
+            "comments": {
+              "nodes": [
+                {
+                  "body": "[P1] unanchored",
+                  "createdAt": "2026-11-03T09:35:00Z",
+                  "path": "src/x.py",
+                  "originalCommit": {
+                    "oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                  },
+                  "author": {
+                    "login": "reviewer"
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "commits": {
+        "nodes": []
+      },
+      "statusCheckRollup": {
+        "contexts": {
+          "nodes": []
+        }
+      }
+    },
+    {
+      "number": 104,
+      "title": "Revert Bad change",
+      "url": "https://example.test/pr/104",
+      "createdAt": "2026-11-04T09:00:00Z",
+      "mergedAt": "2026-11-04T10:00:00Z",
+      "headRefOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "reviews": {
+        "nodes": []
+      },
+      "reviewThreads": {
+        "nodes": []
+      },
+      "commits": {
+        "nodes": [
+          {
+            "commit": {
+              "oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "committedDate": "2026-11-04T09:30:00Z",
+              "messageHeadline": "Revert \"Bad change\""
+            }
+          }
+        ]
+      },
+      "statusCheckRollup": {
+        "contexts": {
+          "nodes": []
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,206 @@
+# L7 monitor rules: informational, proposal-only.
+#
+# Source: grafana/docker-otel-lgtm@v0.38.0
+# (`9ffc7e00c639be7712e544e3e54331e885dccf84`) for the local backend and its
+# OTLP/Prometheus contract; Balusu (2026) AgentTelemetry,
+# doi:10.1145/3805760.3814931, and IBM XPerf, arXiv:2608.20370v1, read
+# 2026-11-08, for the GenAI signal set. Every threshold is registered
+# UNCALIBRATED in parameters.json (ADR-0018): these rules surface a proposal,
+# they never kill a lane, gate a merge or act on a broker.
+#
+# Labels `delivery` and `action` are part of the contract, not decoration. The
+# monitor's own staleness is rendered as unknown/stale, never as a measured 0.
+groups:
+  - name: sextant-monitor-recording
+    interval: 15s
+    rules:
+      - record: sextant:cache_hit_ratio:avg5m
+        expr: avg_over_time(sextant_llm_cache_hit_ratio[5m])
+      - record: sextant:cache_write_waste:avg5m
+        expr: avg_over_time(sextant_llm_cache_write_waste_ratio[5m])
+      - record: sextant:context_pressure:avg5m
+        expr: avg_over_time(sextant_agent_context_pressure_ratio[5m])
+      - record: sextant:tool_failures:max5m
+        expr: max_over_time(sextant_agent_tool_failures_consecutive[5m])
+      - record: sextant:error_ratio:avg5m
+        expr: avg_over_time(sextant_agent_error_ratio[5m])
+      - record: sextant:friction:avg5m
+        expr: avg_over_time(sextant_gh_aw_friction_events[5m])
+      - record: sextant:cost_usd:p95_7d
+        expr: quantile_over_time(0.95, sextant_llm_cost_usd[7d])
+      - record: sextant:quota_time_to_exhaustion:hours
+        expr: sextant_llm_quota_remaining_ratio / clamp_min(sextant_llm_quota_burn_ratio_per_hour, 0.000001)
+      - record: sextant:model_effort_compliance:ratio
+        expr: avg_over_time(sextant_review_model_effort_compliance_ratio[1h])
+      - record: sextant:monitor_staleness:seconds
+        expr: time() - sextant_monitor_last_success_timestamp_seconds
+
+  - name: sextant-monitor-alerts
+    rules:
+      - alert: MonitorCacheHitRatioLow
+        expr: sextant:cache_hit_ratio:avg5m < 0.75
+        for: 30m
+        labels:
+          severity: info
+          delivery: informational
+          action: proposal-only
+          threshold_ref: cache_hit_ratio_min
+          threshold_value: "0.75"
+        annotations:
+          summary: "Prompt-cache hit ratio below the registered floor"
+          description: "A low hit ratio is a candidate for a prompt/cache layout proposal; it never changes a lane."
+          runbook: deploy/monitor/l7/README.md
+
+      - alert: MonitorCacheWriteWasteHigh
+        expr: sextant:cache_write_waste:avg5m > 1.0
+        for: 30m
+        labels:
+          severity: info
+          delivery: informational
+          action: proposal-only
+          threshold_ref: cache_write_waste_ratio_max
+          threshold_value: "1.0"
+        annotations:
+          summary: "Cache writes exceed cache reads"
+          description: "Wasted cache-write spend is a proposal signal only."
+          runbook: deploy/monitor/l7/README.md
+
+      - alert: MonitorContextPressureHigh
+        expr: sextant:context_pressure:avg5m > 0.85
+        for: 15m
+        labels:
+          severity: info
+          delivery: informational
+          action: proposal-only
+          threshold_ref: context_pressure_ratio_max
+          threshold_value: "0.85"
+        annotations:
+          summary: "Context window pressure above the registered ceiling"
+          description: "Surface a compaction proposal; never truncate or kill an agent."
+          runbook: deploy/monitor/l7/README.md
+
+      - alert: MonitorWorkingSetRebuildChurn
+        expr: sextant_gh_aw_rebuild_factor > 3
+        for: 30m
+        labels:
+          severity: info
+          delivery: informational
+          action: proposal-only
+          threshold_ref: rebuild_factor_max
+          threshold_value: "3"
+        annotations:
+          summary: "Working set is being rebuilt repeatedly"
+          description: "A rebuild factor above the registered ceiling is a caching proposal, not a kill switch."
+          runbook: deploy/monitor/l7/README.md
+
+      - alert: MonitorRetryLoop
+        expr: sextant:tool_failures:max5m > 3
+        for: 5m
+        labels:
+          severity: info
+          delivery: informational
+          action: proposal-only
+          threshold_ref: consecutive_tool_failures_max
+          threshold_value: "3"
+        annotations:
+          summary: "Consecutive tool_result failures in a rolling five-minute window"
+          description: "A retry loop is surfaced for a human; the monitor does not stop the lane."
+          runbook: deploy/monitor/l7/README.md
+
+      - alert: MonitorErrorRatioHigh
+        expr: sextant:error_ratio:avg5m > 0.05
+        for: 30m
+        labels:
+          severity: info
+          delivery: informational
+          action: proposal-only
+          threshold_ref: error_ratio_max
+          threshold_value: "0.05"
+        annotations:
+          summary: "Agent error ratio above the registered SLO"
+          description: "This spends no error budget automatically; it informs the next review."
+          runbook: deploy/monitor/l7/README.md
+
+      - alert: MonitorFrictionHigh
+        expr: sextant:friction:avg5m > 2
+        for: 30m
+        labels:
+          severity: info
+          delivery: informational
+          action: proposal-only
+          threshold_ref: friction_events_per_run_max
+          threshold_value: "2"
+        annotations:
+          summary: "gh-aw friction events per run above the registered ceiling"
+          description: "Friction is a harness-quality proposal, never an automatic remediation."
+          runbook: deploy/monitor/l7/README.md
+
+      - alert: MonitorQuotaBurnFast
+        expr: sextant_llm_quota_burn_ratio_per_hour > 0.10
+        for: 30m
+        labels:
+          severity: info
+          delivery: informational
+          action: proposal-only
+          threshold_ref: quota_burn_ratio_per_hour_max
+          threshold_value: "0.10"
+        annotations:
+          summary: "Quota burn velocity above the registered ceiling"
+          description: "Projection only; no quota purchase and no lane pause is automatic."
+          runbook: deploy/monitor/l7/README.md
+
+      - alert: MonitorQuotaExhaustionSoon
+        expr: sextant:quota_time_to_exhaustion:hours < 24 and sextant:quota_time_to_exhaustion:hours > 0
+        for: 10m
+        labels:
+          severity: info
+          delivery: informational
+          action: proposal-only
+          threshold_ref: quota_time_to_exhaustion_hours_min
+          threshold_value: "24"
+        annotations:
+          summary: "Projected quota exhaustion inside the registered window"
+          description: "A projection for the owner; it does not stop a lane or a session."
+          runbook: deploy/monitor/l7/README.md
+
+      - alert: MonitorCostAnomaly
+        expr: sextant_llm_cost_usd > 2 * sextant:cost_usd:p95_7d
+        for: 30m
+        labels:
+          severity: info
+          delivery: informational
+          action: proposal-only
+          threshold_ref: cost_anomaly_multiplier_max
+          threshold_value: "2"
+        annotations:
+          summary: "Cost above the trailing seven-day p95 multiple"
+          description: "The trailing p95 is a baseline, not a cap; no automatic throttle follows."
+          runbook: deploy/monitor/l7/README.md
+
+      - alert: MonitorModelEffortDrift
+        expr: sextant:model_effort_compliance:ratio < 0.95
+        for: 1h
+        labels:
+          severity: info
+          delivery: informational
+          action: proposal-only
+          threshold_ref: model_effort_compliance_ratio_min
+          threshold_value: "0.95"
+        annotations:
+          summary: "Model/effort compliance below the ADR-0030 floor"
+          description: "A drift proposal; model pins change only through their reviewed PR."
+          runbook: deploy/monitor/l7/README.md
+
+      - alert: MonitorEvidenceStale
+        expr: absent(sextant_monitor_last_success_timestamp_seconds) or (time() - sextant_monitor_last_success_timestamp_seconds > 900)
+        for: 5m
+        labels:
+          severity: info
+          delivery: informational
+          action: proposal-only
+          threshold_ref: monitor_staleness_seconds_max
+          threshold_value: "900"
+        annotations:
+          summary: "Monitor evidence is stale or unknown"
+          description: "Render stale/unknown, never 0; the monitor does not hide its own gap."
+          runbook: deploy/monitor/l7/README.md
