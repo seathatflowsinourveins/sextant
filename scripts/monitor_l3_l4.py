@@ -2,13 +2,14 @@
 """Read-only L3/L4 bridge for the monitor: OmniRoute, dsh v4, Orca and AO.
 
 Usage:
-    python3 -I scripts/monitor_l3_l4.py [--write PATH] [--otlp [URL]]
+    python3 -I scripts/monitor_l3_l4.py [--dsh-home PATH] [--write PATH] [--otlp [URL]]
 
 The bridge never writes a router, AO or runtime file. It opens both SQLite
 databases with ``mode=ro`` and reads only the metadata columns allowlisted below,
 never request/response bodies, prompts, terminal text, logs or credentials.
 Orca is called only through the fixed metadata command list; OTLP goes only to a
 loopback endpoint. Missing evidence is reported as unavailable, never zero.
+dsh session collection is OFF by default and requires an explicit --dsh-home.
 """
 
 from __future__ import annotations
@@ -964,14 +965,12 @@ def default_paths() -> dict[str, Path | None]:
     )
     ao_value = os.environ.get("SEXTANT_AO_DB")
     ao_db = Path(ao_value) if ao_value else home / ".ao" / "data" / "ao.db"
-    dsh_value = os.environ.get("DSH_HOME")
-    dsh_root = Path(dsh_value) if dsh_value else home / ".dsh-enhanced"
     orca_value = os.environ.get("SEXTANT_ORCA")
     orca = Path(orca_value) if orca_value else home / ".config" / "orca" / "cli" / "bin" / "orca"
     if not orca.exists():
         found = shutil.which("orca")
         orca = Path(found) if found else None
-    return {"router_db": router, "ao_db": ao_db, "dsh_root": dsh_root, "orca": orca}
+    return {"router_db": router, "ao_db": ao_db, "dsh_root": None, "orca": orca}
 
 
 def snapshot(
@@ -993,7 +992,7 @@ def snapshot(
         else {
             "root": None,
             "available": False,
-            "error": "no dsh home",
+            "error": "dsh collection disabled; opt in with --dsh-home PATH",
             "sessions": 0,
             "calls": 0,
             "by_model": [],
@@ -1353,6 +1352,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     params = load_params()
     endpoint = str(params["monitor_otlp_endpoint"]["value"])
     parser = argparse.ArgumentParser(description="Read-only L3/L4 monitor bridge")
+    parser.add_argument(
+        "--dsh-home", type=Path, help="opt in to dsh session reads from this home (OFF by default)"
+    )
     parser.add_argument("--write", type=Path, help="write the JSON snapshot here")
     parser.add_argument(
         "--otlp",
@@ -1361,7 +1363,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         help=f"emit OTLP/HTTP JSON to this loopback URL (default {endpoint})",
     )
     args = parser.parse_args(argv)
-    snap = snapshot(params=params)
+    paths = default_paths()
+    paths["dsh_root"] = args.dsh_home
+    snap = snapshot(paths=paths, params=params)
     text = json.dumps(snap, indent=2, sort_keys=True)
     if args.write:
         _write(args.write, text)

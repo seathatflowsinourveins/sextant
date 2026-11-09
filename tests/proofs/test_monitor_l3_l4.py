@@ -600,6 +600,66 @@ def test_orca_runs_only_metadata_commands(tmp_path: Path, monkeypatch: pytest.Mo
         assert isinstance(snapshot["commands"][" ".join(command)]["ok"], bool)
 
 
+@pytest.mark.parametrize("dsh_home", [None, ".dsh", ".dsh-enhanced"])
+def test_dsh_collection_is_off_by_default(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    dsh_home: str | None,
+) -> None:
+    _dsh_root(tmp_path / ".dsh")
+    _dsh_root(tmp_path / ".dsh-enhanced")
+    monkeypatch.setattr(mon.Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(mon.shutil, "which", lambda name: None)
+    monkeypatch.setenv("SEXTANT_OMNIROUTE_DB", str(_router_db(tmp_path / "storage.sqlite")))
+    monkeypatch.setenv("SEXTANT_AO_DB", str(_ao_db(tmp_path / "ao.db")))
+    monkeypatch.setenv("SEXTANT_ORCA", str(tmp_path / "no-orca"))
+    if dsh_home is None:
+        monkeypatch.delenv("DSH_HOME", raising=False)
+    else:
+        monkeypatch.setenv("DSH_HOME", str(tmp_path / dsh_home))
+
+    def no_dsh(*args: Any, **kwargs: Any) -> None:
+        raise AssertionError("dsh collection must require explicit opt-in")
+
+    monkeypatch.setattr(mon, "dsh_snapshot", no_dsh)
+    assert mon.default_paths()["dsh_root"] is None
+    snapshot = mon.snapshot(params=_params(), env={}, now=NOW)
+    assert snapshot["sources"]["dsh"] == {"root": None, "available": False}
+    assert "disabled" in snapshot["dsh"]["error"]
+    assert snapshot["dsh"]["deepseek"] is None
+    assert snapshot["router"]["available"] is True
+    assert snapshot["ao"]["available"] is True
+    assert not any(
+        row["name"].startswith("sextant.dsh.") for row in mon.metric_rows(snapshot, _params(), NOW)
+    )
+    assert mon.main([]) == 0
+    output = json.loads(capsys.readouterr().out)
+    assert output["sources"]["dsh"] == {"root": None, "available": False}
+    assert "disabled" in output["dsh"]["error"]
+
+
+def test_dsh_collection_requires_an_explicit_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = _dsh_root(tmp_path / ".dsh")
+    monkeypatch.setattr(
+        mon,
+        "default_paths",
+        lambda: {"router_db": None, "ao_db": None, "dsh_root": None, "orca": None},
+    )
+    assert mon.main(["--dsh-home", str(root)]) == 0
+    output = json.loads(capsys.readouterr().out)
+    assert output["sources"]["dsh"] == {"root": str(root), "available": True}
+    assert output["dsh"]["calls"] == 1
+    assert output["dsh"]["by_model"][0]["tokens"] == {
+        "input": 110,
+        "output": 25,
+        "cache_read": 5,
+        "cache_write": 0,
+    }
+
+
 def test_dsh_v4_derives_ttft_and_decode_rate(tmp_path: Path) -> None:
     root = _dsh_root(tmp_path)
     path = root / "sessions" / "work" / "uuid" / "session.v4.jsonl"

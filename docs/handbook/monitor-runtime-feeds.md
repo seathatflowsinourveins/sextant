@@ -76,3 +76,26 @@ Sources: `deepseek-ai/deepseek-harness@66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db`
 `packages/llm/token-meter/src/turn-usage.ts:77-88`;
 [OpenTelemetry metrics data model](https://opentelemetry.io/docs/specs/otel/metrics/data-model/),
 spatial reaggregation, read 2026-11-09. This adds no deployment or new source reads.
+
+## dsh collection is opt-in
+
+PR #18's final-turn ruling on 2026-11-09 ships dsh session collection **OFF by
+default** after review of `d82b6a863c434f9c624a1dde59a00b979ca35043` found that
+automatic discovery guessed the wrong runtime home. Do not substitute another
+guessed default: `snapshot()` and a CLI invocation without `--dsh-home PATH`
+perform no dsh session reads, even when `DSH_HOME` is inherited or valid logs exist
+in either `~/.dsh` or `~/.dsh-enhanced`. The source reports disabled/unavailable;
+no dsh token, timing or cost metric is exported. Other bridge feeds are unchanged.
+
+An operator can opt in with `python3 -I scripts/monitor_l3_l4.py --dsh-home ~/.dsh`
+or a caller can supply an explicit API `paths["dsh_root"]`. Neither path changes
+runtime configuration or starts a service. The regression proofs
+`test_dsh_collection_is_off_by_default` and
+`test_dsh_collection_requires_an_explicit_home` exercise both CLI and API defaults,
+forbid the collector from being invoked without opt-in, and retain explicit-home
+collection. Existing non-blocking review findings remain follow-ups, not fixes here.
+
+Sources: [Python 3.13 argparse](https://docs.python.org/3.13/library/argparse.html#default)
+(`None` for an absent optional argument) and
+[Release Toggles](https://martinfowler.com/articles/feature-toggles.html#ReleaseToggles),
+both read 2026-11-09; PR #18's final-turn ruling.
