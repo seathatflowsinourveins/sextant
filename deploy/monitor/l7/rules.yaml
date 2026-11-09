@@ -11,6 +11,30 @@
 # Labels `delivery` and `action` are part of the contract, not decoration. The
 # monitor's own staleness is rendered as unknown/stale, never as a measured 0.
 groups:
+  # Normalize the pinned OTel GenAI counters into the contract series this pack
+  # can derive without inventing a metric. The token names are the ones in M1's
+  # genai-mapping.md; a counter exported by
+  # the OTel collector gains the `_total` suffix. These rules produce nothing
+  # until M1/PR-M2 feeds the counters, so the dependent alerts stay dormant
+  # rather than reading a fabricated zero.
+  - name: sextant-monitor-normalize
+    interval: 15s
+    rules:
+      - record: sextant_llm_cache_hit_ratio
+        expr: |
+          sum(rate(gen_ai_client_inference_usage_cache_read_input_tokens_total[5m]))
+          /
+          clamp_min(sum(rate(gen_ai_client_inference_usage_input_tokens_total[5m])), 0.000001)
+
+      - record: sextant_llm_cache_write_waste_ratio
+        expr: |
+          sum(rate(gen_ai_client_inference_usage_cache_write_input_tokens_total[5m]))
+          /
+          clamp_min(sum(rate(gen_ai_client_inference_usage_cache_read_input_tokens_total[5m])), 0.000001)
+
+      - record: sextant_agent_error_ratio
+        expr: avg(sextant_gh_aw_error_ratio)
+
   - name: sextant-monitor-recording
     interval: 15s
     rules:
@@ -46,6 +70,8 @@ groups:
           action: proposal-only
           threshold_ref: cache_hit_ratio_min
           threshold_value: "0.75"
+          source_series: sextant_llm_cache_hit_ratio
+          producer_status: produced
         annotations:
           summary: "Prompt-cache hit ratio below the registered floor"
           description: "A low hit ratio is a candidate for a prompt/cache layout proposal; it never changes a lane."
@@ -60,6 +86,8 @@ groups:
           action: proposal-only
           threshold_ref: cache_write_waste_ratio_max
           threshold_value: "1.0"
+          source_series: sextant_llm_cache_write_waste_ratio
+          producer_status: produced
         annotations:
           summary: "Cache writes exceed cache reads"
           description: "Wasted cache-write spend is a proposal signal only."
@@ -74,6 +102,8 @@ groups:
           action: proposal-only
           threshold_ref: context_pressure_ratio_max
           threshold_value: "0.85"
+          source_series: sextant_agent_context_pressure_ratio
+          producer_status: pending
         annotations:
           summary: "Context window pressure above the registered ceiling"
           description: "Surface a compaction proposal; never truncate or kill an agent."
@@ -88,6 +118,8 @@ groups:
           action: proposal-only
           threshold_ref: rebuild_factor_max
           threshold_value: "3"
+          source_series: sextant_gh_aw_rebuild_factor
+          producer_status: produced
         annotations:
           summary: "Working set is being rebuilt repeatedly"
           description: "A rebuild factor above the registered ceiling is a caching proposal, not a kill switch."
@@ -102,6 +134,8 @@ groups:
           action: proposal-only
           threshold_ref: consecutive_tool_failures_max
           threshold_value: "3"
+          source_series: sextant_agent_tool_failures_consecutive
+          producer_status: pending
         annotations:
           summary: "Consecutive tool_result failures in a rolling five-minute window"
           description: "A retry loop is surfaced for a human; the monitor does not stop the lane."
@@ -116,6 +150,8 @@ groups:
           action: proposal-only
           threshold_ref: error_ratio_max
           threshold_value: "0.05"
+          source_series: sextant_agent_error_ratio
+          producer_status: produced
         annotations:
           summary: "Agent error ratio above the registered SLO"
           description: "This spends no error budget automatically; it informs the next review."
@@ -130,6 +166,8 @@ groups:
           action: proposal-only
           threshold_ref: friction_events_per_run_max
           threshold_value: "2"
+          source_series: sextant_gh_aw_friction_events
+          producer_status: produced
         annotations:
           summary: "gh-aw friction events per run above the registered ceiling"
           description: "Friction is a harness-quality proposal, never an automatic remediation."
@@ -144,6 +182,8 @@ groups:
           action: proposal-only
           threshold_ref: quota_burn_ratio_per_hour_max
           threshold_value: "0.10"
+          source_series: sextant_llm_quota_burn_ratio_per_hour
+          producer_status: pending
         annotations:
           summary: "Quota burn velocity above the registered ceiling"
           description: "Projection only; no quota purchase and no lane pause is automatic."
@@ -158,6 +198,8 @@ groups:
           action: proposal-only
           threshold_ref: quota_time_to_exhaustion_hours_min
           threshold_value: "24"
+          source_series: sextant_llm_quota_remaining_ratio
+          producer_status: pending
         annotations:
           summary: "Projected quota exhaustion inside the registered window"
           description: "A projection for the owner; it does not stop a lane or a session."
@@ -172,6 +214,8 @@ groups:
           action: proposal-only
           threshold_ref: cost_anomaly_multiplier_max
           threshold_value: "2"
+          source_series: sextant_llm_cost_usd
+          producer_status: pending
         annotations:
           summary: "Cost above the trailing seven-day p95 multiple"
           description: "The trailing p95 is a baseline, not a cap; no automatic throttle follows."
@@ -186,6 +230,8 @@ groups:
           action: proposal-only
           threshold_ref: model_effort_compliance_ratio_min
           threshold_value: "0.95"
+          source_series: sextant_review_model_effort_compliance_ratio
+          producer_status: pending
         annotations:
           summary: "Model/effort compliance below the ADR-0030 floor"
           description: "A drift proposal; model pins change only through their reviewed PR."
@@ -200,6 +246,8 @@ groups:
           action: proposal-only
           threshold_ref: monitor_staleness_seconds_max
           threshold_value: "900"
+          source_series: sextant_monitor_last_success_timestamp_seconds
+          producer_status: produced
         annotations:
           summary: "Monitor evidence is stale or unknown"
           description: "Render stale/unknown, never 0; the monitor does not hide its own gap."

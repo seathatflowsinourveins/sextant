@@ -105,7 +105,8 @@ def test_pr_quality_keeps_review_and_comment_bodies_out_of_its_output() -> None:
     encoded = json.dumps(quality)
     assert "bypasses the required check" not in encoded
     assert "races the writer" not in encoded
-    assert set(quality["findings"][0]) == {"priority", "class", "round", "sha", "path", "resolved"}
+    assert "path" not in encoded
+    assert set(quality["findings"][0]) == {"priority", "class", "round", "sha", "resolved"}
 
 
 def test_aic_and_router_usd_stay_separate_and_never_summed() -> None:
@@ -244,7 +245,10 @@ def test_l7_rules_cover_the_converged_signals_and_staleness_is_not_zero() -> Non
     alerts = re.findall(r"^\s+- alert:\s*(\w+)", rules, re.MULTILINE)
     records = re.findall(r"^\s+- record:\s*(\w+)", rules, re.MULTILINE)
     assert len(alerts) == 12
-    assert len(records) == 10
+    assert len(records) == 13
+    assert "sextant_llm_cache_hit_ratio" in records
+    assert "sextant_llm_cache_write_waste_ratio" in records
+    assert "sextant_agent_error_ratio" in records
     assert "MonitorRetryLoop" in alerts
     assert "MonitorCostAnomaly" in alerts
     assert "MonitorModelEffortDrift" in alerts
@@ -308,3 +312,107 @@ def test_l6_missing_trial_witness_is_unavailable_not_zero() -> None:
     ages = evidence.doc_ages(ROOT)
     assert ages["status"] == "OK"
     assert ages["files"] > 0
+
+
+PRODUCERS = ROOT / "deploy" / "monitor" / "l7" / "producers.json"
+
+
+def test_l5_collector_output_never_contains_review_bodies_or_paths(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    payload = {
+        "data": {"repository": {"pullRequests": {"nodes": [_fixture()[101]]}}},
+    }
+
+    def fake_run(args, **kwargs):
+        if "graphql" in args:
+            return subprocess.CompletedProcess(["gh", *args], 0, json.dumps(payload), "")
+        if "runners" in args:
+            return subprocess.CompletedProcess(["gh", *args], 0, json.dumps({"runners": []}), "")
+        return subprocess.CompletedProcess(["gh", *args], 0, "{}", "")
+
+    monkeypatch.setattr(github, "run_gh", fake_run)
+    monkeypatch.setattr(github, "_systemd_state", lambda: {})
+    records = github.collect_once("seathatflowsinourveins/sextant")
+    encoded = json.dumps(records)
+    assert "bypasses the required check" not in encoded
+    assert "races the writer" not in encoded
+    assert "src/gate.py" not in encoded
+    assert '"body"' not in encoded
+    assert '"path"' not in encoded
+    metrics = github.metrics_from_records(records, "seathatflowsinourveins/sextant")
+    assert any(metric.name == "sextant_pr_findings_blocking_class" for metric in metrics)
+
+    out = tmp_path / "github.jsonl"
+    github.write_jsonl(out, records)
+    stored = out.read_text(encoding="utf-8")
+    assert "bypasses the required check" not in stored
+    assert "src/gate.py" not in stored
+
+    monkeypatch.setattr(github, "collect_once", lambda *args, **kwargs: records)
+    assert github.main(["--dry-run", "--no-otlp"]) == 0
+    assert "bypasses the required check" not in capsys.readouterr().out
+
+
+def test_l5_emits_heartbeat_and_run_error_ratio() -> None:
+    metrics = github.metrics_from_records(
+        [{"kind": "schema", "payload": {"version": 1}}], "seathatflowsinourveins/sextant"
+    )
+    by_name = {metric.name: metric for metric in metrics}
+    heartbeat = by_name["sextant_monitor_last_success_timestamp_seconds"]
+    assert heartbeat.unit == "seconds"
+    assert float(heartbeat.value) > 0
+
+    failed = github.metrics_from_records([{"kind": "error", "payload": {}}], "repo")
+    assert not any(
+        metric.name == "sextant_monitor_last_success_timestamp_seconds" for metric in failed
+    )
+
+    run = github.run_metrics(
+        {"workflow_name": "review", "run_id": 7, "turns": 10, "error_count": 2}
+    )
+    ratios = [metric for metric in run if metric.name == "sextant_gh_aw_error_ratio"]
+    assert len(ratios) == 1
+    assert Decimal(str(ratios[0].value)) == Decimal("0.2")
+
+
+def test_every_l7_alert_series_has_a_registered_producer() -> None:
+    data = json.loads(PRODUCERS.read_text(encoding="utf-8"))
+    rows = {row["series"]: row for row in data["rows"]}
+    required = {
+        "sextant_llm_cache_hit_ratio",
+        "sextant_llm_cache_write_waste_ratio",
+        "sextant_agent_context_pressure_ratio",
+        "sextant_agent_tool_failures_consecutive",
+        "sextant_agent_error_ratio",
+        "sextant_llm_cost_usd",
+        "sextant_llm_quota_remaining_ratio",
+        "sextant_llm_quota_burn_ratio_per_hour",
+        "sextant_review_model_effort_compliance_ratio",
+        "sextant_monitor_last_success_timestamp_seconds",
+    }
+    assert required <= set(rows)
+
+    rules = RULES.read_text(encoding="utf-8")
+    alerts = rules.split("- alert:")[1:]
+    assert len(alerts) == 12
+    for alert in alerts:
+        series = re.search(r"source_series:\s*([a-z0-9_]+)", alert)
+        status = re.search(r"producer_status:\s*(produced|pending)", alert)
+        assert series is not None
+        assert status is not None
+        row = rows[series.group(1)]
+        assert row["status"].lower() == status.group(1)
+        if row["status"] == "PENDING":
+            assert row.get("owner")
+            assert row.get("reason")
+        elif row["producer"].startswith("recording-rule:"):
+            record = row["producer"].split(":", 1)[1]
+            assert f"- record: {record}" in rules
+
+    source = (ROOT / "scripts" / "monitor_github.py").read_text(encoding="utf-8")
+    for row in rows.values():
+        if row["status"] == "PRODUCED" and row["producer"].startswith("scripts/"):
+            assert row["series"] in source
+    assert "gen_ai_client_inference_usage_cache_read_input_tokens_total" in rules
+    assert "gen_ai_client_inference_usage_cache_write_input_tokens_total" in rules

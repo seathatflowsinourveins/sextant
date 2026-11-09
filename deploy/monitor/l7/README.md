@@ -20,13 +20,19 @@ OTel GenAI conventions and the signal set in Balusu (2026)
 
 ## Files
 
-- `rules.yaml`: ten recording rules and twelve alert rules covering the eight
-  converged signals: cache efficiency and waste, context pressure and rebuild
-  churn, a rolling five-minute retry loop, error and friction SLOs, quota burn
-  and time-to-exhaustion, cost anomaly against the trailing p95, ADR-0030
-  model/effort compliance, and the monitor's own staleness.
+- `rules.yaml`: thirteen recording rules and twelve alert rules covering the
+  eight converged signals: cache efficiency and waste, context pressure and
+  rebuild churn, a rolling five-minute retry loop, error and friction SLOs,
+  quota burn and time-to-exhaustion, cost anomaly against the trailing p95,
+  ADR-0030 model/effort compliance, and the monitor's own staleness. Three
+  normalization records map the pinned OTel GenAI counters (and L5's run error
+  ratio) onto the ten `sextant_llm_*`/`sextant_agent_*` contract series; the
+  other ten records derive the signal vector.
 - `parameters.json`: the registry. Each alert carries `threshold_ref` and
   `threshold_value`; the referenced row holds the value and its source.
+- `producers.json`: the producer map. Each of the twelve alert series names
+  either the script or recording rule that writes it, or a pending owner and
+  the reason the source does not exist yet.
 
 ## Wiring
 
@@ -35,18 +41,29 @@ LGTM Grafana provisioning tree. The backend is loopback only: Grafana 3000,
 OTLP/gRPC 4317, OTLP/HTTP 4318 on `127.0.0.1`. Do not publish those ports on
 another interface.
 
-The metric contract comes from the other monitor writers: M1's collector emits
-the OTel GenAI series; L5 (`scripts/monitor_github.py`) emits
-`sextant_gh_aw_*`, `sextant_pr_*` and `sextant_runner_*`; L6
-(`scripts/monitor_evidence.py`) emits `sextant_manifest_*`,
+The metric contract comes from the other monitor writers. L5
+(`scripts/monitor_github.py`) emits the `sextant_gh_aw_*`, `sextant_pr_*` and
+`sextant_runner_*` families and the `sextant_monitor_last_success_timestamp_seconds`
+heartbeat; L6 (`scripts/monitor_evidence.py`) emits `sextant_manifest_*`,
 `sextant_budget_utilization`, `sextant_doc_age_days` and
-`sextant_trial_ledger_rows`. A series that has not arrived is stale/unknown,
-not zero. `MonitorEvidenceStale` fires on an absent timestamp as well as an old
-one, so a quiet monitor cannot look healthy.
+`sextant_trial_ledger_rows`. M1's pinned GenAI counters feed the three
+normalization records once PR-M2 lands the runtime feed.
+
+Six series have no writer in this tree yet: context pressure, consecutive tool
+failures, cost in USD, quota remaining, quota burn and review model/effort
+compliance. `producers.json` records each one as `PENDING` with its owner and
+the reason a source does not exist; `rules.yaml` labels those alerts
+`producer_status: pending`, so they stay dormant instead of reading a
+fabricated zero. The six produced alerts are cache hit, cache waste, rebuild
+churn, run error ratio, friction and monitor staleness. A series that has not
+arrived is stale/unknown, not zero. `MonitorEvidenceStale` fires on an absent
+timestamp as well as an old one, so a quiet monitor cannot look healthy.
 
 ## Privacy
 
-The collector never stores prompts, responses, tool arguments, command lines or
-file paths. L5 strips review and comment bodies after parsing; L6 reads only
-the manifest, test names, git timestamps and local budget counts. Nothing in
-this directory uploads to a third party.
+L5 parses the GraphQL payload into derived per-PR quality summaries inside
+`collect_once`; review bodies, comment bodies and diff paths never leave that
+function, so `--dry-run` output and the local JSONL contain no prompt or
+response text, tool arguments, command lines or file paths. L6 reads only the
+manifest, test names, git timestamps and local budget counts. Nothing in this
+directory uploads to a third party.

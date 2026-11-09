@@ -45,6 +45,23 @@ REVIEW_MARKER = re.compile(r"^Review of ([0-9a-f]{40})(?:\s|$)")
 FINDING_MARKER = re.compile(r"^\[(P[0-3])\](?:\s|$)")
 FAILED_CHECKS = frozenset({"FAILURE", "TIMED_OUT", "CANCELLED", "ERROR", "STARTUP_FAILURE"})
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+# Raw review/comment text never leaves collect_once. The PR path is special: the
+# parser needs the bodies to classify findings, then stores only the summary.
+PRIVATE_FIELDS = frozenset(
+    {
+        "body",
+        "bodyText",
+        "bodyHTML",
+        "path",
+        "file_path",
+        "tool_input",
+        "tool_parameters",
+        "full_command",
+        "bash_command",
+        "arguments",
+        "output",
+    }
+)
 
 PR_QUERY = """
 query($owner: String!, $name: String!, $limit: Int!) {
@@ -324,7 +341,6 @@ def pr_quality(pr: Mapping[str, Any]) -> dict[str, Any]:
                 "class": finding.finding_class,
                 "round": finding.round_number,
                 "sha": finding.sha,
-                "path": finding.path,
                 "resolved": finding.resolved,
             }
             for finding in findings
@@ -341,6 +357,20 @@ def pr_quality(pr: Mapping[str, Any]) -> dict[str, Any]:
         ),
         "check_failures": _check_failures(pr),
         "reverted": reverted,
+    }
+
+
+def _pr_quality_record(payload: Mapping[str, Any], repository: str) -> dict[str, Any]:
+    """Replace the raw GraphQL payload with per-PR derived summaries."""
+    data = payload.get("data")
+    repo = data.get("repository") if isinstance(data, Mapping) else None
+    pull_requests = _nodes(repo.get("pullRequests") if isinstance(repo, Mapping) else None)
+    return {
+        "kind": "pull_requests",
+        "payload": {
+            "repository": repository,
+            "pull_requests": [pr_quality(pr) for pr in pull_requests],
+        },
     }
 
 
@@ -432,6 +462,11 @@ def run_metrics(run: Mapping[str, Any]) -> list[Metric]:
     aic = _number(run.get("aic"))
     if aic is not None:
         metrics.append(Metric("sextant_gh_aw_aic_total", "AIC", Decimal(str(aic)), attrs))
+    errors = _number(run.get("error_count"))
+    turns = _number(run.get("turns"))
+    if errors is not None and turns is not None and turns > 0:
+        ratio = Decimal(str(errors)) / Decimal(str(turns))
+        metrics.append(Metric("sextant_gh_aw_error_ratio", "ratio", ratio, attrs))
     working_set = run.get("working_set")
     if isinstance(working_set, Mapping):
         rebuild = _number(working_set.get("rebuild_factor"))
@@ -508,6 +543,17 @@ def _json_from_output(text: str) -> Any:
     return None
 
 
+def _strip_private(value: Any) -> Any:
+    """Drop raw text and file-path fields from a parsed payload recursively."""
+    if isinstance(value, Mapping):
+        return {
+            key: _strip_private(item) for key, item in value.items() if key not in PRIVATE_FIELDS
+        }
+    if isinstance(value, list):
+        return [_strip_private(item) for item in value]
+    return value
+
+
 def _command_record(kind: str, args: Sequence[str], *, timeout: int, parser: str) -> dict[str, Any]:
     try:
         completed = run_gh(args, timeout=timeout)
@@ -528,7 +574,9 @@ def _command_record(kind: str, args: Sequence[str], *, timeout: int, parser: str
                 "kind": "error",
                 "payload": {"source": kind, "error": "response was not JSON"},
             }
-        return {"kind": kind, "payload": payload}
+        if kind == "pull_requests":
+            return {"kind": kind, "payload": payload}
+        return {"kind": kind, "payload": _strip_private(payload)}
     return {"kind": kind, "payload": {"text": completed.stdout.strip()[:4000]}}
 
 
@@ -562,25 +610,26 @@ def collect_once(
         {"kind": "schema", "payload": {"version": 1, "repository": repository}}
     ]
     owner, _, name = repository.partition("/")
-    records.append(
-        _command_record(
-            "pull_requests",
-            [
-                "api",
-                "graphql",
-                "-f",
-                f"query={PR_QUERY}",
-                "-f",
-                f"owner={owner}",
-                "-f",
-                f"name={name}",
-                "-F",
-                f"limit={limit}",
-            ],
-            timeout=timeout,
-            parser="json",
-        )
+    pull_requests = _command_record(
+        "pull_requests",
+        [
+            "api",
+            "graphql",
+            "-f",
+            f"query={PR_QUERY}",
+            "-f",
+            f"owner={owner}",
+            "-f",
+            f"name={name}",
+            "-F",
+            f"limit={limit}",
+        ],
+        timeout=timeout,
+        parser="json",
     )
+    if pull_requests["kind"] == "pull_requests" and isinstance(pull_requests["payload"], Mapping):
+        pull_requests = _pr_quality_record(pull_requests["payload"], repository)
+    records.append(pull_requests)
     records.append(
         _command_record(
             "gh_aw_logs",
@@ -630,10 +679,9 @@ def metrics_from_records(records: Iterable[Mapping[str, Any]], repository: str) 
             errors += 1
             continue
         if kind == "pull_requests" and isinstance(payload, Mapping):
-            data = payload.get("data")
-            repo = data.get("repository") if isinstance(data, Mapping) else None
-            for pr in _nodes(repo.get("pullRequests") if isinstance(repo, Mapping) else None):
-                metrics.extend(quality_metrics(pr_quality(pr), repository))
+            for quality in payload.get("pull_requests", []):
+                if isinstance(quality, Mapping):
+                    metrics.extend(quality_metrics(quality, repository))
         elif kind == "gh_aw_logs" and isinstance(payload, Mapping):
             runs = payload.get("runs")
             for run in runs if isinstance(runs, list) else []:
@@ -644,6 +692,10 @@ def metrics_from_records(records: Iterable[Mapping[str, Any]], repository: str) 
         elif kind == "runners" and isinstance(payload, Mapping):
             metrics.extend(runner_metrics(payload.get("runners", [])))
     metrics.append(Metric("sextant_monitor_collector_errors", "errors", errors))
+    if errors == 0:
+        metrics.append(
+            Metric("sextant_monitor_last_success_timestamp_seconds", "seconds", time.time())
+        )
     return metrics
 
 
