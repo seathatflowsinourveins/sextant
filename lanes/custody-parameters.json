@@ -83,20 +83,20 @@
   {
     "name": "reserve_per_open_position",
     "unit": "request_tokens_per_position",
-    "value": null,
-    "source": "seathatflowsinourveins/northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:docs/adr/0015-owner-entry-paper-exit-manager.md; Sextant ADR-0007 C4: reserve authority remains unverified",
-    "calibration": "UNAVAILABLE",
-    "last_change": "2026-11-06",
-    "scope": "UNAVAILABLE"
+    "value": 2,
+    "source": "seathatflowsinourveins/northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:src/northstar_trading/strategies/exit_manager/protection.py:241-261,357 (cancel each working order, then rest/replace the next stop or close: two requests per open position) and configs/lanes.yaml:1-6 (a slice of the budget reserved for queries/cancels/reconciliation; paper 200 broker vs 180 order budget); Sextant ADR-0007 C4 amendment 2026-11-09: structural floor, UNCALIBRATED until measured",
+    "calibration": "UNCALIBRATED",
+    "last_change": "2026-11-09",
+    "scope": "REVIEWED"
   },
   {
     "name": "reserve_per_exiting_position",
     "unit": "request_tokens_per_position",
-    "value": null,
-    "source": "seathatflowsinourveins/northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:docs/adr/0015-owner-entry-paper-exit-manager.md; Sextant ADR-0007 C4: reserve authority remains unverified",
-    "calibration": "UNAVAILABLE",
-    "last_change": "2026-11-06",
-    "scope": "UNAVAILABLE"
+    "value": 1,
+    "source": "seathatflowsinourveins/northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:src/northstar_trading/strategies/exit_manager/protection.py:241-261,357 (an exiting position's close is already in flight; one request remains for its cancel/amend) and configs/lanes.yaml:1-6 (a slice of the budget reserved for queries/cancels/reconciliation); Sextant ADR-0007 C4 amendment 2026-11-09: structural floor, UNCALIBRATED until measured",
+    "calibration": "UNCALIBRATED",
+    "last_change": "2026-11-09",
+    "scope": "REVIEWED"
   },
   {
     "name": "observation_reminder_s",

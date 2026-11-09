@@ -255,8 +255,10 @@ def test_toml_registry_preserves_inventory_and_supplies_native_data_policy() -> 
             row = next(
                 row for row in json.loads((ROOT / filename).read_text()) if row["name"] == key
             )
-            assert name.startswith("reserve_per_") and row["value"] is None
-            assert row["calibration"] == row["scope"] == "UNAVAILABLE" and row["source"]
+            assert name.startswith("reserve_per_")
+            assert row["scope"] == "REVIEWED"
+            assert isinstance(row["value"], int) and row["value"] > 0
+            assert row["calibration"] == "UNCALIBRATED" and row["source"]
     policy = {name: parameters[name]["start"] for name in DATA_POLICY}
     policy["market_data_type"] = getattr(MarketDataType, policy["market_data_type"])
     data = _build(**policy).data
