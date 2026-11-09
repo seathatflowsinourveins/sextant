@@ -232,8 +232,16 @@ def test_scoreboard_runs_only_daily_or_on_dispatch() -> None:
     assert set(triggers) == {"schedule", "workflow_dispatch"}
     assert triggers["schedule"] == [{"cron": "17 6 * * *"}]
     assert workflow["jobs"]["scoreboard"]["if"] == (
-        "${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}"
+        "${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && "
+        "(github.event_name == 'schedule' || github.actor == github.repository_owner) }}"
     )
+
+
+def test_scoreboard_proves_in_the_container_without_local_only_rows() -> None:
+    scoreboard = (WORKFLOWS / "scoreboard.yml").read_text()
+    justfile = (ROOT / "justfile").read_text()
+    assert 'just prove "not local"' in scoreboard
+    assert 'prove marker="":\n    uv run --frozen pytest tests/proofs -m "{{marker}}"' in justfile
 
 
 def test_scoreboard_measures_the_stop_rule_over_the_last_twenty_merges() -> None:
@@ -244,6 +252,14 @@ def test_scoreboard_measures_the_stop_rule_over_the_last_twenty_merges() -> None
     assert "fromdateiso8601" in text
     assert "stop-rule.md" in text
     assert "Median merge time: ${median} h against a 1.00 h limit." in text
+    assert "Stop rule: ${verdict}" in text
+    assert "Find or create the scoreboard issue" in text
+    assert "Scheduled workflows" in text
+    assert "merged:>=${{ steps.window.outputs.since }}" in text
+    assert "last.mergedAt" in text
+    assert "s/^#+ Proven rows:" in text
+    assert "url=$(gh issue create" in text
+    assert "refs/heads/main" not in text
 
 
 def test_lessons_keep_their_seed_and_stay_append_only() -> None:

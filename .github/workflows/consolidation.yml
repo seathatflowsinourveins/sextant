@@ -1,8 +1,8 @@
-# The weekly consolidation report (#215), for the owner's "automated sota maintanced consolidation"
+# The weekly consolidation report (#90), for the owner's "automated sota maintanced consolidation"
 # (#58, 6711818587). Maintained tools list dead code and duplicate blocks in src, with per-module lines
 # and the headroom under the cap, and the job posts one comment. A writer turns the safe findings into
-# PRs; a later cap raise cites the latest report (#205). It runs trusted default-branch code on the sealed profile:
-# a read-only checkout, no secrets and no Docker. Its one write is the comment.
+# PRs; a later cap raise cites the latest report (#205). It runs trusted default-branch code
+# from a read-only checkout, no secrets and no Docker. Its writes are the report issue when none exists and one comment on it.
 # Sources: jendrikseipp/vulture@v2.16 and pylint-dev/pylint@v4.1.3 (duplicate-code, R0801); docs/manifest.md.
 name: consolidation
 on:
@@ -15,14 +15,12 @@ concurrency:
   cancel-in-progress: false
 jobs:
   report:
-    if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+    if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'schedule' || github.actor == github.repository_owner) }}
     permissions:
       contents: read
       issues: write
     runs-on: ubuntu-24.04
     timeout-minutes: 15
-    env:
-      REPORT_ISSUE: "215"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -100,8 +98,23 @@ jobs:
             echo "${ruff_f} findings. ci enforces these, so anything here is a regression."
           } > report.md
           cat report.md
+      - name: Find or create the consolidation issue
+        id: issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          title="Consolidation report"
+          number="$(gh issue list --repo "$GH_REPO" --state all --search "\"$title\" in:title" \
+            --json number,title --jq ".[] | select(.title == \"$title\") | .number" | head -n 1)"
+          if [[ -z "$number" ]]; then
+            url=$(gh issue create --repo "$GH_REPO" --title "$title" --body-file report.md)
+            number="${url##*/}"
+          fi
+          echo "number=${number}" >> "$GITHUB_OUTPUT"
       - name: Post it once
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: gh issue comment "$REPORT_ISSUE" --body-file report.md
+          ISSUE: ${{ steps.issue.outputs.number }}
+        run: gh issue comment "$ISSUE" --repo "$GH_REPO" --body-file report.md

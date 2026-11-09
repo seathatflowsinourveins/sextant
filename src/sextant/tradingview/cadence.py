@@ -1,7 +1,9 @@
-"""Disabled J5 admission, not a controller or timer. Lead 2026-11-08 19:49:24 #1.
+"""Owner-ruled J5 admission for the owner-consented display loop; no timer.
 
-Native RegistryRow metadata, XNYS/ET helpers, WriterLease and atomic state writer.
-All clocks, weekly usage, landing/enable and completion receipts are supplied.
+Lead 2026-11-08 19:49:24 #1 and the 2026-11-09 TV-LOOP ruling. Native RegistryRow
+metadata, XNYS/ET helpers, WriterLease and atomic state writer. The loop supplies
+one fresh unit per tick; all clocks, landing/enable and completion receipts are
+supplied by its process.
 """
 
 import hashlib
@@ -16,7 +18,11 @@ from types import MappingProxyType
 from sextant.execution.custody import AccountScope, CustodyError, WriterLease
 from sextant.execution.state import write_atomic
 from sextant.ranking.registry import RegistryRow
-from sextant.tradingview.inputs import ET, QUALIFIED, _ns, _session
+from sextant.tradingview.inputs import ET, NAMES, QUALIFIED, _ns, _session
+
+# The T1 producer document and the loop's explicit two-list display view. Both
+# describe exactly one complete membership observation; neither is a score feed.
+ADMISSION_SCHEMAS = frozenset({"sextant.j5-ranked/1", "sextant.display-admission/1"})
 
 ROWS = {
     "enabled": "flag",
@@ -41,21 +47,31 @@ ROWS = {
 
 
 def _members(value: dict) -> dict:
-    if not isinstance(value, dict) or set(value) != {"NS Ranked"}:
-        raise ValueError("complete ranked membership required")
-    names = value["NS Ranked"]
-    if (
-        not isinstance(names, list)
-        or any(
-            not isinstance(n, str)
-            or not QUALIFIED.fullmatch(n)
-            or n.split(":", 1)[0] in {"SMART", "IB", "IBKR", "ALPACA"}
-            for n in names
-        )
-        or len(set(names)) != len(names)
-    ):
-        raise ValueError("exact unique display members required")
-    return {"NS Ranked": sorted(names)}
+    """Exactly one complete shape: the ranked document or the two display lists."""
+    if not isinstance(value, dict):
+        raise ValueError("complete display membership required")
+    if set(value) == {"NS Ranked"}:
+        keys = ("NS Ranked",)
+    elif set(value) == set(NAMES):
+        keys = NAMES
+    else:
+        raise ValueError("complete display membership required")
+    result = {}
+    for key in keys:
+        names = value[key]
+        if (
+            not isinstance(names, list)
+            or any(
+                not isinstance(n, str)
+                or not QUALIFIED.fullmatch(n)
+                or n.split(":", 1)[0] in {"SMART", "IB", "IBKR", "ALPACA"}
+                for n in names
+            )
+            or len(set(names)) != len(names)
+        ):
+            raise ValueError("exact unique display members required")
+        result[key] = sorted(names)
+    return result
 
 
 class Cadence:
@@ -156,6 +172,29 @@ class Cadence:
         finally:
             self.lease.close()
 
+    def reconcile(self, membership: dict, *, source: str) -> dict:
+        """Compare against the observed membership after a restart.
+
+        A saved comparison is only as current as its last completed session; a
+        different broker inventory must not leave a stale pair that skips a
+        needed sync. Only a healthy state is reconciled.
+        """
+        desired = _members(membership)
+        if not isinstance(source, str) or not source.strip():
+            raise ValueError("complete read-back source required")
+        with self._locked() as state:
+            if (
+                state["active"] is not None
+                or state["failed"] is True
+                or state["page_pending"] is True
+            ):
+                raise ValueError("cadence state holds an unresolved run or page")
+            if state["confirmed"] != desired:
+                state["confirmed"] = desired
+                state["confirmed_source"] = source
+                write_atomic(self.state_path, state)
+            return desired
+
     def floor(self, now: datetime, weekly_usage_pct: Decimal) -> int | None:
         _ns(now)
         local, p = now.astimezone(ET), self.params
@@ -216,12 +255,12 @@ class Cadence:
                 try:
                     desired = _members(unit["watchlists"])
                     if (
-                        unit["schema"] != "sextant.j5-ranked/1"
+                        unit["schema"] not in ADMISSION_SCHEMAS
                         or unit["status"] != "fresh"
                         or unit["display_only"] is not True
                         or type(unit["paper_slot"]) is not int
                         or unit["paper_slot"] != 3
-                        or not desired["NS Ranked"]
+                        or not (desired.get("NS Ranked") or desired.get("NS movers"))
                         or not unit["generated_at_ns"] <= at < unit["expires_at_ns"]
                     ):
                         return None

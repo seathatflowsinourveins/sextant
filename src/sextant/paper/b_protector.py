@@ -25,6 +25,7 @@ from decimal import ROUND_FLOOR, Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Protocol
 
+from alpaca.common.exceptions import APIError
 from alpaca.trading.enums import OrderSide, QueryOrderStatus, TimeInForce
 from alpaca.trading.models import Order, Position, TradeAccount, TradeUpdate
 from alpaca.trading.requests import (
@@ -35,6 +36,7 @@ from alpaca.trading.requests import (
 )
 from alpaca.trading.stream import TradingStream
 
+from sextant.execution.pacer import PacerRefused
 from sextant.exits.policy import ExitParams
 from sextant.paper.config import PaperAccount
 from sextant.paper.outside_rth import OutsideRthError, OutsideRthTrail
@@ -146,6 +148,8 @@ class TradingClientLike(Protocol):
 
     def get_orders(self, filter: GetOrdersRequest | None = None) -> list[Order]: ...
 
+    def get_order_by_client_id(self, client_id: str) -> Order: ...
+
     def submit_order(self, order_data: OrderRequest) -> Any: ...
 
     def cancel_order_by_id(self, order_id: object) -> None: ...
@@ -194,6 +198,7 @@ class Protector:
         self._on_page = on_page
         self.pages: list[Page] = []
         self._cancelling: set[str] = set()
+        self._unresolved: dict[str, str] = {}
         self._last_position: dict[str, Decimal] = {}
         self._last_reserved: dict[str, Decimal] = {}
         self._exit_params = exit_params if exit_params is not None else ExitParams.starts()
@@ -387,6 +392,13 @@ class Protector:
         symbol = update.order.symbol
         if not symbol:
             return
+        try:
+            self._handle_update(update, symbol)
+        except PacerRefused as exc:
+            # The pacer retains the deferred call; the next event reconciles again.
+            self.page("pacer_refused", symbol, str(exc))
+
+    def _handle_update(self, update: TradeUpdate, symbol: str) -> None:
         event = _event_name(update.event)
         if self._is_ours(update.order):
             self._handle_house(update, symbol, event)
@@ -577,6 +589,19 @@ class Protector:
             self._cancel_all(ours, "owner_reserved_unprotected")
             self.page("owner_reserved_unprotected", symbol)
             return
+        if symbol in self._unresolved:
+            client_order_id = self._unresolved[symbol]
+            if any(order.client_order_id == client_order_id for order in ours):
+                self._unresolved.pop(symbol)
+            else:
+                status, detail = self._resolve_unresolved(client_order_id)
+                if status == "terminal":
+                    self._unresolved.pop(symbol)
+                    self.page("submit_unresolved_terminal", symbol, detail)
+                    return
+                if status != "absent":
+                    self.page("submit_unresolved", symbol, detail)
+                    return
         session = session_at(self._now_ns())
         in_rth = session is Session.RTH
         # An oversized GTC trail is cancelled before the RTH guard, so it can never
@@ -621,25 +646,48 @@ class Protector:
             return
         self._submit_trail(symbol, protective)
 
+    def _resolve_unresolved(self, client_order_id: str) -> tuple[str, str]:
+        """Resolve a submit that timed out before allocating another exit identity."""
+
+        try:
+            order = self._client.get_order_by_client_id(client_order_id)
+        except APIError as exc:
+            if exc.status_code == 404:
+                return "absent", "the broker has no order with the retained client order id"
+            return "unknown", f"APIError {exc.status_code}"
+        except Exception as exc:
+            return "unknown", type(exc).__name__
+        status = _event_name(order.status)
+        if status == "filled" or status in TERMINAL_EVENTS:
+            return "terminal", f"the broker order with the retained identity is {status}"
+        return "open", f"the broker still lists the retained order as {status}"
+
     def _submit_trail(self, symbol: str, whole: int) -> None:
-        self._sequence += 1
-        client_order_id = (
-            f"{self._account.house_prefix}trail-{_safe_symbol(symbol)}-"
-            f"{self._now_ns()}-{self._sequence}"
-        )
+        client_order_id = self._unresolved.get(symbol)
+        if client_order_id is None:
+            self._sequence += 1
+            client_order_id = (
+                f"{self._account.house_prefix}trail-{_safe_symbol(symbol)}-"
+                f"{self._now_ns()}-{self._sequence}"
+            )[:MAX_CLIENT_ORDER_ID]
         request = TrailingStopOrderRequest(
             symbol=symbol,
             qty=whole,
             side=OrderSide.SELL,
             time_in_force=TimeInForce.GTC,
             trail_percent=float(self._parameters.native_trail_fraction * 100),
-            client_order_id=client_order_id[:MAX_CLIENT_ORDER_ID],
+            client_order_id=client_order_id,
         )
         try:
             submitted = self._client.submit_order(request)
+        except PacerRefused:
+            # The pacer retains the deferred submit and sends it on a later drain.
+            raise
         except Exception as exc:
+            self._unresolved[symbol] = client_order_id
             self.page("trail_submit_failed", symbol, type(exc).__name__)
             return
+        self._unresolved.pop(symbol, None)
         if isinstance(submitted, Order):
             self._remember(submitted)
 

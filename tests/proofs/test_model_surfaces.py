@@ -86,7 +86,7 @@ def test_each_review_surface_requests_its_highest_supported_effort() -> None:
     codex = next(s for s in gate["jobs"]["codex"]["steps"] if s.get("id") == "review")["with"]
     claude = next(s for s in gate["jobs"]["claude"]["steps"] if s.get("id") == "review")["with"]
     assert codex["effort"] == "max"
-    assert "--model opus --effort max" in claude["claude_args"]
+    assert "--model claude-fable-5-2 --effort max" in claude["claude_args"]
     patch = (ROOT / "config/dsh/mcp/max-effort.cordis.yml").read_text()
     assert "reasoningEffort: max" in patch
     action = (ROOT / ".github/actions/dsh-github/action.yml").read_text()

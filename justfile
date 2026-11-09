@@ -43,7 +43,7 @@ orca-update:
 lifecycle:
     bash deploy/wsl/lifecycle.sh
 
-# Inside the clean distro only: the verified reflection, Orca's automation behind its session/merge precheck (#114).
+# Inside the clean distro only: the verified reflection, Orca's automation behind its session/merge precheck (#91).
 reflection:
     bash deploy/wsl/reflection.sh
 
@@ -75,9 +75,9 @@ omni-keys *args:
 gh-app *args:
     bash deploy/wsl/github-app.sh {{args}}
 
-# Run every manifest row's proof. pytest does the running and the counting.
-prove:
-    uv run --frozen pytest tests/proofs -m ""
+# Run every manifest row's proof. Pass a -m expression; the scoreboard passes "not local".
+prove marker="":
+    uv run --frozen pytest tests/proofs -m "{{marker}}"
 
 # Import a disposable copy of the committed research docs into local OpenViking.
 index:
