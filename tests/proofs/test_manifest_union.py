@@ -1,4 +1,5 @@
-"""docs/manifest.md merges by git's built-in union driver, and no row key is ever duplicated.
+"""docs/manifest.md merges by git's built-in union driver, no row key is ever duplicated, and no
+retired row returns.
 
 Source: git/git@v2.56.0 `a018953688f1b10bddf91bff8747068f5f4746a4`:
 `Documentation/gitattributes.adoc`, the built-in `union` merge driver: "Run 3-way file level merge
@@ -13,6 +14,23 @@ ROOT = Path(__file__).parents[2]
 # Row keys main already repeats: the per-section table header, and one row recorded twice
 # before this proof.
 KNOWN_REPEATS = {"Practice or pick": None, "Paper-search MCP": 2}
+# Row keys retired or renamed since the cutover: on the pre-cutover main (695bc7c) or a later gate
+# commit, and gone at c149c0a. Union also takes both versions of a hunk where one side deleted or
+# renamed a row, so a merge, rebase or cherry-pick from an older base restores it, or keeps its
+# old twin beside the renamed row, without repeating a key: #31 restored the runner row the gate
+# bootstrap retired, and #109 removed it again. Add a row's key here when you retire or rename it.
+RETIRED = (
+    "A PR cannot change its own checks. PR code runs on a local ephemeral JIT runner",
+    "All three required-review families use local one-job JIT runners",
+    "EdgarTools documents and 8-K parsers behind archived SEC bytes",
+    "One other-family review per PR through gh-aw",
+    "Owner-ruled J5 cadence, disabled until landing",
+    "Private local ephemeral Actions runners",
+    "Size budgets, 'never bloat': src under 20,800 lines",
+    "Size budgets, 'never bloat': src under 21,550 lines",
+    "Size budgets, 'never bloat': src under 24,000 lines",
+    "The App's pushes activate the required review",
+)
 
 
 def _keys() -> Counter[str]:
@@ -56,6 +74,11 @@ def test_manifest_records_every_adr_0021_display_pin() -> None:
         assert f"{repository} `{commit}`" in manifest
     policy = (ROOT / "docs/adr/0021-tradingview-display.md").read_text()
     assert "Lightweight Charts v5.2.1 (`b2ce010e4ad59f6556c9ed60e2b2b30feccdd2d1`)" in policy
+
+
+def test_no_retired_row_returns() -> None:
+    back = [key for key in _keys() if key.startswith(RETIRED)]
+    assert not back, f"a union merge from an older base restored retired rows; delete them: {back}"
 
 
 def test_union_keeps_both_sides_rows(tmp_path: Path) -> None:

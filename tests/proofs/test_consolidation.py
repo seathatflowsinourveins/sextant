@@ -1,4 +1,4 @@
-"""The weekly consolidation report (#215): one main-only comment on dead code and duplicates.
+"""The weekly consolidation report (#90): one default-branch comment on dead code and duplicates.
 
 Sources: jendrikseipp/vulture@v2.16 `b0f67ba0044693aa9ec0d38fe460590facc98004` and
 pylint-dev/pylint@v4.1.3 `e75de10c69103381c875601f638d4b977ff0fcaf` (duplicate-code, R0801),
@@ -59,7 +59,7 @@ def _compose() -> str:
     return next(step["run"] for step in _job()["steps"] if step.get("name") == "Compose the report")
 
 
-def test_the_report_runs_only_from_main_on_a_hosted_runner() -> None:
+def test_the_report_runs_only_from_the_default_branch_on_a_hosted_runner() -> None:
     workflow = _workflow()
     # PyYAML reads the unquoted key `on:` as the boolean True.
     assert True in workflow
@@ -70,7 +70,10 @@ def test_the_report_runs_only_from_main_on_a_hosted_runner() -> None:
     assert workflow["permissions"] == {}
     job = workflow["jobs"]["report"]
     assert job["permissions"] == {"contents": "read", "issues": "write"}
-    assert job["if"] == "${{ github.ref == 'refs/heads/main' }}"
+    assert job["if"] == (
+        "${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && "
+        "(github.event_name == 'schedule' || github.actor == github.repository_owner) }}"
+    )
     assert job["runs-on"] == HOSTED
     assert "secrets." not in WORKFLOW.read_text()
     for step in job["steps"]:
@@ -78,7 +81,15 @@ def test_the_report_runs_only_from_main_on_a_hosted_runner() -> None:
             assert re.fullmatch(r"[\w.-]+/[\w.-]+@[0-9a-f]{40}", step["uses"]), step["uses"]
     checkout = next(step for step in job["steps"] if step["uses"].startswith("actions/checkout@"))
     assert checkout["with"]["persist-credentials"] is False
-    assert job["env"]["REPORT_ISSUE"] == "215"
+    # The target is resolved by title in the new tracker, so the report issue's number is a doc
+    # reference; #90 is that issue, and it must not drift back to the old tracker's #215.
+    text = WORKFLOW.read_text()
+    assert "refs/heads/main" not in text
+    assert "(#90)" in text and "#215" not in text
+    assert "Find or create the consolidation issue" in text
+    assert "Its writes are the report issue" in text
+    assert "url=$(gh issue create" in text
+    assert "Consolidation report" in text
 
 
 def test_the_consolidation_group_is_locked_with_exact_pins() -> None:

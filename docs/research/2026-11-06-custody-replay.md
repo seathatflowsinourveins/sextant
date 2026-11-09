@@ -1,6 +1,6 @@
 # Custody, pacing and halt: row 8 mechanism proofs
 
-Issue [#51](https://github.com/seathatflowsinourveins/sextant/issues/51); ADR-0007, ADR-0009 and ADR-0010. These are offline policy/wire-envelope tests and native MODELED mechanism drills. They start no broker client, stream, service or paper writer and do not declare B ready.
+Issue [#51](https://github.com/seathatflowsinourveins/sextant-archive/issues/51); ADR-0007, ADR-0009 and ADR-0010. These are offline policy/wire-envelope tests and native MODELED mechanism drills. They start no broker client, stream, service or paper writer and do not declare B ready.
 
 ## Minimal bridge and fit
 

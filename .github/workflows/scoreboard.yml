@@ -1,4 +1,4 @@
-# Publishes rows proven and median merge time to the pinned issue. The proofs run in the real
+# Publishes rows proven and median merge time to one "Scoreboard" issue. The proofs run in the real
 # sandbox image, so this builds it, and that is why it runs daily rather than on every merge.
 # pytest counts, github/issue-metrics measures, peter-evans/create-issue-from-file updates the issue.
 name: scoreboard
@@ -17,8 +17,8 @@ jobs:
       contents: read
       issues: write
       pull-requests: read
-    # The docker profile serves workflow files from main only; a branch dispatch reaches sealed jobs.
-    if: ${{ github.ref == 'refs/heads/main' }}
+    # Scheduled runs fire on the default branch; a branch dispatch reaches sealed jobs.
+    if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'schedule' || github.actor == github.repository_owner) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
@@ -38,31 +38,103 @@ jobs:
         with:
           push: never
           env: GH_TOKEN
-          runCmd: just sync && bash -c 'set -o pipefail; just prove 2>&1 | tail -40'
+          runCmd: just sync && bash -c 'set -o pipefail; just prove "not local" 2>&1 | tail -40'
       # A failed proof fails its own step and turns the job red. The issue still updates.
+      - name: Stop rule over the 20 most recently merged PRs
+        id: window
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh pr list --state merged --limit 100 --search 'sort:updated-desc' \
+            --json createdAt,mergedAt > window.json
+          jq '[.[] | select(.mergedAt != null)] | sort_by(.mergedAt) | reverse | .[0:20]' \
+            window.json > window20.json
+          jq -r '.[] | ((.mergedAt | fromdateiso8601) - (.createdAt | fromdateiso8601)) / 3600' \
+            window20.json > merge-hours.txt
+          count=$(wc -l < merge-hours.txt)
+          median=$(sort -n merge-hours.txt | awk '{a[NR]=$1} END {if (NR==0) {print "n/a"} else if (NR%2) printf "%.2f", a[(NR+1)/2]; else printf "%.2f", (a[NR/2]+a[NR/2+1])/2}')
+          open=$(gh pr list --state open --json number --jq length)
+          verdict=clear
+          clause=""
+          if (( open > 10 )); then
+            verdict=TRIPPED
+            clause="open PRs ${open} > 10"
+          fi
+          if awk -v m="$median" 'BEGIN { exit !(m + 0 > 1) }'; then
+            verdict=TRIPPED
+            clause="${clause:+$clause; }median ${median} h > 1.00 h"
+          fi
+          {
+            echo "## Stop rule over the ${count} most recently merged PRs"
+            echo "Stop rule: ${verdict}${clause:+ (${clause})}"
+            echo "Median merge time: ${median} h against a 1.00 h limit."
+                      } > stop-rule.md
+          echo "since=$(jq -r 'last.mergedAt' window20.json)" >> "$GITHUB_OUTPUT"
       - name: Median merge time
         if: ${{ !cancelled() }}
         uses: github/issue-metrics@671528652402b9b8a33da44b5c693b3161bc090f # v5.0.3
         env:
           GH_TOKEN: ${{ github.token }}
-          SEARCH_QUERY: repo:${{ github.repository }} is:pr is:merged
+          SEARCH_QUERY: repo:${{ github.repository }} is:pr is:merged merged:>=${{ steps.window.outputs.since }}
+      - name: Find the scoreboard issue
+        id: issue
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          number="$(gh issue list --repo "$GH_REPO" --state all --search '"Scoreboard" in:title' \
+            --json number,title --jq '.[] | select(.title == "Scoreboard") | .number' | head -n 1)"
+          echo "number=${number}" >> "$GITHUB_OUTPUT"
       - name: Compose
         if: ${{ !cancelled() }}
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           PROVEN: ${{ steps.prove.outputs.runCmdOutput }}
+          PREVIOUS: ${{ steps.issue.outputs.number }}
         run: |
+          set -euo pipefail
+          now=$(printf '%s\n' "$PROVEN" | grep -oE '[0-9]+ passed' | tail -n 1 | grep -oE '^[0-9]+' || true)
+          change=""
+          if [[ -n "$PREVIOUS" && -n "$now" ]]; then
+            previous=$(gh issue view "$PREVIOUS" --repo "$GH_REPO" --json body --jq .body \
+              | sed -nE 's/^#+ Proven rows: ([0-9]+).*/\1/p' | head -n 1)
+            if [[ -n "$previous" ]]; then
+              change=" (${now} - ${previous} = $((now - previous)))"
+            fi
+          fi
           {
-            echo "## Proven rows"; echo '```'; printf '%s\n' "$PROVEN" | grep -E '^(FAILED|ERROR)|[0-9]+ (passed|failed)' | cut -c1-200; echo '```'
+            echo "## Proven rows: ${now:-unknown}${change}"
+            echo '```'; { printf '%s\n' "$PROVEN" | grep -E '^(FAILED|ERROR)|[0-9]+ (passed|failed)' || true; } | cut -c1-200; echo '```'
             echo "## Open PRs: $(gh pr list --state open --json number --jq length)  (stop adding layers above 10)"
             echo "## Repo: $(git count-objects -vH | awk '/size-pack/{print $2,$3}'), $(git ls-files | wc -l) files"
-            echo "Stop adding layers if median merge time passes 1 hour over the last 20 PRs, or proven rows stop rising across 20 merged PRs."
+            echo "## Scheduled workflows"
+            for workflow in scoreboard consolidation upkeep; do
+              echo "- ${workflow}: $(gh run list --repo "$GH_REPO" --workflow "${workflow}.yml" --limit 1 --json conclusion,createdAt --jq '.[0] | "\(.conclusion // "running") at \(.createdAt)"')"
+            done
+            cat stop-rule.md
             cat issue_metrics.md
           } > scoreboard.md
+      - name: Find or create the scoreboard issue
+        id: upsert
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PREVIOUS: ${{ steps.issue.outputs.number }}
+        run: |
+          number="$PREVIOUS"
+          if [[ -z "$number" ]]; then
+            url=$(gh issue create --repo "$GH_REPO" --title Scoreboard --body-file scoreboard.md)
+            number="${url##*/}"
+          fi
+          echo "number=${number}" >> "$GITHUB_OUTPUT"
       - if: ${{ !cancelled() }}
         uses: peter-evans/create-issue-from-file@fca9117c27cdc29c6c4db3b86c48e4115a786710 # v6.0.0
         with:
-          issue-number: ${{ vars.SCOREBOARD_ISSUE }}
+          issue-number: ${{ steps.upsert.outputs.number }}
           title: Scoreboard
           content-filepath: scoreboard.md

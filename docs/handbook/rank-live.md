@@ -4,9 +4,13 @@ This serves the owner's first step: rank potential extreme movers as they start.
 It is an offline implementation of the live input/output seam, with no client,
 key lookup, stream opener, controller launcher or running schedule. The gate
 branch's `ci`, `source` and `review` policy governs this port; it merges only
-after the budget PR #27. The owner cadence ruling is implemented DISABLED;
-landing, B's feed check and explicit lead enablement remain prerequisites
-(lead 2026-11-08 19:10:06, 19:21:44 and 19:49:24 EST, rank-live handoff).
+after the budget PR #27. The 2026-11-09 TV-LOOP ruling starts the owner-consented
+loop and ships the cadence registry `enabled=1` in the same reviewed PR; the
+change takes effect at the next session boundary (ADR-0018). Stream opening, B's
+feed check and explicit lead enablement of the Windows controller remain
+separate (lead 2026-11-08 19:10:06, 19:21:44 and 19:49:24 EST, rank-live
+handoff; LEAD-1219-tv-pr3-skills.md, SHA-256
+`045f4b2e01128f3e5db21acef340f451451cca4a99994f4fb69287659de266a1`).
 
 ## Data path and sources
 
@@ -104,7 +108,7 @@ retain confirmed changes and unknown outcomes. No selection tool or corrective
 write on a stop. Membership sync does not promise rank-order sorting. Existing
 J5 proofs remain the controller-policy witness; this producer never calls it.
 
-## Registry and disabled owner cadence
+## Registry and owner-consented loop
 
 Every ranking knob stays in main's required `Registry` (all twelve rows, explicit
 source/date, UNCALIBRATED; no defaults). The shipped operational rows live in
@@ -132,7 +136,7 @@ state. There are no missing-value or fixture defaults.
 
 | Registry row | Shipped value | Meaning |
 |---|---|---|
-| `enabled` | 0 | DISABLED; future activation also needs a landed SHA and explicit lead enable receipt |
+| `enabled` | 1 | Enabled by the 2026-11-09 TV-LOOP ruling; effective at the next session boundary. A remaining `0` copy refuses before any state or page |
 | `changed_only` | 1 | Compare exact sets with complete confirmed read-back, ignoring rank/order/score |
 | `max_concurrent_runs` | 1 | Serialized admission and a durable active-run receipt |
 | `max_retries` | 0 | Failed/abandoned runs latch; no retry or automatic recovery |
@@ -154,12 +158,13 @@ membership is unchanged or rank data is unavailable. The high flag persists
 across restarts; a failed page latches admission and leaves `page_pending`.
 
 Call `Cadence.claim` with a fresh producer unit, aware supplied clock and sourced
-Windows weekly-use percentage. Shipped `enabled=0` refuses before any state or
-page. Future enablement must be a reviewed between-session registry change after
-landing, with the lead's explicit receipt. The caller attests those receipts;
-this offline gate cannot verify remote landing or the lead's identity.
-A complete by-ID membership receipt is also required to establish the initial
-comparison; unknown inventory never authorizes a clear or a first-run guess.
+Windows weekly-use percentage. Shipped `enabled=1` is the reviewed between-session
+change after landing; a copy still carrying `0` refuses before any state or page.
+The caller attests those receipts; this offline gate cannot verify remote landing
+or the lead's identity. `--loop` supplies the landed SHA from its own checkout,
+the enabled row's source as the enable receipt, and a complete by-ID membership
+read-back for the initial comparison; unknown inventory never authorizes a clear
+or a first-run guess.
 
 Every cooperating J5 admission process uses the same canonical state root.
 Native `WriterLease` serializes read/claim/finish, and `write_atomic` durably binds
@@ -171,11 +176,50 @@ with existing state requires reviewed migration. This local protocol cannot
 exclude an external host or controller that ignores it; existing Windows J5
 single-controller/allowlist/non-use gates remain required.
 
+## Owner-consented loop
+
+`tradingview/loop.py --loop` starts the process that consumes the admission gate.
+It preflights the registry, landed SHA and enable source without opening a
+session, opens exactly one `official_client` consent context, and performs one
+complete by-ID read-back before the first compare. No unit is pre-read before
+consent.
+
+Each tick sleeps to the current floor, rereads `--research-dir` (the newest
+complete display unit; a symlinked `latest` may be atomically replaced), reads
+the two explicit memberships into a display-admission view, and calls
+`Cadence.claim`. Only an admitted run calls `sync_research(apply=True)`; a
+verified `applied` result with both read-back keys calls `finish(successful=True)`
+with the operation count and read-back sizes as its receipt. A refused or stale
+unit never becomes an empty desired list: it leaves both lists unchanged and
+pages once per distinct episode. The page is written straight to stderr
+because the OAuth redaction guard disables `logging` for the consent session,
+so an ERROR record would be dropped. A sync failure finishes the run as failed,
+latching the same no-retry policy, and stops the process. The loop exits at the
+20:00 ET display close rather than holding OAuth across the closed window, and it
+has no catch-up queue.
+
+The admission comparison is the observed pair `NS movers` and `NS focus`, not
+their union: a name that moves between lists changes both sets even when the
+union is unchanged, and it must sync. The window and floors come only from the
+registry; the loop adds no timer, service, alternate transport or second client.
+`--weekly-usage-pct`/`--usage-source` let a caller supply the Windows controller's
+sourced number; when unset, the default is zero with a source stating that this
+process has no Claude surface, so the 900s branch is not exercised. The default
+state root is `~/sextant-data/tradingview-j5`; every cooperating process must use
+the same canonical root. A restart refuses state that holds an active, failed or
+page-pending run, or that was written by another reviewed registry, before it
+opens a new consent session; the reviewed reconciliation or migration must finish
+first. A healthy restart reconciles the saved comparison with the startup by-ID
+read-back, so the first claim compares the desired pair with the broker's current
+membership, not with a stale pair that could skip a needed sync.
+
 Only an admitted `run_id` may be handed to the existing Windows-native Claude
-controller after enablement. No launcher is installed here. The controller must
-still validate fresh input before **each** batch under ADR-0021; the cadence does
-not extend second-scale producer expiry. `finish` accepts only the matching
-outcome/read-back receipt. Unknown completion keeps the active receipt blocked.
+controller after enablement. The loop spends its admitted run on the no-LLM cloud
+MCP sync itself; that separate controller path still has no launcher here. The
+controller must still validate fresh input before **each** batch under ADR-0021;
+the cadence does not extend second-scale producer expiry. `finish` accepts only
+the matching outcome/read-back receipt. Unknown completion keeps the active
+receipt blocked.
 
 The recorded first-session measurement is **`first_session_j5_run_time_ns`**:
 UTC receipt end minus admitted start for the first completed J5 run, including
@@ -209,6 +253,11 @@ Witnesses cover every owner rule, minute/second boundaries, Eastern DST/XNYS,
 restart and cross-process serialization, failed/abandoned runs, strict usage
 threshold/paging, missing authority, and synthetic first-session receipt timing.
 No test under `tests/repo` is edited; the no-LLM client research remains separate.
+The 2026-11-09 TV-LOOP tests were RED first for the absent loop and two-list
+admission, then GREEN against the real SDK seam. They cover the startup
+read-back, one sync per admission, unchanged-member skip, a cross-list move with
+an unchanged union, stale-page-once with no write, the failed-apply latch, the
+20:00 ET exit and CLI wiring.
 
 Lesson: a membership retry is not a new change; keep the active/failed receipt
 through restarts. Cadence acceptance needs clocked controller receipts and
@@ -268,7 +317,7 @@ The manifest retains every gate row and adds only the three rank-live rows.
 Gate's instructions, review rules, workflows and size tests remain unchanged.
 
 Measured Python source is **16,129 + 589 = 16,718 lines**, below gate's cap of
-**21,550**. The +589 is the 299-line producer plus 290-line cadence module;
+**24,000**. The +589 is the 299-line producer plus 290-line cadence module;
 there is no new dependency, scorer, controller or running service. The earlier
 <20,800 receipt above describes the original carry, not gate's current cap.
 
@@ -279,4 +328,97 @@ pin, and measure against the target's actual size guard before handoff
 `docs/handbook/practices.md`, Harness; `tests/proofs/test_manifest_union.py`).
 The owner has unblocked live ranking; rollout starts when B is ready, under the
 trading lead's six-step rollout. This port keeps `enabled=0`, overnight OFF and
-all display-only boundaries; it performs no rollout or controller apply.
+all display-only boundaries; it performs no rollout or controller apply. The
+owner-consented loop enables the cadence (`enabled=1`) for itself only, keeps
+overnight OFF and all display-only boundaries, and performs no rollout or
+controller apply.
+
+## Bar-fidelity REST host, 2026-11-09
+
+TV-HOST adds the host the seam above was waiting for: it polls SIP 1-minute bars
+over REST, feeds them through main's `RankingPublisher` and T1's `LiveProducer`,
+and writes `sextant.j5-ranked/1` atomically. It is display only. Nothing here
+opens a stream, places an order, launches the Windows controller or schedules
+itself; the lease, the atomic writer and the two-clock rule are T1's, unchanged.
+
+- **Transport.** `tradingview/bars.py:PacedStockBars` is the only bars client:
+  it overrides alpaca-py's `_one_request`, so the shared
+  `data.alpaca_history.Pacer` waits before every HTTP page and every 429/504
+  retry the SDK performs (`RESTClient._get_marketdata` pages by `page_token`,
+  `RESTClient._request` retries, both through `_one_request`; alpaca-py@cc4cb3b7
+  `alpaca/common/rest.py:90-141,360-410`). `AlpacaBarSource` only chunks the
+  requested universe (150 by default, at most 200 symbols per call) and never
+  paces a logical batch on its own, so pagination and retries stay inside the
+  one <= 200/min allocation. Requests are `StockBarsRequest(TimeFrame(1, Minute),
+  feed=SIP, adjustment=RAW, sort=ASC)`; bars keep the vendor `vw` and `n` fields
+  ([ADR-0003](adr/0003-ranking-and-feeds.md):14), and a bar without `n` is
+  refused rather than given a count.
+- **Bar to tick.** `trades_accel` is a count of ticks in `TradeWindow.totals`, so
+  one bar becomes one volume-bearing `TradeTick` at its close plus `n - 1`
+  unit-size counted twins seeded into the volume window
+  (`TradeWindow.append_count`). The twins carry no dollar volume: the bar's
+  `close x volume` is added exactly once and the 60 s/300 s windows count the
+  vendor trade count. The representation is proven equal to `n` independent
+  appends. Provenance is labelled "bar fidelity": within-bar ordering and
+  aggressor are unknown, so the witness cannot support a first-second statement
+  and `mover_min_trades_accel` is a trade-count gate, not a print-verified one.
+- **Prefix.** A first bar that starts the segment anchors at its own open; a
+  later first bar anchors at the prior official close. `Quantity` refuses zero,
+  so the anchor is a unit-size tick and its own dollar volume is subtracted from
+  the segment prefix, leaving that prefix at zero. Later bars append at their
+  close clocks; a bar whose close is after the market clock, a stale bar, or a
+  bar outside the segment or universe is refused, never back-dated. A bar that
+  closes at or after the segment end belongs to the next segment: it is skipped
+  before it can touch the clock, so the final minute cannot invalidate the
+  epoch.
+- **Coverage.** `BarPoll(bars, requested, failed)` says what the poll covered. A
+  complete poll sets `READY` with expected == observed == universe and zero
+  missing/invalid/late; any failed symbol sets `DEGRADED` with the explicit
+  missing count. A degraded poll never clears the list: `publish_unit` writes an
+  explicit unavailable document with `watchlists: null`.
+- **Clocks and corrections.** `poll` decides publication at
+  `max(market_ns, received_ns)`, so a heartbeat receipt even one nanosecond
+  after the market clock cannot make a fresh unit look stale. A failed or
+  unrequested symbol records its unverified minute; the prefix never advances
+  past that hole (`ingest` refuses the newer bar) until the missing bar, or a
+  complete poll of that same minute, verifies it, so coverage stays `DEGRADED`
+  and no understated cumulative is published. An identical duplicate poll is
+  skipped; a changed bar for an already-ingested minute invalidates the epoch
+  and raises, following the correction policy above: a new publisher is
+  required for a revised history.
+- **Mappings.** The host takes an operator-supplied exact
+  `SYMBOL -> EXCHANGE:SYMBOL` JSON map. It never invents a venue; a missing
+  mapping makes the unit unavailable rather than dropping the row.
+- **Universe and baseline builders.** `bars.build_universe` reproduces the e2e's
+  documented NMS operating-company superset from the public NASDAQ Trader
+  directories, dropping test issues, ETFs, `$` symbols, over-long symbols and
+  warrant/unit/right/preferred/fund name and suffix patterns; it is a documented
+  superset, not point-in-time membership. `baseline.build_baseline` builds five
+  prior XNYS sessions of per-session cumulative dollar-volume and trade-count
+  curves, offsets each session's bars from that session's own 04:00/09:30 ET
+  segment start (the lanes pin's `session_offset.segment_start`), interpolates
+  each session at the offset and takes the median; a minute without a bar
+  carries the previous cumulative value forward. Five sessions is the replay's
+  choice, not a seal-bound constant.
+
+### Parity witness, 2026-11-09
+
+`scripts/tv_host_parity.py` runs the host over the recorded e2e artifacts
+(`arrays/2026-11-09.npz`, `baseline_pre.npz`, `baseline_rth.npz`, `ranks.npz`
+and `daily.json`) with the same fixture registry and compares every minute's K2
+order with the replay matrix. It uses the standard library only, including a
+small `.npy` reader, so the witness adds no dependency.
+
+- **Vendor-count run** (the host path): zero hard mismatches over the 454
+  host-representable recorded minutes. The only differences are permutations
+  inside equal-score groups, because the research replay broke score ties with
+  its documented one-tick-per-bar proxy while the host uses the vendor trade
+  count that K2 and the brief require. Every equal-score group keeps exactly the
+  same rank set.
+- **Replay-count control** (`--count-mode replay`): the full rank matrix matches
+  every minute exactly, proving the publisher/reader/unit path equals the e2e
+  replay when fed the same counts.
+- **One boundary minute** (PRE 09:29) is skipped: its bar closes exactly at the
+  09:30 PRE boundary, and the replay clipped that tick to `end - 1 ns`, a
+  catalog-clock convention the live host never applies because a bar that closes
+  at the boundary belongs to the next segment.

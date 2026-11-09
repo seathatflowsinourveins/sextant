@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The verified reflection's precheck. Orca runs the reflection only when this exits 0
 # (stablyai/orca@a162e08b29b2883b02d8a0dfcc99e26c80b2cfe7:docs/site/content/docs/cli/automations.mdx),
-# and #114 asks for a run only when a session ended or a PR merged since the last one.
+# and #91 asks for a run only when a session ended or a PR merged since the last one.
 #   - A Claude session ended: its transcript, `projects/<project>/<session>.jsonl`, changed since the last
 #     pass, and `sessions/` no longer holds the file Claude Code keeps "per running session" and removes
 #     "when its session exits" (code.claude.com/docs/en/claude-directory, Application data, read 2026-11-06).

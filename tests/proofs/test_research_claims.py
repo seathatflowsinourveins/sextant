@@ -45,7 +45,7 @@ def test_input_hashes_match_the_published_reconciliation() -> None:
     source = ROOT / "docs/research/2026-11-06-legs-convergence.md"
     published = source.read_text()
     assert hashlib.sha256(source.read_bytes()).hexdigest() == (
-        "127551a9ae8c8e9013da6236b187df6c9740167d4c9bc177100e4773055252a8"
+        "5a5a010d86267108b4f1f73b2a251ce067bcc078e59e9fc21e30c91d622ea56e"
     )
     inputs = re.findall(
         r"^\| `(\S+-leg-\S+\.md)` \| [^\n]+? \| `([a-f0-9]{64})` \|",
@@ -55,7 +55,7 @@ def test_input_hashes_match_the_published_reconciliation() -> None:
     assert len(inputs) == 5
     for name, digest in inputs:
         assert re.search(rf"^\| `{re.escape(name)}`[^\n]+`{digest}`", published, re.MULTILINE)
-    assert "127551a9ae8c8e9013da6236b187df6c9740167d4c9bc177100e4773055252a8" in NOTE.read_text()
+    assert "5a5a010d86267108b4f1f73b2a251ce067bcc078e59e9fc21e30c91d622ea56e" in NOTE.read_text()
 
 
 def test_129_scope_and_synthesis_slots_remain_awaiting_real_publications() -> None:

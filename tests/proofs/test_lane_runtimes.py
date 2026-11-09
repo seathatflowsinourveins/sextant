@@ -96,6 +96,10 @@ def test_model_policy_keeps_the_approved_google_interim_and_native_claude() -> N
     assert policy["google"]["effort"] == "high"
     assert policy["google"]["router_connections"] == ["agy", "antigravity"]
     assert policy["google"]["status"].startswith("interim: Carbon not in this account's catalog")
+    # The policy register moves on ADR-0030's measured gap; the project settings keep Opus 5.5 until
+    # the hard-lines receipt is regenerated on the host (test_hard_lines.py binds receipt["model"]
+    # to this file, and only a real Claude engine can re-record it).
+    assert policy["claude"]["model"] == "claude-fable-5-2" and policy["claude"]["effort"] == "max"
     claude = json.loads((ROOT / ".claude/settings.json").read_text())
     assert claude["model"] == "claude-opus-5-5"
     assert claude["env"]["CLAUDE_CODE_EFFORT_LEVEL"] == "max"

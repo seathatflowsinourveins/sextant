@@ -212,8 +212,8 @@ registration and search history; a fresh holdout/registered look is required.
   BacktestEngine, FixedRiskSizer and native money/quantity types; no replacement
   simulator, sizing formula or live-client stand-in is proposed.
 
-[owner]: https://github.com/seathatflowsinourveins/sextant/issues/44#issuecomment-6688786219
-[brief]: https://github.com/seathatflowsinourveins/sextant/issues/80
+[owner]: https://github.com/seathatflowsinourveins/sextant-archive/issues/44#issuecomment-6688786219
+[brief]: https://github.com/seathatflowsinourveins/sextant-archive/issues/80
 [lanes]: https://github.com/seathatflowsinourveins/northstar-lanes/tree/00203275944a22655b3e14b221cfde9a265d549a
 [trading]: https://github.com/seathatflowsinourveins/northstar-trading/tree/8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa
 [nautilus]: https://github.com/nautechsystems/nautilus_trader/tree/55c0e82053142bce3a5cba4de4221d3929c2d3bc

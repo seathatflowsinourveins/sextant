@@ -1,6 +1,6 @@
 # TradingView display sync
 
-Issue [#52](https://github.com/seathatflowsinourveins/sextant/issues/52),
+Issue [#52](https://github.com/seathatflowsinourveins/sextant-archive/issues/52),
 [ADR-0021](adr/0021-tradingview-display.md) and
 [ADR-0026](adr/0026-tradingview-sync-and-order-presets.md) govern this slice.
 It supplies no universe selection, machine signal, market feed or order path.
@@ -133,6 +133,7 @@ The following commands are owner-session steps, **not run by this worker**:
 ```sh
 uv run --frozen python -m sextant.tradingview --research-dir /path/to/top100/latest --authorize
 uv run --frozen python -m sextant.tradingview --research-dir /path/to/top100/latest --authorize --apply
+uv run --frozen python -m sextant.tradingview --loop --research-dir /path/to/top100/latest --authorize
 ```
 
 Each process requires explicit owner consent in the browser. It uses only the
@@ -159,6 +160,31 @@ and removes unexpected storage once before rereading. A remaining mismatch,
 quota error, ambiguous mutation or unknown envelope stops. Earlier writes may
 have succeeded: re-inventory before another plan; there is no automatic
 mutation replay or rollback. A refused/dry run records no successful-sync time.
+
+`--loop` keeps that one owner consent for one process and admits at most one
+`sync_research(apply=True)` per J5 cadence tick
+(`lanes/tradingview/j5-cadence.params.json`: 150s in the 07:00–10:30 and
+15:00–16:00 ET onset windows, 300s otherwise inside 04:00–20:00 ET, 900s above
+the 80% weekly-usage mark). It rereads the newest complete unit each tick; a
+missing, stale or invalid unit leaves both lists unchanged and pages once per
+distinct episode. Pages go straight to stderr, not through `logging`: the
+OAuth redaction guard disables logging for the whole consent session. It claims only when the observed `NS movers` and `NS focus`
+pair differs from the last completed read-back, so unchanged membership never
+calls the cloud. It exits at the 20:00 ET display close with a window-closed
+message, and it never holds the OAuth session across the closed window. A failed
+apply latches the admitted run for reviewed reconciliation; there is no
+automatic retry or reset. A restart also refuses existing state that holds an
+active, failed or page-pending run, or that was written by another reviewed
+registry, before it opens a new consent session; the reviewed reconciliation or
+migration must finish first. On a healthy restart, the startup by-ID read-back
+replaces the saved comparison before the first claim, so a sync is judged
+against the broker's current lists rather than the previous session's. The default state root is
+`~/sextant-data/tradingview-j5` (`--cadence-root`); all cooperating processes
+must use the same canonical root. `--weekly-usage-pct`/`--usage-source` exist to
+supply the Windows controller's sourced number; when unset, the process states
+that it has no Claude surface and the 900s branch is not exercised. The loop
+needs one complete display unit; projecting the slot-3 `sextant.j5-ranked/1`
+document into that unit is the bridge's job and is not part of this change.
 
 ## Display parameter registry
 
@@ -200,13 +226,92 @@ the owner's layout by numeric ID. Stop acceptance on ambiguity or missing proof.
 Indicator-preset automation remains failed historically; owner-manual Pine
 application is the fallback. No Desktop access is authorized on this distro.
 
-Broker order presets remain owner-manual. Managed-paper tickets use plain
-LIMIT, no attached bracket; outside RTH follow the broker's session rules.
-`NS ALPACA DAY LIMIT BRACKET` / `NS IBKR DAY LIMIT BRACKET` are historical
-owner-managed presets, with illustrative TP/SL placeholders, not manager exit
-policy. Quantity/risk persistence, account translation, fill visibility,
-production list capacity, official result envelopes and session persistence
-have not been accepted here. No paper handover or order action follows.
+## Owner import card: the four reviewed Pine presets
+
+The four reviewed v6 `indicator()` files live in
+`lanes/tradingview/presets/`; this card is the owner-manual fallback for the
+failed indicator-preset automation. It installs nothing and opens no Desktop
+session.
+
+| File | Save as a NEW script | Packaged SHA-256 |
+|---|---|---|
+| `ema_cross.pine` | `NS 2026-11-06 · ema_cross` | `648ec3830d757a90333792711ac6e19642e7ab2bef315d7bb5b21d31b87bdd37` |
+| `hurst_vpin.pine` | `NS 2026-11-06 · hurst_vpin` | `bec431f2c9e49e062d0a43e1dea20079774b0827d42266b131351eea256c8b7d` |
+| `quote_imbalance.pine` | `NS 2026-11-06 · quote_imbalance` | `86977f1a86f5dc76b808e457fc5ca1849320bda4990094caf8e0a65ac97ad9e7` |
+| `exit_levels.pine` | `NS 2026-11-06 · exit_levels` | `210733c3312a4497ef8e2ad8e01ff5f607d9b93c724087d0a87ab2fa7e5029ac` |
+
+Each packaged hash is the file's SHA-256 in
+`lanes/tradingview/presets/manifest.json`; the upstream hash there separately
+pins the formula bytes, with only the title changed. The local receipt command
+in the [lane README](../../lanes/tradingview/README.md) rechecks both. After the
+owner acceptances above:
+
+1. Open the file and paste its source into a **NEW** script in the Pine Editor;
+   never overwrite, rename or delete an owner script.
+2. Save it with the dated ID above, compile it, and add it to the owner's chart
+   at 1 minute; record chart type, feed/session, seed and inputs.
+3. Recompute SHA-256 of the saved source and compare it with the packaged hash;
+   stop if it differs. Restore the owner's layout by numeric ID afterwards.
+4. Stop on ambiguity or missing proof.
+
+No install automation exists: the indicator-preset path failed historically,
+owner-manual Pine application is the fallback, and no webhook or alert bridge is
+part of this card.
+
+## Owner-manual order presets
+
+Broker order presets are owner-manual ticket defaults, not Pine, a machine
+signal or an order path. The roster is exactly three named presets:
+
+| Preset | Order type | Entry price | TIF | Children | Confirmation | Scope |
+|---|---|---|---|---|---|---|
+| `NS ALPACA DAY LIMIT MANAGED` | LIMIT | 0 relative ticks (at the touch, not a fixed price) | DAY | none | ON | managed-paper entries |
+| `NS ALPACA DAY LIMIT BRACKET` | LIMIT | 0 relative ticks (at the touch, not a fixed price) | DAY | TP/SL | ON | owner-managed positions only |
+| `NS IBKR DAY LIMIT BRACKET` | LIMIT | 0 relative ticks (at the touch, not a fixed price) | DAY | TP/SL | ON | owner-managed positions only |
+
+**Guard:** "TV presets can place brackets without confirmation", so
+managed-paper entries stay plain LIMIT, never a bracket. An applied preset can
+arm chart Buy/Sell and `Shift+B`/`Shift+S` in that mode, brackets included; the
+MANAGED preset therefore carries no TP/SL children. The BRACKET pair is for
+owner-managed positions only, where it reserves shares the custodian cannot
+also protect. Its illustrative 2% TP / 1% SL are owner placeholders, not the
+manager's exit policy ([ADR-0025](adr/0025-gain-protection-and-fast-exit.md));
+DAY expiry does not flatten inventory.
+
+Session truth for Alpaca presets: overnight runs 20:00–04:00 ET, is technically
+the evening before the trade date, and accepts limit orders only. A DAY order
+stays active through the next trading day's RTH and after-hours and cancels at
+20:00 ET if unfilled. No overnight session runs immediately before a full NYSE
+holiday (the Wednesday before Thanksgiving), and a half-day overnight runs the
+full eight hours (the Friday after Thanksgiving). A bracket sets Alpaca's
+`extended_hours` to false/omitted. IBKR TP/SL children exist only while the
+parent is open and unexecuted; after execution no modification or bracket can
+be added, and Pine is not supported for IBKR trading.
+
+Dated sources, all read 2026-11-09:
+
+- **T10:** [TradingView Order presets](https://www.tradingview.com/blog/en/optimize-trading-with-order-presets-48237/)
+  (published 2024-11-13) and Help Center Order presets (article 43000742711):
+  a preset saves order type, relative price in ticks from bid/ask, brackets
+  (relative price or percent) and TIF; 10 presets per broker account;
+  without-confirmation mode can place brackets.
+- **T11:** [TradingView integration at Alpaca](https://alpaca.markets/learn/trade-with-alpaca-on-tradingview)
+  (last updated 2024-11-12) and [Alpaca orders](https://docs.alpaca.markets/docs/orders-at-alpaca)
+  (updatedAt 2026-10-13). The learn page does not say whether a paper account
+  connects, which order types, TIF or brackets work, or what the ticket shows.
+- **T12:** [IBKR TradingView FAQ](https://www.interactivebrokers.com/docs/third-party-integrations/trading-view/faq.md)
+  (re-read 2026-11-09): TP/SL children only while the parent is open and
+  unexecuted; Pine is not supported for IBKR trading.
+- **T13:** [Alpaca 24/5](https://docs.alpaca.markets/us/docs/245-trading)
+  (updatedAt 2026-10-12): the session truth above; `src/sextant/paper/sessions.py`
+  implements it and `tests/proofs/test_paper_config.py` witnesses it.
+
+No webhook, alert bridge or hotkey submission places an order. TV field→API
+session translation (whether a paper account connects, which fields survive,
+and same-account fill visibility) remains owner-verified. Quantity/risk
+persistence, production list capacity, official result envelopes and session
+persistence have not been accepted here. No paper handover or order action
+follows.
 
 
 ## J5 to display-lists bridge
@@ -228,8 +333,11 @@ documents, never an empty list, and more than 100 members refuse untruncated.
 `tradingview/producer.py` adapts the existing `tv-display-producer@ea95075` to
 main's native ranking and the J5 `NS Ranked` contract. Supplied stream tapes and
 REST snapshots only; no key, socket, order, TradingView call or scheduler.
-The [design, source registry, verified carry, consolidation and disabled owner cadence](handbook/rank-live.md)
+The [design, source registry, verified carry, consolidation and owner-consented loop](handbook/rank-live.md)
 record the implementation and remaining acceptance. The lead's 2026-11-08
 19:21:44 pivot requires it to land after B, with dsh and Google gates. The
-19:49:24 owner cadence is implemented DISABLED. Stream opening and controller
-activation still require landing and explicit lead enablement.
+19:49:24 owner cadence now runs only through `--loop`: one process consent, one
+admitted apply per tick, stale input leaves the lists unchanged and pages, and
+`enabled=1` is reviewed in this PR and effective at the next session boundary.
+Stream opening and controller activation still require landing and explicit lead
+enablement.
