@@ -28,7 +28,8 @@
         "action.yml:51-62,118-161",
         "scripts/action-patch.mjs:49-152",
         "scripts/action-post.mjs:29-61",
-        "src/ci/pipeline.ts:142-147,366-450"
+        "src/ci/pipeline.ts:142-147,366-450",
+        "src/ci/tool.ts:123-126, repository-qualified pr avoids the unused ownerRepo argument"
       ],
       "excluded_release": "v0.7.28, 2026-10-27, newer than cutoff",
       "integration_status": "Upstream review scripts and original installer/run/post commands retained unchanged; metadata binds inputs and full SHAs, and added steps compose native parity helpers and main max-effort patch."
@@ -51,7 +52,8 @@
       "published_at": "2026-10-24T18:57:30Z",
       "paths": [
         "action.yml:34-45,57-69,104-119,170-185",
-        "docs/usage.md:205-249"
+        "docs/usage.md:205-249",
+        "action.yml:190-201, path_to_bun_executable keeps the upstream action unchanged"
       ],
       "excluded_reference": "v1.0.269/61a9c274 is newer than cutoff"
     },
@@ -123,6 +125,14 @@
       ],
       "sha256": "612996770ec78df46a3e7d1d3b15b0764201e364c4ec89d2aae9af8902be17ea",
       "reuse": "existing reviewed project installer requested by the lead; unchanged vendored module"
+    },
+    "bun": {
+      "repository": "oven-sh/bun",
+      "version": "bun-v1.4.4",
+      "published_at": "2026-10-22T10:11:32Z",
+      "asset": "bun-linux-x64.zip",
+      "sha256": "bf8ccbfb2b0b80159e0f9a6d15c55317add8077534dbc6130a3edb52fccb395c",
+      "authority": "The already-pinned claude-code-action action.yml:199 selects this exact runtime; release qualifies before the new-pin cutoff. Official path_to_bun_executable input accepts the API-downloaded executable."
     }
   },
   "transitive_actions": [
@@ -148,7 +158,8 @@
     ],
     "bundles/api-only/index.mjs": [
       "Main config/dsh/hard-lines/hard-lines.mjs monotonic ctx.tools.guard pattern",
-      "dsh-github src/ci/tool.ts:42-67 tool names and arguments"
+      "dsh-github src/ci/tool.ts:42-67 tool names and arguments",
+      "PerryLink/dsh-github@2fc0009c:src/ci/tool.ts:123-126 and src/state.ts parsePrRef: exact owner/repo#number is the upstream repository-bearing PR reference; no replacement parser."
     ],
     "verdict.schema.json": [
       "Main .github/review/rubric.md upstream output schema"
