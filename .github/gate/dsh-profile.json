@@ -82,7 +82,7 @@
     },
     {
       "package": "sextant-dsh-review-cmd",
-      "spec": ".github/gate/bundles/review-cmd"
+      "spec": "config/dsh/review-cmd"
     },
     {
       "package": "dsh-goalloop-agentteams",

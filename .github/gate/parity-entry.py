@@ -41,7 +41,7 @@ parity._native(
     [
         "pnpm",
         "--dir",
-        str(ROOT / ".github/gate/bundles/review-cmd"),
+        str(ROOT / "config/dsh/review-cmd"),
         "install",
         "--frozen-lockfile",
         "--store-dir",
