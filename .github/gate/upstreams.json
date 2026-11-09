@@ -88,15 +88,6 @@
         "action.yml, enable-cache input"
       ]
     },
-    "setup-just": {
-      "repository": "extractions/setup-just",
-      "version": "v3",
-      "sha": "f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b",
-      "committed_at": "2026-02-22T18:53:35Z",
-      "paths": [
-        "action.yaml:8-24"
-      ]
-    },
     "ruleset-recipes": {
       "repository": "github/ruleset-recipes",
       "sha": "82adf8954a5cafb9722c18c421b9834c24ec0cd0",
@@ -146,12 +137,6 @@
       "sha": "0c5077e51419868618aeaa5fe8019c62421857d6",
       "committed_at": "2026-03-14T09:37:27Z",
       "used_by": "claude-code-action/action.yml:195"
-    },
-    {
-      "repository": "extractions/setup-crate",
-      "sha": "4993624604c307fbca528d28a3c8b60fa5ecc859",
-      "committed_at": "2024-07-10T21:17:34Z",
-      "used_by": "setup-just/action.yaml:17"
     }
   ],
   "patterns": {
@@ -174,6 +159,9 @@
     "headless-services.cordis.yml": [
       "deepseek-harness@66491b05:packages/bundle/headless/README.md:53-71, restore the credentials service in an empty isolated CI home",
       "PerryLink/dsh-github@2fc0009c:src/commands.ts registerReviewCommand; deepseek-harness@66491b05:apps/cli/README.md:40-48 disabled entry metadata avoids two registrations of the interactive /review command"
+    ],
+    "ci.yml": [
+      "Main .devcontainer/Dockerfile:124-138 tool versions and SHA256 values; GitHub CLI gh release download documented --repo/--pattern/--output API transport, read 2026-11-09. Only the automatic read-only GitHub job token is used, never repository review secrets."
     ]
   },
   "official_documents": [
@@ -190,7 +178,8 @@
     "https://pnpm.io/settings",
     "https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#pull_request",
     "https://docs.github.com/en/actions/reference/workflows-and-actions/variables#default-environment-variables",
-    "https://code.claude.com/docs/en/agent-sdk/structured-outputs#recognize-the-structuredoutput-tool-call"
+    "https://code.claude.com/docs/en/agent-sdk/structured-outputs#recognize-the-structuredoutput-tool-call",
+    "https://cli.github.com/manual/gh_release_download"
   ],
   "vendored_scripts": {
     "action-patch.mjs": "a897b80da6c1a42f32261e54a92e2bd1163dd075e0574edc4c336b96ceb3e797",
