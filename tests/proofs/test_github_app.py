@@ -182,7 +182,10 @@ def test_the_supervisor_restarts_the_command_on_a_new_token_before_expiry(
     github, tmp_path: Path
 ) -> None:
     runner, env, stub, _ = github
-    stub.ttl = MARGIN + timedelta(seconds=1)  # renew one second after each start
+    # Renew four seconds after each start: a 64-worker xdist run can delay the
+    # first child past one second, and the supervisor would kill it before it
+    # reported, losing the token-0 line this test asserts.
+    stub.ttl = MARGIN + timedelta(seconds=4)
     out = tmp_path / "child"
     sup = subprocess.Popen(
         [

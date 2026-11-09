@@ -103,7 +103,7 @@ def test_rubric_is_verbatim_upstream() -> None:
     )
 
 
-def test_ci_gives_pr_code_no_secret_and_no_cache() -> None:
+def test_ci_gives_pr_code_no_repository_secret() -> None:
     from test_public_gate import test_ci_runs_the_complete_check_without_repository_secrets
 
     test_ci_runs_the_complete_check_without_repository_secrets()
@@ -121,11 +121,14 @@ def test_every_action_is_pinned() -> None:
 
 
 def test_lint_covers_every_non_lock_workflow_with_shellcheck() -> None:
-    """Hosted ci calls just ci, whose lint discovers every workflow with ShellCheck."""
+    """Hosted ci's lint job runs just lint, which discovers every workflow with ShellCheck."""
     ci = _read(".github/workflows/ci.yml")
     just = _read("justfile")
     dockerfile = _read(".devcontainer/Dockerfile")
-    assert "- run: just ci" in ci
+    install = _read(".github/actions/ci-tools/install.sh")
+    assert "run: just lint" in ci
+    assert "bash .github/actions/ci-tools/install.sh actionlint shellcheck just" in ci
+    assert "shellcheck .github/actions/ci-tools/install.sh" in just
     assert "ci: sync lint test secrets" in just
     assert "find .github/workflows -maxdepth 1 -type f" in just
     assert '-shellcheck shellcheck "${workflows[@]}"' in just
@@ -135,7 +138,8 @@ def test_lint_covers_every_non_lock_workflow_with_shellcheck() -> None:
     assert f"ARG SHELLCHECK_VERSION={version.group(1)}" in dockerfile
     assert f"sc_sha={digest.group(1)}" in dockerfile
     assert "sc_arch=linux.aarch64; sc_sha=" in dockerfile
-    assert '--strip-components=1 "shellcheck-v${SHELLCHECK_VERSION}/shellcheck"' in ci
+    assert 'member="shellcheck-v${version}/shellcheck"' in install
+    assert '--strip-components=1 "$member"' in install
 
 
 @pytest.mark.local
@@ -217,3 +221,69 @@ def test_lessons_keep_their_seed_and_stay_append_only() -> None:
         "c9c2dd40ff547fdc5625e59b8d286610b991317578390678277d775ebfa4d4d0"
     )
     assert {json.loads(line)["schema"] for line in lines} == {"northstar.handbook.lesson/1"}
+
+
+def test_ci_fans_out_into_parallel_jobs_and_the_fan_in_fails_closed() -> None:
+    """GitHub workflow syntax `jobs` and `jobs.<job_id>.needs`, read 2026-11-09."""
+    import os
+
+    import yaml
+
+    data = yaml.safe_load(_read(".github/workflows/ci.yml"))
+    jobs = data["jobs"]
+    assert data["permissions"] == {"contents": "read"}
+    assert set(jobs) == {"lint", "tests", "budgets", "secrets", "ci"}
+    fan_in = jobs["ci"]
+    assert fan_in["needs"] == ["lint", "tests", "budgets", "secrets"]
+    assert fan_in["if"] == "always()"
+    runs = {
+        name: " ".join(str(step.get("run", "")) for step in job["steps"])
+        for name, job in jobs.items()
+    }
+    scripts = [step.get("run", "") for job in jobs.values() for step in job["steps"]]
+    assert sum("bash .github/actions/ci-tools/install.sh" in script for script in scripts) == 4
+    assert "just lint" in runs["lint"]
+    assert "just test tests/proofs" in runs["tests"]
+    assert "just test tests/repo" in runs["budgets"]
+    assert "just secrets" in runs["secrets"]
+    failed_step = "Fail unless every parallel job succeeded"
+    check = next(step for step in fan_in["steps"] if step.get("name") == failed_step)
+    script = check["run"]
+    results = {name: {"result": "success"} for name in fan_in["needs"]}
+    ok = subprocess.run(
+        ["bash", "-e", "-c", script],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "NEEDS": json.dumps(results)},
+        timeout=60,
+    )
+    assert ok.returncode == 0, ok.stdout + ok.stderr
+    for bad in ("failure", "cancelled", "skipped"):
+        broken = {**results, "tests": {"result": bad}}
+        done = subprocess.run(
+            ["bash", "-e", "-c", script],
+            capture_output=True,
+            text=True,
+            env={**os.environ, "NEEDS": json.dumps(broken)},
+            timeout=60,
+        )
+        assert done.returncode != 0, bad
+        assert "tests=" + bad in done.stdout + done.stderr
+
+
+def test_pytest_runs_on_every_runner_core_with_a_cooled_down_pin() -> None:
+    """pytest-xdist 3.8.0, uploaded 2025-07-01, against `release_cooldown_days: 14`."""
+    assert "pytest-xdist==3.8.0" in _read("pyproject.toml").split("[dependency-groups]", 1)[1]
+    just = _read("justfile")
+    assert re.search(r"^test.*:\n    uv run --frozen pytest -n auto", just, re.MULTILINE)
+
+
+def test_uv_dependency_cache_is_restored_for_ci_and_nowhere_else() -> None:
+    """astral-sh/setup-uv README at the ci.yml pin: `enable-cache` and `save-cache`."""
+    ci = _read(".github/workflows/ci.yml")
+    assert "enable-cache: true" in ci
+    assert "save-cache: false" in ci
+    for name in ("gate.yml", "consolidation.yml"):
+        text = _read(f".github/workflows/{name}")
+        if "astral-sh/setup-uv@" in text:
+            assert "enable-cache: false" in text, name
