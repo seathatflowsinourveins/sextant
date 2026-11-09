@@ -139,6 +139,47 @@ def _refuse_incomplete(
             )
 
 
+def _overnight_session(ts_event: int, sessions: tuple[date, ...]) -> date | None:
+    moment = datetime.fromtimestamp(ts_event / 1_000_000_000, tz=ET)
+    for day in sessions:
+        start = datetime.combine(day - timedelta(days=1), time(20), tzinfo=ET)
+        end = datetime.combine(day, time(4), tzinfo=ET)
+        if start <= moment < end:
+            return day
+    return None
+
+
+def _refuse_overnight_incomplete(
+    rows: dict[str, list[MinuteBarRow]], sessions: tuple[date, ...], symbols: tuple[str, ...]
+) -> None:
+    """A non-empty overnight response must name every requested symbol and session.
+
+    The daytime fetcher refuses the same shape through ``_refuse_incomplete``.
+    A fully empty response stays the documented quiet window; a non-empty one
+    that silently drops a symbol or a session would zero-fill the missing curve.
+    Bars outside the overnight windows are left for ``build_baseline``'s
+    coverage receipt to refuse.
+    """
+    if not rows:
+        return
+    missing_symbols = [symbol for symbol in symbols if symbol not in rows]
+    if missing_symbols:
+        raise ValueError(f"vendor bars are missing requested symbol {missing_symbols[0]}")
+    present: dict[str, set[date]] = defaultdict(set)
+    for symbol, bars in rows.items():
+        for bar in bars:
+            day = _overnight_session(bar.ts_event, sessions)
+            if day is not None:
+                present[symbol].add(day)
+    for symbol in symbols:
+        days = present.get(symbol, set())
+        missing = [day for day in sessions if day not in days]
+        if missing:
+            raise ValueError(
+                f"vendor bars are missing requested session {missing[0].isoformat()} for {symbol}"
+            )
+
+
 def fetch_overnight_baseline(
     client: BarsClient,
     symbols: Iterable[str],
@@ -158,6 +199,9 @@ def fetch_overnight_baseline(
     names = tuple(symbol_name(symbol) for symbol in symbols)
     if not names:
         raise ValueError("at least one symbol is required")
+    feed_value = DataFeed(feed)
+    if feed_value != DataFeed.BOATS:
+        raise ValueError("the overnight baseline uses the boats feed only")
     start = datetime.combine(sessions[0] - timedelta(days=1), time(20), tzinfo=ET)
     end = datetime.combine(sessions[-1], time(4), tzinfo=ET) - timedelta(microseconds=1)
     request = StockBarsRequest(
@@ -166,11 +210,13 @@ def fetch_overnight_baseline(
         start=start,
         end=end,
         adjustment=Adjustment.RAW,
-        feed=DataFeed(feed),
+        feed=feed_value,
         sort=Sort.ASC,
+        asof=as_of.isoformat(),
     )
     response = client.get_stock_bars(request)
     rows = _raw_rows(response)
+    _refuse_overnight_incomplete(rows, sessions, names)
     bars = [bar for symbol in names for bar in rows.get(symbol, ())]
     coverage = [
         BaselineCoverage(
@@ -186,11 +232,8 @@ def fetch_overnight_baseline(
         coverage=coverage,
         as_of=as_of,
         known_at=known_at,
-        provenance=(
-            f"alpaca-py {feed} raw 1-minute bars; v*vw, n; explicit complete coverage; "
-            "linear within minute; overnight segment"
-        ),
-        feed=feed,
+        provenance=f"alpaca-py {feed_value.value} raw 1-minute bars; overnight segment",
+        feed=feed_value.value,
         prior_sessions=prior_sessions,
     )
 

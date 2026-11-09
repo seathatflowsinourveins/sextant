@@ -76,7 +76,9 @@ def test_the_fetcher_requests_boats_over_the_prior_overnight_windows() -> None:
     assert request.feed == DataFeed.BOATS
     assert request.start == datetime(2026, 11, 5, 1, 0)
     assert request.end == datetime(2026, 11, 6, 8, 59, 59, 999999)
+    assert request.asof == AS_OF.isoformat()
     assert table.feed == "boats"
+    assert table.provenance.count("v*vw, n") == 1
 
 
 def test_the_table_holds_overnight_offsets_and_running_totals() -> None:
@@ -110,3 +112,38 @@ def test_an_empty_response_is_a_complete_quiet_window() -> None:
     assert table.samples
     assert {s.session for s in table.samples} == {"2026-11-05", "2026-11-06"}
     assert all(s.dollar_volume == 0 and s.trade_count == 0 for s in table.samples)
+
+
+def test_a_nonempty_response_missing_a_requested_symbol_is_refused() -> None:
+    rows = overnight_rows()
+    del rows["SPY"]
+    with pytest.raises(ValueError, match="missing requested symbol SPY"):
+        fetch_overnight_baseline(
+            FakeData(rows), ["AAPL", "SPY"], as_of=AS_OF, known_at=KNOWN_AT, prior_sessions=2
+        )
+
+
+def test_a_nonempty_response_missing_a_requested_session_is_refused() -> None:
+    rows = overnight_rows()
+    missing = {
+        iso(date(2026, 11, 5), 20, 0),
+        iso(date(2026, 11, 5), 20, 1),
+        iso(date(2026, 11, 6), 3, 59),
+    }
+    rows["AAPL"] = [bar for bar in rows["AAPL"] if str(bar["t"]) not in missing]
+    with pytest.raises(ValueError, match="missing requested session 2026-11-06 for AAPL"):
+        fetch_overnight_baseline(
+            FakeData(rows), ["AAPL", "SPY"], as_of=AS_OF, known_at=KNOWN_AT, prior_sessions=2
+        )
+
+
+def test_the_overnight_fetcher_refuses_a_non_boats_feed() -> None:
+    with pytest.raises(ValueError, match="boats feed only"):
+        fetch_overnight_baseline(
+            FakeData(overnight_rows()),
+            ["AAPL"],
+            as_of=AS_OF,
+            known_at=KNOWN_AT,
+            feed="sip",
+            prior_sessions=2,
+        )
