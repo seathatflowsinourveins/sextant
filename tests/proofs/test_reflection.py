@@ -63,7 +63,7 @@ def test_the_reflection_is_a_marked_proposal_only_run() -> None:
     assert PROMPT.startswith("sextant-verified-reflection.")
     assert "do not append to or rewrite docs/handbook/lessons.jsonl yourself" in PROMPT
     assert "northstar.handbook.lesson/1" in PROMPT and "never write the registry" in PROMPT
-    assert "#114" in PROMPT and "Never merge" in PROMPT
+    assert "#91" in PROMPT and "Never merge" in PROMPT
     setup = SETUP.read_text()
     # A fresh worktree per run, created disabled: enabling it is the lead's call.
     assert "--workspace-mode new-per-run" in setup and "--disabled" in setup

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Sets the verified reflection, #114's runner: an Orca automation in a fresh worktree per run, skipped by
+# Sets the verified reflection, #91's runner: an Orca automation in a fresh worktree per run, skipped by
 # its precheck unless a session ended or a PR merged (stablyai/orca@a162e08b29b2883b02d8a0dfcc99e26c80b2cfe7:
 # docs/site/content/docs/cli/automations.mdx). It proposes lessons in a PR body; the lead, the single
 # writer under ADR-0018's amendment, appends them. Safe to run again. `just reflection` runs it.
