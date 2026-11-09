@@ -198,6 +198,20 @@ def test_codex_config_and_launch_override_statsig_and_content(tmp_path: Path, na
     assert not (tmp_path / ".config/orca").exists()
 
 
+def _native_codex() -> Path | None:
+    # Host and sandbox keep the same pin under different roots; PATH locates either install.
+    tail = Path("@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex")
+    candidates = [
+        Path.home() / ".local/share/sextant-agents/node_modules" / tail,
+        Path("/opt/agents/node_modules") / tail,
+    ]
+    if found := shutil.which("codex"):
+        parents = Path(found).resolve().parents
+        candidates += [parent / tail for parent in parents]
+        candidates += [parent / "node_modules" / tail for parent in parents]
+    return next((path for path in candidates if path.is_file()), None)
+
+
 @pytest.mark.local
 @pytest.mark.parametrize("name", ("sextant-codex", "sextant-codex-review"))
 @pytest.mark.parametrize(
@@ -213,11 +227,9 @@ def test_codex_launch_loads_with_pinned_native_config_parser(
     tmp_path: Path, name: str, metadata: dict
 ) -> None:
     # Installed rust-v0.167.0 package's native binary; no download or inference session.
-    native = Path.home() / (
-        ".local/share/sextant-agents/node_modules/@openai/codex-linux-x64/"
-        "vendor/x86_64-unknown-linux-musl/bin/codex"
-    )
-    assert native.is_file(), "this local proof requires the installed Codex 0.167.0 pin"
+    native = _native_codex()
+    if native is None:
+        pytest.skip("this local proof requires the installed Codex 0.167.0 pin")
     launcher = _codex_lane(tmp_path, name)
     child = tmp_path / ".local/share/sextant-agents/node_modules/.bin/codex"
     child.unlink()
