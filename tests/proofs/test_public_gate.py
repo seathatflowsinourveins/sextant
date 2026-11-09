@@ -101,9 +101,13 @@ def test_ci_runs_the_complete_check_without_repository_secrets() -> None:
     ci = yaml.safe_load(text)
     assert set(ci.get("on", ci.get(True))) == {"pull_request"}
     assert ci["permissions"] == {"contents": "read"}
-    assert any(step.get("run") == "just ci" for step in ci["jobs"]["ci"]["steps"])
+    runs = " ".join(
+        str(step.get("run", "")) for job in ci["jobs"].values() for step in job["steps"]
+    )
+    for part in ("just lint", "just test tests/proofs", "just test tests/repo", "just secrets"):
+        assert part in runs, part
     assert "secrets." not in text
-    assert "enable-cache: false" in text and "package-manager-cache: false" in text
+    assert "enable-cache: true" in text and "package-manager-cache: false" in text
 
 
 def test_fork_pr_workflows_never_bind_repository_secrets() -> None:
