@@ -6,6 +6,8 @@
   "engines": {"dsh": "0.2.2-rc.1"},
   "devDependencies": {
     "@stardustlc/dsh-review": "0.3.0",
+    "dsh-goalloop-agentteams": "github:samirliu/dsh-goalloop-agentteams#6b4b1fad8cd61f98e6eedbb4f12ed10b5dc93f17",
+    "@apcamargo/dsh-review": "github:apcamargo/dsh-review#4997159b99322f7551b33d72678e7a14c5282bbf",
     "dsh-doublecheck": "0.9.29",
     "dsh-openspec-opsx": "1.0.0",
     "dsh-github-skills": "0.2.1",

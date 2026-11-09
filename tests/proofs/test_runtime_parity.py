@@ -148,7 +148,7 @@ def test_acp_and_headless_get_the_mcp_bundle_by_native_plugin_add(tmp_path: Path
     for name in ("acp", "headless"):
         (tmp_path / name).mkdir()
         (tmp_path / name / "package.json").write_text(json.dumps({"dependencies": {}}))
-    assert parity.dsh_missing(tmp_path / "acp", repository) == [str(bundle)]
+    assert parity.dsh_missing(tmp_path / "acp", repository)[0] == str(bundle)
     recorded = os.path.relpath(bundle, tmp_path / "headless")  # as pnpm records a local path
     present = {"sextant-dsh-mcp": f"link:{recorded}"}
     (tmp_path / "headless/package.json").write_text(json.dumps({
@@ -156,7 +156,7 @@ def test_acp_and_headless_get_the_mcp_bundle_by_native_plugin_add(tmp_path: Path
     }))  # fmt: skip
     (tmp_path / "headless/node_modules").mkdir()
     (tmp_path / "headless/node_modules/sextant-dsh-mcp").symlink_to(bundle)
-    assert parity.dsh_missing(tmp_path / "headless", repository) == []
+    assert str(bundle) not in parity.dsh_missing(tmp_path / "headless", repository)
 
 
 @pytest.mark.parametrize("form", ["relative to the profile", "under ~", "absolute"])
@@ -177,9 +177,15 @@ def test_dsh_skills_go_to_its_own_home_and_the_bundle_through_dsh(
     monkeypatch.setenv("PATH", f"{tmp_path / 'tools'}:{os.environ['PATH']}")
     parity.install_dsh(_skills(tmp_path / "source"), dsh_home, [str(dsh)], repository)
     assert len(list((dsh_home / "skills").iterdir())) == 25
+    quality = parity.SPEC["runtimes"]["dsh"]["quality"]
+    goalloop = next(
+        row["spec"] for row in quality["plugins"] if row["package"] == "dsh-goalloop-agentteams"
+    )
+    shim = str(repository / "config/dsh/review-cmd")
     assert log.read_text().splitlines() == [
-        f"plugin --profile acp add --save-exact {repository}/config/dsh/mcp",
-        f"plugin --profile headless add --save-exact {repository}/config/dsh/mcp",
+        f"plugin --profile acp add --save-exact {repository}/config/dsh/mcp {goalloop} {shim}",
+        f"plugin --profile headless add --save-exact {repository}/config/dsh/mcp {goalloop} {shim}",
+        f"plugin --profile dsh-tui add --save-exact {goalloop} {shim}",
     ]
 
 
@@ -547,10 +553,45 @@ def test_dsh_plugin_initializes_a_shipped_profile_that_never_ran(
     monkeypatch.setenv("PATH", f"{tmp_path / 'tools'}:{os.environ['PATH']}")
     parity.install_dsh(_skills(tmp_path / "source"), dsh_home, [str(dsh)], repository)
     bundle = repository / "config/dsh/mcp"
+    quality = parity.SPEC["runtimes"]["dsh"]["quality"]
+    goalloop = next(
+        row["spec"] for row in quality["plugins"] if row["package"] == "dsh-goalloop-agentteams"
+    )
+    shim = str(repository / "config/dsh/review-cmd")
     assert log.read_text().splitlines() == [
-        f"plugin --profile acp add --save-exact {bundle}",
-        f"plugin --profile headless add --save-exact {bundle}",
+        f"plugin --profile acp add --save-exact {bundle} {goalloop} {shim}",
+        f"plugin --profile headless add --save-exact {bundle} {goalloop} {shim}",
+        f"plugin --profile dsh-tui add --save-exact {goalloop} {shim}",
     ]
+
+
+def test_dsh_quality_rows_install_the_p10_picks_on_every_profile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    parity = _parity()
+    repository = _mcp_repository(tmp_path)
+    shim = repository / "config/dsh/review-cmd"
+    (shim / "node_modules").mkdir(parents=True)
+    (shim / "package.json").write_text(json.dumps({"name": "sextant-dsh-review-cmd"}))
+    (shim / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\n")
+    dsh_home = tmp_path / "dsh-home"
+    _link_dsh_research(dsh_home, repository)
+    log = tmp_path / "dsh.log"
+    dsh = _stub(tmp_path / "dsh", f'printf "%s\\n" "$*" >> "{log}"\n')
+    pnpm_log = tmp_path / "pnpm.log"
+    _stub(tmp_path / "tools/pnpm", f'printf "%s\\n" "$*" >> "{pnpm_log}"\n')
+    monkeypatch.setenv("PATH", f"{tmp_path / 'tools'}:{os.environ['PATH']}")
+    parity.install_dsh(_skills(tmp_path / "source"), dsh_home, [str(dsh)], repository)
+    quality = parity.SPEC["runtimes"]["dsh"]["quality"]
+    goalloop = next(
+        row["spec"] for row in quality["plugins"] if row["package"] == "dsh-goalloop-agentteams"
+    )
+    assert log.read_text().splitlines() == [
+        f"plugin --profile acp add --save-exact {repository}/config/dsh/mcp {goalloop} {shim}",
+        f"plugin --profile headless add --save-exact {repository}/config/dsh/mcp {goalloop} {shim}",
+        f"plugin --profile dsh-tui add --save-exact {goalloop} {shim}",
+    ]
+    assert len(pnpm_log.read_text().splitlines()) == 3
 
 
 def test_a_step_failing_on_the_filesystem_is_reported_and_later_steps_still_run(
@@ -600,7 +641,7 @@ def test_a_bundle_link_recorded_relative_or_under_home_counts_as_installed(
     }))  # fmt: skip
     (profile / "node_modules").mkdir()
     (profile / "node_modules/sextant-dsh-mcp").symlink_to(bundle)
-    assert parity.dsh_missing(profile, repository) == []
+    assert str(bundle) not in parity.dsh_missing(profile, repository)
 
 
 @pytest.mark.parametrize("name", ["acp", "headless"])
@@ -621,7 +662,7 @@ def test_acp_and_headless_require_the_installed_target_and_enabled_bundle(
     if state != "missing link":
         target = tmp_path / "old-repository/config/dsh/mcp" if state == "stale link" else bundle
         (profile / "node_modules/sextant-dsh-mcp").symlink_to(target)
-    assert parity.dsh_missing(profile, repository) == [str(bundle)]
+    assert parity.dsh_missing(profile, repository)[0] == str(bundle)
 
 
 def _snapshot(root: Path) -> dict:

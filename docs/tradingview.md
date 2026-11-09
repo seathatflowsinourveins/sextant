@@ -50,7 +50,8 @@ Official sources read 2026-11-06:
 - [TradingView MCP](https://www.tradingview.com/mcp/docs): official endpoint,
   OAuth 2.1, Streamable HTTP, Essential+ non-trial, batch watchlist operations
   and approximately 100 calls/minute/user. Existing members move to the end
-  when added, so only missing members are added.
+  when added, so only missing members are added. Re-read 2026-11-09;
+  the expanded inventory does not widen the membership adapter below.
 - [Pine higher-timeframe data](https://www.tradingview.com/pine-script-docs/concepts/other-timeframes-and-data/):
   confirmed values use an expression offset with `barmerge.lookahead_on`.
 - [Pine repainting](https://www.tradingview.com/pine-script-docs/concepts/repainting/):
@@ -73,6 +74,46 @@ This implements the source's `ns-display-lists/1` consumer, not a second
 ranking/focus producer. Legacy generations without `display-lists.json` refuse.
 The deployment-manifest/search mode, position notifications, rendering and
 Desktop controllers are outside #52's membership/preset slice.
+
+## Official MCP drift fence
+
+The [official MCP documentation](https://www.tradingview.com/mcp/docs), read
+2026-11-09, lists **35 tools** across the nine categories below. This is a
+dated documentation inventory, not a hosted `tools/list` or deployment receipt.
+The service rolls independently; re-read its documentation on every TradingView PR.
+
+Only `list_watchlists`, `get_watchlist`, `create_watchlist`, `add_to_watchlist`
+and `remove_from_watchlist` are admitted by `OfficialTools`. Discovery accepts
+their bare names and existing `mcp-watchlist-...` aliases, ignores unknown names
+and requires exactly one identity for each admitted operation. Every call must
+still pass the operation's argument-key fence and discovered JSON Schema.
+Discovery is capability inventory, not authority to use new tools.
+
+| Category | Documented count | Not admitted by the membership adapter |
+|---|---|---|
+| Watchlists | 8 | `get_active_watchlist`, `delete_watchlist`, `update_watchlist` |
+| Market data | 3 | `get_ohlcv`, `get_economic_data`, `get_economic_symbols` |
+| Search | 1 | `search_symbols` |
+| Screener | 5 | `get_symbol_data`, `run_screener`, `get_symbol_data_batch`, `get_screener_columns`, `get_technicals_rating` |
+| News | 2 | `get_news`, `get_news_story` |
+| Fundamentals | 3 | `get_forecasts`, `get_financials`, `get_financial_history` |
+| Documents | 2 | `get_documents`, `get_document_view` |
+| Calendars | 3 | `get_earnings_calendar`, `get_economic_calendar`, `get_dividends_calendar` |
+| Alerts | 8 | `create_alert`, `update_alert`, `delete_alert`, `stop_alerts`, `restart_alerts`, `list_alerts`, `get_alerts`, `get_alerts_log` |
+
+`get_active_watchlist` can create or activate a list, so it is not an admitted
+read. The inventory lists no broker or order tool; any future such tool is
+nevertheless refused by name. The historical notification policy in ADR-0021
+does not enable alert tools in this membership-only adapter. No TradingView data
+becomes a machine signal; alert/webhook execution bridges remain rejected.
+
+`tests/proofs/test_tradingview.py::test_official_discovery_ignores_every_non_membership_tool`
+advertises all 35 names plus a synthetic `place_order` through the real SDK's
+in-memory transport, with socket connections denied. Bare and namespaced
+membership identities discover exactly the five operations; every other name
+is refused by `validate()` and `call()` before a tool request. An admitted list
+read still succeeds. This proof changes no production code, dependency or pin
+and makes no OAuth, hosted-service, Desktop, broker or owner-acceptance claim.
 
 ## Offline and owner commands
 
@@ -190,6 +231,20 @@ policy. Quantity/risk persistence, account translation, fill visibility,
 production list capacity, official result envelopes and session persistence
 have not been accepted here. No paper handover or order action follows.
 
+
+## J5 to display-lists bridge
+
+`tradingview/bridge.py` is one pure projection from a fresh
+`sextant.j5-ranked/1` document to the three-document unit above
+(`top100.json`, `focus.json`, `display-lists.json`). It performs no I/O and
+reads no clock: the caller supplies sourced `DisplayBounds` (the j5 document
+carries no legacy bounds and there is no default), writes the returned
+documents, and still lets `read_research_inputs` judge freshness, bounding
+`max_age` by the j5 `expires_at_ns` because the target contract has no expiry
+field. Movers pair ranked rows with `NS Ranked` in rank order; focus is
+exactly the paired `focus_eligible` rows, with no armed name invented. A
+refused, unavailable or tampered j5 document raises `BridgeError` with no
+documents, never an empty list, and more than 100 members refuse untruncated.
 
 ## Slot-3 ranked J5 producer
 

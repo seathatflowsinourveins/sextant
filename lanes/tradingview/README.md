@@ -31,4 +31,9 @@ for local receipts; it makes no session or installation claim. The
 [operating notes](../../docs/tradingview.md) hold the parameter registry, exact
 sources, owner commands and outstanding acceptance. Linux auth has no
 persistence option; every owner session needs browser consent. No unattended
-service or Desktop controller is installed.
+service or Desktop controller is installed. The operational K2 ranking
+registry is [`k2-ranking.params.json`](k2-ranking.params.json): the twelve
+ranking rows with pinned sources, all UNCALIBRATED; the DISPLAY deployment
+ages take the display registry's freshness bounds (600/1200/1200), so an
+operational display registry builds from the file, while the trading/entry
+deployment's ages stay UNAVAILABLE until sourced.
