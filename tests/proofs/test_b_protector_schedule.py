@@ -48,6 +48,8 @@ def b_params() -> BParameters:
     return BParameters(
         native_trail_fraction=Decimal("0.025"),
         reconcile_interval_s=Decimal("10"),
+        feed_poll_interval_s=Decimal("1"),
+        feed_silence_s=Decimal("5"),
     )
 
 
@@ -169,6 +171,8 @@ def test_the_registry_carries_the_scheduled_reconcile_interval(tmp_path):
     assert {row["name"] for row in rows} == {
         "native_trail_fraction",
         "reconcile_interval_s",
+        "feed_poll_interval_s",
+        "feed_silence_s",
     }
     assert all(row["calibration_state"] == "UNCALIBRATED" for row in rows)
     assert all(row["source"] for row in rows)
@@ -177,7 +181,7 @@ def test_the_registry_carries_the_scheduled_reconcile_interval(tmp_path):
     assert interval["last_change"] == "2026-11-09"
 
     with pytest.raises(ValueError):
-        BParameters(Decimal("0.025"), Decimal("0"))
+        BParameters(Decimal("0.025"), Decimal("0"), Decimal("1"), Decimal("5"))
 
     incomplete = tmp_path / "b-parameters.json"
     incomplete.write_text(

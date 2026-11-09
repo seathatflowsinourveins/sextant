@@ -14,5 +14,21 @@
     "source": "docs/adr/0007-custody-and-order-writing.md C1-C2 (claim and protect immediately); lead decision 2026-11-07: 10 s reconcile interval; UNCALIBRATED until PR-4",
     "calibration_state": "UNCALIBRATED",
     "last_change": "2026-11-09"
+  },
+  {
+    "name": "feed_poll_interval_s",
+    "unit": "seconds between REST latest quote and trade polls",
+    "value": "1",
+    "source": "Alpaca 24/5 trading and Market Data API docs read 2026-11-09 (Algo Trader Plus: 10,000 historical calls/min; one batched quote and one batched trade per poll); lead decision 2026-11-09; UNCALIBRATED",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-09"
+  },
+  {
+    "name": "feed_silence_s",
+    "unit": "seconds without a fresh outside-RTH quote before the watchdog pages",
+    "value": "5",
+    "source": "lead decision 2026-11-09 (M4 outside-RTH witness; a quiet feed must page); docs/design.md X4 requires a fresh quote for a release; 5 s tolerates the 1 s poll plus jitter; UNCALIBRATED",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-09"
   }
 ]

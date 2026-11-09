@@ -40,6 +40,8 @@ def b_params() -> BParameters:
     return BParameters(
         native_trail_fraction=Decimal("0.025"),
         reconcile_interval_s=Decimal("10"),
+        feed_poll_interval_s=Decimal("1"),
+        feed_silence_s=Decimal("5"),
     )
 
 

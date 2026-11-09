@@ -50,6 +50,8 @@ def b_params(**overrides: Decimal) -> BParameters:
     facts = {
         "native_trail_fraction": Decimal("0.025"),
         "reconcile_interval_s": Decimal("10"),
+        "feed_poll_interval_s": Decimal("1"),
+        "feed_silence_s": Decimal("5"),
     }
     return BParameters(**(facts | overrides))
 
@@ -278,14 +280,19 @@ def test_the_registry_carries_b_the_reviewed_trail(tmp_path):
     assert params.reconcile_interval_s == b_params().reconcile_interval_s
 
     rows = json.loads(path.read_text())
-    assert {row["name"] for row in rows} == {"native_trail_fraction", "reconcile_interval_s"}
+    assert {row["name"] for row in rows} == {
+        "native_trail_fraction",
+        "reconcile_interval_s",
+        "feed_poll_interval_s",
+        "feed_silence_s",
+    }
     assert all(row["calibration_state"] == "UNCALIBRATED" for row in rows)
     assert all(row["source"] for row in rows)
 
     with pytest.raises(ValueError):
-        BParameters(Decimal("0.03"), Decimal("10"))
+        BParameters(Decimal("0.03"), Decimal("10"), Decimal("1"), Decimal("5"))
     with pytest.raises(ValueError):
-        BParameters(Decimal("0.025"), Decimal("0"))
+        BParameters(Decimal("0.025"), Decimal("0"), Decimal("1"), Decimal("5"))
 
     incomplete = tmp_path / "b-parameters.json"
     incomplete.write_text(json.dumps([]))
