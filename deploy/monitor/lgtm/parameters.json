@@ -1,0 +1,42 @@
+[
+  {
+    "name": "prometheus_retention",
+    "unit": "duration",
+    "value": "90d",
+    "source": "grafana/docker-otel-lgtm@v0.38.0 9c57b1400ccdb8920e1a2b6083134cc5ef244a8f:README.md PROMETHEUS_EXTRA_ARGS example (--storage.tsdb.retention.time=90d); ADR-0018 registry, 30-day baseline owed",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-08"
+  },
+  {
+    "name": "loki_retention",
+    "unit": "duration",
+    "value": "90d",
+    "source": "grafana/docker-otel-lgtm@v0.38.0 9c57b1400ccdb8920e1a2b6083134cc5ef244a8f:README.md LOKI_EXTRA_ARGS example (-store.retention=90d); ADR-0018 registry, 30-day baseline owed",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-08"
+  },
+  {
+    "name": "lgtm_container_memory",
+    "unit": "memory",
+    "value": "2G",
+    "source": "grafana/docker-otel-lgtm@v0.38.0 9c57b1400ccdb8920e1a2b6083134cc5ef244a8f:README.md LGTM_CONTAINER_MEMORY knob; monitor RECONCILE L1 footprint (2G cap, hard limit <=4 GiB, ~650-900 MB RSS expected)",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-08"
+  },
+  {
+    "name": "host_ram_floor_gb",
+    "unit": "gigabytes",
+    "value": "20",
+    "source": "Monitor convergence brief host floors (20 GB RAM / 20 GB disk) carried in RECONCILE L1 footprint column; proof checks the host, never a fixture",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-08"
+  },
+  {
+    "name": "host_disk_floor_gb",
+    "unit": "gigabytes",
+    "value": "20",
+    "source": "Monitor convergence brief host floors (20 GB RAM / 20 GB disk) carried in RECONCILE L1 footprint column; proof checks free disk on the repo filesystem",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-08"
+  }
+]

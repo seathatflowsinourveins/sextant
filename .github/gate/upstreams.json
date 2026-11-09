@@ -123,10 +123,10 @@
     "parity-installer": {
       "sha": "c5ffd943fcfbb7fd861ef514e0c5ee7361b1d14b",
       "paths": [
-        "deploy/wsl/lane-runtimes/parity.py:274-329"
+        "deploy/wsl/lane-runtimes/parity.py:288-338"
       ],
-      "sha256": "612996770ec78df46a3e7d1d3b15b0764201e364c4ec89d2aae9af8902be17ea",
-      "reuse": "existing reviewed project installer requested by the lead; unchanged vendored module"
+      "sha256": "f307fc13d142830cdf2aa808c5e2fa4c3dc72120896e6b0f37666940bef20827",
+      "reuse": "existing reviewed project installer requested by the lead; vendored module patched in this PR for the P10 quality rows"
     },
     "bun": {
       "repository": "oven-sh/bun",

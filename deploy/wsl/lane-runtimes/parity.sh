@@ -29,7 +29,7 @@ fi
 mkdir -p "$prefix/mcp-bridge"
 cp "$here/mcp-bridge/package.json" "$here/mcp-bridge/package-lock.json" "$prefix/mcp-bridge/"
 npm ci --prefix "$prefix/mcp-bridge" --omit=dev --ignore-scripts --no-audit --no-fund
-for runtime in antigravity dsh muse; do
+for runtime in claude antigravity dsh muse; do
   install -m 755 "$here/$runtime-launch.sh" "$prefix/$runtime-launch.sh"
 done
 cp "$here/pins.json" "$here/model-policy.json" "$prefix/"

@@ -11,15 +11,21 @@ sync:
 # Everything the required `ci` check runs.
 ci: sync lint test secrets
 
+# Check the locked dsh profile, the live profile and the generated ecosystem index.
+session-start:
+    python3 scripts/dsh_profile_doctor.py
+    python3 scripts/ecosystem_index.py --check
+
 lint:
     uv run --frozen ruff check .
     uv run --frozen ruff format --check .
     uv run --frozen pyright
     uv run --frozen zizmor --offline .github/workflows
+    shellcheck .github/actions/ci-tools/install.sh
     mapfile -t workflows < <(find .github/workflows -maxdepth 1 -type f \( -name '*.yml' -o -name '*.yaml' \) ! -name '*.lock.yml' | sort); actionlint -shellcheck shellcheck "${workflows[@]}"
 
-test:
-    uv run --frozen pytest
+test path="":
+    uv run --frozen pytest -n auto {{path}}
 
 # Scan this PR's commits when CI gives a range, otherwise the working tree.
 secrets:

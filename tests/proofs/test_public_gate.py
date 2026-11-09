@@ -101,9 +101,13 @@ def test_ci_runs_the_complete_check_without_repository_secrets() -> None:
     ci = yaml.safe_load(text)
     assert set(ci.get("on", ci.get(True))) == {"pull_request"}
     assert ci["permissions"] == {"contents": "read"}
-    assert any(step.get("run") == "just ci" for step in ci["jobs"]["ci"]["steps"])
+    runs = " ".join(
+        str(step.get("run", "")) for job in ci["jobs"].values() for step in job["steps"]
+    )
+    for part in ("just lint", "just test tests/proofs", "just test tests/repo", "just secrets"):
+        assert part in runs, part
     assert "secrets." not in text
-    assert "enable-cache: false" in text and "package-manager-cache: false" in text
+    assert "enable-cache: true" in text and "package-manager-cache: false" in text
 
 
 def test_fork_pr_workflows_never_bind_repository_secrets() -> None:
@@ -163,6 +167,29 @@ def test_landing_standard_and_fail_on_error_are_wired_into_the_verdict() -> None
     assert review["with"]["fail-on"] == "error"
     adapter = (ROOT / ".github/gate/gate.cjs").read_text()
     assert ".github/workflows/shared/review-rules.md" in adapter
+
+
+def test_paper_carveout_keeps_only_the_hard_lines_blocking() -> None:
+    rules = (WORKFLOWS / "shared/review-rules.md").read_text()
+    owner = (
+        "it is only paper and i can reset them anytime,never gate the e2e and sota workflow , "
+        "we need full automation on paper lane rather than so afraid of touch the order, "
+        "they meant to be automated with sota stratiges, exit, reentry etc"
+    )
+    assert owner in rules
+    carveout = rules.split("paper carve-out", 1)[1]
+    for required in (
+        "lanes/paper/",
+        "src/sextant/paper/",
+        "secret",
+        "live",
+        "one writer per account",
+        "Decimal",
+        "never cancelled, sold back or resized",
+        "ONE follow-up issue",
+    ):
+        assert required in carveout
+    assert "source" in carveout and "ci" in carveout
 
 
 def test_key_policy_and_failure_paths_execute_against_the_actual_adapter() -> None:

@@ -1,0 +1,20 @@
+{
+  "checked_at": "2026-11-09T03:52:52Z",
+  "release_cooldown_days": 14,
+  "agentsview": {
+    "repository": "kenn-io/agentsview",
+    "tag": "v0.46.1",
+    "version": "0.46.1",
+    "commit": "65523169ae016d10112b70ed3410487204764fbc",
+    "license": "MIT",
+    "published_at": "2026-10-23T03:22:17Z",
+    "install_source": "https://github.com/kenn-io/agentsview/blob/65523169ae016d10112b70ed3410487204764fbc/docs/configuration.md",
+    "asset": "agentsview_0.46.1_linux_amd64.tar.gz",
+    "url": "https://github.com/kenn-io/agentsview/releases/download/v0.46.1/agentsview_0.46.1_linux_amd64.tar.gz",
+    "sha256": "e7822006d7bafa3aef9a5e4f7d7caffca56051bb039b848222a73633ed4c6c9b",
+    "size": 66047182,
+    "parses_dsh_job_events": false,
+    "dsh_gap": "v0.46.1 reads dsh JSONL versions 0-4 but has no job/registered event type, so all 48 configured dsh v0.2.2-rc.1 session files fail sync with 0 deepseek-harness rows while sync exits 0; the dsh root stays off until a cooled release parses the event (review, 2026-11-09)",
+    "checksum_source": "release SHA256SUMS and the asset digest agree; the downloaded bytes hash to the same value (writer check, 2026-11-08)"
+  }
+}
