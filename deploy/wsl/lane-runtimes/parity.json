@@ -28,6 +28,14 @@
     },
     "dsh": {
       "profiles": ["acp", "headless"],
+      "quality": {
+        "source": "docs/manifest.md rows dsh-goalloop-agentteams@6b4b1fad8cd61f98e6eedbb4f12ed10b5dc93f17 and apcamargo/dsh-review@4997159b99322f7551b33d72678e7a14c5282bbf; the gate carries the full quality set, the host carries the P10 picks",
+        "profiles": ["dsh-tui", "acp", "headless"],
+        "plugins": [
+          {"package": "dsh-goalloop-agentteams", "spec": "github:samirliu/dsh-goalloop-agentteams#6b4b1fad8cd61f98e6eedbb4f12ed10b5dc93f17"},
+          {"package": "sextant-dsh-review-cmd", "spec": "config/dsh/review-cmd"}
+        ]
+      },
       "mcp_bundle": "config/dsh/mcp",
       "skills": "deepseek-ai/deepseek-harness@dsh-v0.2.2-rc.1 66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db:packages/skill/skill-filesystem/README.md Roots and priority (<dshHome>/skills); blind legs keep their own empty DSH_HOME",
       "mcp": "dsh-v0.2.2-rc.1 packages/mcp/mcp-client/README.md; apps/cli docs/user/develop/basic/publish.md (dsh plugin --profile <name> add)",

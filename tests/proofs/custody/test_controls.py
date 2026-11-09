@@ -22,13 +22,30 @@ def test_fixture_rows_cannot_be_loaded_as_deployment_authority():
         Controls.from_rows(rows, fixture=True)
 
 
-def test_sourced_registry_keeps_missing_reserves_unavailable_without_blocking_protection():
+def test_sourced_registry_carries_the_structural_protection_reserve():
     rows = json.loads((ROOT / "lanes/custody-parameters.json").read_text())
     controls = Controls.from_rows(rows)
+    assert controls["reserve_per_open_position"] == 2
+    assert controls["reserve_per_exiting_position"] == 1
+    by_name = {row["name"]: row for row in rows}
+    for name in ("reserve_per_open_position", "reserve_per_exiting_position"):
+        row = by_name[name]
+        assert row["scope"] == "REVIEWED"
+        assert row["calibration"] == "UNCALIBRATED"
+        assert "protection.py" in row["source"]
+        assert "ADR-0007" in row["source"]
+
+
+def test_a_missing_reserve_still_never_blocks_protection():
+    controls = Controls.from_rows(
+        control_rows(reserve_per_open_position=None, reserve_per_exiting_position=None),
+        fixture=True,
+    )
     assert controls["reserve_per_open_position"] is None
-    assert controls["reserve_per_exiting_position"] is None
     pacer = AccountPacer(controls, lambda: 0)
     sends = []
-    pacer.request(ActionKind.SUBMIT, lambda mark: (mark(), sends.append("entry")))
-    pacer.request(ActionKind.REDUCE, lambda mark: (mark(), sends.append("protection")))
+    pacer.request(ActionKind.SUBMIT, lambda mark: (mark(), sends.append("entry")), open_positions=1)
+    pacer.request(
+        ActionKind.REDUCE, lambda mark: (mark(), sends.append("protection")), open_positions=1
+    )
     assert sends == ["protection"]
