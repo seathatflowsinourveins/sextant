@@ -200,13 +200,92 @@ the owner's layout by numeric ID. Stop acceptance on ambiguity or missing proof.
 Indicator-preset automation remains failed historically; owner-manual Pine
 application is the fallback. No Desktop access is authorized on this distro.
 
-Broker order presets remain owner-manual. Managed-paper tickets use plain
-LIMIT, no attached bracket; outside RTH follow the broker's session rules.
-`NS ALPACA DAY LIMIT BRACKET` / `NS IBKR DAY LIMIT BRACKET` are historical
-owner-managed presets, with illustrative TP/SL placeholders, not manager exit
-policy. Quantity/risk persistence, account translation, fill visibility,
-production list capacity, official result envelopes and session persistence
-have not been accepted here. No paper handover or order action follows.
+## Owner import card: the four reviewed Pine presets
+
+The four reviewed v6 `indicator()` files live in
+`lanes/tradingview/presets/`; this card is the owner-manual fallback for the
+failed indicator-preset automation. It installs nothing and opens no Desktop
+session.
+
+| File | Save as a NEW script | Packaged SHA-256 |
+|---|---|---|
+| `ema_cross.pine` | `NS 2026-11-06 · ema_cross` | `648ec3830d757a90333792711ac6e19642e7ab2bef315d7bb5b21d31b87bdd37` |
+| `hurst_vpin.pine` | `NS 2026-11-06 · hurst_vpin` | `bec431f2c9e49e062d0a43e1dea20079774b0827d42266b131351eea256c8b7d` |
+| `quote_imbalance.pine` | `NS 2026-11-06 · quote_imbalance` | `86977f1a86f5dc76b808e457fc5ca1849320bda4990094caf8e0a65ac97ad9e7` |
+| `exit_levels.pine` | `NS 2026-11-06 · exit_levels` | `210733c3312a4497ef8e2ad8e01ff5f607d9b93c724087d0a87ab2fa7e5029ac` |
+
+Each packaged hash is the file's SHA-256 in
+`lanes/tradingview/presets/manifest.json`; the upstream hash there separately
+pins the formula bytes, with only the title changed. The local receipt command
+in the [lane README](../../lanes/tradingview/README.md) rechecks both. After the
+owner acceptances above:
+
+1. Open the file and paste its source into a **NEW** script in the Pine Editor;
+   never overwrite, rename or delete an owner script.
+2. Save it with the dated ID above, compile it, and add it to the owner's chart
+   at 1 minute; record chart type, feed/session, seed and inputs.
+3. Recompute SHA-256 of the saved source and compare it with the packaged hash;
+   stop if it differs. Restore the owner's layout by numeric ID afterwards.
+4. Stop on ambiguity or missing proof.
+
+No install automation exists: the indicator-preset path failed historically,
+owner-manual Pine application is the fallback, and no webhook or alert bridge is
+part of this card.
+
+## Owner-manual order presets
+
+Broker order presets are owner-manual ticket defaults, not Pine, a machine
+signal or an order path. The roster is exactly three named presets:
+
+| Preset | Order type | Entry price | TIF | Children | Confirmation | Scope |
+|---|---|---|---|---|---|---|
+| `NS ALPACA DAY LIMIT MANAGED` | LIMIT | 0 relative ticks (at the touch, not a fixed price) | DAY | none | ON | managed-paper entries |
+| `NS ALPACA DAY LIMIT BRACKET` | LIMIT | 0 relative ticks (at the touch, not a fixed price) | DAY | TP/SL | ON | owner-managed positions only |
+| `NS IBKR DAY LIMIT BRACKET` | LIMIT | 0 relative ticks (at the touch, not a fixed price) | DAY | TP/SL | ON | owner-managed positions only |
+
+**Guard:** "TV presets can place brackets without confirmation", so
+managed-paper entries stay plain LIMIT, never a bracket. An applied preset can
+arm chart Buy/Sell and `Shift+B`/`Shift+S` in that mode, brackets included; the
+MANAGED preset therefore carries no TP/SL children. The BRACKET pair is for
+owner-managed positions only, where it reserves shares the custodian cannot
+also protect. Its illustrative 2% TP / 1% SL are owner placeholders, not the
+manager's exit policy ([ADR-0025](adr/0025-gain-protection-and-fast-exit.md));
+DAY expiry does not flatten inventory.
+
+Session truth for Alpaca presets: overnight runs 20:00–04:00 ET, is technically
+the evening before the trade date, and accepts limit orders only. A DAY order
+stays active through the next trading day's RTH and after-hours and cancels at
+20:00 ET if unfilled. No overnight session runs immediately before a full NYSE
+holiday (the Wednesday before Thanksgiving), and a half-day overnight runs the
+full eight hours (the Friday after Thanksgiving). A bracket sets Alpaca's
+`extended_hours` to false/omitted. IBKR TP/SL children exist only while the
+parent is open and unexecuted; after execution no modification or bracket can
+be added, and Pine is not supported for IBKR trading.
+
+Dated sources, all read 2026-11-09:
+
+- **T10:** [TradingView Order presets](https://www.tradingview.com/blog/en/optimize-trading-with-order-presets-48237/)
+  (published 2024-11-13) and Help Center Order presets (article 43000742711):
+  a preset saves order type, relative price in ticks from bid/ask, brackets
+  (relative price or percent) and TIF; 10 presets per broker account;
+  without-confirmation mode can place brackets.
+- **T11:** [TradingView integration at Alpaca](https://alpaca.markets/learn/trade-with-alpaca-on-tradingview)
+  (last updated 2024-11-12) and [Alpaca orders](https://docs.alpaca.markets/docs/orders-at-alpaca)
+  (updatedAt 2026-10-13). The learn page does not say whether a paper account
+  connects, which order types, TIF or brackets work, or what the ticket shows.
+- **T12:** [IBKR TradingView FAQ](https://www.interactivebrokers.com/docs/third-party-integrations/trading-view/faq.md)
+  (re-read 2026-11-09): TP/SL children only while the parent is open and
+  unexecuted; Pine is not supported for IBKR trading.
+- **T13:** [Alpaca 24/5](https://docs.alpaca.markets/us/docs/245-trading)
+  (updatedAt 2026-10-12): the session truth above; `src/sextant/paper/sessions.py`
+  implements it and `tests/proofs/test_paper_config.py` witnesses it.
+
+No webhook, alert bridge or hotkey submission places an order. TV field→API
+session translation (whether a paper account connects, which fields survive,
+and same-account fill visibility) remains owner-verified. Quantity/risk
+persistence, production list capacity, official result envelopes and session
+persistence have not been accepted here. No paper handover or order action
+follows.
 
 
 ## J5 to display-lists bridge
