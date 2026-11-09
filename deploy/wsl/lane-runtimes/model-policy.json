@@ -9,9 +9,10 @@
   },
   "claude": {
     "runtime": "native Claude Code",
-    "model": "claude-opus-5-5",
+    "model": "claude-fable-5-2",
     "effort": "max",
-    "vendor_source": "https://platform.claude.com/docs/en/models/opus-5-5/overview",
+    "read_date": "2026-11-09",
+    "vendor_source": "https://platform.claude.com/docs/en/models/fable-5-2/overview",
     "effort_source": "https://platform.claude.com/docs/en/build-with-claude/effort"
   },
   "google": {
