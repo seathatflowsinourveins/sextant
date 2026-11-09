@@ -254,3 +254,26 @@ trail and ADR-0024's slots.
   not broker fills. No paper or live execution, nothing selected, every row MODELED.
 - The 2/5 slot order is the run-flag time order from the cross-section; the rotation's
   pending order is (rank, flag, case). A different tie-break would change which name rotates.
+
+## PR-4: the tuning harness on these MODELED rows
+
+`src/sextant/validation/tuning.py` and `src/sextant/research/b_tuning.py` search six reviewed rows
+(the trail fraction up to ADR-0025's 2.5% cap; the first-leg window, count, span and max move; and
+the quote-freshness window) with 100-300 Optuna multivariate TPE trials, scoring the lower
+quartile of six CPCV folds. Every trial is one MODELED TrialLog row, refusals and prunes included.
+The report holds proposals with `adoption: none`; a proposal needs an untouched 365-730 day
+holdout, DSR > 0.95, PBO <= 0.05 and at least 30 training sessions.
+
+The run on these rows is NOT_EVALUABLE by construction. The six-mover cohort is one session
+(2026-11-09), and the three replay sessions (2026-10-21, 11-03, 11-09) cannot supply a 12-24 month
+holdout or 30 sessions. No TrialLog file and no proposals were written, which is the honest
+result; `test_b_tuning.py` proves the mechanism on a synthetic 60-session series instead.
+
+Two boundaries are deliberate. K2's thresholds are not tuned: they can only enter as paired arms
+against TV-REG's UNCALIBRATED rows, and the per-name features they gate are absent from these
+rows. K3's premarket-gap arm waits until the K3 section of `2026-11-06-ranking.md` freezes.
+
+The objective is the fold-level lower quartile, not upstream's path-level one: a trial is one
+fixed parameter set, so recomposing a path's held-out blocks would return the same full-series
+Sharpe for every path. The fold-level score keeps the combinatorial design and the coverage
+assertion; the difference is recorded here rather than hidden.
