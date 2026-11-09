@@ -303,6 +303,97 @@ def test_an_owner_working_sell_reserves_those_shares_from_the_house_trail():
     assert "owner_reserved_unprotected" in [page.reason for page in p.pages]
 
 
+def test_an_owner_order_event_cancels_an_oversized_house_trail_before_freezing():
+    house = api_order(
+        client_order_id="B001-trail-AAPL-old",
+        side="sell",
+        qty="10",
+        order_type="trailing_stop",
+        trail_percent="2.5",
+    )
+    owner = api_order(client_order_id="owner-sell-1", side="sell", qty="4")
+    client = FakeTradingClient(positions=[api_position("10")], orders=[house, owner])
+    p = protector(client)
+    p.bind()
+
+    p.handle(api_update(owner, event="new"))
+
+    assert client.cancelled == [str(house.id)]
+    assert str(owner.id) not in client.cancelled
+    assert "AAPL" in p.frozen
+    assert "owner_event_fail_closed" in [page.reason for page in p.pages]
+    assert client.submitted == []
+
+    p.handle(api_update(house, event="canceled"))
+
+    assert [request.qty for request in client.submitted] == [6]
+    assert "AAPL" not in p.frozen
+
+
+def test_a_refused_claim_clock_cancels_a_stale_house_trail_before_freezing():
+    stale = api_order(
+        client_order_id="B001-trail-AAPL-stale",
+        side="sell",
+        qty="10",
+        order_type="trailing_stop",
+        trail_percent="2.5",
+    )
+    client = FakeTradingClient(positions=[api_position("6")], orders=[stale])
+    p = protector(client)
+    p.bind()
+
+    p.handle(
+        api_update(
+            api_order(client_order_id="owner-fill-late", side="sell"),
+            event="fill",
+            at=NOW - timedelta(seconds=12),
+            position_qty=6.0,
+        )
+    )
+
+    assert client.cancelled == [str(stale.id)]
+    assert "AAPL" in p.frozen
+    assert "claim_too_late" in [page.reason for page in p.pages]
+    assert client.submitted == []
+
+    p.handle(api_update(stale, event="canceled"))
+
+    assert [request.qty for request in client.submitted] == [6]
+    assert "AAPL" not in p.frozen
+
+
+def test_more_than_one_house_exit_cancels_the_excess_before_freezing():
+    keep = api_order(
+        client_order_id="B001-trail-AAPL-a",
+        side="sell",
+        qty="10",
+        order_type="trailing_stop",
+        trail_percent="2.5",
+    )
+    excess = api_order(
+        client_order_id="B001-trail-AAPL-b",
+        side="sell",
+        qty="6",
+        order_type="trailing_stop",
+        trail_percent="2.5",
+    )
+    client = FakeTradingClient(positions=[api_position("10")], orders=[keep, excess])
+    p = protector(client)
+    p.bind()
+
+    p.reconcile()
+
+    assert client.cancelled == [str(excess.id)]
+    assert "AAPL" in p.frozen
+    assert "more_than_one_house_exit" in [page.reason for page in p.pages]
+    assert [order.client_order_id for order in client.orders] == ["B001-trail-AAPL-a"]
+
+    p.reconcile()
+
+    assert "AAPL" not in p.frozen
+    assert client.submitted == []
+
+
 def test_an_unrecognized_foreign_order_freezes_the_symbol():
     foreign = api_order(client_order_id="owner-unknown-1").model_copy(update={"side": None})
     client = FakeTradingClient(positions=[api_position("10")], orders=[foreign])

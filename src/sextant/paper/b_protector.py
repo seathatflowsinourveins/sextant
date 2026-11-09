@@ -174,6 +174,7 @@ class Protector:
         self._now_ns = now_ns
         self._on_page = on_page
         self.pages: list[Page] = []
+        self.frozen: set[str] = set()
         self._cancelling: set[str] = set()
         self._sequence = 0
 
@@ -202,9 +203,40 @@ class Protector:
             self._handle_house(update, symbol, event)
         elif event in FILL_EVENTS:
             self._handle_owner_fill(update, symbol)
+        else:
+            self._fail_closed(
+                symbol,
+                "owner_event_fail_closed",
+                f"owner order event {event}",
+            )
 
     def reconcile(self) -> dict[str, Position]:
         """Match the broker's open orders and positions, then protect the whole shares."""
+
+        positions, house, owner_sells, unrecognized = self._snapshot()
+        for symbol, position in positions.items():
+            self._reconcile_symbol(
+                symbol,
+                position,
+                house.pop(symbol, []),
+                owner_sells.get(symbol, Decimal(0)),
+                symbol in unrecognized,
+            )
+        for symbol, ours in house.items():
+            if symbol not in positions:
+                for order in ours:
+                    self._cancel(order, "flat_with_house_exit")
+        return positions
+
+    def _snapshot(
+        self,
+    ) -> tuple[
+        dict[str, Position],
+        dict[str, list[Order]],
+        dict[str, Decimal],
+        set[str],
+    ]:
+        """Read positions and open orders, without changing anything at the broker."""
 
         positions = {
             position.symbol: position
@@ -231,35 +263,63 @@ class Protector:
                 owner_sells[order.symbol] = leaves
             elif side != "buy":
                 unrecognized.add(order.symbol)
-        for symbol, position in positions.items():
-            self._reconcile_symbol(
-                symbol,
-                position,
-                house.pop(symbol, []),
-                owner_sells.get(symbol, Decimal(0)),
-                symbol in unrecognized,
-            )
-        for symbol, ours in house.items():
-            if symbol not in positions:
-                for order in ours:
-                    self._cancel(order, "flat_with_house_exit")
-        return positions
+        return positions, house, owner_sells, unrecognized
+
+    def _fail_closed(self, symbol: str, reason: str, detail: str) -> None:
+        """Broker-first read, cancel only the house's excess, freeze the symbol, page."""
+
+        try:
+            positions, house, owner_sells, _ = self._snapshot()
+        except Exception as exc:
+            self.frozen.add(symbol)
+            self.page(reason, symbol, f"{detail}; reconcile_failed={type(exc).__name__}")
+            return
+        position = positions.get(symbol)
+        protective = 0
+        if position is not None:
+            quantity = _decimal(position.qty, "position.qty")
+            if quantity > 0:
+                available = quantity - owner_sells.get(symbol, Decimal(0))
+                if available > 0:
+                    protective = int(available.to_integral_value(rounding=ROUND_FLOOR))
+        self._cancel_excess(house.get(symbol, []), protective, reason)
+        self.frozen.add(symbol)
+        self.page(reason, symbol, detail)
+
+    def _cancel_excess(self, ours: list[Order], protective: int, reason: str) -> None:
+        """Leave at most one house exit, no larger than the unreserved whole shares."""
+
+        if len(ours) > 1:
+            eligible = [order for order in ours if _leaves(order) <= protective]
+            keeper = max(eligible, key=_leaves) if eligible else None
+            for order in ours:
+                if order is not keeper:
+                    self._cancel(order, reason)
+            return
+        if ours and _leaves(ours[0]) > protective:
+            self._cancel(ours[0], reason)
+
+    @staticmethod
+    def _clean(ours: list[Order], protective: int) -> bool:
+        return len(ours) <= 1 and all(_leaves(order) <= protective for order in ours)
 
     def _handle_owner_fill(self, update: TradeUpdate, symbol: str) -> None:
         filled_ns = _timestamp_ns(update.timestamp)
         if filled_ns is None:
-            self.page("custody_unresolved", symbol, "owner fill has no timestamp")
+            self._fail_closed(symbol, "custody_unresolved", "owner fill has no timestamp")
             return
         now_ns = self._now_ns()
         if filled_ns > now_ns:
-            self.page("invalid_claim_clock", symbol)
+            self._fail_closed(symbol, "invalid_claim_clock", "owner fill clock is in the future")
             return
         latency_ns = int(self._parameters.claim_max_latency_s * NS_PER_SECOND)
         if now_ns - filled_ns > latency_ns:
-            self.page("claim_too_late", symbol)
+            self._fail_closed(
+                symbol, "claim_too_late", "owner fill is older than claim_max_latency_s"
+            )
             return
         if update.position_qty is None:
-            self.page("custody_unresolved", symbol, "owner fill has no position_qty")
+            self._fail_closed(symbol, "custody_unresolved", "owner fill has no position_qty")
             return
         positions = self.reconcile()
         position = positions.get(symbol)
@@ -321,18 +381,25 @@ class Protector:
                 symbol,
                 "owner sell orders reserve more than the position",
             )
-            for order in ours:
-                self._cancel(order, "quantity_mismatch")
+            self._cancel_excess(ours, 0, "quantity_mismatch")
+            self.frozen.add(symbol)
             return
         protective = int(available.to_integral_value(rounding=ROUND_FLOOR))
         if quantity != quantity.to_integral_value() or available != protective:
             self.page("fractional_custody_unverified", symbol)
+        if symbol in self.frozen:
+            if not self._clean(ours, protective):
+                self._cancel_excess(ours, protective, "fail_closed_recheck")
+                return
+            self.frozen.discard(symbol)
         if protective == 0:
-            for order in ours:
-                self._cancel(order, "owner_reserved_unprotected")
+            self._cancel_excess(ours, protective, "owner_reserved_unprotected")
+            self.frozen.add(symbol)
             self.page("owner_reserved_unprotected", symbol)
             return
         if len(ours) > 1:
+            self._cancel_excess(ours, protective, "more_than_one_house_exit")
+            self.frozen.add(symbol)
             self.page("more_than_one_house_exit", symbol)
             return
         in_rth = session_at(self._now_ns()) is Session.RTH
@@ -347,7 +414,8 @@ class Protector:
                     )
                 return
             if held > protective:
-                self._cancel(ours[0], "quantity_mismatch")
+                self._cancel_excess(ours, protective, "quantity_mismatch")
+                self.frozen.add(symbol)
                 self.page("quantity_mismatch", symbol)
             else:
                 self.page("owner_add_unprotected", symbol)
