@@ -289,10 +289,15 @@ and writes `sextant.j5-ranked/1` atomically. It is display only. Nothing here
 opens a stream, places an order, launches the Windows controller or schedules
 itself; the lease, the atomic writer and the two-clock rule are T1's, unchanged.
 
-- **Transport.** `tradingview/bars.py:AlpacaBarSource` chunks the requested
-  universe (150 by default, at most 200 symbols per call) and waits the same
-  `data.alpaca_history.Pacer` before every call, so retries and pages share one
-  <= 200/min allocation. Requests are `StockBarsRequest(TimeFrame(1, Minute),
+- **Transport.** `tradingview/bars.py:PacedStockBars` is the only bars client:
+  it overrides alpaca-py's `_one_request`, so the shared
+  `data.alpaca_history.Pacer` waits before every HTTP page and every 429/504
+  retry the SDK performs (`RESTClient._get_marketdata` pages by `page_token`,
+  `RESTClient._request` retries, both through `_one_request`; alpaca-py@cc4cb3b7
+  `alpaca/common/rest.py:90-141,360-410`). `AlpacaBarSource` only chunks the
+  requested universe (150 by default, at most 200 symbols per call) and never
+  paces a logical batch on its own, so pagination and retries stay inside the
+  one <= 200/min allocation. Requests are `StockBarsRequest(TimeFrame(1, Minute),
   feed=SIP, adjustment=RAW, sort=ASC)`; bars keep the vendor `vw` and `n` fields
   ([ADR-0003](adr/0003-ranking-and-feeds.md):14), and a bar without `n` is
   refused rather than given a count.
@@ -310,7 +315,10 @@ itself; the lease, the atomic writer and the two-clock rule are T1's, unchanged.
   so the anchor is a unit-size tick and its own dollar volume is subtracted from
   the segment prefix, leaving that prefix at zero. Later bars append at their
   close clocks; a bar whose close is after the market clock, a stale bar, or a
-  bar outside the segment or universe is refused, never back-dated.
+  bar outside the segment or universe is refused, never back-dated. A bar that
+  closes at or after the segment end belongs to the next segment: it is skipped
+  before it can touch the clock, so the final minute cannot invalidate the
+  epoch.
 - **Coverage.** `BarPoll(bars, requested, failed)` says what the poll covered. A
   complete poll sets `READY` with expected == observed == universe and zero
   missing/invalid/late; any failed symbol sets `DEGRADED` with the explicit
@@ -325,9 +333,11 @@ itself; the lease, the atomic writer and the two-clock rule are T1's, unchanged.
   warrant/unit/right/preferred/fund name and suffix patterns; it is a documented
   superset, not point-in-time membership. `baseline.build_baseline` builds five
   prior XNYS sessions of per-session cumulative dollar-volume and trade-count
-  curves, interpolates each session at the offset and takes the median; a minute
-  without a bar carries the previous cumulative value forward. Five sessions is
-  the replay's choice, not a seal-bound constant.
+  curves, offsets each session's bars from that session's own 04:00/09:30 ET
+  segment start (the lanes pin's `session_offset.segment_start`), interpolates
+  each session at the offset and takes the median; a minute without a bar
+  carries the previous cumulative value forward. Five sessions is the replay's
+  choice, not a seal-bound constant.
 
 ### Parity witness, 2026-11-09
 

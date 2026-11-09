@@ -154,6 +154,10 @@ class BarFidelityHost:
             raise ValueError(f"bar outside the universe: {symbol}")
         if item.start_ns < self.publisher.segment.start_ns:
             raise ValueError(f"bar outside the segment: {symbol}")
+        if item.close_ns >= self.publisher.segment.end_ns:
+            # A bar closing at the boundary belongs to the next segment; never
+            # let it invalidate this segment's epoch at its final clock.
+            return False
         if item.close_ns > market_ns:
             raise ValueError(f"bar close is after the market clock: {symbol}")
         if self.last_close.get(symbol, item.close_ns - 1) >= item.close_ns:

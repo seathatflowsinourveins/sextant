@@ -1,6 +1,7 @@
 """One-minute bar ingestion for the bar-fidelity display host.
 
-The transport is Alpaca's SIP 1-minute bars through the shared request pacer;
+The transport is Alpaca's SIP 1-minute bars through one paced client, which
+waits on the shared Pacer before every HTTP page and retry;
 the host turns each bar into one volume-bearing tick plus the vendor trade
 count, never into one tick per print.  Nothing here orders, sizes or signs a
 trade: the unit it feeds is display-only, restricted to paper slot three.
@@ -13,10 +14,11 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
-from typing import Protocol, cast
+from typing import Any, Protocol, cast
 
 from alpaca.common.enums import Sort
 from alpaca.data.enums import Adjustment, DataFeed
+from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.models import BarSet
 from alpaca.data.models.bars import Bar as AlpacaBar
 from alpaca.data.requests import StockBarsRequest
@@ -180,33 +182,46 @@ def _bar(symbol: str, row: AlpacaBar) -> Bar:
     )
 
 
-class BarTransport(Protocol):
-    """The one Alpaca client method the bar source needs."""
-
-    def get_stock_bars(self, request: StockBarsRequest) -> BarSet: ...
-
-
 class Waitable(Protocol):
-    """The one pacer method the bar source needs; the shared Pacer satisfies it."""
+    """The one pacer method the paced transport needs."""
 
     def wait(self) -> None: ...
 
 
+class PacedStockBars(StockHistoricalDataClient):
+    """The only stock-bars transport: every HTTP page and retry waits on one Pacer.
+
+    alpaca-py pages inside ``RESTClient._get_marketdata`` (the documented
+    ``page_token`` loop) and retries 429/504 inside ``RESTClient._request``;
+    both paths call ``_one_request``, so this hook applies the shared allocation
+    to every wire request, not once per logical batch (alpaca-py@cc4cb3b7
+    ``alpaca/common/rest.py:90-141,360-410``, ``alpaca/data/historical/stock.py:75``).
+    """
+
+    def __init__(self, *, pacer: Waitable, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._pacer = pacer
+
+    def _one_request(self, method: str, url: str, opts: dict, retry: int) -> dict:
+        self._pacer.wait()
+        return super()._one_request(method, url, opts, retry)
+
+
 class AlpacaBarSource:
-    """SIP 1-minute bars through one shared pacer and batch-sized requests."""
+    """SIP 1-minute bars through the paced transport, in batch-sized requests."""
 
     def __init__(
         self,
-        client: BarTransport,
-        pacer: Waitable,
+        client: PacedStockBars,
         *,
         batch: int = 150,
         feed: DataFeed = DataFeed.SIP,
     ) -> None:
+        if not isinstance(client, PacedStockBars):
+            raise ValueError("historical bars need the paced transport, PacedStockBars")
         if type(batch) is not int or not 1 <= batch <= MAX_BATCH:
             raise ValueError(f"Bar batches must cover 1..{MAX_BATCH} symbols")
         self.client = client
-        self.pacer = pacer
         self.batch = batch
         self.feed = feed
 
@@ -224,7 +239,6 @@ class AlpacaBarSource:
         bars: list[Bar] = []
         for index in range(0, len(names), self.batch):
             chunk = names[index : index + self.batch]
-            self.pacer.wait()
             request = StockBarsRequest(
                 symbol_or_symbols=list(chunk),
                 timeframe=cast(TimeFrame, TimeFrame.Minute),
@@ -234,7 +248,7 @@ class AlpacaBarSource:
                 adjustment=Adjustment.RAW,
                 sort=Sort.ASC,
             )
-            response = self.client.get_stock_bars(request)
+            response = cast(BarSet, self.client.get_stock_bars(request))
             data: Mapping[str, Sequence[AlpacaBar]] | None = response.data
             if data is None:
                 raise ValueError("Alpaca bar response has no data")

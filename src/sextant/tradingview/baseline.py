@@ -12,17 +12,38 @@ from __future__ import annotations
 import json
 from array import array
 from collections.abc import Sequence
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from hashlib import sha256
 from statistics import median
+from zoneinfo import ZoneInfo
 
 from sextant.ranking.baseline import BaselineValue
 from sextant.ranking.engine import Segment
 from sextant.tradingview.bars import Bar
 
 MINUTE_NS = 60 * 1_000_000_000
+NS = 1_000_000_000
 SCALE = 10_000
+NY = ZoneInfo("America/New_York")
+EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+
+
+def _timestamp(value: datetime) -> int:
+    delta = value.astimezone(UTC) - EPOCH
+    return (delta.days * 86400 + delta.seconds) * NS + delta.microseconds * 1000
+
+
+def _session_start(day: date, segment: Segment) -> int:
+    """The same segment clock time on each prior session's own date.
+
+    The pinned lanes baseline offsets every session from its own segment start
+    (northstar-lanes ``session_offset.segment_start``); anchoring every session
+    to the current segment would discard all prior-session bars.
+    """
+
+    local = (EPOCH + timedelta(microseconds=segment.start_ns // 1000)).astimezone(NY)
+    return _timestamp(datetime.combine(day, local.timetz()))
 
 
 class FiveSessionBaseline:
@@ -125,7 +146,7 @@ def build_baseline(
     known_at: int,
     provenance: str,
 ) -> FiveSessionBaseline:
-    """Accumulate each prior session's minute bars into cumulative curves."""
+    """Accumulate each prior session's minute bars from its own segment start."""
     if not provenance:
         raise ValueError("A baseline needs provenance")
     if type(known_at) is not int or known_at < 0:
@@ -147,6 +168,7 @@ def build_baseline(
     count_curves: list[array] = []
     digest = sha256()
     for day, bars in ordered:
+        session_start = _session_start(day, segment)
         dv = array("q", [0]) * (len(names) * points)
         counts = array("i", [0]) * (len(names) * points)
         deltas: dict[int, list[int]] = {}
@@ -155,10 +177,8 @@ def build_baseline(
             row = index.get(bar.symbol)
             if row is None:
                 raise ValueError(f"Bar outside the baseline universe: {bar.symbol}")
-            if bar.start_ns < segment.start_ns:
-                continue
-            offset = (bar.start_ns - segment.start_ns) // MINUTE_NS
-            if offset >= points - 1:
+            offset = (bar.start_ns - session_start) // MINUTE_NS
+            if offset < 0 or offset >= points - 1:
                 continue
             delta = deltas.setdefault(row, [0] * points)
             counts_delta = trade_deltas.setdefault(row, [0] * points)

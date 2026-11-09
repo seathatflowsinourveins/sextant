@@ -3,16 +3,15 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import UTC, date, datetime, time
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
+from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 import pytest
-from alpaca.data.models import BarSet
-from alpaca.data.requests import StockBarsRequest
 from nautilus_trader.common import MessageBus
 from nautilus_trader.model import (
     AggressorSide,
@@ -23,6 +22,7 @@ from nautilus_trader.model import (
     TraderId,
     TradeTick,
 )
+from requests import HTTPError
 
 from sextant.ranking.baseline import BaselineSample, BaselineTable
 from sextant.ranking.engine import (
@@ -130,6 +130,54 @@ def bar(
         trades=trades,
         vw=None,
     )
+
+
+def session_start(day: date, hour: int = 4) -> int:
+    """The segment's own wall-clock start on a prior session's date."""
+
+    return int(datetime.combine(day, time(hour, 0), tzinfo=NY).timestamp()) * NS
+
+
+def session_bar(symbol: str, day: date, minute: int, close: str, volume: int, trades: int) -> Bar:
+    start = session_start(day) + minute * 60 * NS
+    return Bar(
+        symbol=symbol,
+        start_ns=start,
+        open=D(close),
+        close=D(close),
+        volume=volume,
+        trades=trades,
+    )
+
+
+def _bar_payload(close: float = 10.25) -> dict:
+    return {
+        "t": "2026-11-09T09:00:00Z",
+        "o": 10.0,
+        "h": 10.5,
+        "l": 9.9,
+        "c": close,
+        "v": 1200,
+        "n": 7,
+        "vw": 10.1,
+    }
+
+
+class _Response:
+    """Minimal requests response, so the real SDK request path can run offline."""
+
+    def __init__(self, status: int, payload: dict | None = None) -> None:
+        self.status_code = status
+        self._payload = payload
+        self.text = "" if payload is None else json.dumps(payload)
+
+    def json(self) -> dict:
+        assert self._payload is not None
+        return self._payload
+
+    def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            raise HTTPError(f"synthetic {self.status_code}")
 
 
 def duck_tick(symbol: str, price: Decimal, size: Decimal, at: int) -> TradeTick:
@@ -282,50 +330,41 @@ def test_directory_parser_keeps_operating_companies_only() -> None:
     assert build_universe(nasdaq, other, active={"AAPL", "IBM"}) == ("AAPL", "IBM")
 
 
-def test_alpaca_bars_batch_pacer_and_decimal_fields() -> None:
-    class Client:
-        def __init__(self) -> None:
-            self.requests: list[StockBarsRequest] = []
+def test_alpaca_bars_batch_and_decimal_fields() -> None:
+    from sextant.tradingview.bars import PacedStockBars
 
-        def get_stock_bars(self, request: StockBarsRequest) -> BarSet:
-            self.requests.append(request)
-            symbols = request.symbol_or_symbols
-            return BarSet(
-                {
-                    symbol: [
-                        {
-                            "t": "2026-11-09T09:00:00Z",
-                            "o": 10.0,
-                            "h": 10.5,
-                            "l": 9.9,
-                            "c": 10.25,
-                            "v": 1200,
-                            "n": 7,
-                            "vw": 10.1,
-                        }
-                    ]
-                    for symbol in symbols
-                }
-            )
-
-    waits: list[float] = []
+    calls: list[dict] = []
+    waits: list[int] = []
 
     class Pacer:
         def wait(self) -> None:
-            waits.append(1.0)
+            waits.append(len(waits))
 
-    client = Client()
-    source = AlpacaBarSource(client, Pacer(), batch=2)
-    bars = source.minute_bars(
-        ("AAA", "BBB", "CCC"),
-        start=datetime(2026, 11, 9, 4, 0, tzinfo=NY),
-        end=datetime(2026, 11, 9, 4, 5, tzinfo=NY),
+    client = PacedStockBars(
+        pacer=Pacer(),
+        api_key="synthetic",
+        secret_key="synthetic",  # noqa: S106
     )
-    assert len(client.requests) == 2
-    assert len(waits) == 2
+
+    def request(method: str, url: str, **opts: object) -> _Response:
+        params = cast(dict[str, str], opts["params"])
+        calls.append(params)
+        return _Response(
+            200, {"bars": {name: [_bar_payload()] for name in params["symbols"].split(",")}}
+        )
+
+    source = AlpacaBarSource(client, batch=2)
+    with patch.object(client._session, "request", request):
+        bars = source.minute_bars(
+            ("AAA", "BBB", "CCC"),
+            start=datetime(2026, 11, 9, 4, 0, tzinfo=NY),
+            end=datetime(2026, 11, 9, 4, 5, tzinfo=NY),
+        )
+    assert len(calls) == 2
+    assert len(waits) == 2  # one paced wire request per batch, never an unpaced call
     assert [item.symbol for item in bars] == ["AAA", "BBB", "CCC"]
     first = bars[0]
-    assert first.start_ns == int(datetime(2026, 11, 9, 4, 0, tzinfo=NY).timestamp()) * NS
+    assert first.start_ns == int(datetime(2026, 11, 9, 9, 0, tzinfo=UTC).timestamp()) * NS
     assert first.close == D("10.25")
     assert first.volume == 1200
     assert first.trades == 7
@@ -339,16 +378,65 @@ def test_alpaca_bars_batch_pacer_and_decimal_fields() -> None:
         == ()
     )
     with pytest.raises(ValueError):
-        AlpacaBarSource(client, Pacer(), batch=0)
+        AlpacaBarSource(client, batch=0)
+
+
+def test_alpaca_transport_paces_every_page_and_retry() -> None:
+    from sextant.tradingview.bars import PacedStockBars
+
+    calls: list[dict] = []
+    waits: list[int] = []
+
+    class Pacer:
+        def wait(self) -> None:
+            waits.append(len(waits))
+
+    client = PacedStockBars(
+        pacer=Pacer(),
+        api_key="synthetic",
+        secret_key="synthetic",  # noqa: S106
+    )
+    client._retry_wait = 0
+    pages = iter(
+        (
+            _Response(429),
+            _Response(200, {"bars": {"AAA": [_bar_payload()]}, "next_page_token": "page-2"}),
+            _Response(200, {"bars": {"AAA": [_bar_payload(close=10.5)]}}),
+        )
+    )
+
+    def request(method: str, url: str, **opts: object) -> _Response:
+        calls.append(cast(dict, opts["params"]))
+        return next(pages)
+
+    source = AlpacaBarSource(client)
+    with patch.object(client._session, "request", request):
+        bars = source.minute_bars(
+            ("AAA",),
+            start=datetime(2026, 11, 9, 9, 0, tzinfo=NY),
+            end=datetime(2026, 11, 9, 9, 5, tzinfo=NY),
+        )
+    assert [item.close for item in bars] == [D("10.25"), D("10.5")]
+    assert len(calls) == 3  # one 429 retry plus two page_token pages
+    assert len(waits) == len(calls)  # every wire request waited on the shared pacer
 
 
 def test_five_session_baseline_carries_missing_minutes_and_medians() -> None:
     from datetime import date
 
-    sessions = (
-        (date(2026, 11, 2), (bar("AAA", 0, "10.00", 100, 1), bar("AAA", 2, "10.00", 100, 1))),
-        (date(2026, 11, 3), (bar("AAA", 0, "10.00", 300, 1), bar("AAA", 2, "10.00", 100, 1))),
-        (date(2026, 11, 4), (bar("AAA", 0, "10.00", 200, 1), bar("AAA", 2, "10.00", 100, 1))),
+    sessions = tuple(
+        (
+            day,
+            (
+                session_bar("AAA", day, 0, "10.00", volume, 1),
+                session_bar("AAA", day, 2, "10.00", 100, 1),
+            ),
+        )
+        for day, volume in (
+            (date(2026, 11, 2), 100),
+            (date(2026, 11, 3), 300),
+            (date(2026, 11, 4), 200),
+        )
     )
     table = build_baseline(
         sessions,
@@ -377,6 +465,32 @@ def test_five_session_baseline_carries_missing_minutes_and_medians() -> None:
     assert table.cumulative("AAA", "PRE", D(19_801)) is None
     assert table.cumulative("ZZZ", "PRE", D(60)) is None
     assert table.identity
+
+
+def test_baseline_anchors_each_session_to_its_own_start() -> None:
+    sessions = tuple(
+        (day, (session_bar("AAA", day, 0, "10.00", 100, 1),))
+        for day in (
+            date(2026, 11, 2),
+            date(2026, 11, 3),
+            date(2026, 11, 4),
+            date(2026, 11, 5),
+            date(2026, 11, 6),
+        )
+    )
+    table = build_baseline(
+        sessions,
+        symbols=("AAA",),
+        segment=SCOPE,
+        known_at=DAY_START - 24 * 3600 * NS,
+        provenance="fixture five prior sessions",
+    )
+    value = table.cumulative("AAA", "PRE", D(60))
+    assert value is not None
+    assert value.dollar_volume == D(1000)  # each 04:00 ET bar: close 10 x volume 100
+    assert value.trade_count == D(1)
+    carried = table.cumulative("AAA", "PRE", D(180))
+    assert carried is not None and carried.dollar_volume == D(1000)
 
 
 def test_host_ranks_match_direct_bar_fidelity_replay(tmp_path: Path) -> None:
@@ -454,6 +568,24 @@ def test_host_refuses_lookahead_and_skips_stale_bars(tmp_path: Path) -> None:
                 market_ns=close_ns,
                 received_ns=close_ns,
             )
+
+
+def test_bar_closing_at_the_segment_end_is_skipped(tmp_path: Path) -> None:
+    with reserve_stream(
+        tmp_path / "leases", paper_slot=3, existing_streams=0, source="fixture"
+    ) as lease:
+        host = BarFidelityHost(
+            publisher(),
+            lease=lease,
+            sip_authority="fixture SIP authority",
+            symbol_map={name: f"NASDAQ:{name}" for name in ("AAA", "BBB", "CCC")},
+        )
+        boundary = bar("AAA", 329, "11.00", 10, 3)
+        assert boundary.close_ns == SCOPE.end_ns
+        poll = BarPoll(bars=(boundary,), requested=("AAA", "BBB", "CCC"))
+        assert host.ingest(poll, market_ns=SCOPE.end_ns, received_ns=SCOPE.end_ns) == 0
+        assert host.producer.error is None
+        assert host.publisher.states["AAA"].latest is None
 
 
 def prime_two_minutes(host: BarFidelityHost) -> int:
