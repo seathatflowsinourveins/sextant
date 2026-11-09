@@ -24,6 +24,7 @@ from mcp.client.streamable_http import streamable_http_client
 from mcp.shared.auth import OAuthClientInformationFull, OAuthClientMetadata, OAuthToken
 from pydantic import AnyUrl
 
+from sextant.tradingview import diagnostics
 from sextant.tradingview.sync import SyncError, _sanitized
 
 SERVER = "https://mcp.tradingview.com/mcp"
@@ -121,7 +122,7 @@ class OwnerCallback:
 
     async def redirect(self, authorization_url: str) -> None:
         if urlsplit(authorization_url).scheme != "https" or not webbrowser.open(authorization_url):
-            raise SyncError(OWNER_STEP)
+            raise SyncError(OWNER_STEP, stage="authorize")
 
     async def wait(self) -> AuthorizationCodeResult:
         def receive():
@@ -129,7 +130,7 @@ class OwnerCallback:
             while self.result is None and not self.failed and time.monotonic() < deadline:
                 self.server.handle_request()
             if self.result is None:
-                raise SyncError(OWNER_STEP)
+                raise SyncError(OWNER_STEP, stage="callback")
             return self.result
 
         return await asyncio.to_thread(receive)
@@ -145,7 +146,7 @@ async def identify_request(request: httpx2.Request) -> None:
 async def official_client(authorize: bool = False) -> AsyncIterator[Client]:
     """No grant reuse, file/keychain fallback, or transport without owner consent."""
     if not authorize:
-        raise SyncError(OWNER_STEP)
+        raise SyncError(OWNER_STEP, stage="authorize")
     storage = InMemoryTokenStorage()
     callback = None
     with sensitive_logging():
@@ -180,9 +181,14 @@ async def official_client(authorize: bool = False) -> AsyncIterator[Client]:
             _sanitized(asyncio.CancelledError())
         except SyncError:
             raise
-        except Exception:
+        except Exception as error:
             _sanitized(
-                SyncError("TradingView session stopped; re-inventory before retry. " + OWNER_STEP)
+                SyncError(
+                    "TradingView session stopped; re-inventory before retry. " + OWNER_STEP,
+                    label=diagnostics.leaf_label(error),
+                    stage=diagnostics.stage(error),
+                    detail=diagnostics.detail(error),
+                )
             )
         finally:
             storage.tokens = None

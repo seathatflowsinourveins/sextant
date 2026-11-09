@@ -38,7 +38,7 @@ jobs:
         with:
           push: never
           env: GH_TOKEN
-          runCmd: just sync && bash -c 'set -o pipefail; just prove 2>&1 | tail -40'
+          runCmd: just sync && bash -c 'set -o pipefail; just prove "not local" 2>&1 | tail -40'
       # A failed proof fails its own step and turns the job red. The issue still updates.
       - name: Stop rule over the 20 most recently merged PRs
         id: window
