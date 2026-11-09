@@ -10,6 +10,12 @@ MANIFEST = (
     "|---|---|---|---|\n"
     "| Real row | source | applied | proof |\n"
 )
+PLUGIN_MANIFEST = (
+    MANIFEST + "\n## Third-party plugins\n\n"
+    "| Practice or pick | Source, pinned | How it is applied | Proof |\n"
+    "|---|---|---|---|\n"
+    "| Plugin X | owner/repo@v1 " + "d" * 40 + " | one lane | proof |\n"
+)
 HARNESS = """
 const fs = require("fs");
 const vm = require("vm");
@@ -43,11 +49,12 @@ def _failures(
     body: str,
     login: str = "someone",
     created: tuple[str, ...] = (),
+    manifest: str = MANIFEST,
 ) -> list[str]:
     done = subprocess.run(
         ["node", "-e", HARNESS, str(ROOT / "dangerfile.js")],
         input=json.dumps(
-            {"body": body, "login": login, "created": list(created), "manifest": MANIFEST}
+            {"body": body, "login": login, "created": list(created), "manifest": manifest}
         ),
         capture_output=True,
         text=True,
@@ -133,3 +140,15 @@ def test_dependabot_generated_bodies_pass() -> None:
 
 def test_a_sourced_gate_edit_needs_no_owner_label() -> None:
     assert _failures(_body(), created=(".github/workflows/gate.yml",)) == []
+
+
+def test_a_third_party_plugin_row_must_record_its_disclosure() -> None:
+    found = _failures(_body(row='"Plugin X"'), manifest=PLUGIN_MANIFEST)
+    assert any("capability" in failure for failure in found)
+
+
+def test_a_third_party_plugin_row_with_its_disclosure_passes() -> None:
+    manifest = PLUGIN_MANIFEST.replace(
+        "| one lane | proof |", "| capabilities: fs-read; red lines: none; one lane | proof |"
+    )
+    assert _failures(_body(row='"Plugin X"'), manifest=manifest) == []
