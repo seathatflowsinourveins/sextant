@@ -59,6 +59,12 @@ def _stub(path: Path, body: str) -> Path:
     return path
 
 
+def _python3(tools: Path) -> None:
+    """The devcontainer keeps python3 off the minimal PATH these fixtures set."""
+    tools.mkdir(parents=True, exist_ok=True)
+    (tools / "python3").symlink_to(sys.executable)
+
+
 def test_the_shelf_is_the_claude_lock_and_twenty_five_names() -> None:
     names = _parity().shelf_names()
     assert len(names) == len(set(names)) == 25
@@ -448,11 +454,13 @@ def test_without_pnpm_the_dsh_step_stops_before_any_plugin_add(
 
 
 def test_parity_sh_stops_with_a_clear_message_when_pnpm_is_missing(tmp_path: Path) -> None:
+    tools = tmp_path / "tools"
+    _python3(tools)
     result = subprocess.run(
         ["/bin/bash", str(RUNTIMES / "parity.sh")],
         capture_output=True,
         text=True,
-        env={"HOME": str(tmp_path), "PATH": "/usr/bin:/bin"},
+        env={"HOME": str(tmp_path), "PATH": f"{tools}:/usr/bin:/bin"},
         check=False,
     )
     assert result.returncode == 4
@@ -827,6 +835,7 @@ def test_shell_installers_preflight_managed_roots_before_any_home_write(
     root.symlink_to(target, target_is_directory=not is_file)
     tools = tmp_path / "tools"
     _stub(tools / "pnpm", "exit 0\n")
+    _python3(tools)
     # A missed preflight must never reach downloads, native installs or live tools.
     for command in ("npm", "curl", "install", "uv"):
         _stub(tools / command, "exit 86\n")

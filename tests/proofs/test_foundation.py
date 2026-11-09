@@ -237,6 +237,13 @@ def test_scoreboard_runs_only_daily_or_on_dispatch() -> None:
     )
 
 
+def test_scoreboard_proves_in_the_container_without_local_only_rows() -> None:
+    scoreboard = (WORKFLOWS / "scoreboard.yml").read_text()
+    justfile = (ROOT / "justfile").read_text()
+    assert 'just prove "not local"' in scoreboard
+    assert 'prove marker="":\n    uv run --frozen pytest tests/proofs -m "{{marker}}"' in justfile
+
+
 def test_scoreboard_measures_the_stop_rule_over_the_last_twenty_merges() -> None:
     text = (WORKFLOWS / "scoreboard.yml").read_text()
     assert "--state merged --limit 100" in text
