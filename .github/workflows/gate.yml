@@ -227,6 +227,24 @@ jobs:
           claude_args: >-
             --model opus --effort max --disallowedTools Bash,Edit,Write,NotebookEdit
             --json-schema '{"type":"object","properties":{"findings":{"type":"array","items":{"type":"object","properties":{"title":{"type":"string"},"body":{"type":"string"},"priority":{"type":"integer"}}}},"overall_correctness":{"type":"string","enum":["patch is correct","patch is incorrect"]},"overall_explanation":{"type":"string"}},"required":["findings","overall_correctness","overall_explanation"]}'
+      - name: Report a redacted Claude execution error
+        if: failure() && steps.review.outcome == 'failure'
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          REVIEW_GITHUB_TOKEN: ${{ github.token }}
+        with:
+          script: |
+            const fs = require('node:fs');
+            const file = `${process.env.RUNNER_TEMP}/claude-execution-output.json`;
+            if (fs.existsSync(file)) {
+              const result = JSON.parse(fs.readFileSync(file, 'utf8')).findLast(message => message.type === 'result');
+              let detail = result?.is_error && typeof result.result === 'string' ? result.result : 'Claude returned no validated structured output.';
+              for (const key of ['ANTHROPIC_API_KEY', 'REVIEW_GITHUB_TOKEN']) {
+                if (process.env[key]) detail = detail.split(process.env[key]).join('[redacted]');
+              }
+              core.warning(detail);
+            }
       - id: verdict
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         env:

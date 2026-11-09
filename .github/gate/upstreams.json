@@ -53,7 +53,9 @@
       "paths": [
         "action.yml:34-45,57-69,104-119,170-185",
         "docs/usage.md:205-249",
-        "action.yml:190-201, path_to_bun_executable keeps the upstream action unchanged"
+        "action.yml:190-201, path_to_bun_executable keeps the upstream action unchanged",
+        "base-action/src/execution-file.ts:6-25, fixed SDK execution artifact",
+        "base-action/src/run-claude-sdk.ts:221-275, error result and structured-output checks"
       ],
       "excluded_reference": "v1.0.269/61a9c274 is newer than cutoff"
     },
