@@ -11,7 +11,7 @@ import pytest
 
 ROOT = Path(__file__).parents[2]
 WORKFLOWS = ROOT / ".github" / "workflows"
-REPO = "repos/seathatflowsinourveins/sextant"
+REPO = "repos/seathatflowsinourveins/sextant-next"
 
 
 def _read(relative: str) -> str:
@@ -79,24 +79,22 @@ def test_runtimes_match_their_pins() -> None:
 
 
 def test_source_rule_is_enforced() -> None:
-    """tests/repo/test_dangerfile.py runs the rule itself. This row proves `source` runs it."""
-    assert "--dangerfile dangerfile.js --failOnErrors" in (WORKFLOWS / "source.yml").read_text()
+    assert "--dangerfile dangerfile.js --failOnErrors" in _read(".github/workflows/gate.yml")
     assert "Self-invention" in _read(".github/workflows/shared/review-rules.md")
 
 
-def test_review_is_compiled_by_gh_aw_and_sets_the_required_check() -> None:
-    for name, engine in (
-        ("review", "id: deepseek-harness"),
-        ("review-claude", "  id: claude\n"),
-        ("review-codex", "id: codex"),
-    ):
-        source = (WORKFLOWS / f"{name}.md").read_text()
-        assert engine in source
-        assert "pull_request_target" in source
-        assert re.search(r"create-check-run:\n\s+name: review\n", source)
-        assert '"compiler_version":"v1.0.1"' in (WORKFLOWS / f"{name}.lock.yml").read_text()
-    sample = (WORKFLOWS / "shared" / "deepseek-harness.md").read_text()
-    assert 'version: "0.2.2-rc.1"' in sample
+def test_review_uses_upstream_actions_and_posts_required_statuses() -> None:
+    import yaml
+
+    gate = yaml.safe_load(_read(".github/workflows/gate.yml"))
+    assert gate.get("on", gate.get(True)) == {
+        "workflow_run": {"workflows": ["ci"], "types": ["completed"]}
+    }
+    assert {"source", "dsh", "codex", "claude", "result"} == set(gate["jobs"])
+    adapter = _read(".github/gate/gate.cjs")
+    assert "createCommitStatus" in adapter
+    assert "'source'" in adapter and "'review'" in adapter
+    assert not list(WORKFLOWS.glob("*.lock.yml"))
 
 
 def test_rubric_is_verbatim_upstream() -> None:
@@ -106,51 +104,38 @@ def test_rubric_is_verbatim_upstream() -> None:
 
 
 def test_ci_gives_pr_code_no_secret_and_no_cache() -> None:
-    ci = (WORKFLOWS / "ci.yml").read_text()
-    assert "pull_request_target" in ci
-    assert "runs-on: [self-hosted, linux, x64, sextant-jit-sealed]" in ci
-    assert "docker://" not in ci
-    assert "secrets." not in ci
-    assert "enable-cache: false" in ci
-    assert "package-manager-cache: false" in ci
+    from test_public_gate import test_ci_runs_the_complete_check_without_repository_secrets
+
+    test_ci_runs_the_complete_check_without_repository_secrets()
+    ci = _read(".github/workflows/ci.yml")
     assert ci.count("persist-credentials: false") == ci.count("actions/checkout@")
-    assert re.search(r"^permissions:\n  contents: read\n", ci, re.MULTILINE)
 
 
 def test_every_action_is_pinned() -> None:
-    for workflow in WORKFLOWS.glob("*.yml"):
-        for action in re.findall(r"uses:\s*(\S+)", workflow.read_text()):
-            assert re.search(r"@([0-9a-f]{40}|sha256:[0-9a-f]{64})$", action), action
+    from test_public_gate import test_every_action_in_workflows_and_composites_has_a_full_pin
+
+    test_every_action_in_workflows_and_composites_has_a_full_pin()
     setup = _read("deploy/wsl/setup.sh")
     assert "pin=ACTIONLINT_VERSION" in setup and "key=al" in setup
     assert '"$checksum" "$tool_archive" | sha256sum -c -' in setup
 
 
 def test_lint_covers_every_non_lock_workflow_with_shellcheck() -> None:
-    """Both lint surfaces discover the non-lock workflows and run the pinned shellcheck."""
-    found = (
-        "find .github/workflows -maxdepth 1 -type f "
-        "\\( -name '*.yml' -o -name '*.yaml' \\) ! -name '*.lock.yml' | sort"
-    )
-    ci = (WORKFLOWS / "ci.yml").read_text()
+    """Hosted ci calls just ci, whose lint discovers every workflow with ShellCheck."""
+    ci = _read(".github/workflows/ci.yml")
     just = _read("justfile")
     dockerfile = _read(".devcontainer/Dockerfile")
-    for surface in (ci, just):
-        assert f"mapfile -t workflows < <({found})" in surface
-    ci_lint = next(line for line in ci.splitlines() if "-shellcheck" in line)
-    just_lint = next(line for line in just.splitlines() if "actionlint" in line)
-    assert ci_lint.endswith('-shellcheck "$RUNNER_TEMP/shellcheck" "${workflows[@]}"')
-    assert just_lint.endswith('-shellcheck shellcheck "${workflows[@]}"')
+    assert "- run: just ci" in ci
+    assert "ci: sync lint test secrets" in just
+    assert "find .github/workflows -maxdepth 1 -type f" in just
+    assert '-shellcheck shellcheck "${workflows[@]}"' in just
     version = re.search(r"SHELLCHECK_VERSION: (\S+)", ci)
     digest = re.search(r"SHELLCHECK_SHA256: (\S+)", ci)
-    assert version is not None
-    assert digest is not None
+    assert version is not None and digest is not None
     assert f"ARG SHELLCHECK_VERSION={version.group(1)}" in dockerfile
     assert f"sc_sha={digest.group(1)}" in dockerfile
     assert "sc_arch=linux.aarch64; sc_sha=" in dockerfile
-    # shellcheck's release nests its binary under shellcheck-v<version>/; strip one level.
-    assert 'shellcheck-v${SHELLCHECK_VERSION}/shellcheck" 1' in dockerfile
-    assert '--strip-components="${4:-0}"' in dockerfile
+    assert '--strip-components=1 "shellcheck-v${SHELLCHECK_VERSION}/shellcheck"' in ci
 
 
 @pytest.mark.local

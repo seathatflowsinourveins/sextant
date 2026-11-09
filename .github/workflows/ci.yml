@@ -1,74 +1,52 @@
-# Runs from the base branch, so a PR cannot change its own checks. The code under test runs on a
-# fresh local JIT container of the sealed profile: a read-only token, no secrets, no caches and no
-# Docker daemon. For this event: docs.github.com/en/actions/reference/security/securely-using-pull_request_target.
+# Unprivileged PR code on GitHub-hosted runners. GitHub workflow syntax, read 2026-11-09.
 name: ci
 on:
-  pull_request_target: # zizmor: ignore[dangerous-triggers] see docs/adr/0001-sextant-foundation.md
+  pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
-  push:
-    branches: [main]
 permissions:
   contents: read
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
+  group: ci-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 jobs:
   ci:
-    runs-on: [self-hosted, linux, x64, sextant-jit-sealed]
-    timeout-minutes: 20
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
     env:
+      BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       GITLEAKS_VERSION: 8.30.1
       GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
       ACTIONLINT_VERSION: 1.7.12
       ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
       SHELLCHECK_VERSION: 0.11.0
       SHELLCHECK_SHA256: b7af85e41cc99489dcc21d66c6d5f3685138f06d34651e6d34b42ec6d54fe6f6
-      GH_AW_VERSION: 1.0.1
-      GH_AW_SHA256: 746d0b41d5fb87e2c010b8ac23a464436bb745ff89fbd19a3456431942c37652
-      SCAN_RANGE: ${{ github.event.pull_request && format('{0}..{1}', github.event.pull_request.base.sha, github.event.pull_request.head.sha) || '-1' }}
     steps:
-      - name: Code under test, merged onto its base
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.number && format('refs/pull/{0}/merge', github.event.pull_request.number) || github.sha }}
           fetch-depth: 0
           persist-credentials: false
-      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2, 2026-10-22
         with:
           enable-cache: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "24"
+          node-version: '24'
           package-manager-cache: false
-      - run: uv sync --frozen
-      - run: uv run --frozen ruff check .
-      - run: uv run --frozen ruff format --check .
-      - run: uv run --frozen npx --yes "pyright@$(jq -r .dependencies.pyright .devcontainer/agents/package.json)"
-      - run: uv run --frozen pytest
-      - run: uv run --frozen zizmor --offline .github/workflows
-      # Every non-lock workflow, found at run time so a new one is never missed; `gh aw compile`
-      # generates and lints the lock files. Release binaries, because this job has no Docker;
-      # shellcheck is the one actionlint's own image bundles.
-      - name: Lint workflows
+      - uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b # v3
+        with:
+          just-version: '1.59.0' # reuses main's Dockerfile pin
+      - name: Main's pinned lint and secret-scan tools
         run: |
           curl -fsSL "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" -o "$RUNNER_TEMP/actionlint.tgz"
           curl -fsSL "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.gz" -o "$RUNNER_TEMP/shellcheck.tgz"
-          printf '%s  %s\n' "$ACTIONLINT_SHA256" "$RUNNER_TEMP/actionlint.tgz" "$SHELLCHECK_SHA256" "$RUNNER_TEMP/shellcheck.tgz" | sha256sum -c -
-          tar -xzf "$RUNNER_TEMP/actionlint.tgz" -C "$RUNNER_TEMP" actionlint
-          tar -xzf "$RUNNER_TEMP/shellcheck.tgz" -C "$RUNNER_TEMP" --strip-components=1 "shellcheck-v${SHELLCHECK_VERSION}/shellcheck"
-          mapfile -t workflows < <(find .github/workflows -maxdepth 1 -type f \( -name '*.yml' -o -name '*.yaml' \) ! -name '*.lock.yml' | sort)
-          "$RUNNER_TEMP/actionlint" -shellcheck "$RUNNER_TEMP/shellcheck" "${workflows[@]}"
-      # The review locks are gh-aw v1.0.1's own output: recompile them and fail on any difference.
-      - name: Locks are byte-identical gh-aw output
-        run: |
-          curl -fsSL "https://github.com/github/gh-aw/releases/download/v${GH_AW_VERSION}/linux-amd64" -o "$RUNNER_TEMP/gh-aw"
-          echo "${GH_AW_SHA256}  $RUNNER_TEMP/gh-aw" | sha256sum -c -
-          chmod +x "$RUNNER_TEMP/gh-aw"
-          "$RUNNER_TEMP/gh-aw" compile --no-check-update
-          git diff --exit-code -- .github/workflows/ .github/aw/
-      - name: Secret scan
-        run: |
           curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" -o "$RUNNER_TEMP/gitleaks.tgz"
-          echo "${GITLEAKS_SHA256}  $RUNNER_TEMP/gitleaks.tgz" | sha256sum -c -
-          tar -xzf "$RUNNER_TEMP/gitleaks.tgz" -C "$RUNNER_TEMP" gitleaks
-          "$RUNNER_TEMP/gitleaks" git --no-banner --redact --log-opts="$SCAN_RANGE" .
+          printf '%s  %s\n' "$ACTIONLINT_SHA256" "$RUNNER_TEMP/actionlint.tgz" "$SHELLCHECK_SHA256" "$RUNNER_TEMP/shellcheck.tgz" "$GITLEAKS_SHA256" "$RUNNER_TEMP/gitleaks.tgz" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/ci-tools"
+          tar -xzf "$RUNNER_TEMP/actionlint.tgz" -C "$RUNNER_TEMP/ci-tools" actionlint
+          tar -xzf "$RUNNER_TEMP/gitleaks.tgz" -C "$RUNNER_TEMP/ci-tools" gitleaks
+          tar -xzf "$RUNNER_TEMP/shellcheck.tgz" -C "$RUNNER_TEMP/ci-tools" --strip-components=1 "shellcheck-v${SHELLCHECK_VERSION}/shellcheck"
+          echo "$RUNNER_TEMP/ci-tools" >> "$GITHUB_PATH"
+          npm ci --prefix .devcontainer/agents --ignore-scripts --no-audit --no-fund
+          echo "$GITHUB_WORKSPACE/.devcontainer/agents/node_modules/.bin" >> "$GITHUB_PATH"
+      - run: just ci

@@ -489,24 +489,24 @@ def test_startup_arms_the_exit_cleanup_before_its_first_cleanup() -> None:
     assert main.index("\n  arm_exit") < main.index("\n  cleanup\n") < main.index("\n  deregister")
 
 
-def test_ci_proves_the_locks_are_byte_identical_gh_aw_v101_output() -> None:
-    ci = (WORKFLOWS / "ci.yml").read_text()
-    assert "GH_AW_SHA256: 746d0b41d5fb87e2c010b8ac23a464436bb745ff89fbd19a3456431942c37652" in ci
-    assert '"$RUNNER_TEMP/gh-aw" compile --no-check-update' in ci
-    assert "git diff --exit-code -- .github/workflows/ .github/aw/" in ci
+def test_public_gate_retires_generated_private_review_locks() -> None:
+    assert not list(WORKFLOWS.glob("*.lock.yml"))
+    assert "- run: just ci" in (WORKFLOWS / "ci.yml").read_text()
 
 
-def test_the_sealed_smoke_probes_the_daemon_published_ports_and_egress() -> None:
-    smoke = (WORKFLOWS / "scoreboard.yml").read_text().split("  jit-sealed-smoke:", 1)[1]
-    for probe in ("/2375", "for port in 3128 8080", "10.0.2.1/80 10.0.2.2/80 169.254.169.254/80"):
-        assert probe in smoke, probe
+def test_public_workflows_cannot_dispatch_old_runner_smokes() -> None:
+    scoreboard = (WORKFLOWS / "scoreboard.yml").read_text()
+    assert "jit-smoke:" not in scoreboard and "jit-sealed-smoke:" not in scoreboard
+    assert "jit-cleanup-smoke:" not in scoreboard
 
 
-def test_compiler_resolves_every_runtime_container_to_a_digest() -> None:
-    for path in (ROOT / ".github/workflows").glob("review*.lock.yml"):
-        manifest = json.loads(path.read_text().splitlines()[1].split(": ", 1)[1])
-        assert not manifest.get("resolution_failures"), path
-        assert all("@sha256:" in c["pinned_image"] for c in manifest["containers"]), path
+def test_active_review_uses_hosted_jobs_instead_of_runtime_containers() -> None:
+    import yaml
+
+    gate = yaml.safe_load((WORKFLOWS / "gate.yml").read_text())
+    for job in gate["jobs"].values():
+        assert job["runs-on"] == "ubuntu-24.04"
+        assert not {"container", "services"} & set(job)
 
 
 def test_jit_input_is_consumed_from_stdin_and_only_reaches_the_runner(tmp_path: Path) -> None:
@@ -575,44 +575,13 @@ def test_receipt_uses_actual_checkout_and_upstream_summary_file(tmp_path: Path) 
     assert "Started (UTC)" in receipt and "Ended (UTC)" in receipt
 
 
-def test_pr_code_and_docker_free_jobs_run_only_on_the_sealed_profile() -> None:
+def test_public_workflows_never_select_the_legacy_runner_profiles() -> None:
     import yaml
 
-    routes = {
-        f"{path.name}/{name}": job["runs-on"]
-        for path in WORKFLOWS.glob("*.yml")
-        for name, job in yaml.safe_load(path.read_text())["jobs"].items()
-    }
-    sealed = {job for job, labels in routes.items() if labels == SEALED}
-    assert sealed == {
-        "ci.yml/ci",
-        "consolidation.yml/report",
-        "source.yml/source",
-        "dependabot-automerge.yml/automerge",
-        "scoreboard.yml/jit-sealed-smoke",
-        "review.lock.yml/activation",
-        "review.lock.yml/conclusion",
-        "review.lock.yml/pre_activation",
-        "review.lock.yml/safe_outputs",
-        "review-claude.lock.yml/activation",
-        "review-claude.lock.yml/conclusion",
-        "review-claude.lock.yml/pre_activation",
-        "review-claude.lock.yml/safe_outputs",
-        "review-codex.lock.yml/activation",
-        "review-codex.lock.yml/conclusion",
-        "review-codex.lock.yml/pre_activation",
-        "review-codex.lock.yml/safe_outputs",
-    }
-    assert {job for job, labels in routes.items() if labels != SEALED} == {
-        job for job, labels in routes.items() if labels == DOCKER
-    }
-    # No sealed job may need the daemon: no job container, service container or Docker action.
     for path in WORKFLOWS.glob("*.yml"):
-        for name, job in yaml.safe_load(path.read_text())["jobs"].items():
-            if job["runs-on"] == SEALED:
-                assert not {"container", "services"} & set(job), (path.name, name)
-                uses = [str(step.get("uses", "")) for step in job.get("steps", [])]
-                assert not [u for u in uses if u.startswith("docker://")], (path.name, name)
+        for job in yaml.safe_load(path.read_text())["jobs"].values():
+            assert job["runs-on"] == "ubuntu-24.04"
+            assert job["runs-on"] not in (SEALED, DOCKER)
 
 
 def test_ports_published_without_an_address_bind_to_loopback() -> None:
@@ -624,65 +593,26 @@ def test_ports_published_without_an_address_bind_to_loopback() -> None:
     )
 
 
-def test_the_repositorys_own_docker_jobs_are_main_gated() -> None:
+def test_the_parked_report_jobs_remain_main_only() -> None:
     import yaml
 
-    branch_reachable = {}
-    for path in WORKFLOWS.glob("*.yml"):
-        workflow = yaml.safe_load(path.read_text())
-        triggers = set(workflow.get("on", workflow.get(True)))
-        for name, job in workflow["jobs"].items():
-            if job["runs-on"] == DOCKER and triggers != {"pull_request_target"}:
-                branch_reachable[f"{path.name}/{name}"] = job.get("if")
-    # pull_request_target always runs the base branch's files; every other docker job is pinned to
-    # an exact main-only condition, so a new docker job or a widened condition fails here.
-    main = "${{ github.ref == 'refs/heads/main' && "
-    smoke = main + "github.event_name == 'workflow_dispatch' && inputs.jit_smoke }}"
-    assert branch_reachable == {
-        "scoreboard.yml/scoreboard": main
-        + "(github.event_name != 'workflow_dispatch' || !inputs.jit_smoke) }}",
-        "scoreboard.yml/jit-smoke": smoke,
-        "scoreboard.yml/jit-cleanup-smoke": smoke,
+    for name, job_name in (("scoreboard", "scoreboard"), ("consolidation", "report")):
+        job = yaml.safe_load((WORKFLOWS / f"{name}.yml").read_text())["jobs"][job_name]
+        assert "github.ref == 'refs/heads/main'" in job["if"]
+
+
+def test_review_keys_are_bound_only_to_their_selected_review_steps() -> None:
+    import yaml
+
+    ci = (WORKFLOWS / "ci.yml").read_text()
+    assert "secrets." not in ci
+    gate = yaml.safe_load((WORKFLOWS / "gate.yml").read_text())
+    expected = {
+        "dsh": {"DEEPSEEK_API_KEY"},
+        "codex": {"OPENAI_API_KEY"},
+        "claude": {"ANTHROPIC_API_KEY"},
     }
-
-
-def test_every_job_keeps_its_privileges_and_secret_names() -> None:
-    import yaml
-
-    for name in ("ci", "source", "scoreboard", "dependabot-automerge"):
-        text = (WORKFLOWS / f"{name}.yml").read_text()
-        current, base_text = yaml.safe_load(text), _main(f".github/workflows/{name}.yml")
-        base = yaml.safe_load(base_text)
-        for job_name, job in current["jobs"].items():
-            granted = job.get("permissions", current["permissions"])
-            if job_name in base["jobs"]:
-                base_job = base["jobs"][job_name]
-                assert granted == base_job.get("permissions", base["permissions"]), job_name
-            else:
-                assert granted == {"contents": "read"}, job_name
-        assert set(re.findall(r"secrets\.(\w+)", text)) == set(
-            re.findall(r"secrets\.(\w+)", base_text)
-        )
-    # Codex is new in #65, so it has no origin/main file to compare. Bound its
-    # upstream engine inputs explicitly rather than skip the secret invariant.
-    codex_secrets = [
-        "CODEX_API_KEY",
-        "COPILOT_GITHUB_TOKEN",
-        "GH_AW_DEFAULT_OTLP_ENDPOINT",
-        "GH_AW_DEFAULT_OTLP_HEADERS",
-        "GH_AW_GITHUB_MCP_SERVER_TOKEN",
-        "GH_AW_GITHUB_TOKEN",
-        "GITHUB_TOKEN",
-        "OPENAI_API_KEY",
-    ]
-    for path in WORKFLOWS.glob("review*.lock.yml"):
-
-        def secrets(lock: str) -> list[str]:
-            return json.loads(lock.splitlines()[1].split(": ", 1)[1])["secrets"]
-
-        expected = (
-            codex_secrets
-            if path.name == "review-codex.lock.yml"
-            else secrets(_main(f".github/workflows/{path.name}"))
-        )
-        assert secrets(path.read_text()) == expected
+    for name, job in gate["jobs"].items():
+        assert set(re.findall(r"secrets\.(\w+)", json.dumps(job))) == expected.get(name, set())
+    assert "quality == 'codex'" in gate["jobs"]["codex"]["if"]
+    assert "quality == 'claude'" in gate["jobs"]["claude"]["if"]

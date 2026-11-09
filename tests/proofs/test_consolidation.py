@@ -18,7 +18,7 @@ import yaml
 
 ROOT = Path(__file__).parents[2]
 WORKFLOW = ROOT / ".github" / "workflows" / "consolidation.yml"
-SEALED = ["self-hosted", "linux", "x64", "sextant-jit-sealed"]
+HOSTED = "ubuntu-24.04"
 
 # Canned tool output, smallest first like vulture's --sort-by-size. The 90% item is safe; the 60%
 # and 65% items are review, which the workflow must rank largest first.
@@ -59,7 +59,7 @@ def _compose() -> str:
     return next(step["run"] for step in _job()["steps"] if step.get("name") == "Compose the report")
 
 
-def test_the_report_runs_only_from_main_on_the_sealed_runner() -> None:
+def test_the_report_runs_only_from_main_on_a_hosted_runner() -> None:
     workflow = _workflow()
     # PyYAML reads the unquoted key `on:` as the boolean True.
     assert True in workflow
@@ -71,7 +71,7 @@ def test_the_report_runs_only_from_main_on_the_sealed_runner() -> None:
     job = workflow["jobs"]["report"]
     assert job["permissions"] == {"contents": "read", "issues": "write"}
     assert job["if"] == "${{ github.ref == 'refs/heads/main' }}"
-    assert job["runs-on"] == SEALED
+    assert job["runs-on"] == HOSTED
     assert "secrets." not in WORKFLOW.read_text()
     for step in job["steps"]:
         if "uses" in step:

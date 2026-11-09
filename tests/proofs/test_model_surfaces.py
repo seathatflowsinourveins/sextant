@@ -24,6 +24,7 @@ NOT_MODELS = {
     "deepseek-harness.md",
     "deepseek-harness_harness.cjs",
     "deepseek-official",  # dsh's provider id (the agent-default-model row), not a served model
+    "deepseek-api-key",  # PerryLink/dsh-github's credential input name, not a model selection
 }
 
 
@@ -79,27 +80,17 @@ def test_superseded_versions_and_legacy_aliases_are_unavailable(tmp_path: Path, 
 
 
 def test_each_review_surface_requests_its_highest_supported_effort() -> None:
-    workflows = ROOT / ".github/workflows"
-    # dsh 0.2.2-rc.1's documented keys, compiled into the lock that actually runs.
-    for path in (workflows / "shared/deepseek-harness.md", workflows / "review.lock.yml"):
-        text = path.read_text()
-        assert 'const effort = isAnthropic ? "max" : undefined;' in text, path
-        for key in (
-            "reasoningEffort: effort",
-            "reasoning: effort",
-            "reasoningEfforts: { [effort]: effort }",
-            "forceAdaptiveThinking: true",
-        ):
-            assert key in text, (path, key)
-    # Claude Code's documented effort variable; gh-aw's ?effort= applies only in routed mode
-    # (claude_harness.cjs:421-428) and otherwise becomes part of the model id.
-    source = (workflows / "review-claude.md").read_text()
-    assert "    CLAUDE_CODE_EFFORT_LEVEL: max\n" in source and "\nmodel: opus\n" in source
-    lock = (workflows / "review-claude.lock.yml").read_text()
-    assert "ANTHROPIC_MODEL: opus\n" in lock and "CLAUDE_CODE_EFFORT_LEVEL: max\n" in lock
-    assert not [
-        p for p in workflows.glob("*.md") if re.search(r"^model: .*\?", p.read_text(), re.M)
-    ]
+    import yaml
+
+    gate = yaml.safe_load((ROOT / ".github/workflows/gate.yml").read_text())
+    codex = next(s for s in gate["jobs"]["codex"]["steps"] if s.get("id") == "review")["with"]
+    claude = next(s for s in gate["jobs"]["claude"]["steps"] if s.get("id") == "review")["with"]
+    assert codex["effort"] == "max"
+    assert "--model opus --effort max" in claude["claude_args"]
+    patch = (ROOT / "config/dsh/mcp/max-effort.cordis.yml").read_text()
+    assert "reasoningEffort: max" in patch
+    action = (ROOT / ".github/actions/dsh-github/action.yml").read_text()
+    assert "max-effort.cordis.yml" in action
 
 
 def test_dependency_package_names_are_not_model_selections(tmp_path: Path) -> None:
@@ -143,17 +134,11 @@ def test_the_ban_covers_each_live_surface_and_preserves_historical_research(
     assert _superseded(tmp_path) == []
 
 
-def test_the_dsh_reviewers_model_has_ai_credits_pricing() -> None:
-    """AWF v0.29.0's API proxy rejects an unpriced model with HTTP 400 (review-proof run 4)."""
-    source = (ROOT / ".github" / "workflows" / "review.md").read_text()
-    assert "\nmodel: anthropic/deepseek-flash\n" in source
-    # DeepSeek's published peak rates for deepseek-flash, $/1M tokens, read 2026-11-07.
-    assert (
-        "models:\n  default-ai-credits-pricing:\n    input: 0.3\n    output: 1.2\n"
-        "    cache_read: 0.006\n"
-    ) in source
-    lock = (ROOT / ".github" / "workflows" / "review.lock.yml").read_text()
-    pricing = '"defaultAiCreditsPricing":{"input":0.3,"output":1.2,"cachedInput":0.006}'
-    assert pricing.replace('"', '\\"') in lock
-    # The Claude reviewer's opus alias resolves to claude-opus-5-5, which AWF prices itself.
-    assert "\nmodel: opus\n" in (ROOT / ".github" / "workflows" / "review-claude.md").read_text()
+def test_dsh_uses_the_native_provider_without_a_custom_pricing_proxy() -> None:
+    import yaml
+
+    gate = yaml.safe_load((ROOT / ".github/workflows/gate.yml").read_text())
+    step = next(s for s in gate["jobs"]["dsh"]["steps"] if s.get("id") == "review")
+    assert step["with"]["model"] == "deepseek-flash"
+    assert step["with"]["engine"] == "model"
+    assert not list((ROOT / ".github/workflows").glob("*.lock.yml"))

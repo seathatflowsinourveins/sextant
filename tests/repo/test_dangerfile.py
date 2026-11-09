@@ -129,3 +129,7 @@ def test_a_strategy_needs_a_pinned_repo_or_a_paper() -> None:
 
 def test_dependabot_generated_bodies_pass() -> None:
     assert _failures("Bumps a from 1 to 2.", login="dependabot[bot]") == []
+
+
+def test_a_sourced_gate_edit_needs_no_owner_label() -> None:
+    assert _failures(_body(), created=(".github/workflows/gate.yml",)) == []

@@ -38,7 +38,7 @@ if (pr.user.login !== "dependabot[bot]") {
   });
 }
 
-const changed = [...danger.git.created_files, ...danger.git.modified_files];
+const changed = [...danger.git.created_files, ...danger.git.modified_files, ...(danger.git.deleted_files ?? [])];
 const touchesStrategy = changed.some((path) => path.startsWith("src/sextant/strategies/"));
 if (touchesStrategy && !repoAtCommit.test(sources) && !paper.test(sources)) {
   fail("Never self-invent: a strategy starts from an upstream template at a pinned commit or a cited paper.");

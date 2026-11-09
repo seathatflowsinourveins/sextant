@@ -1,0 +1,241 @@
+# GitHub workflow_run privilege separation; all executable files come from the default branch.
+# Sources, dates and upstream path:line citations: .github/gate/upstreams.json.
+name: gate
+on:
+  workflow_run: # zizmor: ignore[dangerous-triggers] GitHub's default-branch API-only separation; see docs/adr/0001-sextant-foundation.md
+    workflows: [ci]
+    types: [completed]
+permissions: {}
+concurrency:
+  group: gate-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: false
+jobs:
+  source:
+    if: github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+      pull-requests: write
+      statuses: write
+    outputs:
+      pr: ${{ steps.prepare.outputs.pr }}
+      head: ${{ steps.prepare.outputs.head }}
+      quality: ${{ steps.prepare.outputs.quality }}
+      ready: ${{ steps.source.outputs.ready }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - id: prepare
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        with:
+          script: await require('./.github/gate/gate.cjs').prepare({github, context, core})
+      - name: Danger from the default branch, PR data through the API
+        id: danger
+        if: steps.prepare.outputs.pr != ''
+        env:
+          DANGER_GITHUB_API_TOKEN: ${{ github.token }}
+          GITHUB_EVENT_PATH: ${{ steps.prepare.outputs.danger_event }}
+        run: npx --yes "danger@$(node -p "require('./.devcontainer/agents/package.json').dependencies.danger")" ci --dangerfile dangerfile.js --failOnErrors
+      - id: source
+        if: always() && steps.prepare.outputs.head != ''
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        env:
+          PR: ${{ steps.prepare.outputs.pr }}
+          HEAD: ${{ steps.prepare.outputs.head }}
+          OUTCOME: ${{ steps.danger.outcome }}
+          PREPARE: ${{ steps.prepare.outcome }}
+        with:
+          script: |
+            const outcome = process.env.PREPARE === 'success' ? process.env.OUTCOME : 'failure';
+            await require('./.github/gate/gate.cjs').sourceResult({github, context, core}, process.env.PR, process.env.HEAD, outcome);
+
+  dsh:
+    needs: source
+    if: needs.source.outputs.ready == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      followups: ${{ steps.verdict.outputs.followups }}
+    permissions:
+      contents: read
+      pull-requests: write
+      checks: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - id: prompt
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        env:
+          PR: ${{ needs.source.outputs.pr }}
+          HEAD: ${{ needs.source.outputs.head }}
+        with:
+          script: await require('./.github/gate/gate.cjs').prompt({github, context, core}, process.env.PR, process.env.HEAD, 'dsh')
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          enable-cache: false
+      - name: Main's pinned paper-search MCP runtime
+        env:
+          UV_TOOL_BIN_DIR: ${{ runner.temp }}/paper-search-bin
+        run: | # zizmor: ignore[github-env] fixed RUNNER_TEMP path, no PR input; GitHub workflow environment-file pattern
+          uv tool install --python 3.13 "$(node -p "require('./deploy/openviking/pins.json')['paper-search-mcp'].source")"
+          echo "$RUNNER_TEMP/paper-search-bin" >> "$GITHUB_PATH"
+      - name: PerryLink/dsh-github with the pinned parity set
+        id: review
+        uses: ./.github/actions/dsh-github # zizmor: ignore[self-repository] explicit github.sha checkout above; GitHub composite-action local-path pattern
+        with:
+          pr: ${{ needs.source.outputs.pr }}
+          head-sha: ${{ needs.source.outputs.head }}
+          node-version: '24'
+          dsh-version: '0.2.2-rc.1'
+          plugin-version: '0.7.27'
+          owner-repo: ${{ github.repository }}
+          engine: model
+          model: deepseek-flash
+          task-prompt: ${{ steps.prompt.outputs.text }}
+          blocking: 'true'
+          fail-on: error
+          deepseek-api-key: ${{ secrets.DEEPSEEK_API_KEY }}
+          github-token: ${{ github.token }}
+          max-diff-chars: '1000000'
+          check-name: dsh-github-review-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Verify the report belongs to this head and contains a complete review
+        id: verdict
+        if: always() && steps.review.outputs.report-json != ''
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        env:
+          PR: ${{ needs.source.outputs.pr }}
+          REPORT: ${{ steps.review.outputs.report-json }}
+          HEAD: ${{ needs.source.outputs.head }}
+        with:
+          script: await require('./.github/gate/gate.cjs').dshResult({github, context, core}, process.env.PR, process.env.HEAD, process.env.REPORT)
+
+  codex:
+    needs: source
+    if: needs.source.outputs.ready == 'true' && needs.source.outputs.quality == 'codex'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      followups: ${{ steps.verdict.outputs.followups }}
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - id: prompt
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        env:
+          PR: ${{ needs.source.outputs.pr }}
+          HEAD: ${{ needs.source.outputs.head }}
+        with:
+          script: await require('./.github/gate/gate.cjs').prompt({github, context, core}, process.env.PR, process.env.HEAD, 'codex')
+      - id: review
+        uses: openai/codex-action@bdf19a4a223ec2549a3e2274a0cf61556bc07675 # v1.13
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          codex-version: '0.167.0' # reuses main's native Codex pin
+          model: gpt-6.1-sol
+          effort: max
+          permission-profile: ':read-only'
+          prompt-file: ${{ steps.prompt.outputs.file }}
+          output-schema-file: .github/gate/verdict.schema.json
+          allow-users: ${{ github.event.workflow_run.actor.login }}
+          allow-bots: true
+          allow-bot-users: 'dependabot[bot],sextant-lanes-seathatflows[bot]'
+      - id: verdict
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        env:
+          PR: ${{ needs.source.outputs.pr }}
+          HEAD: ${{ needs.source.outputs.head }}
+          REPORT: ${{ steps.review.outputs.final-message }}
+        with:
+          script: await require('./.github/gate/gate.cjs').qualityResult({github, context, core}, process.env.PR, process.env.HEAD, process.env.REPORT, 'codex')
+
+  claude:
+    needs: source
+    if: needs.source.outputs.ready == 'true' && needs.source.outputs.quality == 'claude'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      followups: ${{ steps.verdict.outputs.followups }}
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - id: prompt
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        env:
+          PR: ${{ needs.source.outputs.pr }}
+          HEAD: ${{ needs.source.outputs.head }}
+        with:
+          script: await require('./.github/gate/gate.cjs').prompt({github, context, core}, process.env.PR, process.env.HEAD, 'claude')
+      - id: text
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        env:
+          PROMPT: ${{ steps.prompt.outputs.file }}
+        with:
+          script: core.setOutput('text', require('node:fs').readFileSync(process.env.PROMPT, 'utf8'))
+      - id: review
+        uses: anthropics/claude-code-action@925afb53776cf1a2b738c6bdbed37b4d4000ef13 # v1.0.262
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ github.token }}
+          allowed_non_write_users: ${{ github.event.workflow_run.actor.login }}
+          allowed_bots: 'dependabot[bot],github-actions[bot],sextant-lanes-seathatflows[bot]'
+          classify_inline_comments: 'false'
+          prompt: ${{ steps.text.outputs.text }}
+          claude_args: >-
+            --model opus --effort max --disallowedTools Bash,Edit,Write,NotebookEdit
+            --json-schema '{"type":"object","properties":{"findings":{"type":"array","items":{"type":"object","properties":{"title":{"type":"string"},"body":{"type":"string"},"priority":{"type":"integer"}}}},"overall_correctness":{"type":"string","enum":["patch is correct","patch is incorrect"]},"overall_explanation":{"type":"string"}},"required":["findings","overall_correctness","overall_explanation"]}'
+      - id: verdict
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        env:
+          PR: ${{ needs.source.outputs.pr }}
+          HEAD: ${{ needs.source.outputs.head }}
+          REPORT: ${{ steps.review.outputs.structured_output }}
+        with:
+          script: await require('./.github/gate/gate.cjs').qualityResult({github, context, core}, process.env.PR, process.env.HEAD, process.env.REPORT, 'claude')
+
+  result:
+    needs: [source, dsh, codex, claude]
+    if: always() && needs.source.outputs.head != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+      statuses: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        env:
+          PR: ${{ needs.source.outputs.pr }}
+          HEAD: ${{ needs.source.outputs.head }}
+          QUALITY: ${{ needs.source.outputs.quality }}
+          RESULTS: ${{ toJSON(needs) }}
+        with:
+          script: |
+            const results = Object.fromEntries(Object.entries(JSON.parse(process.env.RESULTS)).map(([name, job]) => [name, job.result]));
+            const notes = Object.fromEntries(Object.entries(JSON.parse(process.env.RESULTS)).map(([name, job]) => [name, job.outputs?.followups || '']));
+            await require('./.github/gate/gate.cjs').finish({github, context, core}, process.env.PR, process.env.HEAD, results, process.env.QUALITY, notes);

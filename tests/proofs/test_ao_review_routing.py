@@ -1,7 +1,7 @@
 """The standard AO Codex hand-off keeps a Claude PR's default review outside both families.
 
-Source: AO v0.14.10 033d597032e448a0ea16c298350e36b099f74106 and gh-aw v1.0.1;
-the #189 ruling retains main's dsh default. All git, gh and ao calls are offline stubs.
+Source: AO v0.14.10 033d597032e448a0ea16c298350e36b099f74106 and the
+2026-11-09 owner key policy. All git, gh and ao calls are offline stubs.
 """
 
 import json
@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 import yaml
-from test_local_review import test_one_reviewer_outside_the_author_family as assert_reviewers
+from test_local_review import test_owner_key_policy_routing as assert_reviewers
 
 ROOT = Path(__file__).parents[2]
 STUB = (
@@ -106,11 +106,8 @@ def test_ao_codex_handoff_of_a_claude_pr_defaults_to_dsh(tmp_path: Path, existin
     # A fix push uses the same author body and the installed App actor. Its new head
     # must select dsh, outside the original Claude author and the AO Codex worker.
     # The gh stand-in rejects edits instead of pretending a fixture reread proves this.
-    for name in ("review", "review-claude", "review-codex"):
-        source = (ROOT / ".github/workflows" / f"{name}.md").read_text().split("---", 2)[1]
-        config = yaml.safe_load(source)
-        events = config.get("on", config.get(True))
-        assert "sextant-lanes-seathatflows[bot]" in events["bots"]
+    config = yaml.safe_load((ROOT / ".github/workflows/gate.yml").read_text())
+    assert config.get("on", config.get(True))["workflow_run"]["workflows"] == ["ci"]
     assert_reviewers(body, ["dsh"])
 
 

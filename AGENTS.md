@@ -24,19 +24,20 @@ Everything here comes from a SOTA source: a maintained repo or framework at a pi
 - [TradingView](lanes/tradingview/README.md): display and owner-manual tickets; never a machine signal. Managed-paper entries use plain LIMIT, no bracket.
 
 ## Landing
-- Work on a branch. `just pr "title" body.md` opens the PR from the template and turns on auto-merge. A PR lands through squash auto-merge only when `ci`, `source` and `review` pass. Danger enforces the manifest/source rule in `source`; gh-aw supplies `review`. These run from the base branch, so the PR cannot change its own checks. [ADR-0001](docs/adr/0001-sextant-foundation.md)
-- Follow ADR-0001's gh-aw routing: one other-family reviewer among dsh, Claude and Codex. Use the literal marker format below; explicit reviewer selection needs a recognized author and another family. Either ASCII marker prefix without a recognized family and conflicting selections block review. Choose by fit, never usage. Live promotion retains its separate two-family exact-SHA requirement.
+- Work on a branch. `just pr "title" body.md` opens the PR from the template and turns on auto-merge. Squash auto-merge requires `ci`, `source` and `review`. CI runs on `pull_request` on hosted runners; the default-branch `workflow_run` gate runs Danger API-only and dsh-github, then posts the head's statuses. A PR cannot edit its own gate. [ADR-0001, 2026-11-09 amendment](docs/adr/0001-sextant-foundation.md)
+- dsh-github reviews every PR. API-key reviews run only for dsh authors (Codex by default; `Review-Family claude` selects Claude), or as one extra review of a risk or gate path (.github/**, dangerfile.js, review prompts/rubric). Use the literal markers below; malformed, conflicting or self-review selections block. Other changes use dsh alone. Local Codex uses the subscription pool, never OPENAI_API_KEY. Live promotion keeps its separate two-family exact-SHA requirement.
+- Follow the [landing verdict rule](.github/workflows/shared/review-rules.md#report): only Always P0 or a concrete exact-head failing witness blocks; other findings share one follow-up issue. From the third reviewed head, only P0 blocks.
 - Never push to `main`. If `main` goes red, revert.
 - Tracking is GitHub Issues only.
 
-Fill the author placeholder with your actual family (`codex`, `claude` or `dsh`); fill the second with another family or delete that line for the ADR-0001 default. Unfilled placeholders block review. Use ASCII prefixes, one ASCII space and no colon. Matching scans the whole body, including comments and code blocks; a misspelled prefix is unrecognized. Choose before opening or the next new commit; reopening or draft toggles do not reroute. AO's Codex worker refuses a Codex reviewer and preserves both markers.
+Fill the author placeholder with your actual family (`codex`, `claude`, `dsh`, `muse` or `agy`); fill the second with another family allowed by the key policy, or delete that line. Unfilled placeholders block review. Use ASCII prefixes, one ASCII space and no colon. Matching scans the whole body, including comments and code blocks; a misspelled prefix is unrecognized. A new completed CI run selects the route for its exact head. AO's Codex worker refuses a Codex reviewer and preserves both markers.
 ```text
 Agent-Family <family>
 Review-Family <other-family-or-delete>
 ```
 
 ## Hard lines
-- **Secrets:** never in a file, commit, log, command line or URL. Never print an environment variable's value. Jobs get keys from GitHub Environment secrets. On the clean distro, keys live in `scripts/keys.sh`'s encrypted store and reach one command at a time through `scripts/with-keys.sh`; holding a paper key is not permission to trade (`docs/adr/0028-local-keys.md`). Live keys never enter this store or the sandbox, and broker keys never enter the sandbox.
+- **Secrets:** never in a file, commit, log, command line or URL. Never print an environment variable's value. Broker jobs use GitHub Environment secrets; the public review gate uses repository review secrets under the owner's 2026-11-09 key policy. On the clean distro, keys live in `scripts/keys.sh`'s encrypted store and reach one command at a time through `scripts/with-keys.sh`; holding a paper key is not permission to trade (`docs/adr/0028-local-keys.md`). Live keys never enter this store or the sandbox, and broker keys never enter the sandbox.
 - **Live:** only the `live` environment's job on the `live` branch places live orders. Agents never touch a live endpoint.
 - **Custody:** the owner's orders are never cancelled, sold back or resized, and one writer owns each account's quantities.
 - **Paper:** each account has one writer; paper is never gated by P&L or counts, only by its hard lines.
