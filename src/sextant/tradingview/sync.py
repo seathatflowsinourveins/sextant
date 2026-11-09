@@ -30,6 +30,59 @@ ALLOWED = {
 WIRE = {"mcp-watchlist-" + name.replace("_", "-"): name for name in ALLOWED}
 _NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$")
 
+# Fixed refusal literals. The CLI may echo these exact strings and nothing else;
+# SAFE_STOP_MESSAGES is built from the constants, never hand-copied.
+INCOMPLETE_RESPONSE = "Incomplete or failed MCP response; no automatic replay"
+AMBIGUOUS_TOOL_IDENTITY = "Ambiguous official tool identity"
+REPEATED_TOOLS_CURSOR = "Repeated tools/list cursor"
+INCOMPLETE_TOOL_DISCOVERY = "Incomplete tool discovery"
+TOOLS_UNAVAILABLE = "Required official watchlist tools unavailable"
+RESEARCH_EXPIRED = "Research expired during sync; no further write"
+NON_DISPLAY_INPUT = "Non-display operation or incompatible official input schema"
+SESSION_REFUSED = "MCP session refused or interrupted; no automatic replay"
+CALL_FAILED = "Official MCP call failed or was quota-limited; re-inventory before retry"
+UNKNOWN_RESULT_ENVELOPE = "Unknown MCP result envelope"
+INVALID_LIST_ID = "Invalid or conflicting owned-list ID"
+LIST_READ_ONLY = "Owned watchlist is read-only or changed identity"
+UNKNOWN_MEMBERSHIP_ENVELOPE = "Unknown watchlist membership envelope"
+UNKNOWN_INVENTORY_ENVELOPE = "Unknown watchlist inventory envelope"
+DUPLICATE_LIST_NAME = "Duplicate reserved watchlist name"
+LIST_ALIAS = "Owned watchlist aliases another list"
+INVALID_INPUTS = "Only a validated nonempty research membership pair can be synced"
+AMBIGUOUS_MUTATION = "Ambiguous watchlist mutation; re-inventory before retry"
+UNKNOWN_CREATE_RESULT = "Unknown create result; re-inventory before retry"
+CREATE_ALIAS = "Created list aliases an existing list; no further writes"
+CREATE_MISSING = "Created watchlist missing from readback"
+AMBIGUOUS_REMOVAL = "Ambiguous corrective removal; no replay"
+READBACK_MISMATCH = "Readback mismatch after one corrective removal; no replay"
+REJECTED_TOO_MANY = "Readback rejected more than five distinct names; verified subsets retained"
+SAFE_STOP_MESSAGES = (
+    INCOMPLETE_RESPONSE,
+    AMBIGUOUS_TOOL_IDENTITY,
+    REPEATED_TOOLS_CURSOR,
+    INCOMPLETE_TOOL_DISCOVERY,
+    TOOLS_UNAVAILABLE,
+    RESEARCH_EXPIRED,
+    NON_DISPLAY_INPUT,
+    SESSION_REFUSED,
+    CALL_FAILED,
+    UNKNOWN_RESULT_ENVELOPE,
+    INVALID_LIST_ID,
+    LIST_READ_ONLY,
+    UNKNOWN_MEMBERSHIP_ENVELOPE,
+    UNKNOWN_INVENTORY_ENVELOPE,
+    DUPLICATE_LIST_NAME,
+    LIST_ALIAS,
+    INVALID_INPUTS,
+    AMBIGUOUS_MUTATION,
+    UNKNOWN_CREATE_RESULT,
+    CREATE_ALIAS,
+    CREATE_MISSING,
+    AMBIGUOUS_REMOVAL,
+    READBACK_MISMATCH,
+    REJECTED_TOO_MANY,
+)
+
 
 class SyncError(RuntimeError):
     """Re-inventory after refusal: an earlier write may have succeeded.
@@ -67,7 +120,7 @@ def _unwrap(value: Any) -> Any:
             or value.get("next_cursor")
         ):
             raise SyncError(
-                "Incomplete or failed MCP response; no automatic replay",
+                INCOMPLETE_RESPONSE,
                 stage="tool call",
             )
         if set(value) == {"result"}:
@@ -108,16 +161,16 @@ class OfficialTools:
                 name = WIRE.get(tool.name, tool.name)
                 if name in ALLOWED:
                     if name in self.schemas:
-                        raise SyncError("Ambiguous official tool identity", stage="tool list")
+                        raise SyncError(AMBIGUOUS_TOOL_IDENTITY, stage="tool list")
                     self.schemas[name], self.wire[name] = tool.input_schema, tool.name
             cursor = page.next_cursor
             if cursor is None:
                 break
             if cursor in seen:
-                raise SyncError("Repeated tools/list cursor", stage="tool list")
+                raise SyncError(REPEATED_TOOLS_CURSOR, stage="tool list")
             seen.add(cursor)
         else:
-            raise SyncError("Incomplete tool discovery", stage="tool list")
+            raise SyncError(INCOMPLETE_TOOL_DISCOVERY, stage="tool list")
         if set(self.schemas) != set(ALLOWED):
             required = set(WIRE)
             missing = sorted(required - set(self.wire.values()))[:8]
@@ -127,14 +180,14 @@ class OfficialTools:
                 f"missing {', '.join(missing) or 'none'}"
             )
             raise SyncError(
-                "Required official watchlist tools unavailable",
+                TOOLS_UNAVAILABLE,
                 stage="tool list",
                 detail=detail,
             )
 
     def fresh(self, inputs: ResearchInputs) -> None:
         if self.now() >= inputs.expires_at:
-            raise SyncError("Research expired during sync; no further write")
+            raise SyncError(RESEARCH_EXPIRED)
 
     def validate(self, name: str, arguments: dict[str, Any]) -> None:
         if (
@@ -144,7 +197,7 @@ class OfficialTools:
             or not Draft202012Validator(self.schemas[name]).is_valid(arguments)
         ):
             raise SyncError(
-                "Non-display operation or incompatible official input schema",
+                NON_DISPLAY_INPUT,
                 stage="tool call",
             )
 
@@ -168,13 +221,13 @@ class OfficialTools:
                 )
             except Exception:
                 error = SyncError(
-                    "MCP session refused or interrupted; no automatic replay",
+                    SESSION_REFUSED,
                     stage="tool call",
                 )
                 _sanitized(error)
         if result.is_error:
             raise SyncError(
-                "Official MCP call failed or was quota-limited; re-inventory before retry",
+                CALL_FAILED,
                 stage="tool call",
             )
         value = result.structured_content
@@ -185,7 +238,7 @@ class OfficialTools:
                     raise ValueError
                 value = json.loads(texts[0], parse_float=Decimal)
             except ValueError:
-                raise SyncError("Unknown MCP result envelope", stage="tool call") from None
+                raise SyncError(UNKNOWN_RESULT_ENVELOPE, stage="tool call") from None
         return _unwrap(value)
 
 
@@ -202,7 +255,7 @@ def _id(row: dict[str, Any]) -> str:
         )
         or len({str(value) for value in values}) != 1
     ):
-        raise SyncError("Invalid or conflicting owned-list ID", stage="tool call")
+        raise SyncError(INVALID_LIST_ID, stage="tool call")
     return str(values[0])
 
 
@@ -216,10 +269,10 @@ async def _membership(tools: OfficialTools, name: str, key: str) -> set[str]:
         or _id(row) != key
         or row.get("read_only") not in (None, False)
     ):
-        raise SyncError("Owned watchlist is read-only or changed identity", stage="tool call")
+        raise SyncError(LIST_READ_ONLY, stage="tool call")
     symbols = row.get("symbols")
     if not isinstance(symbols, list) or any(not isinstance(symbol, str) for symbol in symbols):
-        raise SyncError("Unknown watchlist membership envelope", stage="tool call")
+        raise SyncError(UNKNOWN_MEMBERSHIP_ENVELOPE, stage="tool call")
     return set(symbols)
 
 
@@ -227,12 +280,12 @@ async def _inventory(tools: OfficialTools) -> dict[str, tuple[str, set[str]]]:
     rows = await tools.call("list_watchlists", {})
     rows = rows.get("watchlists") if isinstance(rows, dict) else rows
     if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
-        raise SyncError("Unknown watchlist inventory envelope", stage="tool call")
+        raise SyncError(UNKNOWN_INVENTORY_ENVELOPE, stage="tool call")
     result = {}
     for name in NAMES:
         matches = [row for row in rows if row.get("name") == name]
         if len(matches) > 1:
-            raise SyncError("Duplicate reserved watchlist name", stage="tool call")
+            raise SyncError(DUPLICATE_LIST_NAME, stage="tool call")
         if not matches:
             continue
         key = _id(matches[0])
@@ -246,7 +299,7 @@ async def _inventory(tools: OfficialTools) -> dict[str, tuple[str, set[str]]]:
             for row in rows
         )
         if references != 1:
-            raise SyncError("Owned watchlist aliases another list", stage="tool call")
+            raise SyncError(LIST_ALIAS, stage="tool call")
         result[name] = key, await _membership(tools, name, key)
     return result
 
@@ -261,7 +314,7 @@ async def sync_research(
         or len(inputs.unmapped) > 5
     ):
         raise SyncError(
-            "Only a validated nonempty research membership pair can be synced",
+            INVALID_INPUTS,
             stage="inputs",
         )
     tools.fresh(inputs)
@@ -302,7 +355,7 @@ async def sync_research(
         response = await tools.call(operation["tool"], operation["arguments"], inputs=inputs)
         if operation["tool"] != "create_watchlist" and response != {"success": True}:
             raise SyncError(
-                "Ambiguous watchlist mutation; re-inventory before retry",
+                AMBIGUOUS_MUTATION,
                 stage="apply",
             )
         if operation["tool"] == "create_watchlist":
@@ -319,12 +372,12 @@ async def sync_research(
                 or any(not isinstance(symbol, str) for symbol in row["symbols"])
             ):
                 raise SyncError(
-                    "Unknown create result; re-inventory before retry",
+                    UNKNOWN_CREATE_RESULT,
                     stage="apply",
                 )
             if _id(row) in {item[0] for item in current.values()}:
                 raise SyncError(
-                    "Created list aliases an existing list; no further writes",
+                    CREATE_ALIAS,
                     stage="apply",
                 )
     if any(op["tool"] == "create_watchlist" for op in operations):
@@ -332,7 +385,7 @@ async def sync_research(
     rejected_all = set()
     for name in NAMES:
         if name not in current:
-            raise SyncError("Created watchlist missing from readback", stage="apply")
+            raise SyncError(CREATE_MISSING, stage="apply")
         key = current[name][0]
         stored = await _membership(tools, name, key)
         desired = inputs.memberships[name]
@@ -344,7 +397,7 @@ async def sync_research(
                 inputs=inputs,
             )
             if response != {"success": True}:
-                raise SyncError("Ambiguous corrective removal; no replay", stage="apply")
+                raise SyncError(AMBIGUOUS_REMOVAL, stage="apply")
             stored = await _membership(tools, name, key)
         result["readback"][name] = {
             "stored": sorted(stored),
@@ -354,12 +407,10 @@ async def sync_research(
         rejected_all.update(rejected)
         if stored != desired - rejected:
             raise SyncError(
-                "Readback mismatch after one corrective removal; no replay",
+                READBACK_MISMATCH,
                 stage="apply",
             )
     if len(rejected_all) > 5:
-        raise SyncError(
-            "Readback rejected more than five distinct names; verified subsets retained"
-        )
+        raise SyncError(REJECTED_TOO_MANY)
     result["applied"] = True
     return result

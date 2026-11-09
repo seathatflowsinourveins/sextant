@@ -1193,6 +1193,47 @@ def test_cli_stop_prints_a_fixed_vocabulary_detail(
     assert "SECRET" not in output.out and "https://" not in output.out
 
 
+def test_cli_prints_each_fixed_sync_literal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+):
+    _, sync = api()
+    cli = importlib.import_module("sextant.tradingview.__main__")
+    monkeypatch.setattr(cli, "read_research_inputs", lambda *args, **kwargs: object())
+    for message in sync.SAFE_STOP_MESSAGES:
+
+        def refuse(*args, _message=message, **kwargs):
+            raise sync.SyncError(_message, stage="tool list")
+
+        monkeypatch.setattr(cli, "official_client", refuse)
+        assert cli.main(["--research-dir", str(tmp_path), "--authorize"]) == 2
+        output = capsys.readouterr()
+        assert f"Safe diagnostic: SyncError at tool list: {message}" in output.out
+        assert output.err == ""
+
+
+def test_cli_withholds_a_message_outside_the_fixed_sync_literals(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+):
+    cli = importlib.import_module("sextant.tradingview.__main__")
+    from sextant.tradingview.sync import SyncError
+
+    def refuse(*args, **kwargs):
+        raise SyncError(
+            "TradingView session stopped; SECRET-7f3a",
+            label="OAuthFlowError",
+            stage="callback",
+        )
+
+    monkeypatch.setattr(cli, "read_research_inputs", lambda *args, **kwargs: object())
+    monkeypatch.setattr(cli, "official_client", refuse)
+    assert cli.main(["--research-dir", str(tmp_path), "--authorize"]) == 2
+    output = capsys.readouterr()
+    assert "Safe diagnostic: OAuthFlowError at callback." in output.out
+    assert "TradingView session stopped" not in output.out
+    assert "SECRET-7f3a" not in output.out
+    assert output.err == ""
+
+
 def test_same_owner_session_can_sync_another_cycle(tmp_path: Path):
     inputs, sync = api()
     data = inputs.read_research_inputs(unit(tmp_path), now=NOW)
