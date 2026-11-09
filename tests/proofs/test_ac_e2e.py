@@ -1,14 +1,30 @@
 """Proof that the A/C node's recorded-session e2e decides and protects by rule."""
 
+import importlib.util
 import json
+import sys
 from decimal import Decimal
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 
-from sextant.backtest.ac_e2e import Point, append_trials, load_tape, run, run_case, trail
 from sextant.paper.ac_node import entry_parameters, profiles
 from sextant.validation.trials import TrialLog
+
+ROOT = Path(__file__).parents[2]
+SPEC = importlib.util.spec_from_file_location("ac_e2e", ROOT / "scripts" / "ac_e2e.py")
+assert SPEC and SPEC.loader
+ac_e2e: ModuleType = importlib.util.module_from_spec(SPEC)
+sys.modules[SPEC.name] = ac_e2e
+SPEC.loader.exec_module(ac_e2e)
+
+Point = ac_e2e.Point
+append_trials = ac_e2e.append_trials
+load_tape = ac_e2e.load_tape
+run = ac_e2e.run
+run_case = ac_e2e.run_case
+trail = ac_e2e.trail
 
 
 @pytest.fixture(scope="module")

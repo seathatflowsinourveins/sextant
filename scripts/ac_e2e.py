@@ -43,7 +43,7 @@ from sextant.paper.ac_node import (
     refused_plan,
 )
 
-REPOSITORY = Path(__file__).resolve().parents[3]
+REPOSITORY = Path(__file__).resolve().parents[1]
 TAPE_PATH = REPOSITORY / "tests/fixtures/ac-e2e-session.json"
 EASTERN = ZoneInfo("America/New_York")
 NS = 1_000_000_000
@@ -391,7 +391,7 @@ def _implementation_sha() -> str:
             return sha
     except (OSError, subprocess.CalledProcessError):
         pass
-    digest = hashlib.sha256((REPOSITORY / "src/sextant/backtest/ac_e2e.py").read_bytes())
+    digest = hashlib.sha256((REPOSITORY / "scripts/ac_e2e.py").read_bytes())
     return digest.hexdigest()[:40]
 
 
@@ -550,7 +550,7 @@ def append_trials(report: dict[str, Any], log_path: Path) -> int:
         "tape": "ac-e2e-session.json",
         "recorded_at": str(report.get("recorded_at") or "recorded-session"),
         "starting_equity": STARTING_CASH,
-        "source": "src/sextant/backtest/ac_e2e.py",
+        "source": "scripts/ac_e2e.py",
     }
     evidence_weights = {
         "k2_generation": "recorded e2e-omh generations",
