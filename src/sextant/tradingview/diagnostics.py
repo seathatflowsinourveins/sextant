@@ -11,15 +11,38 @@ URL, token, or upstream message.
 
 from __future__ import annotations
 
+import re
+
 import httpx2
 from mcp.client.auth.exceptions import OAuthFlowError, OAuthRegistrationError, OAuthTokenError
 from mcp.client.streamable_http import ResumptionError, StreamableHTTPError
 from mcp.shared.exceptions import MCPError
+from pydantic import ValidationError
 
 from sextant.tradingview.sync import SyncError
 
 MAX_GROUP_DEPTH = 32
 MAX_GROUP_NODES = 256
+MAX_DETAIL = 240
+MAX_NAMES = 8
+
+# RFC 6749 section 5.2's fixed token-error vocabulary; names only, never the body.
+_OAUTH_CODES = (
+    "invalid_request",
+    "invalid_client",
+    "invalid_grant",
+    "unauthorized_client",
+    "unsupported_grant_type",
+    "invalid_scope",
+)
+_OAUTH_CODE = re.compile(r"(?<![A-Za-z0-9_.-])(" + "|".join(_OAUTH_CODES) + r")(?![A-Za-z0-9_.-])")
+_TOKEN_STATUS = re.compile(r"^Token exchange failed \((\d{3})\)")
+_ENDPOINTS = (
+    ("/mcp/oauth/token", "token"),
+    ("/mcp/oauth/register", "registration"),
+    ("/mcp", "session"),
+)
+_FIELD_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_.-]{0,63}$")
 
 _CLASS_LABELS: dict[type[BaseException], str] = {
     SyncError: "SyncError",
@@ -103,3 +126,69 @@ def stage(error: BaseException) -> str:
 def leaf_label(error: BaseException) -> str:
     """The fixed label of the group's first leaf; the class a stop is caused by."""
     return class_label(_leaf(error))
+
+
+def _causes(error: BaseException):
+    """Bounded cause walk; group members are already reached through _leaf."""
+    for _ in range(MAX_GROUP_DEPTH):
+        yield error
+        nxt = error.__cause__ if error.__cause__ is not None else error.__context__
+        if nxt is None or nxt is error:
+            return
+        error = nxt
+
+
+def _status_and_endpoint(error: BaseException) -> tuple[int | None, str]:
+    for item in _causes(error):
+        if isinstance(item, httpx2.HTTPStatusError):
+            status = getattr(item.response, "status_code", None)
+            if not isinstance(status, int) or not 100 <= status <= 599:
+                continue
+            path = getattr(getattr(item.request, "url", None), "path", "")
+            endpoint = next((name for prefix, name in _ENDPOINTS if path == prefix), "")
+            return status, endpoint
+        if isinstance(item, OAuthTokenError):
+            text = item.args[0] if item.args and isinstance(item.args[0], str) else ""
+            match = _TOKEN_STATUS.match(text)
+            if match and 100 <= int(match.group(1)) <= 599:
+                return int(match.group(1)), "token"
+    return None, ""
+
+
+def _oauth_code(error: BaseException) -> str:
+    for item in _causes(error):
+        if isinstance(item, OAuthTokenError):
+            text = item.args[0] if item.args and isinstance(item.args[0], str) else ""
+            match = _OAUTH_CODE.search(text)
+            if match:
+                return match.group(1)
+    return ""
+
+
+def _field_names(error: BaseException) -> list[str]:
+    for item in _causes(error):
+        if isinstance(item, ValidationError):
+            names: list[str] = []
+            for detail in item.errors():
+                for part in detail.get("loc", ()):
+                    if isinstance(part, str) and part != "body" and _FIELD_NAME.match(part):
+                        if part not in names:
+                            names.append(part)
+            return sorted(names)[:MAX_NAMES]
+    return []
+
+
+def detail(error: BaseException) -> str:
+    """Fixed-vocabulary, names-only detail: status, endpoint class, OAuth code, field names."""
+    bits: list[str] = []
+    leaf = _leaf(error)
+    status, endpoint = _status_and_endpoint(leaf)
+    if status is not None:
+        bits.append(f"HTTP {status}" + (f" at {endpoint} endpoint" if endpoint else ""))
+    code = _oauth_code(leaf)
+    if code:
+        bits.append(f"OAuth error {code}")
+    fields = _field_names(leaf)
+    if fields:
+        bits.append("fields " + ", ".join(fields))
+    return "; ".join(bits)[:MAX_DETAIL]

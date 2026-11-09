@@ -1005,6 +1005,7 @@ def test_owner_session_names_the_safe_class_and_stage_of_an_oauth_failure(
                 pytest.fail("Fixture transport always refuses")
         assert error.value.label == "OAuthTokenError"
         assert error.value.stage == "token"
+        assert error.value.detail == "HTTP 400 at token endpoint"
         assert "SECRET" not in str(error.value) and "example.invalid" not in str(error.value)
         assert error.value.__context__ is None
         assert error.value.__cause__ is None
@@ -1086,6 +1087,110 @@ def test_diagnostics_keeps_a_trusted_sync_stage_through_a_group():
     error = ExceptionGroup("sdk", [sync.SyncError("stop", stage="callback")])
     assert diagnostics.stage(error) == "callback"
     assert diagnostics.leaf_label(error) == "SyncError"
+
+
+def test_diagnostics_names_http_status_and_endpoint_class():
+    import httpx2
+
+    from sextant.tradingview import diagnostics
+
+    def status_error(status, path):
+        request = httpx2.Request("POST", f"https://mcp.tradingview.com{path}")
+        return httpx2.HTTPStatusError(
+            "refused", request=request, response=httpx2.Response(status, request=request)
+        )
+
+    assert diagnostics.detail(status_error(400, "/mcp/oauth/token")) == "HTTP 400 at token endpoint"
+    assert diagnostics.detail(status_error(401, "/mcp")) == "HTTP 401 at session endpoint"
+    assert diagnostics.detail(ExceptionGroup("sdk", [status_error(503, "/mcp")])) == (
+        "HTTP 503 at session endpoint"
+    )
+
+
+def test_diagnostics_names_only_the_oauth_error_vocabulary():
+    from mcp.client.auth.exceptions import OAuthTokenError
+
+    from sextant.tradingview import diagnostics
+
+    known = OAuthTokenError(
+        'Token exchange failed (400): {"error": "invalid_grant", "error_description": "SECRET"}'
+    )
+    assert diagnostics.detail(known) == "HTTP 400 at token endpoint; OAuth error invalid_grant"
+    assert "SECRET" not in diagnostics.detail(known)
+    unknown = OAuthTokenError('Token exchange failed (401): {"error": "made_up_code"}')
+    assert "made_up_code" not in diagnostics.detail(unknown)
+    assert "OAuth error" not in diagnostics.detail(unknown)
+
+
+def test_diagnostics_names_pydantic_field_names_only():
+    from pydantic import BaseModel, ValidationError
+
+    from sextant.tradingview import diagnostics
+
+    class Token(BaseModel):
+        access_token: str
+        token_type: str
+
+    with pytest.raises(ValidationError) as error:
+        Token.model_validate({"detail": "SECRET"})
+    result = diagnostics.detail(error.value)
+    assert result == "fields access_token, token_type"
+    assert "SECRET" not in result
+
+
+def test_tool_discovery_reports_the_name_diff():
+    import asyncio
+    from types import SimpleNamespace
+
+    from sextant.tradingview import sync
+
+    class Drifting:
+        async def list_tools(self, *, cursor=None, cache_mode=None):
+            return SimpleNamespace(
+                tools=[
+                    SimpleNamespace(name="mcp-watchlist-list-watchlists", input_schema={}),
+                    SimpleNamespace(name="mcp-watchlist-delete-watchlist", input_schema={}),
+                ],
+                next_cursor=None,
+            )
+
+    tools = sync.OfficialTools(Drifting(), interval=0)  # type: ignore[arg-type]
+    with pytest.raises(sync.SyncError) as error:
+        asyncio.run(tools.discover())
+    assert error.value.stage == "tool list"
+    assert "mcp-watchlist-delete-watchlist" in error.value.detail
+    for name in (
+        "mcp-watchlist-get-watchlist",
+        "mcp-watchlist-create-watchlist",
+        "mcp-watchlist-add-to-watchlist",
+        "mcp-watchlist-remove-from-watchlist",
+    ):
+        assert name in error.value.detail
+
+
+def test_cli_stop_prints_a_fixed_vocabulary_detail(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+):
+    cli = importlib.import_module("sextant.tradingview.__main__")
+    from sextant.tradingview.sync import SyncError
+
+    def refuse(*args, **kwargs):
+        raise SyncError(
+            "TradingView session stopped; re-inventory before retry.",
+            label="OAuthTokenError",
+            stage="token",
+            detail="HTTP 400 at token endpoint; OAuth error invalid_grant",
+        )
+
+    monkeypatch.setattr(cli, "read_research_inputs", lambda *args, **kwargs: object())
+    monkeypatch.setattr(cli, "official_client", refuse)
+    assert cli.main(["--research-dir", str(tmp_path), "--authorize"]) == 2
+    output = capsys.readouterr()
+    assert (
+        "Safe diagnostic: OAuthTokenError at token "
+        "(HTTP 400 at token endpoint; OAuth error invalid_grant)." in output.out
+    )
+    assert "SECRET" not in output.out and "https://" not in output.out
 
 
 def test_same_owner_session_can_sync_another_cycle(tmp_path: Path):

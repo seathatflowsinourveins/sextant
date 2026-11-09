@@ -187,6 +187,7 @@ async def official_client(authorize: bool = False) -> AsyncIterator[Client]:
                     "TradingView session stopped; re-inventory before retry. " + OWNER_STEP,
                     label=diagnostics.leaf_label(error),
                     stage=diagnostics.stage(error),
+                    detail=diagnostics.detail(error),
                 )
             )
         finally:

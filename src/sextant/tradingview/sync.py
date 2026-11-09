@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -27,20 +28,23 @@ ALLOWED = {
     "remove_from_watchlist": {"watchlist_id", "symbols"},
 }
 WIRE = {"mcp-watchlist-" + name.replace("_", "-"): name for name in ALLOWED}
+_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$")
 
 
 class SyncError(RuntimeError):
     """Re-inventory after refusal: an earlier write may have succeeded.
 
-    ``label`` and ``stage`` are fixed diagnostic literals (a type name and one of
-    the flow positions: inputs, authorize, callback, token, client registration,
-    session, tool list, tool call, apply). They never carry upstream text.
+    ``label``, ``stage`` and ``detail`` are fixed diagnostic literals (a type
+    name, one of the flow positions: inputs, authorize, callback, token, client
+    registration, session, tool list, tool call, apply, and fixed-vocabulary
+    names-only detail). They never carry upstream text, values or credentials.
     """
 
-    def __init__(self, message: str, *, label: str = "", stage: str = "") -> None:
+    def __init__(self, message: str, *, label: str = "", stage: str = "", detail: str = "") -> None:
         super().__init__(message)
         self.label = label
         self.stage = stage
+        self.detail = detail
 
 
 def _sanitized(error: BaseException) -> Never:
@@ -93,11 +97,14 @@ class OfficialTools:
         self.schemas.clear()
         self.wire.clear()
         cursor, seen = None, set()
+        offered: set[str] = set()
         for _ in range(100):
             async with self.lock:
                 await self._pace()
                 page = await self.client.list_tools(cursor=cursor, cache_mode="refresh")
             for tool in page.tools:
+                if isinstance(tool.name, str) and _NAME.match(tool.name):
+                    offered.add(tool.name)
                 name = WIRE.get(tool.name, tool.name)
                 if name in ALLOWED:
                     if name in self.schemas:
@@ -112,7 +119,18 @@ class OfficialTools:
         else:
             raise SyncError("Incomplete tool discovery", stage="tool list")
         if set(self.schemas) != set(ALLOWED):
-            raise SyncError("Required official watchlist tools unavailable", stage="tool list")
+            required = set(WIRE)
+            missing = sorted(required - set(self.wire.values()))[:8]
+            extra = sorted(raw for raw in offered if WIRE.get(raw, raw) not in ALLOWED)[:8]
+            detail = (
+                f"tool list extra {', '.join(extra) or 'none'}; "
+                f"missing {', '.join(missing) or 'none'}"
+            )
+            raise SyncError(
+                "Required official watchlist tools unavailable",
+                stage="tool list",
+                detail=detail,
+            )
 
     def fresh(self, inputs: ResearchInputs) -> None:
         if self.now() >= inputs.expires_at:
