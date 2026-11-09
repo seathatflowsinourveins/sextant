@@ -215,11 +215,28 @@ class Protector:
             if event in RESERVATION_END_EVENTS:
                 self.reconcile()
 
-    def reconcile(self) -> dict[str, Position]:
-        """Match the broker's open orders and positions, then protect the whole shares."""
+    def reconcile(self, *, strict_custody: bool = False) -> dict[str, Position]:
+        """Match the broker's open orders and positions, then protect the whole shares.
 
-        positions, house, owner_sells, unrecognized = self._snapshot()
+        On a reconnect ``strict_custody`` refuses to trail a position the protector has not
+        already reconciled: newly discovered custody must be claimed by an owner fill first.
+        """
+
+        try:
+            positions, house, owner_sells, unrecognized = self._snapshot()
+        except ProtectorRefusal as exc:
+            self.page("open_orders_truncated", None, str(exc))
+            return {}
         for symbol, position in positions.items():
+            quantity = _decimal(position.qty, "position.qty")
+            previous_position = self._last_position.get(symbol)
+            if strict_custody and (previous_position is None or quantity > previous_position):
+                self._fail_closed(
+                    symbol,
+                    "custody_unclaimed",
+                    "reconnect found custody that no owner fill has claimed",
+                )
+                continue
             reserved = owner_sells.get(symbol, Decimal(0))
             previous = self._last_reserved.get(symbol)
             freed = symbol not in self._last_position or (
@@ -263,7 +280,7 @@ class Protector:
             GetOrdersRequest(status=QueryOrderStatus.OPEN, limit=OPEN_ORDER_LIMIT)
         )
         if len(orders) >= OPEN_ORDER_LIMIT:
-            self.page("open_orders_truncated")
+            raise ProtectorRefusal("open order snapshot hit the page limit and may be truncated")
         house: dict[str, list[Order]] = {}
         owner_sells: dict[str, Decimal] = {}
         unrecognized: set[str] = set()
@@ -285,10 +302,22 @@ class Protector:
         """Broker-first read, cancel only the house's excess, freeze the symbol, page."""
 
         try:
-            positions, house, owner_sells, _ = self._snapshot()
+            positions, house, owner_sells, unrecognized = self._snapshot()
         except Exception as exc:
             self.frozen.add(symbol)
+            if isinstance(exc, ProtectorRefusal):
+                self.page("open_orders_truncated", symbol, str(exc))
             self.page(reason, symbol, f"{detail}; reconcile_failed={type(exc).__name__}")
+            return
+        if symbol in unrecognized:
+            self._cancel_excess(house.get(symbol, []), 0, "unrecognized_open_order")
+            self.frozen.add(symbol)
+            self.page(
+                "unrecognized_open_order",
+                symbol,
+                "an open order has no buy/sell side, so its reservation is unknown",
+            )
+            self.page(reason, symbol, detail)
             return
         position = positions.get(symbol)
         protective = 0
@@ -349,15 +378,28 @@ class Protector:
         if update.position_qty is None:
             self._fail_claim(update, symbol, "custody_unresolved", "owner fill has no position_qty")
             return
+        expected = _decimal(str(update.position_qty), "position_qty")
+        try:
+            positions, _, _, _ = self._snapshot()
+        except ProtectorRefusal as exc:
+            self._fail_claim(update, symbol, "custody_unresolved", f"snapshot refused: {exc}")
+            return
+        position = positions.get(symbol)
+        if position is None or _decimal(position.qty, "position.qty") != expected:
+            self._fail_closed(
+                symbol,
+                "quantity_mismatch",
+                "owner fill position_qty does not match the broker",
+            )
+            return
         positions = self.reconcile()
         position = positions.get(symbol)
-        if position is None:
-            self.page("custody_unresolved", symbol, "reconciled account is flat")
-            return
-        if _decimal(position.qty, "position.qty") != _decimal(
-            str(update.position_qty), "position_qty"
-        ):
-            self.page("quantity_mismatch", symbol)
+        if position is None or _decimal(position.qty, "position.qty") != expected:
+            self._fail_closed(
+                symbol,
+                "quantity_mismatch",
+                "owner fill position_qty does not match the broker after reconcile",
+            )
 
     def _handle_house(self, update: TradeUpdate, symbol: str, event: str) -> None:
         if event in FILL_EVENTS:
@@ -528,6 +570,7 @@ class ProtectorStream(TradingStream):
                 url_override=url_override,
             )
         self.protector = Protector(client, account, parameters, now_ns=now_ns, on_page=on_page)
+        self._connected = False
         self.subscribe_trade_updates(self._on_trade_update)
 
     async def _on_trade_update(self, update: TradeUpdate) -> None:
@@ -538,8 +581,10 @@ class ProtectorStream(TradingStream):
 
     async def _start_ws(self) -> None:
         await super()._start_ws()
+        strict_custody = self._connected
+        self._connected = True
         try:
-            self.protector.reconcile()
+            self.protector.reconcile(strict_custody=strict_custody)
         except Exception as exc:
             self.protector.page("reconcile_failed", None, type(exc).__name__)
 

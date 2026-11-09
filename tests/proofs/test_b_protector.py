@@ -610,3 +610,108 @@ def test_a_flat_position_cancels_the_house_trail_and_never_an_owner_order():
     assert client.cancelled == [str(house.id)]
     assert str(owner.id) not in client.cancelled
     assert client.submitted == []
+
+
+class FakePacer:
+    """Runs each admitted broker call immediately and records its action kind."""
+
+    def __init__(self) -> None:
+        self.kinds: list[object] = []
+
+    def request(self, kind, send, *, admission=lambda: True) -> None:
+        self.kinds.append(kind)
+        send(lambda: None)
+
+
+def test_a_fill_quantity_mismatch_freezes_before_any_submit():
+    client = FakeTradingClient(positions=[api_position("10")])
+    p = protector(client)
+    p.bind()
+
+    p.handle(
+        api_update(
+            api_order(client_order_id="owner-buy-1"),
+            event="fill",
+            position_qty=6.0,
+        )
+    )
+
+    assert client.submitted == []
+    assert "quantity_mismatch" in [page.reason for page in p.pages]
+    assert "AAPL" in p.frozen
+
+
+def test_a_reconnect_refuses_new_custody_without_a_claim(monkeypatch):
+    async def no_connect(self) -> None:
+        return None
+
+    monkeypatch.setattr(TradingStream, "_start_ws", no_connect)
+    client = FakeTradingClient(positions=[])
+    stream = ProtectorStream(
+        client,
+        b_account(),
+        b_params(),
+        api_key="test-key",
+        secret_key="test-secret",  # noqa: S106 - fixture, never a real key
+        now_ns=lambda: NOW_NS,
+    )
+
+    asyncio.run(stream._start_ws())
+    assert client.submitted == []
+
+    client.positions = [api_position("10")]
+    asyncio.run(stream._start_ws())
+
+    assert client.submitted == []
+    assert "custody_unclaimed" in [page.reason for page in stream.protector.pages]
+    assert "AAPL" in stream.protector.frozen
+
+
+def test_the_fail_closed_path_keeps_an_unknown_reservation():
+    house = api_order(
+        client_order_id="B001-trail-AAPL-old",
+        side="sell",
+        qty="10",
+        order_type="trailing_stop",
+        trail_percent="2.5",
+    )
+    foreign = api_order(client_order_id="owner-unknown-1").model_copy(update={"side": None})
+    client = FakeTradingClient(positions=[api_position("10")], orders=[house, foreign])
+    p = protector(client)
+    p.bind()
+
+    p.handle(api_update(foreign, event="new"))
+
+    assert client.cancelled == [str(house.id)]
+    assert "unrecognized_open_order" in [page.reason for page in p.pages]
+    assert "AAPL" in p.frozen
+    assert client.submitted == []
+
+
+def test_every_broker_call_goes_through_the_account_pacer():
+    from sextant.execution.pacer import ActionKind
+    from sextant.paper.b_protector_main import PacedTradingClient
+
+    client = FakeTradingClient(positions=[api_position("10")])
+    pacer = FakePacer()
+    p = protector(PacedTradingClient(client, pacer))
+    p.bind()
+    p.reconcile()
+
+    assert len(pacer.kinds) == len(client.calls)
+    assert ActionKind.QUERY in pacer.kinds
+    assert ActionKind.REDUCE in pacer.kinds
+
+
+def test_a_truncated_open_order_snapshot_refuses_writes():
+    orders = [
+        api_order(client_order_id=f"owner-buy-{index}", side="buy", qty="1") for index in range(500)
+    ]
+    client = FakeTradingClient(positions=[api_position("10")], orders=orders)
+    p = protector(client)
+    p.bind()
+
+    p.reconcile()
+
+    assert client.submitted == []
+    assert "open_orders_truncated" in [page.reason for page in p.pages]

@@ -21,13 +21,16 @@ import argparse
 import json
 import os
 import signal
+import time
 from collections.abc import Callable, Sequence
+from decimal import Decimal
 from pathlib import Path
 from types import FrameType
-from typing import cast
+from typing import Any, cast
 
 from alpaca.trading.client import TradingClient
 
+from sextant.execution.pacer import AccountPacer, ActionKind
 from sextant.paper.b_protector import (
     BParameters,
     Page,
@@ -36,10 +39,12 @@ from sextant.paper.b_protector import (
     TradingClientLike,
     load_b_parameters,
 )
-from sextant.paper.config import PaperAccount
+from sextant.paper.config import PaperAccount, PaperBudget, load_budget
 from sextant.paper.sessions import Session
+from sextant.risk.controls import Controls
 
 DEFAULT_PARAMETERS = Path(__file__).resolve().parents[3] / "lanes/paper/b-parameters.json"
+DEFAULT_LIMITS = Path(__file__).resolve().parents[3] / "lanes/limits.yaml"
 CONFIG_KEYS = frozenset({"lane", "account_id", "client_id", "namespace", "sessions"})
 KEY_NAMES = ("ALPACA_PAPER_2_API_KEY", "ALPACA_PAPER_2_SECRET_KEY")
 EXPECTED_SUFFIX_ENV = "B_EXPECTED_ACCOUNT_SUFFIX"
@@ -47,6 +52,71 @@ EXPECTED_FULL_ENV = "B_EXPECTED_ACCOUNT_ID"
 DEFAULT_CLIENT_FACTORY: Callable[..., TradingClientLike] = cast(
     Callable[..., TradingClientLike], TradingClient
 )
+
+
+class PacerRefused(RuntimeError):
+    """The account pacer did not admit a broker call; the caller must fail closed."""
+
+
+class PacedTradingClient:
+    """Route every broker read and write through the repo's existing account pacer."""
+
+    def __init__(self, client: TradingClientLike, pacer: Any) -> None:
+        self._client = client
+        self._pacer = pacer
+
+    def _call(self, kind: ActionKind, method: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        results: list[Any] = []
+        state = {"cancelled": False}
+
+        def send(before_wire: Callable[[], None]) -> None:
+            before_wire()
+            results.append(method(*args, **kwargs))
+
+        def admission() -> bool:
+            return not state["cancelled"]
+
+        self._pacer.request(kind, send, admission=admission)
+        if not results:
+            state["cancelled"] = True
+            raise PacerRefused(f"the account pacer did not admit {method.__name__}")
+        return results[0]
+
+    def get_account(self) -> Any:
+        return self._call(ActionKind.QUERY, self._client.get_account)
+
+    def get_all_positions(self) -> Any:
+        return self._call(ActionKind.QUERY, self._client.get_all_positions)
+
+    def get_orders(self, filter: Any = None) -> Any:
+        return self._call(ActionKind.QUERY, self._client.get_orders, filter)
+
+    def submit_order(self, order_data: Any) -> Any:
+        return self._call(ActionKind.REDUCE, self._client.submit_order, order_data)
+
+    def cancel_order_by_id(self, order_id: object) -> None:
+        self._call(ActionKind.CANCEL, self._client.cancel_order_by_id, order_id)
+
+
+class BudgetControls:
+    """The row-8 controls AccountPacer needs, from the existing paper budget row."""
+
+    def __init__(self, budget: PaperBudget) -> None:
+        self._values: dict[str, Any] = {
+            "request_budget": budget.requests,
+            "window_s": Decimal(budget.window_s),
+            "burst": max(1, budget.requests // 10),
+        }
+
+    def __getitem__(self, name: str) -> Any:
+        return self._values[name]
+
+    def ns(self, name: str) -> int:
+        return int(self._values[name] * Decimal(1_000_000_000))
+
+    @property
+    def burst(self) -> int:
+        return int(self._values["burst"])
 
 
 def load_account_config(path: Path) -> PaperAccount:
@@ -131,16 +201,27 @@ def main(
         default=DEFAULT_PARAMETERS,
         help="B's UNCALIBRATED registry rows",
     )
+    parser.add_argument(
+        "--limits",
+        type=Path,
+        default=DEFAULT_LIMITS,
+        help="shared paper rate-limit rows",
+    )
     args = parser.parse_args(argv)
 
     account = load_account_config(args.config)
     parameters: BParameters = load_b_parameters(args.parameters)
+    budget = load_budget(args.limits, account.lane)
     api_key = os.environ.get(KEY_NAMES[0])
     secret_key = os.environ.get(KEY_NAMES[1])
     if not api_key or not secret_key:
         raise SystemExit(f"{KEY_NAMES[0]} and {KEY_NAMES[1]} must be set by with-keys")
 
-    client = client_factory(api_key=api_key, secret_key=secret_key, paper=True)
+    pacer = AccountPacer(cast(Controls, BudgetControls(budget)), now_ns=time.time_ns)
+    client = PacedTradingClient(
+        client_factory(api_key=api_key, secret_key=secret_key, paper=True),
+        pacer,
+    )
     stream = ProtectorStream(
         client,
         account,
