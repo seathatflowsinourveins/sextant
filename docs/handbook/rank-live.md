@@ -2,9 +2,10 @@
 
 This serves the owner's first step: rank potential extreme movers as they start.
 It is an offline implementation of the live input/output seam, with no client,
-key lookup, stream opener, controller launcher or schedule. It lands after B,
-with dsh and Google gates; the lead must rule on cadence before any stream opens
-(lead 2026-11-08 19:10:06 EST, item 2, rank-live handoff).
+key lookup, stream opener, controller launcher or running schedule. It lands
+after B, with dsh and Google gates. The owner cadence ruling is implemented
+DISABLED; landing and explicit lead enablement remain prerequisites
+(lead 2026-11-08 19:10:06, 19:21:44 and 19:49:24 EST, rank-live handoff).
 
 ## Data path and sources
 
@@ -102,55 +103,108 @@ retain confirmed changes and unknown outcomes. No selection tool or corrective
 write on a stop. Membership sync does not promise rank-order sorting. Existing
 J5 proofs remain the controller-policy witness; this producer never calls it.
 
-## Registry and cadence proposal
+## Registry and disabled owner cadence
 
 Every ranking knob stays in main's required `Registry` (all twelve rows, explicit
-source/date, UNCALIBRATED; no defaults). New rows are documented below; operational
-missing authority remains unavailable. No code loads this table as a deployment
-configuration. A fixture row cannot authorize a live run.
+source/date, UNCALIBRATED; no defaults). The explicit snapshot allocation remains
+`snapshot_requests_per_minute` (>0 and <=200, no default; source: Alpaca's lowest
+documented data quota and native Pacer). Symbol groups are explicit inputs with
+no default size or undocumented maximum. `top_n` remains main's row, bounded by
+ADR-0021's 1,000-name limit. Fixed authorities are slot 3, one stream, and J5
+batches <=100. Missing operational authority stays unavailable.
 
-| Row | Value / bound | Source and state |
+The owner replaced the five-minute proposal in lead **2026-11-08 19:49:24 EST,
+item 1** (`LEAD-1949-cadence.md`, SHA-256
+`3d6cfe285839d122b2637f928ea26976e5ed821f1e41209818bcc8b041aecab6`).
+`cadence.py` is an offline admission gate, with no timer, worker, controller,
+network call, credential access or alternative J5 client. The shipped
+[`j5-cadence.params.json`](../../lanes/tradingview/j5-cadence.params.json) is the
+runtime registry. Every row has its unit, value, source, date and UNCALIBRATED
+state. There are no missing-value or fixture defaults.
+
+| Registry row | Shipped value | Meaning |
 |---|---|---|
-| `snapshot_requests_per_minute` | explicit allocation, >0 and <=200; no default | Alpaca Plans' lowest documented Trading API data quota; existing Pacer; UNCALIBRATED, actual shared allocation UNAVAILABLE |
-| `snapshot_symbols_per_request` | caller supplies explicit nonempty symbol group; no automatic chunking | Alpaca Snapshots / native StockSnapshotRequest; operational group size UNAVAILABLE because endpoint maximum/URL capacity is undocumented |
-| `top_n` | main's `top_n`, <=1,000 | main Registry and ADR-0021 list cap; UNCALIBRATED; no new value |
-| `j5_sync_interval_s` | propose 300s, disabled | ADR-0026:23's 300s display-notification expiry is only a review starting scale, not a measured watchlist optimum; UNCALIBRATED proposal, no runtime row/value or schedule |
-| `paper_slot` / `streams_per_account` | 3 / 1, fixed authority | lead item 2; invariants, not tuning knobs |
-| `j5_bulk_entries` | <=100, controller side only | FerroxLabs/tvcontrol@v2.5.3 `85200201f92967db9e4b63a9251d51fcdfe1f3a8` `src/tools/watchlist.js:48,62`; invariant |
+| `enabled` | 0 | DISABLED; future activation also needs a landed SHA and explicit lead enable receipt |
+| `changed_only` | 1 | Compare exact sets with complete confirmed read-back, ignoring rank/order/score |
+| `max_concurrent_runs` | 1 | Serialized admission and a durable active-run receipt |
+| `max_retries` | 0 | Failed/abandoned runs latch; no retry or automatic recovery |
+| `overnight_enabled` | 0 | Wait for Paper B's overnight-feed check, then reviewed policy change |
+| `onset_floor_s` | 150 | 07:00–10:30 and 15:00–16:00 ET, start-inclusive/end-exclusive |
+| `regular_floor_s` | 300 | Other times within 04:00–20:00 ET |
+| `usage_floor_s` | 900 | Higher floor when weekly Claude usage passes 80% |
+| `weekly_usage_backoff_pct` | 80 | Strictly greater; exactly 80% retains the ordinary floor |
+| `display_start_minute_et` / `display_end_minute_et` | 240 / 1200 | 04:00 / 20:00 ET |
+| `am_start_minute_et` / `am_end_minute_et` | 420 / 630 | 07:00 / 10:30 ET |
+| `pm_start_minute_et` / `pm_end_minute_et` | 900 / 960 | 15:00 / 16:00 ET |
 
-Propose one serialized, fresh Windows-native J5 run **no more often than every
-five minutes**, and only when membership differs; skip overlaps. Do not hold a
-five-minute-old ranking until the next run: capture a fresh producer document at
-run entry and again before every batch; existing second-scale ranking freshness
-still applies. A headless job may outlast that freshness, which must be measured
-before apply. Do not lengthen input TTL to hide controller latency.
+The ET conversion and trading-date check reuse `tradingview.inputs.ET/_session`;
+UTC offsets and DST are not guessed. Elapsed time is counted from the previous
+run's start against the floor at the current decision time. Unknown/nonfinite
+weekly usage or a missing source receipt refuses admission. A current high-usage
+receipt emits the injected owner-page callback once per crossing, even when
+membership is unchanged or rank data is unavailable. The high flag persists
+across restarts; a failed page latches admission and leaves `page_pending`.
 
-At 300s there are at most **12 Claude invocations/hour**, **78 per normal 6.5-hour
-RTH session**, **192 per 16-hour PRE/RTH/POST window**, or **288 per 24-hour
-display day**; the last is capacity accounting, not overnight readiness. Counts
-use half-open sessions with the first run at the start, no extra close run, and
-no retries. Changed-only skipping reduces these upper bounds. The lead chooses
-the display interval after measurement; the trade clock remains independent.
+Call `Cadence.claim` with a fresh producer unit, aware supplied clock and sourced
+Windows weekly-use percentage. Shipped `enabled=0` refuses before any state or
+page. Future enablement must be a reviewed between-session registry change after
+landing, with the lead's explicit receipt. The caller attests those receipts;
+this offline gate cannot verify remote landing or the lead's identity.
+A complete by-ID membership receipt is also required to establish the initial
+comparison; unknown inventory never authorizes a clear or a first-run guess.
 
-**One actual J5 run's cost today is UNKNOWN.** No run-cost receipt is in the
-repo or supplied/staged J5 handoff reports; no controller is run to fabricate
-one. Let `c` be one fresh run's recorded `total_cost_usd`, `u` its per-model token
-usage. For an equal-cost planning scenario this is **12c/hour, 78c/RTH session,
-192c/16h, 288c/24h**, and the same multipliers of `u`. Actual cost is the sum of
-individual runs, whose cache use, deltas and duration differ; `c` is not a fixed
-price or a future upper bound. Real dollars and subscription quota percentage
-remain UNKNOWN. For comparison 60s would be 60c/hour and 390c/RTH;
-900s would be 4c/hour and 26c/RTH. These are arithmetic scenarios, not measured
-Claude cost. Source: [Claude headless JSON](https://code.claude.com/docs/en/headless)
-and [costs](https://code.claude.com/docs/en/costs), read 2026-11-08: JSON reports
-client-estimated `total_cost_usd`/per-model breakdown, resumed conversations
-include prior runs, and subscription billing differs from API-equivalent cost.
-Obtain the current Windows J5 fresh-run receipt (or difference of resumed totals),
-model/effort, tokens/cache use and elapsed time before the lead's cadence ruling.
+Every cooperating J5 admission process uses the same canonical state root.
+Native `WriterLease` serializes read/claim/finish, and `write_atomic` durably binds
+the active run, last start, confirmed membership, usage crossing and parameter
+hash. A second process observes the active receipt and refuses, even after a
+crash. Failed or abandoned runs need reviewed read-back/reconciliation; no
+automatic reset, catch-up queue, overlap or retry is provided. A registry change
+with existing state requires reviewed migration. This local protocol cannot
+exclude an external host or controller that ignores it; existing Windows J5
+single-controller/allowlist/non-use gates remain required.
 
-Lesson: a valid native rank does not prove full-market entitlement, stream
-ownership, a fresh Windows apply, rank order in a watchlist or an economic edge.
-Mechanical proofs here grant none of those acceptances.
+Only an admitted `run_id` may be handed to the existing Windows-native Claude
+controller after enablement. No launcher is installed here. The controller must
+still validate fresh input before **each** batch under ADR-0021; the cadence does
+not extend second-scale producer expiry. `finish` accepts only the matching
+outcome/read-back receipt. Unknown completion keeps the active receipt blocked.
+
+The recorded first-session measurement is **`first_session_j5_run_time_ns`**:
+UTC receipt end minus admitted start for the first completed J5 run, including
+a failed completion, with `first_session_date` and `run_receipt_source`. Later
+runs record `last_j5_run_time_ns` without replacing the first measurement. It is
+**null in the shipped registry**, and no J5 measurement is made in this turn.
+All witness durations are labelled synthetic fixture clocks. In the first
+enabled session the real Windows result supplies both timestamps and its receipt;
+record controller model/effort, tokens/cache use and `total_cost_usd` alongside it.
+
+Capacity accounting before changed-only skipping, runtime or back-off: up to
+24 runs/hour during onset windows, 12/hour otherwise; a normal 6.5-hour RTH
+session has an upper-bound scenario of 102 runs, and a 16-hour 04:00–20:00 day
+246. At the 900s floor the scenarios are 4/hour, 26/RTH and 64/16h. These are
+invocation scenarios, not measured Claude cost. For equal-cost runs at `c` USD
+and `u` tokens each, multiply the counts by `c` and `u`; actual spend is the sum
+of individual runs. One actual J5 run's current USD cost, tokens, duration and
+subscription usage remain UNKNOWN. [Claude headless JSON](https://code.claude.com/docs/en/headless)
+and [costs](https://code.claude.com/docs/en/costs), read 2026-11-08, identify the
+client-estimated cost/model fields, cumulative resumed totals and subscription
+distinction. No new controller run is authorized to obtain them here.
+
+## Contract-first acceptance
+
+Per the lead's 19:47:09 contract-first practice, `test_j5_cadence.py` and the
+body's named acceptance checks were written before cadence code/config. All 43
+initial cases were RED for the absent implementation, then GREEN. A separate
+RED witness caught paging suppressed by unavailable rank data; moving usage
+handling before rank admission fixed it. Full RED/GREEN logs are in the handoff.
+Witnesses cover every owner rule, minute/second boundaries, Eastern DST/XNYS,
+restart and cross-process serialization, failed/abandoned runs, strict usage
+threshold/paging, missing authority, and synthetic first-session receipt timing.
+No test under `tests/repo` is edited; the no-LLM client research remains separate.
+
+Lesson: a membership retry is not a new change; keep the active/failed receipt
+through restarts. Cadence acceptance needs clocked controller receipts and
+weekly-use provenance, while display freshness remains independent.
 
 ## Verified carry and consolidation
 
@@ -173,8 +227,12 @@ original new rows. Original targeted proofs passed: **83 passed**. Complete
 patches, raw and normalized receipts are in the rank-live scratch/carry handoff.
 
 The carried 835 source lines (298 display_lists + 107 display_support + 430
-producer) become one 299-line `tradingview/producer.py`, including the live seam:
-**-536 versus the carry, +299 versus main**. Scoring, sorting, baseline curves,
+producer) became one 299-line `tradingview/producer.py` at `29d2cd4`, including the live
+seam: **-536 versus the carry, +299 versus main before the cadence follow-up**.
+The cadence follow-up adds a 290-line admission module: **+589 versus main,
++290 this turn, -246 versus the original carry**. Total source is 16,718 under
+the unchanged <20,800 guard; the combined post-B tree still needs checking. Scoring,
+sorting, baseline curves,
 coverage/source/feature validation and generation identity delegate to main;
 clock interpretation follows M2. Native `WriterLease`, `Pacer`, SDK request
 models, qualified-symbol grammar and durable `write_atomic` replace private
