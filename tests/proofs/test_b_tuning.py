@@ -453,7 +453,7 @@ def test_the_cohort_trail_takes_a_fraction_and_keeps_the_default() -> None:
 def test_proposals_never_write_a_registry(tmp_path: Path) -> None:
     paths = (
         REPO / "lanes/sim/entry-parameters.json",
-        REPO / "src/sextant/exits/owner_b.py",
+        REPO / "src/sextant/paper/b_protector.py",
     )
     before = {path: hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}
     result = tuning.StudyResult(
@@ -507,3 +507,62 @@ def test_the_real_cohort_is_not_evaluable_and_writes_no_trial_row(tmp_path: Path
     assert not (tmp_path / "trials.parquet").exists()
     payload = json.loads((tmp_path / "proposals.json").read_text())
     assert payload["results"] and all(row["proposals"] == [] for row in payload["results"])
+
+
+def test_pbo_uses_average_ranks_for_tied_trials() -> None:
+    a = (0.009, 0.011, -0.10, 0.12)
+    b = (-0.10, 0.14, 0.019, 0.021)
+    matrix = np.array([a, a, a, b], dtype=float).T
+    assert tuning.pbo_cscv(matrix, s=2) == 1.0
+
+
+def test_a_consumed_holdout_is_not_reused(tmp_path: Path) -> None:
+    sessions = _sessions()
+    holdout = sessions[-13:]
+    log_path = tmp_path / "trials.parquet"
+    first = tuning.run_study(
+        _spec(),
+        _evaluate(sessions),
+        sessions=sessions,
+        holdout_days=holdout,
+        log_path=log_path,
+    )
+    assert first.decision == "PROPOSED"
+    calls: list[tuple[str, ...]] = []
+
+    def evaluate(params, days):
+        calls.append(tuple(days))
+        return _evaluate(sessions)(params, days)
+
+    second = tuning.run_study(
+        _spec(),
+        evaluate,
+        sessions=sessions,
+        holdout_days=holdout,
+        log_path=log_path,
+    )
+    assert second.decision == "NOT_EVALUABLE"
+    assert "holdout" in second.reason
+    assert calls == []
+
+
+def test_sibling_arms_share_the_multiple_testing_correction(tmp_path: Path) -> None:
+    spec = _spec()
+    log = tuning.TrialLog(tmp_path / "trials.parquet")
+    config = tuning._trial_config(spec, arm_id=f"{spec.name}:sibling:trial-0", sha="a" * 40)
+    config["sandbox_config"]["arm"] = "sibling"
+    config["sandbox_config_hash"] = tuning.snapshot_hash(config["sandbox_config"])
+    config["block_set_id"] = f"{spec.name}:{spec.symbol_class}:sibling"
+    config["params_hash"] = tuning.snapshot_hash({})
+    log.append(
+        spec.name,
+        {},
+        config,
+        spec.seed,
+        state="COMPLETE",
+        days=("2020-01-01",),
+        daily_net_returns=(0.0,),
+        fold_scores=(0.0,),
+        objective=0.0,
+    )
+    assert tuning._prior_attempts(log, spec) == 1

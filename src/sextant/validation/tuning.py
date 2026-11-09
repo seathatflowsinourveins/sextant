@@ -269,7 +269,9 @@ def pbo_cscv(matrix: np.ndarray, *, s: int = 16) -> float | None:
         in_sample = _block_sharpe(data[is_index])
         out_sample = _block_sharpe(data[oos_index])
         best = int(np.argmax(in_sample))
-        rank = 1 + int((out_sample > out_sample[best]).sum())
+        greater = int((out_sample > out_sample[best]).sum())
+        tied = int((out_sample == out_sample[best]).sum())
+        rank = greater + (tied + 1) / 2
         total += 1
         if rank > trials / 2:
             below += 1
@@ -389,7 +391,7 @@ _N = "northstar-trading@8256c16c31dc"
 _E = "lanes/sim/entry-parameters.json"
 _PROPOSAL_ROWS = {
     "native_trail_fraction": (
-        "src/sextant/exits/owner_b.py",
+        "src/sextant/paper/b_protector.py",
         "native_trail_fraction",
         "ADR-0025 B scope: the 2.5% cap",
     ),
@@ -426,7 +428,7 @@ def _proposals(
             continue
         registry, row, source = _PROPOSAL_ROWS[name]
         current = _current_value(registry, row)
-        if current != value:
+        if str(current) != str(value):
             proposals.append(
                 Proposal(
                     registry=registry,
@@ -440,16 +442,47 @@ def _proposals(
     return tuple(proposals)
 
 
+def _holdout_consumed(log: TrialLog, spec: StudySpec, holdout: Sequence[str]) -> bool:
+    """A holdout block already evaluated under this study/symbol class is no longer untouched."""
+    wanted = set(holdout)
+    for record in log.records:
+        try:
+            config = json.loads(record["config"])
+        except (TypeError, ValueError):
+            continue
+        sandbox = config.get("sandbox_config", {})
+        if (
+            config.get("tier") != "MODELED"
+            or sandbox.get("study") != spec.name
+            or sandbox.get("symbol_class") != spec.symbol_class
+            or not str(config.get("arm_id", "")).endswith(":holdout")
+        ):
+            continue
+        days = record.get("days") or ()
+        if isinstance(days, str):
+            try:
+                days = json.loads(days)
+            except json.JSONDecodeError:
+                continue
+        if wanted & set(days):
+            return True
+    return False
+
+
 def _prior_attempts(log: TrialLog, spec: StudySpec) -> int:
-    """MODELED attempts already in the cumulative ledger for this study and arm."""
-    block = f"{spec.name}:{spec.symbol_class}:{spec.arm}"
+    """MODELED attempts for this study and symbol class, across its competing arms."""
     count = 0
     for record in log.records:
         try:
             config = json.loads(record["config"])
         except (TypeError, ValueError):
             continue
-        if config.get("tier") != "MODELED" or config.get("block_set_id") != block:
+        sandbox = config.get("sandbox_config", {})
+        if (
+            config.get("tier") != "MODELED"
+            or sandbox.get("study") != spec.name
+            or sandbox.get("symbol_class") != spec.symbol_class
+        ):
             continue
         if str(config.get("arm_id", "")).endswith(":holdout"):
             continue
@@ -479,6 +512,15 @@ def run_study(
         )
     train, holdout, folds = eligibility.train, eligibility.holdout, eligibility.folds
     log = TrialLog(Path(log_path))
+    if _holdout_consumed(log, spec, holdout):
+        return StudyResult(
+            spec=spec,
+            decision="NOT_EVALUABLE",
+            reason="holdout already consumed by a prior run for this study and symbol class",
+            n_sessions=len(sessions),
+            n_train_sessions=len(train),
+            n_holdout_sessions=len(holdout),
+        )
     attempts = _prior_attempts(log, spec)
     sha = _implementation_sha()
     series: dict[int, list[float]] = {}
@@ -527,11 +569,12 @@ def run_study(
         sampler=optuna.samplers.TPESampler(multivariate=True, seed=spec.seed),
         pruner=optuna.pruners.WilcoxonPruner(p_threshold=WILCOXON_P_THRESHOLD),
     )
+    start = len(log.records)
     study.optimize(objective, n_trials=spec.n_trials)
-    records = log.records
-    complete = sum(1 for record in records if record["state"] == "COMPLETE")
-    failed = sum(1 for record in records if record["state"] == "FAIL")
-    pruned = sum(1 for record in records if record["state"] == "PRUNED")
+    run_records = log.records[start:]
+    complete = sum(1 for record in run_records if record["state"] == "COMPLETE")
+    failed = sum(1 for record in run_records if record["state"] == "FAIL")
+    pruned = sum(1 for record in run_records if record["state"] == "PRUNED")
     try:
         best = study.best_trial
     except ValueError:
