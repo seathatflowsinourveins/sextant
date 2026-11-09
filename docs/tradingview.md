@@ -133,6 +133,7 @@ The following commands are owner-session steps, **not run by this worker**:
 ```sh
 uv run --frozen python -m sextant.tradingview --research-dir /path/to/top100/latest --authorize
 uv run --frozen python -m sextant.tradingview --research-dir /path/to/top100/latest --authorize --apply
+uv run --frozen python -m sextant.tradingview --loop --research-dir /path/to/top100/latest --authorize
 ```
 
 Each process requires explicit owner consent in the browser. It uses only the
@@ -159,6 +160,31 @@ and removes unexpected storage once before rereading. A remaining mismatch,
 quota error, ambiguous mutation or unknown envelope stops. Earlier writes may
 have succeeded: re-inventory before another plan; there is no automatic
 mutation replay or rollback. A refused/dry run records no successful-sync time.
+
+`--loop` keeps that one owner consent for one process and admits at most one
+`sync_research(apply=True)` per J5 cadence tick
+(`lanes/tradingview/j5-cadence.params.json`: 150s in the 07:00–10:30 and
+15:00–16:00 ET onset windows, 300s otherwise inside 04:00–20:00 ET, 900s above
+the 80% weekly-usage mark). It rereads the newest complete unit each tick; a
+missing, stale or invalid unit leaves both lists unchanged and pages once per
+distinct episode. Pages go straight to stderr, not through `logging`: the
+OAuth redaction guard disables logging for the whole consent session. It claims only when the observed `NS movers` and `NS focus`
+pair differs from the last completed read-back, so unchanged membership never
+calls the cloud. It exits at the 20:00 ET display close with a window-closed
+message, and it never holds the OAuth session across the closed window. A failed
+apply latches the admitted run for reviewed reconciliation; there is no
+automatic retry or reset. A restart also refuses existing state that holds an
+active, failed or page-pending run, or that was written by another reviewed
+registry, before it opens a new consent session; the reviewed reconciliation or
+migration must finish first. On a healthy restart, the startup by-ID read-back
+replaces the saved comparison before the first claim, so a sync is judged
+against the broker's current lists rather than the previous session's. The default state root is
+`~/sextant-data/tradingview-j5` (`--cadence-root`); all cooperating processes
+must use the same canonical root. `--weekly-usage-pct`/`--usage-source` exist to
+supply the Windows controller's sourced number; when unset, the process states
+that it has no Claude surface and the 900s branch is not exercised. The loop
+needs one complete display unit; projecting the slot-3 `sextant.j5-ranked/1`
+document into that unit is the bridge's job and is not part of this change.
 
 ## Display parameter registry
 
@@ -307,8 +333,11 @@ documents, never an empty list, and more than 100 members refuse untruncated.
 `tradingview/producer.py` adapts the existing `tv-display-producer@ea95075` to
 main's native ranking and the J5 `NS Ranked` contract. Supplied stream tapes and
 REST snapshots only; no key, socket, order, TradingView call or scheduler.
-The [design, source registry, verified carry, consolidation and disabled owner cadence](handbook/rank-live.md)
+The [design, source registry, verified carry, consolidation and owner-consented loop](handbook/rank-live.md)
 record the implementation and remaining acceptance. The lead's 2026-11-08
 19:21:44 pivot requires it to land after B, with dsh and Google gates. The
-19:49:24 owner cadence is implemented DISABLED. Stream opening and controller
-activation still require landing and explicit lead enablement.
+19:49:24 owner cadence now runs only through `--loop`: one process consent, one
+admitted apply per tick, stale input leaves the lists unchanged and pages, and
+`enabled=1` is reviewed in this PR and effective at the next session boundary.
+Stream opening and controller activation still require landing and explicit lead
+enablement.

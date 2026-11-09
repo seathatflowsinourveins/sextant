@@ -134,7 +134,10 @@
         "package": "sextant-dsh-research",
         "spec": "link:config/dsh",
         "link": "config/dsh",
-        "version": "0.0.0"
+        "version": "0.0.0",
+        "extra_live": [
+          "pins"
+        ]
       },
       {
         "package": "sextant-dsh-review-cmd",

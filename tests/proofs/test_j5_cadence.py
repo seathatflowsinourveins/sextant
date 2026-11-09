@@ -82,10 +82,12 @@ def finish(gate, run, now, *, successful=True):
     )
 
 
-def test_j5_ships_disabled_until_landed_and_lead_enabled(tmp_path):
-    assert REGISTRY.is_file(), "The disabled cadence registry is missing"
+def test_j5_ships_enabled_with_landing_and_lead_enablement(tmp_path):
+    assert REGISTRY.is_file(), "The owner-ruled cadence registry is missing"
     raw = json.loads(REGISTRY.read_text())
-    assert next(r["value"] for r in raw["rows"] if r["name"] == "enabled") == 0
+    enabled = next(r for r in raw["rows"] if r["name"] == "enabled")
+    assert enabled["value"] == 1
+    assert "LEAD-1219" in enabled["source"]
     assert raw["measurements"]["first_session_j5_run_time_ns"] is None
     disabled = policy(tmp_path, enabled=False)
     assert claim(disabled, at()) is None
@@ -94,6 +96,56 @@ def test_j5_ships_disabled_until_landed_and_lead_enabled(tmp_path):
     missing_landing.landed_sha = "f" * 40
     missing_landing.enable_source = ""
     assert claim(missing_landing, at()) is None
+
+
+def display_unit(now, movers=("NASDAQ:A",), focus=("NASDAQ:A",)):
+    """The loop's explicit two-list admission view; never passed off as a producer unit."""
+    return {
+        "schema": "sextant.display-admission/1",
+        "status": "fresh",
+        "display_only": True,
+        "paper_slot": 3,
+        "generated_at_ns": _ns(now),
+        "expires_at_ns": _ns(now) + 2 * NS,
+        "watchlists": {"NS movers": list(movers), "NS focus": list(focus)},
+    }
+
+
+def test_j5_display_admission_keeps_both_lists_and_claims_a_cross_list_move(tmp_path):
+    module = api()
+    assert module._members({"NS movers": ["NASDAQ:B", "NASDAQ:A"], "NS focus": ["NASDAQ:A"]}) == {
+        "NS movers": ["NASDAQ:A", "NASDAQ:B"],
+        "NS focus": ["NASDAQ:A"],
+    }
+    for bad in (
+        {},
+        {"NS Ranked": ["NASDAQ:A"], "NS focus": []},
+        {"NS movers": ["NASDAQ:A"]},
+        {"NS movers": ["NASDAQ:A"], "NS focus": [], "NS Ranked": []},
+    ):
+        with pytest.raises(ValueError):
+            module._members(bad)
+    now = at()
+    gate = policy(tmp_path, baseline={"NS movers": ["NASDAQ:A", "NASDAQ:B"], "NS focus": []})
+    moved = gate.claim(
+        display_unit(now, ("NASDAQ:A",), ("NASDAQ:B",)),
+        now=now,
+        weekly_usage_pct=Decimal(30),
+        usage_source="synthetic display admission",
+    )
+    assert moved and moved["members"] == {
+        "NS movers": ["NASDAQ:A"],
+        "NS focus": ["NASDAQ:B"],
+    }
+    finish(gate, moved, now + timedelta(seconds=1))
+    later = at("08:00:00")
+    empty = gate.claim(
+        display_unit(later, (), ("NASDAQ:C",)),
+        now=later,
+        weekly_usage_pct=Decimal(30),
+        usage_source="synthetic display admission",
+    )
+    assert empty is None
 
 
 def test_j5_syncs_only_changed_membership_not_order_or_score(tmp_path):

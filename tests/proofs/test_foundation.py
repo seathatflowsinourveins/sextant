@@ -231,6 +231,28 @@ def test_scoreboard_runs_only_daily_or_on_dispatch() -> None:
     assert "push" not in triggers
     assert set(triggers) == {"schedule", "workflow_dispatch"}
     assert triggers["schedule"] == [{"cron": "17 6 * * *"}]
+    assert workflow["jobs"]["scoreboard"]["if"] == (
+        "${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && "
+        "(github.event_name == 'schedule' || github.actor == github.repository_owner) }}"
+    )
+
+
+def test_scoreboard_measures_the_stop_rule_over_the_last_twenty_merges() -> None:
+    text = (WORKFLOWS / "scoreboard.yml").read_text()
+    assert "--state merged --limit 100" in text
+    assert "sort:updated-desc" in text
+    assert "sort_by(.mergedAt) | reverse | .[0:20]" in text
+    assert "fromdateiso8601" in text
+    assert "stop-rule.md" in text
+    assert "Median merge time: ${median} h against a 1.00 h limit." in text
+    assert "Stop rule: ${verdict}" in text
+    assert "Find or create the scoreboard issue" in text
+    assert "Scheduled workflows" in text
+    assert "merged:>=${{ steps.window.outputs.since }}" in text
+    assert "last.mergedAt" in text
+    assert "s/^#+ Proven rows:" in text
+    assert "url=$(gh issue create" in text
+    assert "refs/heads/main" not in text
 
 
 def test_lessons_keep_their_seed_and_stay_append_only() -> None:

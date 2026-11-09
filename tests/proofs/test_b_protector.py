@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 import pytest
 from alpaca.trading.enums import OrderSide, TimeInForce
 from alpaca.trading.models import Order, Position, TradeAccount, TradeUpdate
-from alpaca.trading.requests import TrailingStopOrderRequest
+from alpaca.trading.requests import LimitOrderRequest, TrailingStopOrderRequest
 from alpaca.trading.stream import TradingStream
 
 from sextant.paper.b_protector import (
@@ -22,6 +22,7 @@ from sextant.paper.b_protector import (
     ProtectorStream,
     load_b_parameters,
 )
+from sextant.paper.b_protector_main import PacerRefused
 from sextant.paper.config import PaperAccount
 from sextant.paper.sessions import Session, session_at
 
@@ -46,7 +47,10 @@ def b_account() -> PaperAccount:
 
 
 def b_params(**overrides: Decimal) -> BParameters:
-    facts = {"native_trail_fraction": Decimal("0.025")}
+    facts = {
+        "native_trail_fraction": Decimal("0.025"),
+        "reconcile_interval_s": Decimal("10"),
+    }
     return BParameters(**(facts | overrides))
 
 
@@ -91,6 +95,9 @@ def api_order(
     order_type: str = "limit",
     status: str = "new",
     trail_percent: str | None = None,
+    stop_price: str | None = None,
+    limit_price: str | None = None,
+    extended_hours: bool = False,
 ) -> Order:
     payload = {
         "id": str(uuid4()),
@@ -101,7 +108,7 @@ def api_order(
         "order_class": "simple",
         "time_in_force": "gtc",
         "status": status,
-        "extended_hours": False,
+        "extended_hours": extended_hours,
         "symbol": symbol,
         "qty": qty,
         "filled_qty": filled_qty,
@@ -110,6 +117,10 @@ def api_order(
     }
     if trail_percent is not None:
         payload["trail_percent"] = trail_percent
+    if stop_price is not None:
+        payload["stop_price"] = stop_price
+    if limit_price is not None:
+        payload["limit_price"] = limit_price
     return Order.model_validate(payload)
 
 
@@ -140,7 +151,7 @@ class FakeTradingClient:
         self.positions = list(positions)
         self.orders = list(orders)
         self.calls: list[str] = []
-        self.submitted: list[TrailingStopOrderRequest] = []
+        self.submitted: list[TrailingStopOrderRequest | LimitOrderRequest] = []
         self.cancelled: list[str] = []
         self.replaced: list[object] = []
 
@@ -156,21 +167,37 @@ class FakeTradingClient:
         self.calls.append("get_orders")
         return list(self.orders)
 
+    def get_order_by_client_id(self, client_id: str) -> Order:
+        self.calls.append("get_order_by_client_id")
+        raise AssertionError("the fixture has no order with that client order id")
+
     def submit_order(self, order_data):
         self.calls.append("submit_order")
-        assert isinstance(order_data, TrailingStopOrderRequest)
+        assert isinstance(order_data, (TrailingStopOrderRequest, LimitOrderRequest))
         assert order_data.client_order_id is not None
         assert order_data.symbol is not None
         self.submitted.append(order_data)
-        order = api_order(
-            client_order_id=order_data.client_order_id,
-            symbol=order_data.symbol,
-            qty=str(order_data.qty),
-            side="sell",
-            order_type="trailing_stop",
-            status="new",
-            trail_percent=str(order_data.trail_percent),
-        )
+        if isinstance(order_data, LimitOrderRequest):
+            order = api_order(
+                client_order_id=order_data.client_order_id,
+                symbol=order_data.symbol,
+                qty=str(order_data.qty),
+                side="sell",
+                order_type="limit",
+                status="new",
+                limit_price=str(order_data.limit_price),
+                extended_hours=bool(order_data.extended_hours),
+            )
+        else:
+            order = api_order(
+                client_order_id=order_data.client_order_id,
+                symbol=order_data.symbol,
+                qty=str(order_data.qty),
+                side="sell",
+                order_type="trailing_stop",
+                status="new",
+                trail_percent=str(order_data.trail_percent),
+            )
         self.orders.append(order)
         return order
 
@@ -182,6 +209,57 @@ class FakeTradingClient:
     def replace_order_by_id(self, *args, **kwargs):
         self.replaced.append((args, kwargs))
         raise AssertionError("the protector must never replace an order")
+
+
+class RefusingClient(FakeTradingClient):
+    """The account pacer refuses a broker read while an owner fill is being claimed."""
+
+    def __init__(self, *, account=None, positions=(), orders=()):
+        super().__init__(account=account, positions=positions, orders=orders)
+        self.refusing = True
+
+    def get_all_positions(self):
+        if self.refusing:
+            self.calls.append("get_all_positions")
+            raise PacerRefused("the account pacer did not admit get_all_positions")
+        return super().get_all_positions()
+
+
+class TimedOutSubmitClient(FakeTradingClient):
+    """The broker accepted the trail but the response was lost, so it is not listed yet."""
+
+    def __init__(self, *, account=None, positions=(), orders=()):
+        super().__init__(account=account, positions=positions, orders=orders)
+        self.by_client_id: dict[str, Order] = {}
+        self.lookups: list[str] = []
+
+    def submit_order(self, order_data):
+        self.calls.append("submit_order")
+        assert isinstance(order_data, TrailingStopOrderRequest)
+        self.submitted.append(order_data)
+        client_order_id = order_data.client_order_id
+        symbol = order_data.symbol
+        assert client_order_id is not None
+        assert symbol is not None
+        order = api_order(
+            client_order_id=client_order_id,
+            symbol=symbol,
+            qty=str(order_data.qty),
+            side="sell",
+            order_type="trailing_stop",
+            status="new",
+            trail_percent=str(order_data.trail_percent),
+        )
+        self.by_client_id[client_order_id] = order
+        raise TimeoutError("the submit response was lost")
+
+    def get_order_by_client_id(self, client_id: str) -> Order:
+        self.calls.append("get_order_by_client_id")
+        self.lookups.append(client_id)
+        order = self.by_client_id.get(client_id)
+        if order is None:
+            raise AssertionError("unexpected client order id")
+        return order
 
 
 def protector(client, *, now=NOW_NS, account=None, params=None) -> Protector:
@@ -196,15 +274,18 @@ def protector(client, *, now=NOW_NS, account=None, params=None) -> Protector:
 def test_the_registry_carries_b_the_reviewed_trail(tmp_path):
     path = ROOT / "lanes/paper/b-parameters.json"
     params = load_b_parameters(path)
-    assert params.native_trail_fraction == BParameters(Decimal("0.025")).native_trail_fraction
+    assert params.native_trail_fraction == b_params().native_trail_fraction
+    assert params.reconcile_interval_s == b_params().reconcile_interval_s
 
     rows = json.loads(path.read_text())
-    assert {row["name"] for row in rows} == {"native_trail_fraction"}
+    assert {row["name"] for row in rows} == {"native_trail_fraction", "reconcile_interval_s"}
     assert all(row["calibration_state"] == "UNCALIBRATED" for row in rows)
     assert all(row["source"] for row in rows)
 
     with pytest.raises(ValueError):
-        BParameters(Decimal("0.03"))
+        BParameters(Decimal("0.03"), Decimal("10"))
+    with pytest.raises(ValueError):
+        BParameters(Decimal("0.025"), Decimal("0"))
 
     incomplete = tmp_path / "b-parameters.json"
     incomplete.write_text(json.dumps([]))
@@ -326,9 +407,13 @@ def test_an_owner_sell_cancel_arms_the_freed_shares_to_protective():
     client.orders = [order for order in client.orders if str(order.id) != str(owner.id)]
     p.handle(api_update(owner, event="canceled", position_qty=10.0))
 
+    # The old 6-share trail is cancelled first; the resize waits for its terminal event.
+    assert client.submitted == []
     assert client.cancelled == [str(house.id)]
     assert client.submitted == []
     assert str(owner.id) not in client.cancelled
+    p.handle(api_update(house, event="canceled", position_qty=10.0))
+    assert [request.qty for request in client.submitted] == [10]
     assert client.replaced == []
 
     p.handle(api_update(house, event="canceled", position_qty=10.0))
@@ -495,7 +580,7 @@ def test_a_slot_one_lane_and_a_foreign_account_number_refuse_before_any_order():
     assert "get_all_positions" not in client.calls
 
 
-def test_a_reconnect_and_outside_rth_page_instead_of_submitting(monkeypatch):
+def test_a_reconnect_and_outside_rth_arms_the_native_trail_instead_of_paging(monkeypatch):
     async def no_connect(self) -> None:
         return None
 
@@ -526,17 +611,18 @@ def test_a_reconnect_and_outside_rth_page_instead_of_submitting(monkeypatch):
             position_qty=10.0,
         )
     )
-    assert client.submitted == []
-    assert [page.reason for page in p.pages] == ["unprotected_outside_rth_until_pr2"]
+    assert len(client.submitted) == 1
+    assert p.pages == []
 
 
-def test_an_existing_house_trail_outside_rth_is_not_counted_as_protection():
+def test_an_existing_house_trail_outside_rth_is_adopted():
     house = api_order(
         client_order_id="B001-trail-AAPL-old",
         side="sell",
         qty="10",
         order_type="trailing_stop",
         trail_percent="2.5",
+        stop_price="97.50",
     )
     after_hours = datetime(2026, 11, 9, 20, 30, tzinfo=ET)
     client = FakeTradingClient(positions=[api_position("10")], orders=[house])
@@ -546,10 +632,11 @@ def test_an_existing_house_trail_outside_rth_is_not_counted_as_protection():
 
     assert client.submitted == []
     assert client.cancelled == []
-    assert [page.reason for page in p.pages] == ["unprotected_outside_rth_until_pr2"]
+    assert p.pages == []
+    assert p.emulated_trigger("AAPL") == Decimal("97.50")
 
 
-def test_an_owner_add_outside_rth_pages_instead_of_writing():
+def test_an_owner_add_outside_rth_resizes_after_the_terminal_cancel():
     house = api_order(
         client_order_id="B001-trail-AAPL-old",
         side="sell",
@@ -563,12 +650,16 @@ def test_an_owner_add_outside_rth_pages_instead_of_writing():
     p.bind()
     p.reconcile()
 
-    assert client.cancelled == []
+    assert client.cancelled == [str(house.id)]
     assert client.submitted == []
-    assert [page.reason for page in p.pages] == ["unprotected_outside_rth_until_pr2"]
+    assert [page.reason for page in p.pages] == []
+
+    p.handle(api_update(house, event="canceled", position_qty=12.0))
+
+    assert [request.qty for request in client.submitted] == [12]
 
 
-def test_an_oversized_house_trail_is_cancelled_outside_rth_before_the_page():
+def test_an_oversized_house_trail_is_cancelled_outside_rth_before_the_rearm():
     house = api_order(
         client_order_id="B001-trail-AAPL-big",
         side="sell",
@@ -584,7 +675,11 @@ def test_an_oversized_house_trail_is_cancelled_outside_rth_before_the_page():
 
     assert client.cancelled == [str(house.id)]
     assert client.submitted == []
-    assert [page.reason for page in p.pages] == ["unprotected_outside_rth_until_pr2"]
+    assert [page.reason for page in p.pages] == []
+
+    p.handle(api_update(house, event="canceled", position_qty=9.0))
+
+    assert [request.qty for request in client.submitted] == [9]
 
 
 def test_the_rearm_submits_only_after_the_cancelled_house_trail_event():
@@ -859,3 +954,41 @@ def test_a_truncated_open_order_snapshot_refuses_writes():
 
     assert client.submitted == []
     assert "open_orders_truncated" in [page.reason for page in p.pages]
+
+
+def test_a_pacer_refusal_pages_instead_of_escaping_the_handler_and_the_next_event_protects():
+    client = RefusingClient(positions=[api_position("10")])
+    p = protector(client)
+    p.bind()
+
+    p.handle(api_update(api_order(client_order_id="owner-buy-1"), event="fill", position_qty=10.0))
+
+    assert "pacer_refused" in [page.reason for page in p.pages]
+    assert client.submitted == []
+
+    client.refusing = False
+    p.handle(api_update(api_order(client_order_id="owner-buy-1"), event="fill", position_qty=10.0))
+
+    assert len(client.submitted) == 1
+    assert client.submitted[0].qty == 10
+
+
+def test_a_timed_out_submit_is_resolved_by_its_client_order_id_before_any_second_exit():
+    client = TimedOutSubmitClient(positions=[api_position("10")])
+    p = protector(client)
+    p.bind()
+    p.handle(api_update(api_order(client_order_id="owner-buy-1"), event="fill", position_qty=10.0))
+
+    assert len(client.submitted) == 1
+    client_order_id = client.submitted[0].client_order_id
+    assert client_order_id is not None
+
+    p.reconcile()
+
+    assert client.lookups == [client_order_id]
+    assert "submit_unresolved" in [page.reason for page in p.pages]
+
+    client.orders = [client.by_client_id[client_order_id]]
+    p.reconcile()
+
+    assert len(client.submitted) == 1
