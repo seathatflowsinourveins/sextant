@@ -235,6 +235,49 @@ def test_paper_and_e2e_carveout_is_finding_level() -> None:
         assert required in carveout
 
 
+def test_upstream_first_rule_names_the_sdk_call_and_its_severity() -> None:
+    rules = (WORKFLOWS / "shared/review-rules.md").read_text()
+    owner = (
+        "with clean upstrean integrated line should not be talking too much lines "
+        "in the first place ,we need sota automation"
+    )
+    assert owner in rules
+    upstream_first = rules.split("## Upstream-first", 1)[1].split("## Report", 1)[0]
+    # What a pinned upstream already provides must not be re-implemented in new src code.
+    for required in (
+        "re-implements what a pinned upstream already provides",
+        "HTTP transports",
+        "retry or pagination loops",
+        "rate pacers",
+        "calculators",
+        "data clients",
+        "OAuth flows",
+        # The finding names the SDK call to use instead.
+        "TradingClient",
+        "StockHistoricalDataClient",
+        "NautilusTrader's own components",
+        "the MCP SDK",
+        "edgartools",
+        # Severity: P1 on normal paths, a follow-up under #128 on paper paths.
+        "[P1]",
+        "#128",
+        "never blocking",
+        # The example witness: #74's hand-built HTTP transport.
+        "#74",
+        "src/sextant/execution/alpaca_transport.py",
+        # Using the upstream, or carrying it verbatim, is not re-implementing it.
+        "not re-implementing it",
+        "not an Always P0",
+    ):
+        assert required in upstream_first, required
+    # The Report verdict admits the witnessed P1 on normal paths, and only then.
+    report = rules.split("## Report", 1)[1]
+    assert "upstream-first duplication on a normal path" in report
+    assert (
+        "Only a finding at the blocking threshold" in (ROOT / ".github/gate/gate.cjs").read_text()
+    )
+
+
 def test_key_policy_and_failure_paths_execute_against_the_actual_adapter() -> None:
     done = subprocess.run(
         ["node", "--test", "tests/proofs/public-gate.test.cjs"],
