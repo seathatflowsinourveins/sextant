@@ -5,10 +5,12 @@ expected account come only from the environment, every broker call after the
 startup checks goes through the repo's account pacer, one writer lease owns the
 account, and SIGTERM/SIGINT stop the stream without cancelling the broker-held
 trail.  The C decision core (``c_session.py``) is unchanged: this module only
-wires it to alpaca-py's SIP feed and trading client (v0.44.0
-``examples/stocks/stocks-trading-basic.ipynb`` cells 25-36), submits the one
-witness-size LIMIT entry, then the native GTC trailing stop the session emits
-after the fill.
+wires it to alpaca-py's trading client (v0.44.0
+``examples/stocks/stocks-trading-basic.ipynb`` cells 25-36), selects SIP in the
+day sessions and BOATS overnight, loads the current segment's baseline, submits
+the one witness-size LIMIT entry, then the native GTC trailing stop in RTH or a
+resting GTC LIMIT at the ADR-0025 trail price outside it, re-priced as the trail
+rises.
 
 The account config is a JSON object with ``PaperAccount``'s fields: ``lane``,
 ``account_id``, ``client_id``, ``namespace`` and ``sessions``.  The fetched
@@ -30,14 +32,19 @@ import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from decimal import Decimal
+from decimal import ROUND_FLOOR, Decimal
 from pathlib import Path
 from types import FrameType
 from typing import Any, Protocol, cast
 
 from alpaca.trading.client import TradingClient
 from alpaca.trading.enums import OrderSide, QueryOrderStatus, TimeInForce
-from alpaca.trading.requests import GetOrdersRequest, LimitOrderRequest, TrailingStopOrderRequest
+from alpaca.trading.requests import (
+    GetOrdersRequest,
+    LimitOrderRequest,
+    ReplaceOrderRequest,
+    TrailingStopOrderRequest,
+)
 from nautilus_trader.model import Currency, Equity, InstrumentId, Price, Quantity, Symbol
 
 from sextant.entry.parameters import EntryParameters
@@ -57,6 +64,7 @@ from sextant.paper.c_session import CConfig, CSession
 from sextant.paper.config import PaperAccount
 from sextant.paper.sessions import Session
 from sextant.ranking.baseline import BaselineTable, load_baseline, segment_start
+from sextant.ranking.engine import Segment
 from sextant.risk.controls import Controls
 from sextant.risk.guard import Guard
 from sextant.validation.trials import WITNESS_PATH, TrialLog
@@ -75,6 +83,15 @@ OPEN_ORDER_LIMIT = 500
 STOP_STATUSES = frozenset(
     {"CANCELED", "CANCELLED", "DONE_FOR_DAY", "EXPIRED", "REJECTED", "REPLACED", "STOPPED"}
 )
+SEGMENT_BASELINES = {
+    "OVERNIGHT": "overnight.json",
+    "PRE": "pre.json",
+    "RTH": "rth.json",
+    "POST": "post.json",
+}
+_NS_PER_S = 1_000_000_000
+_PROTECTION_ACKS = frozenset({"NEW", "ACCEPTED", "PENDING_NEW", "PARTIALLY_FILLED"})
+_PROTECTION_GONE = frozenset({"CANCELED", "CANCELLED", "REPLACED"})
 
 
 class LiveRefusal(RuntimeError):
@@ -99,6 +116,10 @@ class TradingClientLike(Protocol):
     def get_order_by_id(self, order_id: object) -> Any: ...
 
     def submit_order(self, order_data: Any) -> Any: ...
+
+    def cancel_order_by_id(self, order_id: object) -> Any: ...
+
+    def replace_order_by_id(self, order_id: object, order_data: Any) -> Any: ...
 
 
 class PacedTradingClient:
@@ -143,6 +164,12 @@ class PacedTradingClient:
     def submit_order(self, order_data: Any, *, kind: ActionKind) -> Any:
         return self._call(kind, self._client.submit_order, order_data)
 
+    def cancel_order_by_id(self, order_id: object) -> Any:
+        return self._call(ActionKind.CANCEL, self._client.cancel_order_by_id, order_id)
+
+    def replace_order_by_id(self, order_id: object, order_data: Any) -> Any:
+        return self._call(ActionKind.MODIFY, self._client.replace_order_by_id, order_id, order_data)
+
 
 @dataclass
 class RunRecord:
@@ -155,6 +182,7 @@ class RunRecord:
     protection_cid: str | None = None
     dry_run: bool = False
     snapshot: dict[str, Any] = field(default_factory=dict)
+    flags: int = 0
 
 
 def load_account_config(path: Path) -> PaperAccount:
@@ -311,23 +339,54 @@ def _command_payload(command: OrderCommand, cid: str) -> dict[str, Any]:
     }
 
 
-def _record_command(
-    run: RunRecord, command: OrderCommand, cid: str, *, status: str
+def _record_row(
+    run: RunRecord,
+    *,
+    cid: str,
+    kind: str,
+    side: str,
+    quantity: Decimal,
+    limit_price: Decimal | None,
+    trail_price: Decimal | None,
+    status: str,
+    segment: str,
 ) -> dict[str, Any]:
     row = {
         "cid": cid,
-        "kind": command.order_type,
-        "side": command.side,
-        "qty": _decimal_text(command.quantity),
-        "limit": None if command.limit_price is None else _decimal_text(command.limit_price),
-        "trail": None if command.trail_price is None else _decimal_text(command.trail_price),
+        "kind": kind,
+        "side": side,
+        "qty": _decimal_text(quantity),
+        "limit": None if limit_price is None else _decimal_text(limit_price),
+        "trail": None if trail_price is None else _decimal_text(trail_price),
         "ack": "",
         "fill": "0",
         "status": status,
         "venue_id": "",
+        "segment": segment,
     }
     run.commands.append(row)
     return row
+
+
+def _record_command(
+    run: RunRecord,
+    command: OrderCommand,
+    cid: str,
+    *,
+    status: str,
+    segment: str,
+) -> dict[str, Any]:
+    return _record_row(
+        run,
+        cid=cid,
+        kind=command.order_type,
+        side=command.side,
+        quantity=command.quantity,
+        limit_price=command.limit_price,
+        trail_price=command.trail_price,
+        status=status,
+        segment=segment,
+    )
 
 
 def _request_for(command: OrderCommand, cid: str, *, extended_hours: bool) -> Any:
@@ -364,8 +423,9 @@ def _write_receipt(
     account_suffix: str,
     symbols: Sequence[str],
     run: RunRecord,
-    baseline: BaselineTable,
+    baseline: BaselineTable | None,
     config: CConfig,
+    final_segment: str,
     stamp: str,
 ) -> Path:
     payload = {
@@ -376,7 +436,9 @@ def _write_receipt(
         "commands": run.commands,
         "protection_cid": run.protection_cid,
         "errors": run.errors,
-        "baseline": {
+        "baseline": None
+        if baseline is None
+        else {
             "provenance": baseline.provenance,
             "known_at": baseline.known_at,
             "feed": baseline.feed,
@@ -385,6 +447,7 @@ def _write_receipt(
         "dry_run": run.dry_run,
         "started_ns": run.started_ns,
         "stopped_ns": run.stopped_ns,
+        "final_segment": final_segment,
         "segment": {
             "name": config.segment.name,
             "session_date": config.segment.session_date.isoformat(),
@@ -411,32 +474,27 @@ def _record_trial(
     *,
     ledger_path: Path,
     run: RunRecord,
-    baseline: BaselineTable,
+    baseline: BaselineTable | None,
     config: CConfig,
     failure: str | None,
 ) -> None:
     """Append one BROKER-PAPER row; flags/entries/fills are counts, never a P&L claim."""
 
-    flags = sum(
-        1
-        for key, state in run.snapshot.items()
-        if key != "params_hash" and isinstance(state, dict) and state.get("flag_ts") is not None
-    )
     entries = sum(1 for row in run.commands if row["kind"] == "LIMIT" and row["side"] == "BUY")
     fills = sum(1 for row in run.commands if Decimal(str(row["fill"])) > 0)
     params = {
         "symbols": list(config.symbols),
         "segment": config.segment.name,
         "session_date": config.segment.session_date.isoformat(),
-        "flags": flags,
+        "flags": run.flags,
         "entries": entries,
         "fills": fills,
         "protection_cid": run.protection_cid or "",
         "dry_run": run.dry_run,
         "commands": run.commands,
         "errors": list(run.errors),
-        "baseline_known_at": baseline.known_at,
-        "baseline_provenance": baseline.provenance,
+        "baseline_known_at": None if baseline is None else baseline.known_at,
+        "baseline_provenance": "" if baseline is None else baseline.provenance,
         "entry_params_hash": config.params.params_hash,
     }
     identity = _trial_config(config, run.started_ns)
@@ -450,6 +508,179 @@ def _record_trial(
                 raise TrialFailed(failure)
     except TrialFailed:
         return
+
+
+@dataclass
+class _LimitProtection:
+    """A resting limit exit that stands in for the RTH-only native trail."""
+
+    instrument: str
+    entry_cid: str
+    cid: str
+    venue_id: str
+    quantity: Decimal
+    fill_price: Decimal
+    limit_price: Decimal
+    hwm: Decimal
+    replacements: int = 0
+
+
+def _segment_baseline(
+    baseline: Path | None, baseline_dir: Path | None, segment: Segment
+) -> BaselineTable:
+    if baseline is not None:
+        path = baseline
+    elif baseline_dir is not None:
+        path = Path(baseline_dir) / SEGMENT_BASELINES[segment.name]
+    else:
+        raise LiveRefusal("no baseline source was given")
+    try:
+        return load_baseline(path.read_text())
+    except (OSError, ValueError) as exc:
+        raise LiveRefusal(f"the {segment.name} baseline is unavailable at {path}: {exc}") from exc
+
+
+def _feed_for(segment: Segment) -> str:
+    return "boats" if segment.name == "OVERNIGHT" else "sip"
+
+
+def _attribute(asset: object, name: str) -> bool:
+    """Read the Assets API attribute list the way the live model carries it.
+
+    alpaca-py v0.44.0 has no top-level ``overnight_tradable`` on ``Asset``; the
+    live GET /v2/assets response carries the flag in ``attributes``.
+    """
+    values = getattr(asset, "attributes", None) or ()
+    if isinstance(values, str):
+        values = (values,)
+    return any(str(item).lower() == name for item in values)
+
+
+def _require_eligible(asset: object, symbol: str, segment: Segment) -> None:
+    if getattr(asset, "tradable", None) is not True:
+        raise LiveRefusal(f"{symbol} is not tradable")
+    if segment.name != "OVERNIGHT":
+        return
+    overnight_tradable = getattr(asset, "overnight_tradable", None) is True or _attribute(
+        asset, "overnight_tradable"
+    )
+    if getattr(asset, "overnight_halted", None) is True or _attribute(asset, "overnight_halted"):
+        raise LiveRefusal(f"{symbol} is not overnight-eligible (overnight_halted)")
+    if overnight_tradable is not True:
+        raise LiveRefusal(
+            f"{symbol} is not overnight-eligible "
+            f"(attributes={getattr(asset, 'attributes', None)!r})"
+        )
+
+
+def _instruments_for(
+    client: PacedTradingClient, symbols: Sequence[str], segment: Segment
+) -> dict[str, Equity]:
+    instruments: dict[str, Equity] = {}
+    for full_id in symbols:
+        try:
+            iid = InstrumentId.from_str(full_id)
+        except ValueError as exc:
+            raise LiveRefusal(f"bad instrument id {full_id}") from exc
+        if str(iid.venue) != "ALPACA":
+            raise LiveRefusal(f"{full_id} is not an ALPACA instrument")
+        asset = client.get_asset(iid.symbol.value)
+        _require_eligible(asset, iid.symbol.value, segment)
+        precision, increment = _equity_ladder(asset)
+        instruments[full_id] = Equity(
+            iid,
+            Symbol(iid.symbol.value),
+            Currency.from_str("USD"),
+            precision,
+            Price.from_str(_price_text(increment)),
+            0,
+            0,
+            lot_size=Quantity.from_int(1),
+        )
+    return instruments
+
+
+def _fill_price(order: Any) -> Decimal:
+    raw = getattr(order, "filled_avg_price", None)
+    if raw is None:
+        raise LiveRefusal(
+            "the filled entry has no average price; the ADR-0025 limit exit cannot be priced"
+        )
+    try:
+        price = _plain_decimal(raw)
+    except (TypeError, ValueError) as exc:
+        raise LiveRefusal(f"the filled entry average price is invalid: {exc}") from exc
+    if price <= 0:
+        raise LiveRefusal("the filled entry average price is not positive")
+    return price
+
+
+def _filled_quantity(order: Any) -> Decimal:
+    raw = getattr(order, "filled_qty", None)
+    if raw is None:
+        return Decimal(0)
+    try:
+        filled = _plain_decimal(raw)
+    except (TypeError, ValueError):
+        return Decimal(0)
+    return filled if filled > 0 else Decimal(0)
+
+
+def _trail_limit(price: Decimal, trail_fraction: Decimal, increment: Decimal) -> Decimal:
+    if increment <= 0:
+        raise LiveRefusal("the instrument has no positive price increment")
+    steps = (price * (Decimal(1) - trail_fraction) / increment).to_integral_value(
+        rounding=ROUND_FLOOR
+    )
+    limit = steps * increment
+    if limit <= 0:
+        raise LiveRefusal("the ADR-0025 trail price is not positive")
+    return limit
+
+
+def _await_cancel(
+    client: PacedTradingClient,
+    order_id: str,
+    *,
+    sleep: Callable[[float], None],
+    monotonic: Callable[[], float],
+    poll_interval_s: float,
+    timeout_s: float,
+) -> Any:
+    deadline = monotonic() + timeout_s
+    settled = _PROTECTION_GONE | {"FILLED"}
+    while True:
+        order = client.get_order_by_id(order_id)
+        status = _status(order)
+        if status in settled:
+            return order
+        if status in STOP_STATUSES:
+            raise LiveRefusal(f"the protection order {order_id} ended {status}")
+        now = monotonic()
+        if now >= deadline:
+            raise LiveRefusal(
+                f"the protection order {order_id} did not settle after {timeout_s:g}s"
+            )
+        sleep(min(poll_interval_s, deadline - now))
+
+
+def _flag_count(snapshot: dict[str, Any]) -> int:
+    return sum(
+        1
+        for key, state in snapshot.items()
+        if key != "params_hash" and isinstance(state, dict) and state.get("flag_ts") is not None
+    )
+
+
+def _config_for(symbols: Sequence[str], params: EntryParameters, segment: Segment) -> CConfig:
+    return CConfig(
+        symbols=tuple(symbols),
+        chase_cap_fraction=Decimal("0.03"),  # 0.03 = the recorded first_leg_max_move
+        trail_fraction=Decimal("0.025"),  # ADR-0025 C-scope, UNCALIBRATED
+        slot_count=2,  # ADR-0024 2-of-5 pool
+        segment=segment,
+        params=params,
+    )
 
 
 def main(
@@ -475,7 +706,17 @@ def main(
         metavar="FULL_ID",
         help="full Alpaca instrument ids, e.g. OMH.ALPACA",
     )
-    parser.add_argument("--baseline", type=Path, required=True, help="baseline JSON")
+    baseline_source = parser.add_mutually_exclusive_group(required=True)
+    baseline_source.add_argument(
+        "--baseline-dir",
+        type=Path,
+        help="directory holding overnight.json, pre.json, rth.json and post.json",
+    )
+    baseline_source.add_argument(
+        "--baseline",
+        type=Path,
+        help="single-segment baseline JSON; the run does not switch segments",
+    )
     parser.add_argument("--state", type=Path, required=True, help="writer/custody/guard state dir")
     parser.add_argument("--seconds", type=int, default=300, help="foreground run length")
     parser.add_argument("--dry-run", action="store_true", help="print commands; send nothing")
@@ -551,181 +792,438 @@ def main(
         guard.initialize(book.flat_receipt())
 
         symbols = tuple(args.symbols)
-        instruments: dict[str, Equity] = {}
-        for full_id in symbols:
-            try:
-                iid = InstrumentId.from_str(full_id)
-            except ValueError as exc:
-                raise SystemExit(f"C live main refused: bad instrument id {full_id}") from exc
-            if str(iid.venue) != "ALPACA":
-                raise SystemExit(f"C live main refused: {full_id} is not an ALPACA instrument")
-            asset = client.get_asset(iid.symbol.value)
-            precision, increment = _equity_ladder(asset)
-            instruments[full_id] = Equity(
-                iid,
-                Symbol(iid.symbol.value),
-                Currency.from_str("USD"),
-                precision,
-                Price.from_str(_price_text(increment)),
-                0,
-                0,
-                lot_size=Quantity.from_int(1),
-            )
-
-        baseline = load_baseline(Path(args.baseline).read_text())
-        segment, _, _ = segment_start(now_ns())
-        if segment is None:
+        first, _, _ = segment_start(now_ns())
+        if first is None:
             raise SystemExit("C live main refused: the XNYS session is closed")
-        params = EntryParameters.from_rows(
-            json.loads(DEFAULT_ENTRY_PARAMETERS.read_text()),
-            first_leg_only=True,
-        )
-        config = CConfig(
-            symbols=symbols,
-            chase_cap_fraction=Decimal("0.03"),  # 0.03 = the recorded first_leg_max_move
-            trail_fraction=Decimal("0.025"),  # ADR-0025 C-scope, UNCALIBRATED
-            slot_count=2,  # ADR-0024 2-of-5 pool
-            segment=segment,
-            params=params,
-        )
+        try:
+            first_baseline = _segment_baseline(args.baseline, args.baseline_dir, first)
+            first_instruments = _instruments_for(client, symbols, first)
+        except LiveRefusal as exc:
+            raise SystemExit(f"C live main refused: {exc}") from exc
+        try:
+            params = EntryParameters.from_rows(
+                json.loads(DEFAULT_ENTRY_PARAMETERS.read_text()),
+                first_leg_only=True,
+            )
+        except (OSError, ValueError, json.JSONDecodeError, KeyError) as exc:
+            raise SystemExit(f"C live main refused: entry parameters unavailable: {exc}") from exc
 
         run.started_ns = now_ns()
-        session_ref: list[CSession] = []
-        pending_fills: list[OrderFact] = []
+        deadline = monotonic() + float(args.seconds)
+        stop_requested = [False]
+        active_feed: list[Any] = [None]
 
-        def place(command: OrderCommand) -> None:
-            cid = command.client_order_id or _house_cid(account, command)
-            if run.dry_run:
-                print(json.dumps(_command_payload(command, cid), sort_keys=True), flush=True)
-                _record_command(run, command, cid, status="DRY_RUN")
-                return
-            if not lease.held:
-                raise LiveRefusal("the C writer lease is not held")
-            if not book.submission_ready(command.instrument):
-                raise LiveRefusal(f"custody is not submission-ready for {command.instrument}")
-            if command.side == "BUY" and not guard.entry_allowed():
-                raise LiveRefusal("the guard does not allow a C entry")
-            if command.side == "SELL" and (
-                book.available_exit(command.instrument) < command.quantity
-            ):
-                raise LiveRefusal(
-                    f"exit quantity exceeds the reconciled position for {command.instrument}"
+        def run_segment(
+            segment: Segment,
+            baseline: BaselineTable,
+            instruments: dict[str, Equity],
+            config: CConfig,
+        ) -> tuple[dict[str, Any], str | None, bool, bool]:
+            pending_fills: list[OrderFact] = []
+            protections: dict[str, _LimitProtection] = {}
+
+            def _place_limit_exit(
+                entry_cid: str,
+                instrument: str,
+                quantity: Decimal,
+                entry: Any,
+            ) -> None:
+                fill_price = _fill_price(entry)
+                increment = instruments[instrument].price_increment.as_decimal()
+                limit_price = _trail_limit(fill_price, config.trail_fraction, increment)
+                cid = f"{entry_cid}-exit"
+                if not lease.held:
+                    raise LiveRefusal("the C writer lease is not held")
+                if not book.submission_ready(instrument):
+                    raise LiveRefusal(f"custody is not submission-ready for {instrument}")
+                if book.available_exit(instrument) < quantity:
+                    raise LiveRefusal(
+                        f"{quantity} shares of {instrument} are not available to protect"
+                    )
+                command = OrderCommand(
+                    client_order_id=cid,
+                    instrument=instrument,
+                    side="SELL",
+                    quantity=quantity,
+                    order_type="LIMIT",
+                    time_in_force="GTC",
+                    limit_price=limit_price,
                 )
-
-            row = _record_command(run, command, cid, status="SUBMITTED")
-            request = _request_for(command, cid, extended_hours=config.segment.name != "RTH")
-            ack = client.submit_order(
-                request,
-                kind=ActionKind.SUBMIT if command.side == "BUY" else ActionKind.REDUCE,
-            )
-            row["ack"] = _status(ack)
-            row["venue_id"] = _order_id(ack) or ""
-            print(
-                f"command {cid} {command.side} {command.order_type} ack={row['ack']}",
-                flush=True,
-            )
-            final = _await_order(
-                client,
-                cid,
-                ack,
-                sleep=sleep,
-                monotonic=monotonic,
-                poll_interval_s=poll_interval_s,
-                timeout_s=order_timeout_s,
-            )
-            filled = _filled(final)
-            row["fill"] = _decimal_text(filled)
-            row["status"] = _status(final)
-            if command.side == "SELL":
+                row = _record_command(run, command, cid, status="SUBMITTED", segment=segment.name)
+                request = _request_for(command, cid, extended_hours=True)
+                ack = client.submit_order(request, kind=ActionKind.REDUCE)
+                row["ack"] = _status(ack)
+                row["venue_id"] = _order_id(ack) or ""
+                print(
+                    f"protection {cid} SELL LIMIT GTC {_decimal_text(limit_price)} "
+                    f"ack={row['ack']}",
+                    flush=True,
+                )
+                if row["ack"] == "FILLED":
+                    row["status"] = "FILLED"
+                    row["fill"] = _decimal_text(quantity)
+                    run.protection_cid = cid
+                    return
+                if row["ack"] not in _PROTECTION_ACKS:
+                    raise LiveRefusal(
+                        f"the {segment.name} limit exit {cid} was not accepted "
+                        f"({row['ack']}); the position is unprotected"
+                    )
+                if not row["venue_id"]:
+                    raise LiveRefusal(
+                        f"the {segment.name} limit exit {cid} has no venue id; "
+                        "the position is unprotected"
+                    )
+                protections[instrument] = _LimitProtection(
+                    instrument=instrument,
+                    entry_cid=entry_cid,
+                    cid=cid,
+                    venue_id=row["venue_id"],
+                    quantity=quantity,
+                    fill_price=fill_price,
+                    limit_price=limit_price,
+                    hwm=fill_price,
+                )
                 run.protection_cid = cid
-                return
-            now = now_ns()
-            epoch = (book.snapshot.epoch + 1) if book.snapshot is not None else 2
-            observed = book.observe(
-                AccountSnapshot(
-                    scope,
-                    epoch,
-                    {command.instrument: filled},
-                    {command.instrument: PositionAuthority(filled, f"alpaca fill {cid}")},
-                    (),
-                    True,
-                    now,
-                    f"alpaca fill {cid}",
-                ),
-                now=now,
-            )
-            if not observed:
-                raise LiveRefusal(f"the fill snapshot for {cid} is not observable")
-            # CSession records ``state.cid`` only after its synchronous ``_submit``
-            # returns, so calling ``on_fill`` here would look up a still-None cid.
-            # Queue the fact and flush it after the feed callback unwinds.
-            pending_fills.append(
-                OrderFact(
-                    cid,
-                    command.instrument,
-                    "BUY",
-                    command.quantity,
-                    filled,
-                    "FILLED",
-                    _order_id(final),
+
+            def _replace_protection(protection: _LimitProtection, new_limit: Decimal) -> None:
+                cancel_row = _record_row(
+                    run,
+                    cid=protection.cid,
+                    kind="CANCEL",
+                    side="SELL",
+                    quantity=protection.quantity,
+                    limit_price=protection.limit_price,
+                    trail_price=None,
+                    status="SUBMITTED",
+                    segment=segment.name,
                 )
-            )
+                try:
+                    client.cancel_order_by_id(protection.venue_id)
+                except Exception as exc:
+                    raise LiveRefusal(
+                        f"cancel of {protection.cid} failed; the position may be unprotected: {exc}"
+                    ) from exc
+                cancel_row["ack"] = "ACCEPTED"
+                print(
+                    f"protection cancel {protection.cid} (venue {protection.venue_id})",
+                    flush=True,
+                )
+                final = _await_cancel(
+                    client,
+                    protection.venue_id,
+                    sleep=sleep,
+                    monotonic=monotonic,
+                    poll_interval_s=poll_interval_s,
+                    timeout_s=order_timeout_s,
+                )
+                status = _status(final)
+                if status == "FILLED":
+                    cancel_row["status"] = "FILLED"
+                    filled = _filled_quantity(final)
+                    cancel_row["fill"] = _decimal_text(filled)
+                    if filled < protection.quantity:
+                        raise LiveRefusal(
+                            f"the limit exit for {protection.instrument} filled {filled} "
+                            f"of {protection.quantity}; the rest is unprotected"
+                        )
+                    protections.pop(protection.instrument, None)
+                    return
+                if status not in _PROTECTION_GONE:
+                    raise LiveRefusal(
+                        f"the protection for {protection.instrument} ended {status}; "
+                        "the position is unprotected"
+                    )
+                cancel_row["status"] = status
+                filled = _filled_quantity(final)
+                if filled > 0:
+                    raise LiveRefusal(
+                        f"the limit exit for {protection.instrument} filled {filled} "
+                        "before cancel; the rest is unprotected"
+                    )
+                replacements = protection.replacements + 1
+                new_cid = f"{protection.entry_cid}-exit-r{replacements}"
+                modify_row = _record_row(
+                    run,
+                    cid=new_cid,
+                    kind="MODIFY",
+                    side="SELL",
+                    quantity=protection.quantity,
+                    limit_price=new_limit,
+                    trail_price=None,
+                    status="SUBMITTED",
+                    segment=segment.name,
+                )
+                try:
+                    replaced = client.replace_order_by_id(
+                        protection.venue_id,
+                        # alpaca-py annotates limit_price as float; pydantic accepts
+                        # the already-quantized Decimal and serializes the price.
+                        ReplaceOrderRequest(
+                            limit_price=new_limit,  # pyright: ignore[reportArgumentType]
+                            client_order_id=new_cid,
+                        ),
+                    )
+                except Exception as exc:
+                    raise LiveRefusal(
+                        f"replace of {protection.cid} failed after cancel; the position "
+                        f"is unprotected: {exc}"
+                    ) from exc
+                modify_row["ack"] = _status(replaced)
+                modify_row["venue_id"] = _order_id(replaced) or ""
+                print(
+                    f"protection {new_cid} SELL LIMIT GTC {_decimal_text(new_limit)} "
+                    f"ack={modify_row['ack']}",
+                    flush=True,
+                )
+                if modify_row["ack"] not in _PROTECTION_ACKS or not modify_row["venue_id"]:
+                    raise LiveRefusal(
+                        f"the replacement protection {new_cid} was not accepted; "
+                        "the position is unprotected"
+                    )
+                protection.cid = new_cid
+                protection.venue_id = modify_row["venue_id"]
+                protection.limit_price = new_limit
+                protection.replacements = replacements
+                run.protection_cid = new_cid
 
-        session = CSession(config, baseline, now_ns, place, instruments=instruments)
-        session_ref.append(session)
+            def _reprice_protection(tick: Any) -> None:
+                protection = protections.get(str(tick.instrument_id))
+                if protection is None:
+                    return
+                price = tick.price.as_decimal()
+                if price <= protection.hwm:
+                    return
+                protection.hwm = price
+                increment = instruments[protection.instrument].price_increment.as_decimal()
+                new_limit = _trail_limit(price, config.trail_fraction, increment)
+                if new_limit > protection.limit_price:
+                    _replace_protection(protection, new_limit)
 
-        def flush_fills() -> None:
-            while pending_fills:
-                session.on_fill(pending_fills.pop(0))
+            def place(command: OrderCommand) -> None:
+                cid = command.client_order_id or _house_cid(account, command)
+                if run.dry_run:
+                    print(json.dumps(_command_payload(command, cid), sort_keys=True), flush=True)
+                    _record_command(run, command, cid, status="DRY_RUN", segment=segment.name)
+                    return
+                if not lease.held:
+                    raise LiveRefusal("the C writer lease is not held")
+                if not book.submission_ready(command.instrument):
+                    raise LiveRefusal(f"custody is not submission-ready for {command.instrument}")
+                if command.side == "BUY" and not guard.entry_allowed():
+                    raise LiveRefusal("the guard does not allow a C entry")
+                if command.side == "SELL" and (
+                    book.available_exit(command.instrument) < command.quantity
+                ):
+                    raise LiveRefusal(
+                        f"exit quantity exceeds the reconciled position for {command.instrument}"
+                    )
 
-        def on_trade(tick: Any) -> None:
-            session.on_trade(tick)
-            flush_fills()
+                row = _record_command(run, command, cid, status="SUBMITTED", segment=segment.name)
+                request = _request_for(command, cid, extended_hours=segment.name != "RTH")
+                ack = client.submit_order(
+                    request,
+                    kind=ActionKind.SUBMIT if command.side == "BUY" else ActionKind.REDUCE,
+                )
+                row["ack"] = _status(ack)
+                row["venue_id"] = _order_id(ack) or ""
+                print(
+                    f"command {cid} {command.side} {command.order_type} ack={row['ack']}",
+                    flush=True,
+                )
+                final = _await_order(
+                    client,
+                    cid,
+                    ack,
+                    sleep=sleep,
+                    monotonic=monotonic,
+                    poll_interval_s=poll_interval_s,
+                    timeout_s=order_timeout_s,
+                )
+                filled = _filled(final)
+                row["fill"] = _decimal_text(filled)
+                row["status"] = _status(final)
+                if command.side == "SELL":
+                    run.protection_cid = cid
+                    return
+                now = now_ns()
+                epoch = (book.snapshot.epoch + 1) if book.snapshot is not None else 2
+                observed = book.observe(
+                    AccountSnapshot(
+                        scope,
+                        epoch,
+                        {command.instrument: filled},
+                        {command.instrument: PositionAuthority(filled, f"alpaca fill {cid}")},
+                        (),
+                        True,
+                        now,
+                        f"alpaca fill {cid}",
+                    ),
+                    now=now,
+                )
+                if not observed:
+                    raise LiveRefusal(f"the fill snapshot for {cid} is not observable")
+                pending_fills.append(
+                    OrderFact(
+                        cid,
+                        command.instrument,
+                        "BUY",
+                        command.quantity,
+                        filled,
+                        "FILLED",
+                        _order_id(final),
+                    )
+                )
+                if segment.name != "RTH":
+                    _place_limit_exit(cid, command.instrument, filled, final)
 
-        def on_quote(tick: Any) -> None:
-            session.on_quote(tick)
-            flush_fills()
+            try:
+                session = CSession(config, baseline, now_ns, place, instruments=instruments)
+            except Exception as exc:
+                return (
+                    {},
+                    f"session failure: {type(exc).__name__}: {exc}",
+                    bool(stop_requested[0]),
+                    False,
+                )
 
-        feed = feed_factory(
-            instruments,
-            on_trade=on_trade,
-            on_quote=on_quote,
-            api_key=api_key,
-            secret_key=secret_key,
-            feed="sip",
-        )
+            def flush_fills() -> None:
+                while pending_fills:
+                    session.on_fill(pending_fills.pop(0))
+
+            def on_trade(tick: Any) -> None:
+                session.on_trade(tick)
+                flush_fills()
+                _reprice_protection(tick)
+
+            def on_quote(tick: Any) -> None:
+                session.on_quote(tick)
+                flush_fills()
+
+            try:
+                feed = feed_factory(
+                    instruments,
+                    on_trade=on_trade,
+                    on_quote=on_quote,
+                    api_key=api_key,
+                    secret_key=secret_key,
+                    feed=_feed_for(segment),
+                )
+            except Exception as exc:
+                return (
+                    {},
+                    f"feed failure: {type(exc).__name__}: {exc}",
+                    bool(stop_requested[0]),
+                    False,
+                )
+
+            active_feed[0] = feed
+            boundary = [False]
+            remaining = max(0.0, deadline - monotonic())
+            until_boundary = max(0.0, (segment.end_ns - now_ns()) / _NS_PER_S)
+            timer_seconds = min(remaining, until_boundary)
+            boundary_timer = until_boundary <= remaining
+
+            def stop_at_timer() -> None:
+                if boundary_timer:
+                    boundary[0] = True
+                feed.stop()
+
+            timer = threading.Timer(timer_seconds, stop_at_timer)
+            timer.daemon = True
+            timer.start()
+            failure: str | None = None
+            try:
+                feed.start()
+            except LiveRefusal as exc:
+                failure = f"refused: {exc}"
+            except Exception as exc:
+                failure = f"feed failure: {type(exc).__name__}: {exc}"
+            finally:
+                timer.cancel()
+                active_feed[0] = None
+                with contextlib.suppress(Exception):
+                    feed.stop()
+            if failure is None and getattr(feed, "failure", None) is not None:
+                caught = feed.failure
+                failure = f"feed failure: {type(caught).__name__}: {caught}"
+            return session.snapshot(), failure, bool(stop_requested[0]), boundary[0]
 
         def stop_feed(signum: int, frame: FrameType | None) -> None:
-            feed.stop()
+            stop_requested[0] = True
+            feed = active_feed[0]
+            if feed is not None:
+                feed.stop()
 
         previous_term = signal.signal(signal.SIGTERM, stop_feed)
         previous_int = signal.signal(signal.SIGINT, stop_feed)
-        timer: threading.Timer | None = None
         failure: str | None = None
+        final_segment = first.name
+        final_baseline: BaselineTable | None = first_baseline
+        final_config: CConfig | None = None
+        current = first
+        current_baseline = first_baseline
+        current_instruments = first_instruments
         try:
-            timer = threading.Timer(float(args.seconds), feed.stop)
-            timer.daemon = True
-            timer.start()
-            feed.start()
-        except LiveRefusal as exc:
-            failure = f"refused: {exc}"
-        except Exception as exc:
-            failure = f"feed failure: {type(exc).__name__}: {exc}"
+            while True:
+                final_segment = current.name
+                final_baseline = current_baseline
+                final_config = _config_for(symbols, params, current)
+                snapshot, failure, stopped, boundary = run_segment(
+                    current, current_baseline, current_instruments, final_config
+                )
+                run.snapshot = snapshot
+                run.flags += _flag_count(snapshot)
+                if failure is not None or stopped:
+                    break
+                if args.baseline is not None:
+                    break
+                if monotonic() >= deadline:
+                    break
+                nxt = segment_start(now_ns())[0]
+                if nxt is None:
+                    failure = "refused: the XNYS session is closed"
+                    break
+                if nxt.name == current.name:
+                    if not boundary:
+                        break
+                    wait = max(0.0, (current.end_ns - now_ns()) / _NS_PER_S) + 0.05
+                    if monotonic() + wait >= deadline:
+                        break
+                    sleep(wait)
+                    nxt = segment_start(now_ns())[0]
+                    if nxt is None:
+                        failure = "refused: the XNYS session is closed"
+                        break
+                    if nxt.name == current.name:
+                        break
+                final_segment = nxt.name
+                try:
+                    next_baseline = _segment_baseline(args.baseline, args.baseline_dir, nxt)
+                except LiveRefusal as exc:
+                    failure = f"refused: {exc}"
+                    final_baseline = None
+                    final_config = _config_for(symbols, params, nxt)
+                    break
+                try:
+                    next_instruments = _instruments_for(client, symbols, nxt)
+                except LiveRefusal as exc:
+                    failure = f"refused: {exc}"
+                    final_baseline = next_baseline
+                    final_config = _config_for(symbols, params, nxt)
+                    break
+                current = nxt
+                current_baseline = next_baseline
+                current_instruments = next_instruments
         finally:
-            if timer is not None:
-                timer.cancel()
             signal.signal(signal.SIGTERM, previous_term)
             signal.signal(signal.SIGINT, previous_int)
-            with contextlib.suppress(Exception):
-                feed.stop()
 
-        if failure is None and getattr(feed, "failure", None) is not None:
-            caught = feed.failure
-            failure = f"feed failure: {type(caught).__name__}: {caught}"
+        if final_config is None:
+            raise SystemExit("C live main refused: no segment was configured")
         if failure is not None:
             run.errors.append(failure)
         run.stopped_ns = now_ns()
-        run.snapshot = session.snapshot()
         stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
         try:
             receipt = _write_receipt(
@@ -733,22 +1231,26 @@ def main(
                 account_suffix=account_number[-4:],
                 symbols=symbols,
                 run=run,
-                baseline=baseline,
-                config=config,
+                baseline=final_baseline,
+                config=final_config,
+                final_segment=final_segment,
                 stamp=stamp,
             )
             receipt_written = True
             print(f"receipt {receipt}", flush=True)
         except OSError as exc:
             run.errors.append(f"receipt: {type(exc).__name__}: {exc}")
-            print(f"receipt not written: {type(exc).__name__}: {exc}", file=sys.stderr)
+            print(
+                f"receipt not written: {type(exc).__name__}: {exc}",
+                file=sys.stderr,
+            )
 
         try:
             _record_trial(
                 ledger_path=Path(ledger_path) if ledger_path is not None else Path(WITNESS_PATH),
                 run=run,
-                baseline=baseline,
-                config=config,
+                baseline=final_baseline,
+                config=final_config,
                 failure=failure,
             )
         except Exception as exc:
