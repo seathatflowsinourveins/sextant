@@ -17,8 +17,8 @@ jobs:
       contents: read
       issues: write
       pull-requests: read
-    # The docker profile serves workflow files from main only; a branch dispatch reaches sealed jobs.
-    if: ${{ github.ref == 'refs/heads/main' }}
+    # Scheduled runs fire on the default branch; a branch dispatch reaches sealed jobs.
+    if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
@@ -46,6 +46,21 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           SEARCH_QUERY: repo:${{ github.repository }} is:pr is:merged
+      - name: Stop rule over the last 20 merges
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr list --state merged --limit 20 --json createdAt,mergedAt \
+            --jq '.[] | ((.mergedAt | fromdateiso8601) - (.createdAt | fromdateiso8601)) / 3600' \
+            > merge-hours.txt
+          count=$(wc -l < merge-hours.txt)
+          median=$(sort -n merge-hours.txt | awk '{a[NR]=$1} END {if (NR==0) {print "n/a"} else if (NR%2) printf "%.2f", a[(NR+1)/2]; else printf "%.2f", (a[NR/2]+a[NR/2+1])/2}')
+          {
+            echo "## Stop rule (last ${count} merged PRs)"
+            echo "Median merge time: ${median} h against a 1.00 h limit."
+            echo "The second stop is a flat proven-row count across the same 20-PR window."
+          } > stop-rule.md
       - name: Compose
         if: ${{ !cancelled() }}
         env:
@@ -57,7 +72,7 @@ jobs:
             echo "## Proven rows"; echo '```'; printf '%s\n' "$PROVEN" | grep -E '^(FAILED|ERROR)|[0-9]+ (passed|failed)' | cut -c1-200; echo '```'
             echo "## Open PRs: $(gh pr list --state open --json number --jq length)  (stop adding layers above 10)"
             echo "## Repo: $(git count-objects -vH | awk '/size-pack/{print $2,$3}'), $(git ls-files | wc -l) files"
-            echo "Stop adding layers if median merge time passes 1 hour over the last 20 PRs, or proven rows stop rising across 20 merged PRs."
+            cat stop-rule.md
             cat issue_metrics.md
           } > scoreboard.md
       - if: ${{ !cancelled() }}
