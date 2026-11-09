@@ -255,6 +255,21 @@ class Protector:
         for order in ours:
             self._cancel(order, reason)
 
+    def _cancel_excess(self, ours: list[Order], protective: int, reason: str) -> list[Order]:
+        """Cancel house exits beyond one trail no larger than the protective quantity."""
+
+        if len(ours) > 1:
+            eligible = [order for order in ours if _leaves(order) <= protective]
+            keeper = max(eligible, key=_leaves) if eligible else None
+            for order in ours:
+                if order is not keeper:
+                    self._cancel(order, reason)
+            return [keeper] if keeper is not None else []
+        if ours and _leaves(ours[0]) > protective:
+            self._cancel(ours[0], reason)
+            return []
+        return list(ours)
+
     def _handle_house(self, update: TradeUpdate, symbol: str, event: str) -> None:
         if event in FILL_EVENTS:
             self.reconcile()
@@ -304,7 +319,10 @@ class Protector:
             self.page("owner_reserved_unprotected", symbol)
             return
         in_rth = session_at(self._now_ns()) is Session.RTH
-        if len(ours) == 1 and _leaves(ours[0]) == protective:
+        # An oversized GTC trail is cancelled before the RTH guard, so it can never
+        # ride into the next open; only the replacement submit waits for RTH.
+        rest = self._cancel_excess(ours, protective, "rearm_full_protective_quantity")
+        if len(rest) == 1 and _leaves(rest[0]) == protective:
             if not in_rth:
                 self.page(
                     "unprotected_outside_rth_until_pr2",
@@ -315,10 +333,13 @@ class Protector:
         if not in_rth:
             self.page("unprotected_outside_rth_until_pr2", symbol)
             return
-        # Attempt every cancellation: one stalled request must not spare the rest.
-        results = [self._cancel(order, "rearm_full_protective_quantity") for order in ours]
-        if all(results):
-            self._submit_trail(symbol, protective)
+        for order in rest:
+            self._cancel(order, "rearm_full_protective_quantity")
+        # The terminal canceled event of the house's own trail drives reconcile(),
+        # which submits the single replacement; never submit over a live exit.
+        if ours:
+            return
+        self._submit_trail(symbol, protective)
 
     def _submit_trail(self, symbol: str, whole: int) -> None:
         self._sequence += 1
