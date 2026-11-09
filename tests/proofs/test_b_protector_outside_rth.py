@@ -436,3 +436,76 @@ def test_the_release_price_is_refreshed_when_the_cancellation_completes() -> Non
     limits = [order for order in client.submitted if isinstance(order, LimitOrderRequest)]
     assert len(limits) == 1
     assert Decimal(str(limits[0].limit_price)) == Decimal("98.00")
+
+
+def test_a_cancelled_released_limit_rearms_the_outside_emulation() -> None:
+    client = FakeClient()
+    client.positions = [api_position("10")]
+    trail = api_order(stop_price="99.45")
+    client.orders = [trail]
+    p = protector(client)
+    p.reconcile()
+    drive_breach(p)
+    p.handle(api_update(trail, event="canceled"))
+    limit = client.submitted[-1]
+    assert isinstance(limit, LimitOrderRequest)
+    released = client.echoes[-1]
+    client.orders = [released]
+
+    # Two more shares arrive, so the released ten-share LIMIT no longer covers the
+    # position; the outside resize cancels it and re-arms the native trail.
+    client.positions = [api_position("12")]
+    p.reconcile()
+    assert client.cancelled[-1] == str(released.id)
+    assert [type(order) for order in client.submitted] == [LimitOrderRequest]
+    p.handle(api_update(released, event="canceled"))
+    trails = [order for order in client.submitted if isinstance(order, TrailingStopOrderRequest)]
+    assert len(trails) == 1
+    assert Decimal(str(trails[0].qty)) == Decimal("12")
+
+    # The replacement trail rests outside RTH, so the emulated trigger must still
+    # accept quotes; otherwise the position has no active exit.
+    moved = p.on_quote(
+        "AAPL",
+        bid=Decimal("110.00"),
+        ask=Decimal("110.02"),
+        last=Decimal("110.01"),
+        ts_ns=NOW_NS + 2 * SEC,
+    )
+    assert moved == Decimal("107.25")
+
+
+def test_the_0930_handover_snapshot_submits_only_the_released_limit() -> None:
+    clock = {
+        "ns": int(datetime(2026, 11, 9, 9, 29, 58, 500000, tzinfo=ET).timestamp()) * 1_000_000_000
+    }
+    client = FakeClient()
+    client.positions = [api_position("10")]
+    trail = api_order(stop_price="99.45")
+    client.orders = [trail]
+    p = Protector(client, b_account(), b_params(), now_ns=lambda: clock["ns"])
+    p.reconcile()
+
+    p.on_quote(
+        "AAPL",
+        bid=Decimal("99.505"),
+        ask=Decimal("99.510"),
+        last=Decimal("99.510"),
+        ts_ns=clock["ns"],
+    )
+    assert p.on_trade("AAPL", Decimal("99.40"), clock["ns"]) is False
+    assert p.on_trade("AAPL", Decimal("99.40"), clock["ns"] + SEC // 2) is False
+    assert p.on_trade("AAPL", Decimal("99.40"), clock["ns"] + SEC) is True
+
+    # The trail's terminal cancellation arrives just after the regular session opens.
+    # The handover's internal reconcile must not arm a second full-position exit
+    # beside the LIMIT it is about to submit.
+    clock["ns"] = int(datetime(2026, 11, 9, 9, 30, 0, 300000, tzinfo=ET).timestamp())
+    clock["ns"] *= 1_000_000_000
+    p.handle(api_update(trail, event="canceled"))
+
+    exits = client.submitted
+    assert len(exits) == 1
+    assert isinstance(exits[0], LimitOrderRequest)
+    assert Decimal(str(exits[0].qty)) == Decimal("10")
+    assert Decimal(str(exits[0].limit_price)) == Decimal("99.50")

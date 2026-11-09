@@ -150,7 +150,10 @@ def _leaves(order: Order) -> Decimal:
 
 
 def _is_limit(order: Order) -> bool:
-    return _event_name(getattr(order, "order_type", None)) == "limit"
+    kind = getattr(order, "type", None)
+    if kind is None:
+        kind = getattr(order, "order_type", None)
+    return _event_name(kind) == "limit"
 
 
 def _safe_symbol(symbol: str) -> str:
@@ -576,6 +579,10 @@ class Protector:
         # which submits the single replacement; never submit over a live exit.
         if ours:
             return
+        if symbol in self._released_symbols:
+            # The release handover is about to submit its LIMIT from a fresh
+            # snapshot; never arm a second full-position exit beside it.
+            return
         self._submit_trail(symbol, protective)
 
     def _submit_trail(self, symbol: str, whole: int) -> None:
@@ -621,8 +628,12 @@ class Protector:
             self.page("cancel_failed", order.symbol, f"{reason}: {type(exc).__name__}")
             return False
         if _is_limit(order):
-            # A cancelled release no longer blocks re-arming protection.
+            # A cancelled release no longer blocks re-arming protection, and the
+            # emulator must accept quotes again for whatever exit replaces it.
             self._released_symbols.discard(order.symbol)
+            state = self._outside.get(order.symbol)
+            if state is not None:
+                state.rearm()
         return True
 
     def _is_ours(self, order: Order) -> bool:
