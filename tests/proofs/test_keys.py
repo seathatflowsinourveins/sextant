@@ -52,3 +52,16 @@ def test_t9_box_two_names_are_registered_and_the_northstar_app_keys_are_not() ->
     }
     assert box_two <= names
     assert not {name for name in names if name.startswith("GITHUB_APP_NORTHSTAR")}
+
+
+def test_receive_keys_never_takes_the_owners_peregrine_slot() -> None:
+    """Slot 1 is the owner's Peregrine account (2026-11-07); the one move takes slots 2 and 3."""
+    receiver = (ROOT / "deploy" / "wsl" / "receive-keys.sh").read_text()
+    names = receiver.split("names=(", 1)[1].split("\n)", 1)[0]
+    assert "ALPACA_PAPER_2_API_KEY" in names
+    assert "ALPACA_PAPER_3_API_KEY" in names
+    assert "ALPACA_PAPER_1_" not in names
+    known = (SCRIPTS / "keys.sh").read_text().split("KNOWN=(", 1)[1].split("\n)", 1)[0]
+    # The store keeps the registration, so a key already received is never deleted here.
+    assert "ALPACA_PAPER_1_API_KEY" in known
+    assert "ALPACA_PAPER_1_SECRET_KEY" in known

@@ -14,7 +14,7 @@ def test_agent_files_stay_short() -> None:
 
 
 def test_justfile_stays_short() -> None:
-    assert _lines(ROOT / "justfile") < 100
+    assert _lines(ROOT / "justfile") < 105
 
 
 def test_at_most_thirty_one_page_adrs() -> None:

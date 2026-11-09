@@ -1,4 +1,5 @@
 {
+  "lock": "config/dsh/profile.lock.json",
   "source": "~/.dsh-full/profiles/dsh-tui/package.json, 24-bundle parity recipe; runtime replaced with official headless; no memory plugins",
   "engine": "0.2.2-rc.1",
   "engine_authority": "reuses main's dsh pin (lead ruling 2026-11-09)",
@@ -82,7 +83,7 @@
     },
     {
       "package": "sextant-dsh-review-cmd",
-      "spec": ".github/gate/bundles/review-cmd"
+      "spec": "config/dsh/review-cmd"
     },
     {
       "package": "dsh-goalloop-agentteams",
