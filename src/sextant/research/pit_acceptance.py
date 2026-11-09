@@ -188,7 +188,9 @@ def independent_sample(
         # fund/ETF/ETN shares are their issuers' common equity.
         common_sample = entry.get("class") is None or is_common(entry["class"])
 
-        def exit_by_effective(ticker: str, filed: date = filed) -> date | None:
+        def exit_by_effective(
+            ticker: str, filed: date = filed, common_sample: bool = common_sample
+        ) -> date | None:
             final = finals.get(ticker)
             if (
                 final is None
@@ -204,7 +206,7 @@ def independent_sample(
                 else None
             )
 
-        def why(ticker: str) -> str:
+        def why(ticker: str, common_sample: bool = common_sample) -> str:
             if ticker in cov.exclusions:
                 return cov.exclusions[ticker]
             final = finals.get(ticker)
