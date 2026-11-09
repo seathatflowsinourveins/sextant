@@ -10,9 +10,9 @@ dir=/mnt/wsl/sextant/keys
 status="$dir/status"
 # The old host's user group. Only it may write a frame, and only this user can read one.
 sender_gid=1000
+# Slot 1 is the owner's Peregrine account (2026-11-07): never receive ALPACA_PAPER_1_*.
 names=(
   ANTHROPIC_API_KEY DEEPSEEK_API_KEY EXA_API_KEY CONTEXT7_API_KEY TYPESAFE_API_KEY
-  ALPACA_PAPER_1_API_KEY ALPACA_PAPER_1_SECRET_KEY
   ALPACA_PAPER_2_API_KEY ALPACA_PAPER_2_SECRET_KEY
   ALPACA_PAPER_3_API_KEY ALPACA_PAPER_3_SECRET_KEY
   IB_PAPER_USERNAME IB_PAPER_PASSWORD IB_PAPER_ACCOUNT_ID
