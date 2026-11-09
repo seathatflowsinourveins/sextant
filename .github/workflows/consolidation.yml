@@ -1,4 +1,4 @@
-# The weekly consolidation report (#215), for the owner's "automated sota maintanced consolidation"
+# The weekly consolidation report (#90), for the owner's "automated sota maintanced consolidation"
 # (#58, 6711818587). Maintained tools list dead code and duplicate blocks in src, with per-module lines
 # and the headroom under the cap, and the job posts one comment. A writer turns the safe findings into
 # PRs; a later cap raise cites the latest report (#205). It runs trusted main code on the sealed profile:
@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
-      REPORT_ISSUE: "215"
+      REPORT_ISSUE: "90"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

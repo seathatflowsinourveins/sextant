@@ -1,4 +1,4 @@
-"""The weekly consolidation report (#215): one main-only comment on dead code and duplicates.
+"""The weekly consolidation report (#90): one main-only comment on dead code and duplicates.
 
 Sources: jendrikseipp/vulture@v2.16 `b0f67ba0044693aa9ec0d38fe460590facc98004` and
 pylint-dev/pylint@v4.1.3 `e75de10c69103381c875601f638d4b977ff0fcaf` (duplicate-code, R0801),
@@ -78,7 +78,7 @@ def test_the_report_runs_only_from_main_on_a_hosted_runner() -> None:
             assert re.fullmatch(r"[\w.-]+/[\w.-]+@[0-9a-f]{40}", step["uses"]), step["uses"]
     checkout = next(step for step in job["steps"] if step["uses"].startswith("actions/checkout@"))
     assert checkout["with"]["persist-credentials"] is False
-    assert job["env"]["REPORT_ISSUE"] == "215"
+    assert job["env"]["REPORT_ISSUE"] == "90"
 
 
 def test_the_consolidation_group_is_locked_with_exact_pins() -> None:
