@@ -1,4 +1,5 @@
 # Unprivileged PR code on GitHub-hosted runners. GitHub workflow syntax, read 2026-11-09.
+# Main's .devcontainer/Dockerfile:124-138 pins/checksums; cli.github.com/manual/gh_release_download, read 2026-11-09.
 name: ci
 on:
   pull_request:
@@ -21,6 +22,8 @@ jobs:
       ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
       SHELLCHECK_VERSION: 0.11.0
       SHELLCHECK_SHA256: b7af85e41cc99489dcc21d66c6d5f3685138f06d34651e6d34b42ec6d54fe6f6
+      JUST_VERSION: 1.59.0
+      JUST_SHA256: 409044617b6f06517c1035e55ca38c8c856ff8b650e41bc2aa1ef82d5903a23e
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -33,18 +36,19 @@ jobs:
         with:
           node-version: '24'
           package-manager-cache: false
-      - uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b # v3
-        with:
-          just-version: '1.59.0' # reuses main's Dockerfile pin
-      - name: Main's pinned lint and secret-scan tools
+      - name: Main's pinned check tools through GitHub's release API
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          curl -fsSL "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" -o "$RUNNER_TEMP/actionlint.tgz"
-          curl -fsSL "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.gz" -o "$RUNNER_TEMP/shellcheck.tgz"
-          curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" -o "$RUNNER_TEMP/gitleaks.tgz"
-          printf '%s  %s\n' "$ACTIONLINT_SHA256" "$RUNNER_TEMP/actionlint.tgz" "$SHELLCHECK_SHA256" "$RUNNER_TEMP/shellcheck.tgz" "$GITLEAKS_SHA256" "$RUNNER_TEMP/gitleaks.tgz" | sha256sum -c -
+          gh release download "v$ACTIONLINT_VERSION" --repo rhysd/actionlint --pattern "actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" --output "$RUNNER_TEMP/actionlint.tgz"
+          gh release download "v$SHELLCHECK_VERSION" --repo koalaman/shellcheck --pattern "shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.gz" --output "$RUNNER_TEMP/shellcheck.tgz"
+          gh release download "v$GITLEAKS_VERSION" --repo gitleaks/gitleaks --pattern "gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" --output "$RUNNER_TEMP/gitleaks.tgz"
+          gh release download "$JUST_VERSION" --repo casey/just --pattern "just-${JUST_VERSION}-x86_64-unknown-linux-musl.tar.gz" --output "$RUNNER_TEMP/just.tgz"
+          printf '%s  %s\n' "$ACTIONLINT_SHA256" "$RUNNER_TEMP/actionlint.tgz" "$SHELLCHECK_SHA256" "$RUNNER_TEMP/shellcheck.tgz" "$GITLEAKS_SHA256" "$RUNNER_TEMP/gitleaks.tgz" "$JUST_SHA256" "$RUNNER_TEMP/just.tgz" | sha256sum -c -
           mkdir -p "$RUNNER_TEMP/ci-tools"
           tar -xzf "$RUNNER_TEMP/actionlint.tgz" -C "$RUNNER_TEMP/ci-tools" actionlint
           tar -xzf "$RUNNER_TEMP/gitleaks.tgz" -C "$RUNNER_TEMP/ci-tools" gitleaks
+          tar -xzf "$RUNNER_TEMP/just.tgz" -C "$RUNNER_TEMP/ci-tools" just
           tar -xzf "$RUNNER_TEMP/shellcheck.tgz" -C "$RUNNER_TEMP/ci-tools" --strip-components=1 "shellcheck-v${SHELLCHECK_VERSION}/shellcheck"
           echo "$RUNNER_TEMP/ci-tools" >> "$GITHUB_PATH"
           npm ci --prefix .devcontainer/agents --ignore-scripts --no-audit --no-fund
