@@ -18,7 +18,7 @@ class Candidate:
     """One caller-ranked candidate, qualified by the caller's current evidence."""
 
     symbol: str
-    first_moved_ns: int
+    first_moved_ns: int | None = None
     qualified: bool = True
 
 
