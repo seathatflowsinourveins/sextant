@@ -1,5 +1,5 @@
 # Vendored from PerryLink/dsh-github@2fc0009cdb84945fdd8066be0a7f98aed9910c9b:action.yml.
-# Adaptations: full pinned parity install, explicit composite input environment, pinned Node action.
+# Adaptations: pinned parity and main language servers, explicit input environment, pinned Node action.
 # dsh-github — official-grade GitHub CI integration for DeepSeek Harness.
 #
 # Runs `dsh --profile headless` with the dsh-github CI surface composed on top,
@@ -125,6 +125,15 @@ runs:
       uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
       with:
         node-version: ${{ inputs.node-version }}
+
+    - name: Main's pinned language-server executables
+      shell: bash
+      run: |
+        npm install --prefix "$RUNNER_TEMP/review-lsp" --ignore-scripts --no-save --no-audit --no-fund \
+          "pyright@$(node -p "require('./.devcontainer/agents/package.json').dependencies.pyright")" \
+          "typescript-language-server@$(node -p "require('./.devcontainer/agents/package.json').dependencies['typescript-language-server']")" \
+          "typescript@$(node -p "require('./.devcontainer/agents/package.json').dependencies.typescript")"
+        echo "$RUNNER_TEMP/review-lsp/node_modules/.bin" >> "$GITHUB_PATH"
 
     - name: Install dsh and dsh-github
       shell: bash

@@ -1,6 +1,8 @@
 // Native node:test pattern already used by workflow-scenarios.mjs; no provider or GitHub calls.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const gate = require('../../.github/gate/gate.cjs');
 
 test('ordinary PRs never select an API-key reviewer', () => {
@@ -101,11 +103,34 @@ test('the API-only guard refuses execution and publishing for another head or PR
   const env = {DSH_GATE_REPO: 'owner/project', DSH_GATE_PR: '7', DSH_GATE_HEAD: 'a'.repeat(40)};
   for (const name of ['bash', 'pwsh', 'write', 'edit', 'apply_patch', 'terminal_send']) assert.ok(refusal({name}, env));
   assert.equal(refusal({name: 'gh_file'}, env), undefined);
-  const args = {task: 'publish', pr: '7', ownerRepo: 'owner/project', body: `Review of ${env.DSH_GATE_HEAD}`, findings: []};
+  const args = {task: 'publish', pr: 'owner/project#7', body: `Review of ${env.DSH_GATE_HEAD}`, findings: []};
   assert.equal(refusal({name: 'ci_run', arguments: args}, env), undefined);
   assert.ok(refusal({name: 'ci_run', arguments: {...args, pr: '8'}}, env));
+  assert.ok(refusal({name: 'ci_run', arguments: {...args, pr: '7', ownerRepo: 'owner/project'}}, env));
+  assert.ok(refusal({name: 'ci_run', arguments: {...args, pr: 'another/repo#7'}}, env));
   assert.ok(refusal({name: 'ci_run', arguments: {...args, task: 'review'}}, env));
   assert.ok(refusal({name: 'ci_run', arguments: {...args, body: 'Review of another head'}}, env));
+});
+
+test('the actual dsh prompt uses the upstream qualified PR reference accepted by its guard', async () => {
+  const f = fixture();
+  const temporary = fs.mkdtempSync(path.join(process.cwd(), '.gate-prompt-test-'));
+  const previous = process.env.RUNNER_TEMP;
+  process.env.RUNNER_TEMP = temporary;
+  try {
+    await gate.prompt(f, 7, f.head, 'dsh');
+    const match = f.outputs.text.match(/first call ci_run with (\{[^\n]*?\})/);
+    assert.ok(match);
+    const args = JSON.parse(match[1]);
+    assert.deepEqual(args, {task: 'analyze', pr: 'owner/project#7'});
+    const {refusal} = await import('../../.github/gate/bundles/api-only/index.mjs');
+    assert.equal(refusal({name: 'ci_run', arguments: args},
+      {DSH_GATE_REPO: 'owner/project', DSH_GATE_PR: '7', DSH_GATE_HEAD: f.head}), undefined);
+  } finally {
+    if (previous === undefined) delete process.env.RUNNER_TEMP;
+    else process.env.RUNNER_TEMP = previous;
+    fs.rmSync(temporary, {recursive: true, force: true});
+  }
 });
 
 test('all nonblocking findings share one follow-up issue across heads and families', async () => {
