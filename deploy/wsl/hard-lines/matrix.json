@@ -1,0 +1,617 @@
+{
+  "about": "The canonical table every engine's hard-line rules are generated from: deploy/wsl/hard-lines/generate.py writes .claude/settings.json's deny list, .codex/rules/default.rules, antigravity.json and the guard's own rules array from it, and tests/proofs/test_hard_lines.py walks the whole cross product. Each target is one command and the argument that makes it a hard line. The cross product is: the target's programs, each in every path form; 0 to `option_slots` option words before each positional argument; and each wrapper, itself in every path form, with the option words its own grammar allows. A spelling is added here, never in a rule file. Every wrapper is also matched in each `wrapper_paths` form, and `git_options` are the option words git itself takes before a subcommand. A wrapper marked shell_builtin is a shell builtin or keyword, checked on this host with `type`, so it has no path form and none is generated or walked.",
+  "lines": {
+    "wsl": "Never run `wsl.exe`",
+    "push": "Never push to `main`",
+    "worktree": "Don't `git worktree add` by hand",
+    "env": "Never print an environment variable's value"
+  },
+  "paths": [
+    "",
+    "*/",
+    "/usr/bin/",
+    "/bin/",
+    "/usr/local/bin/"
+  ],
+  "option_slots": 3,
+  "targets": [
+    {
+      "key": "wsl",
+      "line": "wsl",
+      "programs": [
+        "wsl.exe"
+      ],
+      "cases": [
+        "wsl.exe",
+        "WSL.EXE",
+        "Wsl.Exe"
+      ],
+      "arguments": [
+        []
+      ],
+      "windows_paths": [
+        "/mnt/c/Windows/System32/"
+      ]
+    },
+    {
+      "key": "push-main",
+      "line": "push",
+      "programs": [
+        "git"
+      ],
+      "subcommand": [
+        "push"
+      ],
+      "arguments": [
+        [
+          "main"
+        ],
+        [
+          ":main"
+        ],
+        [
+          "+main"
+        ],
+        [
+          "refs/heads/main"
+        ]
+      ],
+      "remotes": [
+        "origin"
+      ],
+      "any_source": true,
+      "destination_tail": true
+    },
+    {
+      "key": "push-branch-set",
+      "line": "push",
+      "programs": [
+        "git"
+      ],
+      "subcommand": [
+        "push"
+      ],
+      "arguments": [
+        [
+          "--all"
+        ],
+        [
+          "--branches"
+        ],
+        [
+          "--mirror"
+        ]
+      ]
+    },
+    {
+      "key": "worktree-add",
+      "line": "worktree",
+      "programs": [
+        "git"
+      ],
+      "subcommand": [
+        "worktree",
+        "add"
+      ],
+      "arguments": [
+        []
+      ]
+    },
+    {
+      "key": "printenv",
+      "line": "env",
+      "programs": [
+        "printenv"
+      ],
+      "arguments": [
+        []
+      ]
+    },
+    {
+      "key": "env",
+      "line": "env",
+      "programs": [
+        "env"
+      ],
+      "arguments": [
+        []
+      ]
+    },
+    {
+      "key": "export-p",
+      "line": "env",
+      "programs": [
+        "export"
+      ],
+      "arguments": [
+        [
+          "-p"
+        ]
+      ],
+      "shell_builtin": true
+    }
+  ],
+  "wrappers": [
+    {
+      "name": "sudo",
+      "flags": [
+        "-n",
+        "--non-interactive",
+        "-E",
+        "--preserve-env",
+        "-H",
+        "--set-home",
+        "-S",
+        "--stdin",
+        "-b",
+        "--background",
+        "-P",
+        "--preserve-groups",
+        "-A",
+        "--askpass",
+        "-B",
+        "--bell",
+        "-k",
+        "--reset-timestamp",
+        "--"
+      ],
+      "valued": [
+        "-u",
+        "--user",
+        "-g",
+        "--group",
+        "-p",
+        "--prompt",
+        "-C",
+        "--close-from",
+        "-D",
+        "--chdir",
+        "-h",
+        "--host",
+        "-r",
+        "--role",
+        "-t",
+        "--type",
+        "-T",
+        "--command-timeout",
+        "-U",
+        "--other-user",
+        "-c",
+        "--login-class",
+        "-R",
+        "--chroot",
+        "-a",
+        "--type"
+      ],
+      "values": {
+        "-u": [
+          "root"
+        ],
+        "--user": [
+          "root"
+        ]
+      },
+      "assignments": true,
+      "source": "sudo.ws/docs/man/sudo.man"
+    },
+    {
+      "name": "doas",
+      "flags": [
+        "-n",
+        "-s",
+        "-L"
+      ],
+      "valued": [
+        "-a",
+        "-C",
+        "-u"
+      ],
+      "values": {
+        "-u": [
+          "root"
+        ]
+      },
+      "source": "man.openbsd.org/doas"
+    },
+    {
+      "name": "exec",
+      "flags": [
+        "-c",
+        "-l"
+      ],
+      "valued": [
+        "-a"
+      ],
+      "source": "gnu.org/software/bash/manual/bash.html",
+      "shell_builtin": true
+    },
+    {
+      "name": "env",
+      "flags": [
+        "-i",
+        "--ignore-environment",
+        "-0",
+        "--null",
+        "-v",
+        "--debug",
+        "-"
+      ],
+      "valued": [
+        "-u",
+        "--unset",
+        "-C",
+        "--chdir",
+        "-S",
+        "--split-string"
+      ],
+      "assignments": true,
+      "source": "gnu.org/software/coreutils/manual/html_node/env-invocation.html"
+    },
+    {
+      "name": "nice",
+      "flags": [],
+      "valued": [
+        "-n",
+        "--adjustment"
+      ],
+      "glued": "-n",
+      "source": "gnu.org/software/coreutils/manual/html_node/nice-invocation.html"
+    },
+    {
+      "name": "timeout",
+      "flags": [
+        "--preserve-status",
+        "--foreground",
+        "-v",
+        "--verbose"
+      ],
+      "valued": [
+        "-s",
+        "--signal",
+        "-k",
+        "--kill-after"
+      ],
+      "positional": 1,
+      "source": "gnu.org/software/coreutils/manual/html_node/timeout-invocation.html"
+    },
+    {
+      "name": "stdbuf",
+      "flags": [],
+      "valued": [
+        "-i",
+        "--input",
+        "-o",
+        "--output",
+        "-e",
+        "--error"
+      ],
+      "glued": "-o",
+      "source": "gnu.org/software/coreutils/manual/html_node/stdbuf-invocation.html"
+    },
+    {
+      "name": "xargs",
+      "flags": [
+        "-0",
+        "--null",
+        "-r",
+        "--no-run-if-empty",
+        "-t",
+        "--verbose",
+        "-p",
+        "--interactive",
+        "-x",
+        "--exit"
+      ],
+      "valued": [
+        "-a",
+        "--arg-file",
+        "-E",
+        "-d",
+        "--delimiter",
+        "-I",
+        "--replace",
+        "-L",
+        "--max-lines",
+        "-n",
+        "--max-args",
+        "-P",
+        "--max-procs",
+        "-s",
+        "--max-chars"
+      ],
+      "source": "man7.org/linux/man-pages/man1/xargs.1.html"
+    },
+    {
+      "name": "command",
+      "flags": [
+        "-p"
+      ],
+      "valued": [],
+      "not_run": [
+        "-v",
+        "-V"
+      ],
+      "source": "code.claude.com/docs/en/permissions.md",
+      "shell_builtin": true
+    },
+    {
+      "name": "nohup",
+      "flags": [],
+      "valued": [],
+      "source": "code.claude.com/docs/en/permissions.md"
+    },
+    {
+      "name": "time",
+      "flags": [
+        "-p"
+      ],
+      "valued": [],
+      "source": "code.claude.com/docs/en/permissions.md",
+      "shell_builtin": true
+    },
+    {
+      "name": "builtin",
+      "flags": [],
+      "valued": [],
+      "source": "code.claude.com/docs/en/permissions.md",
+      "shell_builtin": true
+    },
+    {
+      "name": "noglob",
+      "flags": [],
+      "valued": [],
+      "source": "code.claude.com/docs/en/permissions.md",
+      "shell_builtin": true
+    },
+    {
+      "name": "setsid",
+      "flags": [
+        "-f",
+        "--fork",
+        "-w",
+        "--wait"
+      ],
+      "valued": [],
+      "source": "man7.org/linux/man-pages/man1/setsid.1.html"
+    }
+  ],
+  "shells": {
+    "posix": [
+      "bash",
+      "sh",
+      "zsh",
+      "dash",
+      "ksh"
+    ],
+    "script_flag": "a cluster containing c",
+    "option_values": [
+      "-o",
+      "+o",
+      "-O",
+      "+O",
+      "--rcfile",
+      "--init-file"
+    ],
+    "source": "gnu.org/software/bash/manual/bash.html 6.1",
+    "bash_invocation": {
+      "source": "https://www.gnu.org/software/bash/manual/html_node/Invoking-Bash.html",
+      "set_source": "https://www.gnu.org/software/bash/manual/html_node/The-Set-Builtin.html",
+      "shopt_source": "https://www.gnu.org/software/bash/manual/html_node/The-Shopt-Builtin.html",
+      "read": "2026-11-08",
+      "section": "6.1 (section number, not a Bash release)",
+      "set_letters": "abefhkmnptuvxBCEHPT",
+      "invocation_letters": "cilrsD",
+      "named_option_flags": [
+        "-o",
+        "+o",
+        "-O",
+        "+O"
+      ],
+      "set_names": [
+        "allexport",
+        "braceexpand",
+        "emacs",
+        "errexit",
+        "errtrace",
+        "functrace",
+        "hashall",
+        "histexpand",
+        "history",
+        "ignoreeof",
+        "keyword",
+        "monitor",
+        "noclobber",
+        "noexec",
+        "noglob",
+        "nolog",
+        "notify",
+        "nounset",
+        "onecmd",
+        "physical",
+        "pipefail",
+        "posix",
+        "privileged",
+        "verbose",
+        "vi",
+        "xtrace"
+      ],
+      "shopt_names": [
+        "array_expand_once",
+        "assoc_expand_once",
+        "autocd",
+        "bash_source_fullpath",
+        "cdable_vars",
+        "cdspell",
+        "checkhash",
+        "checkjobs",
+        "checkwinsize",
+        "cmdhist",
+        "compat31",
+        "compat32",
+        "compat40",
+        "compat41",
+        "compat42",
+        "compat43",
+        "compat44",
+        "complete_fullquote",
+        "direxpand",
+        "dirspell",
+        "dotglob",
+        "execfail",
+        "expand_aliases",
+        "extdebug",
+        "extglob",
+        "extquote",
+        "failglob",
+        "force_fignore",
+        "globasciiranges",
+        "globskipdots",
+        "globstar",
+        "gnu_errfmt",
+        "histappend",
+        "histreedit",
+        "histverify",
+        "hostcomplete",
+        "huponexit",
+        "inherit_errexit",
+        "interactive_comments",
+        "lastpipe",
+        "lithist",
+        "localvar_inherit",
+        "localvar_unset",
+        "login_shell",
+        "mailwarn",
+        "no_empty_cmd_completion",
+        "nocaseglob",
+        "nocasematch",
+        "noexpand_translation",
+        "nullglob",
+        "patsub_replacement",
+        "progcomp",
+        "progcomp_alias",
+        "promptvars",
+        "restricted_shell",
+        "shift_verbose",
+        "sourcepath",
+        "varredir_close",
+        "xpg_echo"
+      ],
+      "long_options": [
+        "--debugger",
+        "--dump-po-strings",
+        "--dump-strings",
+        "--help",
+        "--init-file",
+        "--rcfile",
+        "--login",
+        "--noediting",
+        "--noprofile",
+        "--norc",
+        "--posix",
+        "--restricted",
+        "--verbose",
+        "--version"
+      ],
+      "file_options": [
+        "--rcfile",
+        "--init-file"
+      ],
+      "file_literals": [
+        "/dev/null"
+      ],
+      "c_cluster_literals": [
+        "-c",
+        "-lc",
+        "-ec",
+        "-cl",
+        "-ce",
+        "-ic",
+        "-lec",
+        "-xc",
+        "-cx",
+        "-ci"
+      ],
+      "cluster_grammar": "Single-character options may be clustered and repeated; c selects the command string. The emitter includes -c, every -Xc for an unvalued documented letter X, and the listed legacy c_cluster_literals. Other clusters are residuals.",
+      "long_option_order": "Long options precede single-character options.",
+      "terminators": [
+        "--",
+        "-"
+      ],
+      "codex_pattern_source": "openai/codex@rust-v0.167.0 codex-rs/execpolicy/src/parser.rs:171-215; src/rule.rs:21-26,46-72: literals or literal alternatives, no wildcard",
+      "residuals": [
+        "Arbitrary FILE operands for --rcfile/--init-file beyond file_literals.",
+        "Unlisted clusters, including repeated letters, with or without c.",
+        "More than option_slots extra words, or extra words on both sides of the c cluster.",
+        "Multi-word scripts and script operands after an unlisted end-of-options layout."
+      ],
+      "residual_severity": "P1: no independent Codex WSL guard has been verified for these invocation forms; return to the lead under the 2026-11-08 14:04:37 ruling, requirement 5.",
+      "synopsis_letters": "abefhkmnptuvxdBCDHP"
+    }
+  },
+  "windows_shells": {
+    "programs": [
+      "cmd",
+      "cmd.exe",
+      "powershell",
+      "powershell.exe",
+      "pwsh",
+      "pwsh.exe"
+    ],
+    "flags": [
+      "/c",
+      "/C",
+      "/k",
+      "/K",
+      "-c",
+      "-C",
+      "-Command",
+      "-command",
+      "-e",
+      "-ec",
+      "-EncodedCommand"
+    ],
+    "environment_printers": [
+      "set",
+      "Get-ChildItem",
+      "gci",
+      "dir",
+      "ls"
+    ],
+    "source": "learn.microsoft.com/en-us/windows-server/administration/windows-commands/cmd and .../about/about_pwsh"
+  },
+  "git_options": {
+    "flags": [
+      "--no-pager",
+      "--paginate",
+      "--no-replace-objects",
+      "--bare",
+      "--literal-pathspecs",
+      "--no-optional-locks",
+      "-P"
+    ],
+    "valued": [
+      "-C",
+      "-c",
+      "--git-dir",
+      "--work-tree",
+      "--namespace",
+      "--exec-path",
+      "--config-env"
+    ],
+    "glued": [
+      "--git-dir=",
+      "--work-tree=",
+      "--namespace=",
+      "--exec-path=",
+      "--config-env="
+    ],
+    "source": "git-scm.com/docs/git",
+    "note": "git -C <dir> push and git -c k=v push reach the same remote; the option words come before the subcommand."
+  },
+  "wrapper_paths": [
+    "",
+    "/usr/bin/",
+    "/bin/",
+    "/usr/local/bin/"
+  ]
+}

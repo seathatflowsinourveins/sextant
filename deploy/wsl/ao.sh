@@ -81,8 +81,14 @@ claim() {
   }
   head=$(jq -r .headRefName <<< "$view")
   sha=$(jq -r .headRefOid <<< "$view")
-  ao spawn --project "$project" --agent codex --branch "$head" --claim-pr "$pr" --no-takeover --name "PR #$pr fix-CI/review" \
-    --prompt "$(prompt "$pr" "$head" "$sha")"
+  # Codex's interface is named as well as its agent, so AO's daemon default, which a setting changes
+  # (backend/internal/storage/sqlite/migrations/0105_default_session_mode_chat.sql), never picks it.
+  # Codex keeps chat, its own app-server (backend/internal/adapters/chatdriver/registry/registry.go:76).
+  # A Claude worker would name tui, the claude CLI itself (backend/internal/domain/sessionmode.go:11-13),
+  # never chat: AO's chat runs Claude Code through claude-agent-acp, the Agent SDK in AO's runtime, with
+  # the owner's Claude sign-in (registry.go:76-77; the lead, 2026-11-08).
+  ao spawn --project "$project" --agent codex --mode chat --branch "$head" --claim-pr "$pr" --no-takeover \
+    --name "PR #$pr fix-CI/review" --prompt "$(prompt "$pr" "$head" "$sha")"
 }
 
 prompt() {
@@ -90,8 +96,9 @@ prompt() {
 You own PR #$1 (branch $2) for one job: its fix-CI and answer-review loop. Its lane worker has handed it off.
 First make your worktree the PR head: git fetch origin $2 && git checkout -B $2 origin/$2, and check that
 git rev-parse HEAD is $3. Then wait for AO's messages. For a failed check, reproduce it with just ci and push
-a fix to $2. For a review comment, fix it or answer it on the PR with your reason. Follow AGENTS.md: every
-change keeps the PR's Upstream references and manifest row true.
+a fix to $2 with plain git push, its upstream; the Codex rules forbid an explicit push to origin. For a
+review comment, fix it or answer it on the PR with your reason. Follow AGENTS.md: every change keeps the
+PR's Upstream references and manifest row true.
 Never alter the PR body's Agent-Family or Review-Family markers.
 Never merge (no ao pr merge, no gh pr merge), never disable auto-merge, never force-push, and never edit
 .github/ or dangerfile.js. A PR lands only by squash auto-merge once ci, source and review pass.

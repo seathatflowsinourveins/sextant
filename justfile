@@ -45,6 +45,10 @@ reflection:
 shelf:
     bash deploy/wsl/shelf.sh
 
+# Inside the clean distro only, from the main checkout: the hard-line rules' Codex, Antigravity and dsh user layers.
+hard-lines:
+    bash deploy/wsl/hard-lines/install.sh
+
 # Inside the clean distro only: issue #62's pinned native Orca CLI roster.
 lane-runtimes:
     bash deploy/wsl/lane-runtimes/install.sh

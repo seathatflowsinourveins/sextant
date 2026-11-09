@@ -18,6 +18,19 @@ FAKE_AO = """#!/usr/bin/env bash
 all="$*"
 printf '%s\\n' "${all//$'\\n'/ }" >> "$FAKE_LOG"
 [[ "$1" == version ]] && echo "${FAKE_VERSION:-0.14.10 commit 033d597032e4 built 2026-11-06}"
+if [[ "$1" == spawn ]]; then
+  # AO's own resolution: an omitted --agent is the project's worker.agent, an omitted --mode the
+  # daemon default (backend/internal/cli/spawn.go:224-236).
+  agent=${FAKE_WORKER:-} mode=${FAKE_DEFAULT_MODE:-chat}
+  while (($#)); do
+    case "$1" in
+      --agent | --harness) agent=$2; shift ;;
+      --mode) mode=$2; shift ;;
+    esac
+    shift
+  done
+  echo "session agent=$agent mode=$mode" >> "$FAKE_LOG"
+fi
 exit 0
 """
 HANDED_OFF = {
@@ -31,7 +44,14 @@ HANDED_OFF = {
 }
 
 
-def _run(tmp: Path, *args: str, pr: dict | None = None, version: str | None = None):
+def _run(
+    tmp: Path,
+    *args: str,
+    pr: dict | None = None,
+    version: str | None = None,
+    worker: str | None = None,
+    default_mode: str | None = None,
+):
     bin_dir = tmp / "bin"
     bin_dir.mkdir(exist_ok=True)
     for name, body in (("gh", FAKE_GH), ("ao", FAKE_AO)):
@@ -44,6 +64,10 @@ def _run(tmp: Path, *args: str, pr: dict | None = None, version: str | None = No
         "FAKE_PR": str(tmp / "pr.json"),
         "FAKE_LOG": str(tmp / "calls"),
     }
+    if worker:
+        env["FAKE_WORKER"] = worker
+    if default_mode:
+        env["FAKE_DEFAULT_MODE"] = default_mode
     # Shell startup hooks can pin an installed AO over the PATH stand-in.
     env.pop("BASH_ENV", None)
     if version:
@@ -70,6 +94,27 @@ def test_ao_is_pinned_and_claims_only_a_handed_off_pr(tmp_path: Path) -> None:
     spawn = next(call for call in calls if call.startswith("spawn "))
     assert "--claim-pr 57 --no-takeover" in spawn and "--branch lane-x" in spawn
     assert "Never merge" in spawn and "a" * 40 in spawn
+    # The worker pushes the way .codex/rules/default.rules allows: plain git push, its upstream.
+    assert "with plain git push" in spawn
+
+
+@pytest.mark.parametrize("default_mode", ["chat", "tui"])
+@pytest.mark.parametrize("worker", ["claude-code", "codex", "deepseek-harness", "muse"])
+def test_claim_names_codex_and_its_chat_interface_for_any_project_worker(
+    tmp_path: Path, worker: str, default_mode: str
+) -> None:
+    """The fake ao resolves the session as AO does: the project's worker.agent unless --agent names
+    one, the daemon default unless --mode does. Whatever the worker, claude-code among them (the
+    lead, 2026-11-08), and whatever the default, which the lead moves to tui, claim's session is
+    Codex in chat, its own app-server, so no Claude runs in chat's claude-agent-acp."""
+    run, calls = _run(tmp_path, "claim", "57", worker=worker, default_mode=default_mode)
+    assert run.returncode == 0, run.stderr
+    spawn = next(call for call in calls if call.startswith("spawn ")).split()
+    assert spawn.count("--agent") == 1 and spawn.count("--mode") == 1
+    assert "session agent=codex mode=chat" in calls
+    # Nor is AO pointed at a Claude ACP runtime: its two overrides (claudeacp/driver.go:541-551).
+    script = AO.read_text()
+    assert "AO_CLAUDE_ACP_COMMAND" not in script and "AO_ACP_RUNTIME_DIR" not in script
 
 
 def test_claim_refuses_a_pr_its_worker_still_holds(tmp_path: Path) -> None:
