@@ -138,6 +138,17 @@ def test_dependabot_generated_bodies_pass() -> None:
     assert _failures("Bumps a from 1 to 2.", login="dependabot[bot]") == []
 
 
+def test_dependabot_on_a_governed_path_keeps_its_exemption() -> None:
+    assert (
+        _failures(
+            "Bumps a from 1 to 2.",
+            login="dependabot[bot]",
+            created=("src/sextant/exits/engine.py",),
+        )
+        == []
+    )
+
+
 def test_a_sourced_gate_edit_needs_no_owner_label() -> None:
     assert _failures(_body(), created=(".github/workflows/gate.yml",)) == []
 
@@ -152,3 +163,27 @@ def test_a_third_party_plugin_row_with_its_disclosure_passes() -> None:
         "| one lane | proof |", "| capabilities: fs-read; red lines: none; one lane | proof |"
     )
     assert _failures(_body(row='"Plugin X"'), manifest=manifest) == []
+
+
+def test_a_governed_path_must_name_its_authority() -> None:
+    found = _failures(
+        _body(sources="example/fork@v1 " + "c" * 40),
+        created=("src/sextant/exits/engine.py",),
+    )
+    assert any("engine" in failure and "authority" in failure.lower() for failure in found)
+
+
+def test_a_governed_path_with_its_authority_passes() -> None:
+    body = _body(sources="nautechsystems/nautilus_trader@v1 " + "c" * 40)
+    assert _failures(body, created=("src/sextant/exits/engine.py",)) == []
+
+
+def test_a_docs_only_change_needs_no_authority() -> None:
+    body = _body(sources="example/fork@v1 " + "c" * 40)
+    assert _failures(body, created=("docs/handbook/sources.md",)) == []
+
+
+def test_a_lookalike_owner_does_not_pass_for_its_prefix() -> None:
+    body = _body(sources="not-nautechsystems/nautilus_trader@v1 " + "c" * 40)
+    found = _failures(body, created=("src/sextant/exits/engine.py",))
+    assert any("engine" in failure and "authority" in failure.lower() for failure in found)
