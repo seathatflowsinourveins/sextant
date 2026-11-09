@@ -177,8 +177,8 @@ def load_profiles(path: Path = AC_PARAMETERS) -> dict[str, Profile]:
     c_risk = _row(c_rows, "c_risk_per_trade")
     if a_risk["scope"] != "REVIEWED":
         raise ValueError("a_risk_per_trade: ADR-0002 is reviewed")
-    if c_risk["scope"] != "FIXTURE_ONLY":
-        raise ValueError("c_risk_per_trade: no owner decision, fixture scope only")
+    if c_risk["scope"] != "REVIEWED":
+        raise ValueError("c_risk_per_trade: the owner's current-equity ruling is reviewed")
     return {
         "a": Profile(
             "a",
@@ -201,11 +201,7 @@ def load_profiles(path: Path = AC_PARAMETERS) -> dict[str, Profile]:
             str(c_risk["source"]),
             _count(c_rows, "c_target_names"),
             _count(c_rows, "c_mover_slots"),
-            (
-                _number(c_rows, "c_rank_ceiling_top"),
-                _number(c_rows, "c_rank_ceiling_mid"),
-                _number(c_rows, "c_rank_ceiling_rest"),
-            ),
+            ceilings,
             "current",
         ),
     }
@@ -290,8 +286,8 @@ def plan_entry(
             setup=setup,
             rank=rank,
             reason=(
-                "c_risk_per_trade: the superseded profile has no risk number and the "
-                "owner has not decided the replacement (docs/design.md:161)"
+                f"{profile.key}_risk_per_trade: FIXTURE_ONLY authority cannot size a "
+                "non-fixture entry"
             ),
         )
     if not ask.is_finite() or ask <= 0:
@@ -593,8 +589,8 @@ class AcNode:
         require_writable_slot(self.profile.slot)
         if self.profile.risk_scope == "FIXTURE_ONLY":
             raise SizingRefusal(
-                "c_risk_per_trade is FIXTURE_ONLY: the owner has not decided the "
-                "replacement risk (docs/design.md:161)"
+                f"{self.profile.key}_risk_per_trade is FIXTURE_ONLY: fixture authority "
+                "cannot open a writer lease"
             )
         if self.deployment is None:
             raise NodeDisabled("no writer lease, pacer, guard or protector wired")

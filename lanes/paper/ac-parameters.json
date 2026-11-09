@@ -66,10 +66,10 @@
       "lane": "alpaca-paper-c",
       "c_risk_per_trade": {
         "value": "0.01",
-        "unit": "fraction of current equity",
-        "scope": "FIXTURE_ONLY",
+        "unit": "fraction of current equity, re-read before each entry",
+        "scope": "REVIEWED",
         "calibration": "UNCALIBRATED",
-        "source": "docs/design.md:161 lead recommendation only; the owner has not decided the replacement risk",
+        "source": "owner 2026-11-09 07:4x verbatim \"dynamic compounding leanring, optimize with compounding and histrocial data\"; docs/adr/0011-sizing-and-auto-leverage.md (FixedRiskSizer on current equity and buying power); docs/adr/0002-philosophy-and-lanes.md:26 (A's 1.0% starting fraction and 2x/1.5x/1x ceilings); lanes/paper/README.md \"No conservative profile\" (owner 2026-11-06); docs/adr/0015-research-lane-and-strategy-sourcing.md and docs/adr/0018-evidence-and-learning-loop.md (the optimizer proposes; adoption happens between sessions)",
         "last_change": "2026-11-09"
       },
       "c_target_names": {
@@ -88,36 +88,12 @@
         "source": "docs/adr/0024-extreme-mover-ranking-and-early-entry.md 8/20 split",
         "last_change": "2026-11-09"
       },
-      "c_rank_ceiling_top": {
-        "value": "1",
-        "unit": "risk multiple for ranks 1-5",
-        "scope": "FIXTURE_ONLY",
-        "calibration": "UNCALIBRATED",
-        "source": "docs/adr/0002-philosophy-and-lanes.md:26 superseded 1x shape; replacement unresolved",
-        "last_change": "2026-11-09"
-      },
-      "c_rank_ceiling_mid": {
-        "value": "1",
-        "unit": "risk multiple for ranks 6-10",
-        "scope": "FIXTURE_ONLY",
-        "calibration": "UNCALIBRATED",
-        "source": "docs/adr/0002-philosophy-and-lanes.md:26 superseded 1x shape; replacement unresolved",
-        "last_change": "2026-11-09"
-      },
-      "c_rank_ceiling_rest": {
-        "value": "1",
-        "unit": "risk multiple outside the top ten",
-        "scope": "FIXTURE_ONLY",
-        "calibration": "UNCALIBRATED",
-        "source": "docs/adr/0002-philosophy-and-lanes.md:26 superseded 1x shape; replacement unresolved",
-        "last_change": "2026-11-09"
-      },
       "c_equity_mode": {
         "value": "current",
         "unit": "sizing basis",
-        "scope": "FIXTURE_ONLY",
+        "scope": "REVIEWED",
         "calibration": "UNCALIBRATED",
-        "source": "b-clean/BRIEF.md 10:4x addendum: C compounds on current equity; owner decision pending",
+        "source": "owner 2026-11-09 07:4x compounding ruling; docs/adr/0011-sizing-and-auto-leverage.md (FixedRiskSizer on current equity and buying power); b-clean/BRIEF.md 10:4x addendum",
         "last_change": "2026-11-09"
       }
     }

@@ -78,26 +78,59 @@ def test_a_profile_can_never_open_a_writer_even_when_enabled():
         ).open()
 
 
-def test_c_refuses_to_size_without_the_owners_replacement_decision():
-    c = profiles()["c"]
-    plan = ac_node.plan_entry(
-        c,
-        instrument=equity("TEST"),
-        symbol="TEST",
-        ts_ns=START,
-        ask=Decimal("100"),
-        equity=ac_node.Money.from_str(EQUITY),
-        setup="FIRST_LEG",
-        rank=1,
-        regular_hours=True,
-        fixture=False,
+def test_c_sizes_on_current_equity_under_the_owners_compounding_ruling():
+    a, c = profiles()["a"], profiles()["c"]
+
+    def sized(equity_text: str) -> ac_node.EntryPlan:
+        return ac_node.plan_entry(
+            c,
+            instrument=equity("TEST"),
+            symbol="TEST",
+            ts_ns=START,
+            ask=Decimal("100"),
+            equity=ac_node.Money.from_str(equity_text),
+            setup="FIRST_LEG",
+            rank=1,
+            regular_hours=True,
+            fixture=False,
+        )
+
+    base = sized(EQUITY)
+    higher = sized("1040000 USD")
+    assert base.accepted, base.refusal
+    assert higher.accepted, higher.refusal
+    assert base.quantity is not None and higher.quantity is not None
+    assert base.quantity.as_decimal() == 8000
+    assert higher.quantity.as_decimal() == 8320
+    assert c.risk_scope == "REVIEWED"
+    assert c.risk_per_trade == a.risk_per_trade == Decimal("0.01")
+    assert c.rank_ceilings == a.rank_ceilings == (Decimal("2"), Decimal("1.5"), Decimal("1"))
+    assert c.equity_mode == "current"
+    assert "dynamic compounding" in c.risk_source
+    for citation in (
+        "docs/adr/0011-sizing-and-auto-leverage.md",
+        "docs/adr/0002-philosophy-and-lanes.md",
+        "lanes/paper/README.md",
+        "No conservative profile",
+        "docs/adr/0015-",
+        "docs/adr/0018-",
+    ):
+        assert citation in c.risk_source, citation
+
+    node = ac_node.AcNode(
+        profile=c,
+        params=ac_node.entry_parameters(),
+        start_equity=ac_node.Money.from_str(EQUITY),
     )
-    assert plan.refusal.startswith("c_risk_per_trade")
-    assert plan.quantity is None
+    before = node.entry(instrument=equity("TEST"), start_ns=START, segment="PRE")
+    node.ledger.record(entry=Decimal("100"), exit_price=Decimal("110"), quantity=Decimal("1000"))
+    after = node.entry(instrument=equity("TEST"), start_ns=START, segment="PRE")
+    assert before.equity.as_decimal() == Decimal("1000000")
+    assert after.equity.as_decimal() == Decimal("1010000")
 
 
-def test_c_profile_open_refuses_before_any_writer_lease():
-    with pytest.raises(ac_node.SizingRefusal, match="FIXTURE_ONLY"):
+def test_c_open_reaches_the_writer_seam_without_a_fixture_gate():
+    with pytest.raises(ac_node.NodeDisabled, match="no writer lease"):
         ac_node.AcNode(
             profile=profiles()["c"],
             params=ac_node.entry_parameters(),
