@@ -88,3 +88,21 @@ def test_the_installed_goalloop_gate_passes_the_four_pilot_assertions() -> None:
         "c-two-false-completes-block",
         "d-reset-is-human-only",
     ]
+
+
+HOST = json.loads((ROOT / "deploy/wsl/lane-runtimes/parity.json").read_text())
+
+
+def _host_plugin_row(package: str) -> dict:
+    rows = [
+        row for row in HOST["runtimes"]["dsh"]["quality"]["plugins"] if row["package"] == package
+    ]
+    assert len(rows) == 1, f"host parity.json quality.plugins: {package} rows = {len(rows)}"
+    return rows[0]
+
+
+def test_the_host_installer_spec_delivers_the_same_two_pins() -> None:
+    quality = HOST["runtimes"]["dsh"]["quality"]
+    assert quality["profiles"] == ["dsh-tui", "acp", "headless"]
+    assert _host_plugin_row("dsh-goalloop-agentteams")["spec"] == GOALLOOP
+    assert _host_plugin_row("sextant-dsh-review-cmd")["spec"] == SHIM

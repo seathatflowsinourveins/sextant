@@ -22,7 +22,8 @@ test('dsh authors get Codex by default and Claude only when selected', () => {
 
 test('every owner-named risk prefix selects exactly one extra other-family review', () => {
   for (const prefix of ['src/sextant/execution/', 'src/sextant/exits/', 'src/sextant/paper/',
-    'src/sextant/risk/', 'src/sextant/alpaca/', 'lanes/paper/', 'lanes/live/', 'deploy/live/', '.github/']) {
+    'src/sextant/risk/', 'src/sextant/alpaca/', 'lanes/paper/', 'lanes/live/', 'deploy/live/',
+    'config/dsh/review-cmd/', '.github/']) {
     for (const field of ['filename', 'previous_filename']) {
       const files = [{filename: 'docs/moved.txt', [field]: `${prefix}example.py`}];
       assert.equal(gate.route('Agent-Family codex', files).quality, 'claude', `${prefix}:${field}`);
