@@ -35,6 +35,19 @@ if (pr.user.login !== "dependabot[bot]") {
     if (!named.some((name) => rows.some((row) => row.startsWith(`| ${name} |`)))) {
       fail('Manifest row: name a row of docs/manifest.md in "double quotes". This PR may add it.');
     }
+
+    // A third-party plugin row carries the disclosure its admission depends on.
+    const register = manifest.split(/^## /m).find((part) => part.startsWith("Third-party plugins\n"));
+    if (!register) return;
+    const pluginRows = register
+      .split("\n")
+      .filter((row) => row.startsWith("| ") && !row.startsWith("| Practice or pick |") && !row.startsWith("|---"));
+    for (const name of named) {
+      const row = pluginRows.find((line) => line.startsWith(`| ${name} |`));
+      if (row && !/capabilit|red line|red-line/i.test(row)) {
+        fail(`Third-party plugin row "${name}" must record its capability and red-line disclosure (docs/handbook/plugins.md).`);
+      }
+    }
   });
 }
 

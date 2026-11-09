@@ -9,6 +9,11 @@
 #   - claim: docs/cli/README.md and docs/scm-observer.md, `ao spawn --claim-pr`, AO's own PR ownership,
 #     with --no-takeover so a second owner is refused. The lifecycle manager then sends that session
 #     each failed check and review comment (backend/internal/lifecycle/reactions.go). It never merges.
+#   - harness ids: backend/internal/adapters/agent/deepseekharness/deepseekharness.go:59 defines
+#     deepseek-harness, resolving dsh (:228-246) and launching its headless profile (:144);
+#     backend/internal/adapters/agent/codex/codex.go:95 defines codex.
+#     backend/internal/cli/spawn.go:224 aliases --agent to --harness: one harness per spawn.
+#     claim stays Codex; select DeepSeek only with an explicit ao spawn --harness deepseek-harness.
 # usage: ao.sh install | daemon | project | credential | claim <pr-number>
 set -Eeuo pipefail
 
