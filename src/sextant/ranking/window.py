@@ -55,6 +55,26 @@ class TradeWindow:
             i -= 1
         return self.anchor if self.anchor and self.anchor.ts_event <= ts else None
 
+    def before(self, ts: int) -> TradeTick | None:
+        return self.price_at(ts - 1)
+
+    def last(self, n: int) -> tuple[TradeTick, ...]:
+        result: tuple[TradeTick, ...] = ()
+        for bucket in reversed(self.buckets):
+            result = bucket.ticks[-n:] + result
+            if len(result) >= n:
+                break
+        return result[-n:]
+
+    def first_moved(self, start: int, price: Decimal, move: Decimal) -> TradeTick | None:
+        for bucket in self.buckets:
+            if (bucket.second + 1) * NS <= start:
+                continue
+            for tick in bucket.ticks:
+                if tick.ts_event > start and tick.price.as_decimal() >= price * (1 + move):
+                    return tick
+        return None
+
     def totals(self, start: int, end: int) -> tuple[Decimal, int]:
         """Half-open at start: (start, end], matching all rolling windows."""
         dv, count = ZERO, 0

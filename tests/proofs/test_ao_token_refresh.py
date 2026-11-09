@@ -28,7 +28,7 @@ def test_the_daemon_puts_the_minting_gh_first_on_path() -> None:
 
 
 def test_aos_clone_resets_the_global_helper_and_asks_the_minting_gh(tmp_path: Path) -> None:
-    clone = tmp_path / ".ao" / "repos" / "sextant"
+    clone = tmp_path / ".ao" / "repos" / "sextant-next"
     clone.mkdir(parents=True)
     env = {**os.environ, "HOME": str(tmp_path), "GIT_CONFIG_GLOBAL": "/dev/null"}
     subprocess.run(["git", "init", "-q", str(clone)], check=True, env=env)
