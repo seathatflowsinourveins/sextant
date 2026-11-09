@@ -42,6 +42,8 @@ FOLD_QUANTILE = 0.25
 TRADING_DAYS = 252
 WILCOXON_P_THRESHOLD = 0.1
 TRAIL_CAP = "0.025"
+# Holdout-custody findings stay open until the reviewed fixes land; no proposal until then.
+OPEN_HOLDOUT_REVIEW = "codex review 5833241132 at b4e4822"
 
 
 @dataclass(frozen=True)
@@ -637,12 +639,11 @@ def run_study(
         and pbo <= 0.05
     )
     if admissible:
-        decision = "PROPOSED"
-        assert best_objective is not None
-        proposals = _proposals(
-            spec, best_suggested, objective=best_objective, holdout_sharpe=holdout_sharpe or 0.0
+        decision, proposals = "NOT_ADMISSIBLE", ()
+        reason = (
+            f"{OPEN_HOLDOUT_REVIEW}: three holdout-custody findings remain open; "
+            "the tuner writes no proposal until the reviewed fixes land"
         )
-        reason = "CPCV, holdout, DSR and PBO gates pass; the proposal is for review, never adoption"
     else:
         decision, proposals = "NO_PROPOSAL", ()
         reason = (

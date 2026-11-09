@@ -157,7 +157,7 @@ def test_the_search_never_evaluates_a_holdout_session(tmp_path: Path) -> None:
         holdout_days=holdout,
         log_path=tmp_path / "trials.parquet",
     )
-    assert result.decision == "PROPOSED"
+    assert result.decision == "NOT_ADMISSIBLE"
     assert calls[:-1] and all(call == train for call in calls[:-1])
     assert calls[-1] == holdout
 
@@ -184,7 +184,7 @@ def test_a_duplicated_holdout_date_is_rejected_before_any_trial(tmp_path: Path) 
     assert not (tmp_path / "trials.parquet").exists()
 
 
-def test_a_supported_series_proposes_but_never_adopts(tmp_path: Path) -> None:
+def test_a_supported_series_is_stamped_not_admissible_and_never_adopts(tmp_path: Path) -> None:
     sessions = _sessions()
     holdout = sessions[-13:]
     log_path = tmp_path / "trials.parquet"
@@ -196,7 +196,9 @@ def test_a_supported_series_proposes_but_never_adopts(tmp_path: Path) -> None:
         holdout_days=holdout,
         log_path=log_path,
     )
-    assert result.decision == "PROPOSED"
+    assert result.decision == "NOT_ADMISSIBLE"
+    assert "5833241132" in result.reason
+    assert result.proposals == ()
     assert result.holdout == "PASS"
     assert result.merit == "OK"
     assert result.dsr > 0.95
@@ -224,12 +226,8 @@ def test_a_supported_series_proposes_but_never_adopts(tmp_path: Path) -> None:
     payload = json.loads(report_path.read_text())
     assert payload["schema"] == "b-tuning.study/1"
     assert payload["results"][0]["adoption"] == "none"
-    assert payload["results"][0]["proposals"]
-    assert all(row["adoption"] == "none" for row in payload["results"][0]["proposals"])
-    assert all(
-        row["current"] != row["proposed"] or row["current"]
-        for row in payload["results"][0]["proposals"]
-    )
+    assert payload["results"][0]["decision"] == "NOT_ADMISSIBLE"
+    assert payload["results"][0]["proposals"] == []
 
 
 def test_a_negative_holdout_stops_the_proposal(tmp_path: Path) -> None:
@@ -527,7 +525,7 @@ def test_a_consumed_holdout_is_not_reused(tmp_path: Path) -> None:
         holdout_days=holdout,
         log_path=log_path,
     )
-    assert first.decision == "PROPOSED"
+    assert first.decision == "NOT_ADMISSIBLE"
     calls: list[tuple[str, ...]] = []
 
     def evaluate(params, days):
