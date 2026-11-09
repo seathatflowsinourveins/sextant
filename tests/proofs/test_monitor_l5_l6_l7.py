@@ -298,6 +298,28 @@ def test_l5_commands_are_read_only(monkeypatch: pytest.MonkeyPatch) -> None:
     assert any("graphql" in command for command in commands)
 
 
+def test_pr_query_selects_newest_merged_prs(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert "pullRequests(first: $limit" in github.PR_QUERY
+    assert "pullRequests(last:" not in github.PR_QUERY
+    assert "orderBy: {field: UPDATED_AT, direction: DESC}" in github.PR_QUERY
+
+    queries: list[str] = []
+
+    def fake_run(args, **kwargs):
+        for arg in args:
+            if isinstance(arg, str) and arg.startswith("query="):
+                queries.append(arg.removeprefix("query="))
+        return subprocess.CompletedProcess(["gh", *args], 0, "{}", "")
+
+    monkeypatch.setattr(github, "run_gh", fake_run)
+    monkeypatch.setattr(github, "_systemd_state", lambda: {})
+    github.collect_once("seathatflowsinourveins/sextant")
+    assert len(queries) == 1
+    assert "pullRequests(first: $limit" in queries[0]
+    assert "states: [MERGED]" in queries[0]
+    assert "pullRequests(last:" not in queries[0]
+
+
 def test_l6_missing_trial_witness_is_unavailable_not_zero() -> None:
     witness = ROOT / "reports" / "research" / "trials.parquet"
     summary = evidence.trial_ledger(ROOT)

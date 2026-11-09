@@ -66,7 +66,7 @@ PRIVATE_FIELDS = frozenset(
 PR_QUERY = """
 query($owner: String!, $name: String!, $limit: Int!) {
   repository(owner: $owner, name: $name) {
-    pullRequests(last: $limit, states: [MERGED], orderBy: {field: UPDATED_AT, direction: DESC}) {
+    pullRequests(first: $limit, states: [MERGED], orderBy: {field: UPDATED_AT, direction: DESC}) {
       nodes {
         number
         title
