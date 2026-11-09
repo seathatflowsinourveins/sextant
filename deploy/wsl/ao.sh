@@ -21,8 +21,8 @@ pin_version=0.14.10
 pin_commit=033d597032e448a0ea16c298350e36b099f74106
 port=3301
 project=sextant
-clone="$HOME/.ao/repos/sextant"
-repo_url=https://github.com/seathatflowsinourveins/sextant
+clone="$HOME/.ao/repos/sextant-next"
+repo_url=https://github.com/seathatflowsinourveins/sextant-next
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 install() {
