@@ -1,6 +1,7 @@
 """Paper-only Alpaca transport: status mapping and one wire call, with no network."""
 
 from typing import Any
+from urllib.parse import urlsplit
 
 import pytest
 import requests
@@ -40,6 +41,20 @@ def wire_request() -> WireRequest:
 def query_request() -> WireRequest:
     return WireRequest(
         "GET", "/v2/positions", {}, None, ActionKind.QUERY, 0, 0, "lease-token", "params-hash"
+    )
+
+
+def request_with_path(path: str) -> WireRequest:
+    return WireRequest(
+        "POST",
+        path,
+        ORDER_BODY,
+        "house-exit",
+        ActionKind.SUBMIT,
+        0,
+        1,
+        "lease-token",
+        "params-hash",
     )
 
 
@@ -211,6 +226,39 @@ def test_a_query_2xx_decodable_body_is_an_ack_without_a_venue_id(payload):
     assert outcome == Outcome("ACK")
     assert wire_calls == [1]
     assert len(session.calls) == 1
+
+
+def test_a_normal_root_relative_path_passes_and_keeps_the_paper_host():
+    session = FakeSession(FakeResponse(200, {"id": "venue-1"}))
+
+    outcome, wire_calls = send(session)
+
+    assert outcome == Outcome("ACK", "venue-1")
+    assert wire_calls == [1]
+    assert session.calls[0][1] == f"{PAPER_HOST}/v2/orders"
+    assert urlsplit(session.calls[0][1]).hostname == "paper-api.alpaca.markets"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "@api.alpaca.markets/v2/orders",
+        "//api.alpaca.markets/v2/orders",
+        "https://api.alpaca.markets/v2/orders",
+        "/v2/orders@",
+        "/v2/orders\\",
+    ],
+    ids=["userinfo", "scheme-relative", "absolute-url", "trailing-at", "backslash"],
+)
+def test_a_path_that_could_retarget_the_request_is_refused_without_wire(path):
+    wire_calls: list[int] = []
+    session = FakeSession(FakeResponse(200, {"id": "venue-1"}), wire_calls=wire_calls)
+
+    with pytest.raises(ValueError):
+        build(session)(request_with_path(path), lambda: wire_calls.append(1))
+
+    assert wire_calls == []
+    assert session.calls == []
 
 
 @pytest.mark.parametrize(

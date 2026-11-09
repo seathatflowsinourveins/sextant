@@ -10,9 +10,11 @@ rather than a raise. The official Create an Order reference (read 2026-11-09) su
 
 One transport call is one HTTP request: ``wire()`` runs exactly once immediately before it,
 and the account pacer owns every retry. Redirects are not followed, so a 3xx is an unknown
-outcome rather than a second request. Only ``PAPER_HOST`` is reachable by construction, so
-no call here can reach the live venue. HTTP and network answers become ``Outcome`` values,
-never exceptions, and no message carries the key, the secret or the order body.
+outcome rather than a second request. A request path must be root-relative and may not carry
+``@``, a leading ``//`` or a backslash, and the built URL is re-parsed to keep the paper host.
+Only ``PAPER_HOST`` is reachable by construction, so no call here can reach the live venue.
+HTTP and network answers become ``Outcome`` values, never exceptions, and no message carries
+the key, the secret or the order body.
 """
 
 from collections.abc import Callable, Mapping
@@ -25,6 +27,7 @@ from sextant.execution.alpaca import Outcome, WireRequest
 from sextant.execution.pacer import ActionKind
 
 PAPER_HOST = "https://paper-api.alpaca.markets"
+_PAPER_HOSTNAME = "paper-api.alpaca.markets"
 
 
 def _paper_base_url(base_url: str) -> str:
@@ -42,6 +45,17 @@ def _paper_base_url(base_url: str) -> str:
     if base_url != PAPER_HOST:
         raise ValueError("the Alpaca transport is paper-only; only PAPER_HOST is accepted")
     return base_url
+
+
+def _request_url(path: str) -> str:
+    """Return ``PAPER_HOST + path`` only for a path that cannot retarget the request."""
+    if not path.startswith("/") or path.startswith("//") or "@" in path or "\\" in path:
+        raise ValueError("a wire path must be root-relative and may not retarget the paper host")
+    url = PAPER_HOST + path
+    parts = urlsplit(url)
+    if parts.scheme != "https" or parts.hostname != _PAPER_HOSTNAME:
+        raise ValueError("a wire path must keep the paper Alpaca host")
+    return url
 
 
 def _outcome(response: Any, *, query: bool) -> Outcome:
@@ -83,7 +97,7 @@ def build_transport(
     """Return a one-request paper transport; HTTP results all come back as an Outcome."""
     if not key or not secret:
         raise ValueError("a non-empty Alpaca paper key and secret are required")
-    root = _paper_base_url(base_url)
+    _paper_base_url(base_url)
     client = requests.Session() if session is None else session
     headers = {
         "APCA-API-KEY-ID": key,
@@ -92,11 +106,12 @@ def build_transport(
     }
 
     def transport(request: WireRequest, wire: Callable[[], None]) -> Outcome:
+        url = _request_url(request.path)
         wire()  # Exactly once, immediately before the only request; its failure aborts the send.
         try:
             response = client.request(
                 request.method,
-                root + request.path,
+                url,
                 headers=headers,
                 json=dict(request.body),
                 timeout=timeout_s,
