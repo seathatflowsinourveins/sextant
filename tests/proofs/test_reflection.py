@@ -11,8 +11,12 @@ WSL = ROOT / "deploy" / "wsl"
 SETUP = WSL / "reflection.sh"
 PRECHECK = WSL / "reflection-precheck.sh"
 PROMPT = (WSL / "reflection-prompt.md").read_text()
+POLICY = WSL / "lane-runtimes" / "model-policy.json"
+# Each call goes to FAKE_LOG as one line and to FAKE_ARGV with its exact arguments, ended by the
+# ASCII unit and record separators, which no argument here contains.
 FAKE = """#!/usr/bin/env bash
 echo "${0##*/} $*" >> "$FAKE_LOG"
+{ printf '%s\\037' "${0##*/}" "$@"; printf '\\036'; } >> "$FAKE_ARGV"
 case "${0##*/} $*" in
   "orca-ide automations list --json")
     if [ -f "$FAKE_STATE" ]; then
@@ -36,6 +40,7 @@ def _env(tmp: Path, *names: str) -> dict[str, str]:
         **os.environ,
         "PATH": f"{bin_dir}:{os.environ['PATH']}",
         "FAKE_LOG": str(tmp / "calls"),
+        "FAKE_ARGV": str(tmp / "argv"),
         "FAKE_STATE": str(tmp / "created"),
         "FAKE_MAIN": str(ROOT),
         "HOME": str(tmp),
@@ -84,6 +89,23 @@ def test_setting_up_the_reflection_twice_makes_one_and_never_enables_it(tmp_path
     assert "--base-branch origin/gate" in edits[0] and "--base-branch origin/gate" in creates[0]
     assert "--repo path:" in edits[0] and "--repo path:" in creates[0]
     assert not any("--enabled" in call for call in calls)
+
+
+def test_a_rerun_converges_the_agent_args_of_an_existing_automation(tmp_path: Path) -> None:
+    """The edit path sets the create path's agent args, so `just reflection` converges an
+    automation that already exists, at model-policy.json's claude_reflection entry (ADR-0030,
+    2026-11-09 amendment). orca-ide 1.4.251, `automations edit --help`: "--extra-agent-args=<args>
+    Extra agent arguments for fresh runs; empty clears"."""
+    env = _env(tmp_path, "orca-ide", "gh")
+    for _ in range(2):
+        run = subprocess.run(["bash", str(SETUP)], env=env, capture_output=True, text=True)
+        assert run.returncode == 0, run.stderr
+    records = (tmp_path / "argv").read_text().split("\x1e")[:-1]
+    calls = {tuple(argv[:3]): argv for argv in (record.split("\x1f")[:-1] for record in records)}
+    entry = json.loads(POLICY.read_text())["claude_reflection"]
+    want = f"--extra-agent-args=--model {entry['model']} --effort {entry['effort']}"
+    assert want in calls[("orca-ide", "automations", "create")]
+    assert want in calls[("orca-ide", "automations", "edit")]
 
 
 def test_the_precheck_runs_only_after_an_ended_session_or_a_merge(tmp_path: Path) -> None:

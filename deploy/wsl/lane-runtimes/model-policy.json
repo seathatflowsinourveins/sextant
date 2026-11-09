@@ -39,6 +39,16 @@
     "vendor_source": "https://platform.claude.com/docs/en/models/fable-5-2/overview",
     "effort_source": "https://platform.claude.com/docs/en/build-with-claude/effort"
   },
+  "claude_reflection": {
+    "runtime": "native Claude Code, run by an Orca automation (orca-ide 1.4.251)",
+    "model": "claude-fable-5-2",
+    "effort": "max",
+    "read_date": "2026-11-09",
+    "pinned_in": "deploy/wsl/reflection.sh, the agent args of both its create and edit paths: the reflection automation",
+    "authority": "ADR-0030 Decision 1, applied by the daily detector's #168 on 2026-11-09 (ADR-0030, 2026-11-09 amendment)",
+    "vendor_source": "https://platform.claude.com/docs/en/models/fable-5-2/overview",
+    "effort_source": "https://platform.claude.com/docs/en/build-with-claude/effort"
+  },
   "google": {
     "preferred": "Gemini 4 Carbon (High)",
     "antigravity": "gemini-4-argon-high",

@@ -99,15 +99,18 @@ def test_model_policy_keeps_the_approved_google_interim_and_native_claude() -> N
     assert policy["google"]["effort"] == "high"
     assert policy["google"]["router_connections"] == ["agy", "antigravity"]
     assert policy["google"]["status"].startswith("interim: Carbon not in this account's catalog")
-    # ADR-0030's 2026-11-09 amendment: the worker entry is the owner's named exception, Opus 5.5,
-    # and the project settings follow it (test_hard_lines.py binds the hard-lines receipt to them,
-    # and only a host engine run re-records it); the lead and the API reviewer run Fable 5.2.
-    worker, lead, reviewer = policy["claude"], policy["claude_lead"], policy["claude_reviewer"]
+    # ADR-0030's 2026-11-09 amendment, one entry per row of its table: the worker entry is the
+    # owner's named exception, Opus 5.5, and the project settings follow it (test_hard_lines.py
+    # binds the hard-lines receipt to them, and only a host engine run re-records it); the lead,
+    # the API reviewer and the reflection automation run Fable 5.2.
+    worker, lead = policy["claude"], policy["claude_lead"]
+    reviewer, reflection = policy["claude_reviewer"], policy["claude_reflection"]
     assert (worker["model"], worker["effort"]) == ("claude-opus-5-5", "max")
     assert (lead["model"], lead["effort"]) == ("claude-fable-5-2", "max")
     assert lead["launch"] == "claude --model fable --effort max"
     assert (reviewer["model"], reviewer["effort"]) == ("claude-fable-5-2", "max")
-    for entry in (worker, lead, reviewer):
+    assert (reflection["model"], reflection["effort"]) == ("claude-fable-5-2", "max")
+    for entry in (worker, lead, reviewer, reflection):
         assert "ADR-0030, 2026-11-09 amendment" in entry["authority"]
     claude = json.loads((ROOT / ".claude/settings.json").read_text())
     assert claude["model"] == worker["model"]
