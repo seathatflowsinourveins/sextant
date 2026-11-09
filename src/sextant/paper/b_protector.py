@@ -176,6 +176,17 @@ def _safe_symbol(symbol: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]", "_", symbol)[:40]
 
 
+def _state_number(value: object | None) -> str:
+    """A broker value as one bare line field; logging never raises on a bad value."""
+
+    if value is None:
+        return "none"
+    try:
+        return format(value if isinstance(value, Decimal) else Decimal(str(value)), "f")
+    except (InvalidOperation, ValueError):
+        return "none"
+
+
 class Protector:
     """B's one-account protector; the client is called, never constructed here."""
 
@@ -188,6 +199,8 @@ class Protector:
         now_ns: Callable[[], int] = time.time_ns,
         on_page: Callable[[Page], None] | None = None,
         exit_params: ExitParams | None = None,
+        feed: str = "none",
+        on_state: Callable[[str], None] | None = None,
     ) -> None:
         if account.lane != B_LANE:
             raise ProtectorRefusal("B's protector runs only on the slot-2 B paper lane")
@@ -196,7 +209,12 @@ class Protector:
         self._parameters = parameters
         self._now_ns = now_ns
         self._on_page = on_page
+        self._on_state = on_state
         self.pages: list[Page] = []
+        self.states: list[str] = []
+        self._feed = feed
+        self._last_observation_ns: int | None = None
+        self._announced: dict[str, tuple[object, ...]] = {}
         self._cancelling: set[str] = set()
         self._unresolved: dict[str, str] = {}
         self._last_position: dict[str, Decimal] = {}
@@ -234,6 +252,83 @@ class Protector:
         state = self._outside.get(symbol)
         return None if state is None else state.trigger
 
+    def _age(self, now_ns: int) -> str:
+        """The age of the newest market-data observation, or none when no feed is wired."""
+
+        if self._last_observation_ns is None:
+            return "none"
+        elapsed_ns = max(0, now_ns - self._last_observation_ns)
+        return f"{Decimal(elapsed_ns) / NS_PER_SECOND:.1f}s"
+
+    def _state_snapshot(self, symbol: str, now_ns: int) -> tuple[str, tuple[object, ...]]:
+        """Render the one-line custody and protection state, with its change key."""
+
+        position = self._last_position.get(symbol, Decimal(0))
+        orders = [
+            order
+            for order in self._house.get(symbol, [])
+            if str(getattr(order, "id", "")) not in self._cancelling
+        ]
+        trails = [order for order in orders if not _is_limit(order)]
+        limit = next((order for order in orders if _is_limit(order)), None)
+        trail = trails[0] if trails else None
+        resting = trail or limit
+        protected = sum((_leaves(order) for order in trails), Decimal(0))
+        session = session_at(now_ns)
+        trigger: object | None = None
+        basis: str | None = None
+        if symbol not in self._released_symbols:
+            if trail is not None and session is Session.RTH:
+                trigger = trail.stop_price
+                basis = "trade"
+            elif session in (Session.PRE, Session.POST, Session.OVERNIGHT):
+                state = self._outside.get(symbol)
+                if state is not None and state.has_trigger and not state.released:
+                    trigger = state.trigger
+                    basis = "bid"
+        order_id = "none" if resting is None else str(resting.id)
+        line = (
+            f"state mode={session.value} symbol={_safe_symbol(symbol)} "
+            f"position={_state_number(position)} protected={_state_number(protected)} "
+            f"trigger={_state_number(trigger)} on={basis or 'none'} order={order_id} "
+            f"feed={_safe_symbol(self._feed)} age={self._age(now_ns)}"
+        )
+        key = (
+            session.value,
+            _state_number(position),
+            _state_number(protected),
+            tuple(sorted(str(order.id) for order in orders)),
+            basis or "none",
+            _safe_symbol(self._feed),
+        )
+        return line, key
+
+    def _emit_state(self, line: str) -> None:
+        self.states.append(line)
+        if self._on_state is not None:
+            try:
+                self._on_state(line)
+            except Exception:
+                # A broken log sink must never change the protection path.
+                self._on_state = None
+
+    def _announce_symbol(self, symbol: str, now_ns: int) -> None:
+        held = symbol in self._last_position
+        if not held and symbol not in self._announced:
+            return
+        line, key = self._state_snapshot(symbol, now_ns)
+        if not held:
+            self._emit_state(line)
+            self._announced.pop(symbol, None)
+            return
+        if self._announced.get(symbol) != key:
+            self._emit_state(line)
+            self._announced[symbol] = key
+
+    def _announce_states(self, now_ns: int) -> None:
+        for symbol in sorted(set(self._last_position) | set(self._announced)):
+            self._announce_symbol(symbol, now_ns)
+
     def on_quote(
         self,
         symbol: str,
@@ -250,6 +345,9 @@ class Protector:
         """
 
         at = self._now_ns() if ts_ns is None else ts_ns
+        self._last_observation_ns = (
+            at if self._last_observation_ns is None else max(self._last_observation_ns, at)
+        )
         if session_at(at) not in (Session.PRE, Session.POST, Session.OVERNIGHT):
             return None
         return self._outside_state(symbol).observe_quote(bid=bid, ask=ask, last=last, ts_ns=at)
@@ -258,6 +356,9 @@ class Protector:
         """Feed one outside-RTH trade; true when it completes a persistent breach."""
 
         at = self._now_ns() if ts_ns is None else ts_ns
+        self._last_observation_ns = (
+            at if self._last_observation_ns is None else max(self._last_observation_ns, at)
+        )
         if session_at(at) not in (Session.PRE, Session.POST, Session.OVERNIGHT):
             return False
         state = self._outside.get(symbol)
@@ -322,6 +423,7 @@ class Protector:
             return
         self._pending_release[symbol] = _PendingRelease(trail_order_id=str(trails[0].id))
         state.begin_release(ts_ns)
+        self._announce_symbol(symbol, ts_ns)
 
     def _complete_outside_release(self, symbol: str, ts_ns: int) -> None:
         """Reprice and re-quantify from a fresh snapshot, then submit the one LIMIT."""
@@ -387,6 +489,7 @@ class Protector:
         state = self._outside.get(symbol)
         if state is not None:
             state.mark_released(self._now_ns())
+        self._announce_symbol(symbol, self._now_ns())
 
     def handle(self, update: TradeUpdate) -> None:
         symbol = update.order.symbol
@@ -466,6 +569,7 @@ class Protector:
             s: order_id for s, order_id in self._pending_rearm.items() if s in held
         }
         self._released_symbols &= held
+        self._announce_states(now_ns)
         return positions
 
     def _snapshot(
@@ -744,6 +848,8 @@ class ProtectorStream(TradingStream):
         url_override: str | None = None,
         now_ns: Callable[[], int] = time.time_ns,
         on_page: Callable[[Page], None] | None = None,
+        feed: str = "none",
+        on_state: Callable[[str], None] | None = None,
     ) -> None:
         if url_override is None:
             super().__init__(api_key=api_key, secret_key=secret_key, paper=paper)
@@ -754,7 +860,15 @@ class ProtectorStream(TradingStream):
                 paper=paper,
                 url_override=url_override,
             )
-        self.protector = Protector(client, account, parameters, now_ns=now_ns, on_page=on_page)
+        self.protector = Protector(
+            client,
+            account,
+            parameters,
+            now_ns=now_ns,
+            on_page=on_page,
+            feed=feed,
+            on_state=on_state,
+        )
         self.subscribe_trade_updates(self._on_trade_update)
 
     async def _on_trade_update(self, update: TradeUpdate) -> None:

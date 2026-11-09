@@ -969,6 +969,349 @@ def test_owner_session_failure_never_emits_upstream_diagnostics(
     assert logging.root.manager.disable == previous
 
 
+def test_owner_session_names_the_safe_class_and_stage_of_an_oauth_failure(
+    monkeypatch: pytest.MonkeyPatch, capsys
+):
+    import asyncio
+    from types import SimpleNamespace
+
+    from mcp.client.auth.exceptions import OAuthTokenError
+
+    from sextant.tradingview import auth
+    from sextant.tradingview.sync import SyncError
+
+    class Callback:
+        uri = "http://127.0.0.1:1/callback"
+        result = None
+        server = SimpleNamespace(server_close=lambda: None)
+
+        async def redirect(self, _url):
+            pytest.fail("A browser is not needed in this failure fixture")
+
+        async def wait(self):
+            pytest.fail("A callback is not needed in this failure fixture")
+
+    def refuse_transport(*args, **kwargs):
+        raise OAuthTokenError(
+            "Token exchange failed (400): access_token=SECRET https://example.invalid/?state=x"
+        )
+
+    monkeypatch.setattr(auth, "OwnerCallback", Callback)
+    monkeypatch.setattr(auth, "streamable_http_client", refuse_transport)
+
+    async def run():
+        with pytest.raises(SyncError) as error:
+            async with auth.official_client(authorize=True):
+                pytest.fail("Fixture transport always refuses")
+        assert error.value.label == "OAuthTokenError"
+        assert error.value.stage == "token"
+        assert error.value.detail == "HTTP 400 at token endpoint"
+        assert "SECRET" not in str(error.value) and "example.invalid" not in str(error.value)
+        assert error.value.__context__ is None
+        assert error.value.__cause__ is None
+
+    asyncio.run(run())
+    captured = capsys.readouterr()
+    assert captured.out == captured.err == ""
+
+
+def test_owner_callback_names_authorize_and_callback_refusals(monkeypatch: pytest.MonkeyPatch):
+    import asyncio
+
+    from sextant.tradingview import auth
+    from sextant.tradingview.sync import SyncError
+
+    monkeypatch.setattr(auth.webbrowser, "open", lambda _url: False)
+    callback = auth.OwnerCallback()
+    try:
+        with pytest.raises(SyncError) as error:
+            asyncio.run(callback.redirect("https://www.tradingview.com/mcp/oauth/authorize?ok=1"))
+        assert error.value.stage == "authorize"
+    finally:
+        callback.server.server_close()
+
+    callback = auth.OwnerCallback()
+    try:
+        callback.failed = True
+        with pytest.raises(SyncError) as error:
+            asyncio.run(callback.wait())
+        assert error.value.stage == "callback"
+    finally:
+        callback.server.server_close()
+
+
+def test_cli_stop_names_only_the_safe_class_and_stage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+):
+    cli = importlib.import_module("sextant.tradingview.__main__")
+    from sextant.tradingview.sync import SyncError
+
+    def refuse(*args, **kwargs):
+        raise SyncError(
+            "TradingView session stopped; re-inventory before retry.",
+            label="OAuthFlowError",
+            stage="callback",
+        )
+
+    monkeypatch.setattr(cli, "read_research_inputs", lambda *args, **kwargs: object())
+    monkeypatch.setattr(cli, "official_client", refuse)
+    assert cli.main(["--research-dir", str(tmp_path), "--authorize"]) == 2
+    output = capsys.readouterr()
+    assert "Safe diagnostic: OAuthFlowError at callback." in output.out
+    assert "SECRET" not in output.out and "https://" not in output.out and output.err == ""
+    assert "earlier writes" in output.out
+
+
+def test_tool_discovery_names_the_tool_list_stage():
+    import asyncio
+    from types import SimpleNamespace
+
+    from sextant.tradingview import sync
+
+    class Silent:
+        async def list_tools(self, *, cursor=None, cache_mode=None):
+            return SimpleNamespace(
+                tools=[SimpleNamespace(name="mcp-watchlist-list-watchlists", input_schema={})],
+                next_cursor=None,
+            )
+
+    tools = sync.OfficialTools(Silent(), interval=0)  # type: ignore[arg-type]
+    with pytest.raises(sync.SyncError) as error:
+        asyncio.run(tools.discover())
+    assert error.value.stage == "tool list"
+
+
+def test_diagnostics_keeps_a_trusted_sync_stage_through_a_group():
+    from sextant.tradingview import diagnostics, sync
+
+    error = ExceptionGroup("sdk", [sync.SyncError("stop", stage="callback")])
+    assert diagnostics.stage(error) == "callback"
+    assert diagnostics.leaf_label(error) == "SyncError"
+
+
+def test_diagnostics_names_http_status_and_endpoint_class():
+    import httpx2
+
+    from sextant.tradingview import diagnostics
+
+    def status_error(status, path):
+        request = httpx2.Request("POST", f"https://mcp.tradingview.com{path}")
+        return httpx2.HTTPStatusError(
+            "refused", request=request, response=httpx2.Response(status, request=request)
+        )
+
+    assert diagnostics.detail(status_error(400, "/mcp/oauth/token")) == "HTTP 400 at token endpoint"
+    assert diagnostics.detail(status_error(401, "/mcp")) == "HTTP 401 at session endpoint"
+    assert diagnostics.detail(ExceptionGroup("sdk", [status_error(503, "/mcp")])) == (
+        "HTTP 503 at session endpoint"
+    )
+
+
+def test_diagnostics_names_only_the_oauth_error_vocabulary():
+    from mcp.client.auth.exceptions import OAuthTokenError
+
+    from sextant.tradingview import diagnostics
+
+    known = OAuthTokenError(
+        'Token exchange failed (400): {"error": "invalid_grant", "error_description": "SECRET"}'
+    )
+    assert diagnostics.detail(known) == "HTTP 400 at token endpoint; OAuth error invalid_grant"
+    assert "SECRET" not in diagnostics.detail(known)
+    unknown = OAuthTokenError('Token exchange failed (401): {"error": "made_up_code"}')
+    assert "made_up_code" not in diagnostics.detail(unknown)
+    assert "OAuth error" not in diagnostics.detail(unknown)
+
+
+def test_diagnostics_names_pydantic_field_names_only():
+    from pydantic import BaseModel, ValidationError
+
+    from sextant.tradingview import diagnostics
+
+    class Token(BaseModel):
+        access_token: str
+        token_type: str
+
+    with pytest.raises(ValidationError) as error:
+        Token.model_validate({"detail": "SECRET"})
+    result = diagnostics.detail(error.value)
+    assert result == "fields access_token, token_type"
+    assert "SECRET" not in result
+
+
+def test_tool_discovery_reports_the_name_diff():
+    import asyncio
+    from types import SimpleNamespace
+
+    from sextant.tradingview import sync
+
+    class Drifting:
+        async def list_tools(self, *, cursor=None, cache_mode=None):
+            return SimpleNamespace(
+                tools=[
+                    SimpleNamespace(name="mcp-watchlist-list-watchlists", input_schema={}),
+                    SimpleNamespace(name="mcp-watchlist-delete-watchlist", input_schema={}),
+                ],
+                next_cursor=None,
+            )
+
+    tools = sync.OfficialTools(Drifting(), interval=0)  # type: ignore[arg-type]
+    with pytest.raises(sync.SyncError) as error:
+        asyncio.run(tools.discover())
+    assert error.value.stage == "tool list"
+    assert "mcp-watchlist-delete-watchlist" in error.value.detail
+    for name in (
+        "mcp-watchlist-get-watchlist",
+        "mcp-watchlist-create-watchlist",
+        "mcp-watchlist-add-to-watchlist",
+        "mcp-watchlist-remove-from-watchlist",
+    ):
+        assert name in error.value.detail
+
+
+def test_cli_stop_prints_a_fixed_vocabulary_detail(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+):
+    cli = importlib.import_module("sextant.tradingview.__main__")
+    from sextant.tradingview.sync import SyncError
+
+    def refuse(*args, **kwargs):
+        raise SyncError(
+            "TradingView session stopped; re-inventory before retry.",
+            label="OAuthTokenError",
+            stage="token",
+            detail="HTTP 400 at token endpoint; OAuth error invalid_grant",
+        )
+
+    monkeypatch.setattr(cli, "read_research_inputs", lambda *args, **kwargs: object())
+    monkeypatch.setattr(cli, "official_client", refuse)
+    assert cli.main(["--research-dir", str(tmp_path), "--authorize"]) == 2
+    output = capsys.readouterr()
+    assert (
+        "Safe diagnostic: OAuthTokenError at token "
+        "(HTTP 400 at token endpoint; OAuth error invalid_grant)." in output.out
+    )
+    assert "SECRET" not in output.out and "https://" not in output.out
+
+
+def test_cli_prints_each_fixed_sync_literal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+):
+    _, sync = api()
+    cli = importlib.import_module("sextant.tradingview.__main__")
+    monkeypatch.setattr(cli, "read_research_inputs", lambda *args, **kwargs: object())
+    for message in sync.SAFE_STOP_MESSAGES:
+
+        def refuse(*args, _message=message, **kwargs):
+            raise sync.SyncError(_message, stage="tool list")
+
+        monkeypatch.setattr(cli, "official_client", refuse)
+        assert cli.main(["--research-dir", str(tmp_path), "--authorize"]) == 2
+        output = capsys.readouterr()
+        assert f"Safe diagnostic: SyncError at tool list: {message}" in output.out
+        assert output.err == ""
+
+
+def test_cli_withholds_a_message_outside_the_fixed_sync_literals(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+):
+    cli = importlib.import_module("sextant.tradingview.__main__")
+    from sextant.tradingview.sync import SyncError
+
+    def refuse(*args, **kwargs):
+        raise SyncError(
+            "TradingView session stopped; SECRET-7f3a",
+            label="OAuthFlowError",
+            stage="callback",
+        )
+
+    monkeypatch.setattr(cli, "read_research_inputs", lambda *args, **kwargs: object())
+    monkeypatch.setattr(cli, "official_client", refuse)
+    assert cli.main(["--research-dir", str(tmp_path), "--authorize"]) == 2
+    output = capsys.readouterr()
+    assert "Safe diagnostic: OAuthFlowError at callback." in output.out
+    assert "TradingView session stopped" not in output.out
+    assert "SECRET-7f3a" not in output.out
+    assert output.err == ""
+
+
+def test_envelope_refusals_name_only_the_json_shape():
+    _, sync = api()
+
+    class Inventory:
+        async def call(self, name, arguments):
+            return {"watchlists": 7}
+
+    with pytest.raises(sync.SyncError) as error:
+        asyncio.run(sync._inventory(Inventory()))
+    assert str(error.value) == sync.UNKNOWN_INVENTORY_ENVELOPE
+    assert error.value.detail == "JSON number"
+
+    class Membership:
+        async def call(self, name, arguments):
+            return {"name": "NS movers", "id": "1", "symbols": 7}
+
+    with pytest.raises(sync.SyncError) as error:
+        asyncio.run(sync._membership(Membership(), "NS movers", "1"))
+    assert str(error.value) == sync.UNKNOWN_MEMBERSHIP_ENVELOPE
+    assert error.value.detail == "JSON number"
+
+    with pytest.raises(sync.SyncError) as error:
+        sync._unwrap({"result": {"stored": True, "has_more": True}})
+    assert str(error.value) == sync.INCOMPLETE_RESPONSE
+    assert error.value.detail == "JSON object, 2 keys"
+
+
+def test_tool_result_error_names_public_tool_and_one_fixed_word():
+    _, sync = api()
+    from mcp.types import CallToolResult, TextContent
+
+    class Session:
+        async def call_tool(self, *args, **kwargs):
+            return CallToolResult(
+                content=[TextContent(type="text", text="Quota exceeded for this SECRET-9 account")],
+                is_error=True,
+            )
+
+    client = SimpleNamespace(session=Session())
+
+    async def run():
+        tools = sync.OfficialTools(client, interval=0)
+        tools.schemas["add_to_watchlist"] = {"type": "object"}
+        tools.wire["add_to_watchlist"] = "mcp-watchlist-add-to-watchlist"
+        with pytest.raises(sync.SyncError) as error:
+            await tools.call("add_to_watchlist", {"watchlist_id": "1", "symbols": ["NASDAQ:AAPL"]})
+        return error.value
+
+    error = asyncio.run(run())
+    assert str(error) == sync.CALL_FAILED
+    assert error.detail == "tool mcp-watchlist-add-to-watchlist; quota"
+    assert "SECRET" not in error.detail
+
+
+def test_jsonrpc_error_names_only_its_integer_code():
+    _, sync = api()
+    from mcp.shared.exceptions import MCPError
+
+    class Session:
+        async def call_tool(self, *args, **kwargs):
+            raise MCPError(code=-32602, message="bad params SECRET-9")
+
+    client = SimpleNamespace(session=Session())
+
+    async def run():
+        tools = sync.OfficialTools(client, interval=0)
+        tools.schemas["add_to_watchlist"] = {"type": "object"}
+        tools.wire["add_to_watchlist"] = "mcp-watchlist-add-to-watchlist"
+        with pytest.raises(sync.SyncError) as error:
+            await tools.call("add_to_watchlist", {"watchlist_id": "1", "symbols": ["NASDAQ:AAPL"]})
+        return error.value
+
+    error = asyncio.run(run())
+    assert str(error) == sync.SESSION_REFUSED
+    assert error.detail == "JSON-RPC error -32602"
+    assert "SECRET" not in error.detail
+
+
 def test_same_owner_session_can_sync_another_cycle(tmp_path: Path):
     inputs, sync = api()
     data = inputs.read_research_inputs(unit(tmp_path), now=NOW)
