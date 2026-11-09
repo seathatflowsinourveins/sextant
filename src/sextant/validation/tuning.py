@@ -602,33 +602,34 @@ def run_study(
     matrix = np.asarray(list(series.values()), dtype=float).T
     pbo = pbo_cscv(matrix, s=16) if matrix.shape[1] >= 32 else None
 
-    holdout_state, holdout_error, holdout_label = "COMPLETE", "", "MISSING"
-    try:
-        holdout_observations = evaluate(best_suggested, holdout)
-        holdout_days_used, holdout_returns = session_series(holdout_observations, holdout)
-        holdout_sharpe: float | None = sharpe(holdout_returns)
-        holdout_label = "PASS" if holdout_sharpe > 0 else "FAIL"
-    except Exception as error:
-        holdout_days_used, holdout_returns = [], []
-        holdout_sharpe, holdout_state = None, "FAIL"
-        holdout_error = f"{type(error).__name__}: {error}"
-
-    holdout_config = _trial_config(spec, arm_id=f"{spec.name}:{spec.arm}:holdout", sha=sha)
-    holdout_config["params_hash"] = snapshot_hash(best_logged)
-    log.append(
-        spec.name,
-        best_logged,
-        holdout_config,
-        spec.seed,
-        state=holdout_state,
-        days=holdout_days_used,
-        daily_net_returns=holdout_returns,
-        objective=holdout_sharpe,
-        error=holdout_error,
-    )
-
     n_trades = len(best_returns)
     merit = "OK" if n_trades >= 30 else "INSUFFICIENT_N"
+    holdout_state, holdout_error, holdout_label, holdout_sharpe = "COMPLETE", "", "MISSING", None
+    if not OPEN_HOLDOUT_REVIEW:
+        try:
+            holdout_observations = evaluate(best_suggested, holdout)
+            holdout_days_used, holdout_returns = session_series(holdout_observations, holdout)
+            holdout_sharpe = sharpe(holdout_returns)
+            holdout_label = "PASS" if holdout_sharpe > 0 else "FAIL"
+        except Exception as error:
+            holdout_days_used, holdout_returns = [], []
+            holdout_sharpe, holdout_state = None, "FAIL"
+            holdout_error = f"{type(error).__name__}: {error}"
+
+        holdout_config = _trial_config(spec, arm_id=f"{spec.name}:{spec.arm}:holdout", sha=sha)
+        holdout_config["params_hash"] = snapshot_hash(best_logged)
+        log.append(
+            spec.name,
+            best_logged,
+            holdout_config,
+            spec.seed,
+            state=holdout_state,
+            days=holdout_days_used,
+            daily_net_returns=holdout_returns,
+            objective=holdout_sharpe,
+            error=holdout_error,
+        )
+
     admissible = (
         best_objective is not None
         and best_objective > 0
@@ -638,12 +639,9 @@ def run_study(
         and pbo is not None
         and pbo <= 0.05
     )
-    if admissible:
+    if OPEN_HOLDOUT_REVIEW or admissible:
         decision, proposals = "NOT_ADMISSIBLE", ()
-        reason = (
-            f"{OPEN_HOLDOUT_REVIEW}: three holdout-custody findings remain open; "
-            "the tuner writes no proposal until the reviewed fixes land"
-        )
+        reason = f"{OPEN_HOLDOUT_REVIEW}: the run refuses before consuming the one-shot holdout"
     else:
         decision, proposals = "NO_PROPOSAL", ()
         reason = (
