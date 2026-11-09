@@ -201,3 +201,5 @@ async function finish({ github, context, core }, number, head, results, quality,
 
 module.exports = { marker, route, current, prepare, sourceResult, prompt, blockingPriority, qualityPassed,
   qualityResult, dshResult, followupIssue, finish };
+
+// Codex-route gate-path proof: this comment leaves review routing behavior unchanged.
