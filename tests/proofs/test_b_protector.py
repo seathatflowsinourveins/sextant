@@ -263,6 +263,57 @@ def test_owner_orders_are_never_cancelled_replaced_or_resized():
     assert client.replaced == []
 
 
+def test_an_owner_working_sell_reserves_those_shares_from_the_house_trail():
+    owner = api_order(client_order_id="owner-sell-1", side="sell", qty="4")
+    client = FakeTradingClient(positions=[api_position("10")], orders=[owner])
+    p = protector(client)
+    p.bind()
+    p.reconcile()
+
+    assert [request.qty for request in client.submitted] == [6]
+    assert client.cancelled == []
+    assert "owner_reserved_unprotected" not in [page.reason for page in p.pages]
+
+    house = api_order(
+        client_order_id="B001-trail-AAPL-old",
+        side="sell",
+        qty="10",
+        order_type="trailing_stop",
+        trail_percent="2.5",
+    )
+    client = FakeTradingClient(positions=[api_position("10")], orders=[owner, house])
+    p = protector(client)
+    p.bind()
+    p.reconcile()
+
+    assert client.cancelled == [str(house.id)]
+    assert client.submitted == []
+    assert "quantity_mismatch" in [page.reason for page in p.pages]
+
+    p.handle(api_update(house, event="canceled", position_qty=10.0))
+    assert [request.qty for request in client.submitted] == [6]
+
+    full = api_order(client_order_id="owner-sell-all", side="sell", qty="10")
+    client = FakeTradingClient(positions=[api_position("10")], orders=[full])
+    p = protector(client)
+    p.bind()
+    p.reconcile()
+
+    assert client.submitted == []
+    assert "owner_reserved_unprotected" in [page.reason for page in p.pages]
+
+
+def test_an_unrecognized_foreign_order_freezes_the_symbol():
+    foreign = api_order(client_order_id="owner-unknown-1").model_copy(update={"side": None})
+    client = FakeTradingClient(positions=[api_position("10")], orders=[foreign])
+    p = protector(client)
+    p.bind()
+    p.reconcile()
+
+    assert client.submitted == []
+    assert "unrecognized_open_order" in [page.reason for page in p.pages]
+
+
 def test_a_slot_one_lane_and_a_foreign_account_number_refuse_before_any_order():
     client = FakeTradingClient(positions=[api_position("10")])
     with pytest.raises(ProtectorRefusal):
@@ -311,6 +362,25 @@ def test_a_reconnect_and_outside_rth_page_instead_of_submitting(monkeypatch):
         )
     )
     assert client.submitted == []
+    assert [page.reason for page in p.pages] == ["unprotected_outside_rth_until_pr2"]
+
+
+def test_an_existing_house_trail_outside_rth_is_not_counted_as_protection():
+    house = api_order(
+        client_order_id="B001-trail-AAPL-old",
+        side="sell",
+        qty="10",
+        order_type="trailing_stop",
+        trail_percent="2.5",
+    )
+    after_hours = datetime(2026, 11, 9, 20, 30, tzinfo=ET)
+    client = FakeTradingClient(positions=[api_position("10")], orders=[house])
+    p = protector(client, now=ns(after_hours))
+    p.bind()
+    p.reconcile()
+
+    assert client.submitted == []
+    assert client.cancelled == []
     assert [page.reason for page in p.pages] == ["unprotected_outside_rth_until_pr2"]
 
 

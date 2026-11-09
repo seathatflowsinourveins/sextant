@@ -217,11 +217,28 @@ class Protector:
         if len(orders) >= OPEN_ORDER_LIMIT:
             self.page("open_orders_truncated")
         house: dict[str, list[Order]] = {}
+        owner_sells: dict[str, Decimal] = {}
+        unrecognized: set[str] = set()
         for order in orders:
-            if order.symbol and self._is_ours(order):
+            if not order.symbol:
+                continue
+            if self._is_ours(order):
                 house.setdefault(order.symbol, []).append(order)
+                continue
+            side = _event_name(order.side).lower()
+            if side == "sell":
+                leaves = owner_sells.get(order.symbol, Decimal(0)) + _leaves(order)
+                owner_sells[order.symbol] = leaves
+            elif side != "buy":
+                unrecognized.add(order.symbol)
         for symbol, position in positions.items():
-            self._reconcile_symbol(symbol, position, house.pop(symbol, []))
+            self._reconcile_symbol(
+                symbol,
+                position,
+                house.pop(symbol, []),
+                owner_sells.get(symbol, Decimal(0)),
+                symbol in unrecognized,
+            )
         for symbol, ours in house.items():
             if symbol not in positions:
                 for order in ours:
@@ -270,37 +287,77 @@ class Protector:
                 self.page("house_exit_lost", symbol, f"a house exit ended {event}")
             self.reconcile()
 
-    def _reconcile_symbol(self, symbol: str, position: Position, ours: list[Order]) -> None:
+    def _reconcile_symbol(
+        self,
+        symbol: str,
+        position: Position,
+        ours: list[Order],
+        owner_sell_reserved: Decimal,
+        unrecognized_open_order: bool,
+    ) -> None:
         quantity = _decimal(position.qty, "position.qty")
         if quantity < 0:
             self.page("short_position_unprotected", symbol)
             for order in ours:
                 self._cancel(order, "short_position")
             return
-        whole = int(quantity.to_integral_value(rounding=ROUND_FLOOR))
-        if quantity != whole:
-            self.page("fractional_custody_unverified", symbol)
-        if whole == 0:
+        if quantity == 0:
             for order in ours:
                 self._cancel(order, "flat_with_house_exit")
+            return
+        if unrecognized_open_order:
+            self.page(
+                "unrecognized_open_order",
+                symbol,
+                "an open order has no buy/sell side, so its reservation is unknown",
+            )
+            for order in ours:
+                self._cancel(order, "unrecognized_open_order")
+            return
+        available = quantity - owner_sell_reserved
+        if available < 0:
+            self.page(
+                "quantity_mismatch",
+                symbol,
+                "owner sell orders reserve more than the position",
+            )
+            for order in ours:
+                self._cancel(order, "quantity_mismatch")
+            return
+        protective = int(available.to_integral_value(rounding=ROUND_FLOOR))
+        if quantity != quantity.to_integral_value() or available != protective:
+            self.page("fractional_custody_unverified", symbol)
+        if protective == 0:
+            for order in ours:
+                self._cancel(order, "owner_reserved_unprotected")
+            self.page("owner_reserved_unprotected", symbol)
             return
         if len(ours) > 1:
             self.page("more_than_one_house_exit", symbol)
             return
+        in_rth = session_at(self._now_ns()) is Session.RTH
         if ours:
             held = _leaves(ours[0])
-            if held == whole:
+            if held == protective:
+                if not in_rth:
+                    self.page(
+                        "unprotected_outside_rth_until_pr2",
+                        symbol,
+                        "the resting native trail does not trigger outside regular market hours",
+                    )
                 return
-            if held > whole:
+            if held > protective:
                 self._cancel(ours[0], "quantity_mismatch")
                 self.page("quantity_mismatch", symbol)
             else:
                 self.page("owner_add_unprotected", symbol)
+            if not in_rth:
+                self.page("unprotected_outside_rth_until_pr2", symbol)
             return
-        if session_at(self._now_ns()) is not Session.RTH:
+        if not in_rth:
             self.page("unprotected_outside_rth_until_pr2", symbol)
             return
-        self._submit_trail(symbol, whole)
+        self._submit_trail(symbol, protective)
 
     def _submit_trail(self, symbol: str, whole: int) -> None:
         self._sequence += 1
