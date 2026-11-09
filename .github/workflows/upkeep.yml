@@ -186,13 +186,17 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
+          UPKEEP_BRIEF: ${{ steps.brief.outputs.brief }}
         run: |
           set -euo pipefail
           mkdir -p .upkeep
           touch .upkeep/previous-receipt.md
           note="$(gh issue list --repo "$GH_REPO" --state all --search '"Hosted upkeep receipts" in:title' --json number,title --jq '.[] | select(.title == "Hosted upkeep receipts") | .number' | head -n 1)"
           if [[ -n "$note" ]]; then
-            gh issue view "$note" --repo "$GH_REPO" --json body,comments --jq 'if (.comments | length) == 0 then .body else .comments[-1].body end' >> .upkeep/previous-receipt.md
+            # The tracker holds one receipt per brief; take the last one for this brief,
+            # never another brief's newer receipt.
+            gh issue view "$note" --repo "$GH_REPO" --json body,comments \
+              | jq -r --arg brief "$UPKEEP_BRIEF" '([.body] + [.comments[].body]) | map(select(startswith("### `" + $brief + "`"))) | last // empty' >> .upkeep/previous-receipt.md
           fi
 
       - name: Run the dsh headless upkeep worker

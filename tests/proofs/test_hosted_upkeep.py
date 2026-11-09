@@ -134,6 +134,14 @@ def test_worker_gets_a_read_only_token_and_no_write_token() -> None:
         assert forbidden not in _text()
 
 
+def test_the_previous_receipt_is_filtered_to_the_selected_brief() -> None:
+    fetch = _step("Fetch the previous run receipt")
+    assert fetch["env"]["UPKEEP_BRIEF"] == "${{ steps.brief.outputs.brief }}"
+    assert "--arg brief" in fetch["run"]
+    assert "startswith" in fetch["run"]
+    assert ".comments[-1]" not in fetch["run"], "a newer other-brief receipt must not win"
+
+
 def test_pr_path_uses_the_app_token_and_the_default_branch_base() -> None:
     mint = _step("Mint the pull-request app token")
     assert mint["id"] == "app-token"
