@@ -38,7 +38,7 @@
 
 ## Custody and budgets
 
-- The owner's orders are never cancelled, sold back, resized or adopted; a reconciled owner fill is claimed within `claim_max_latency_s` and protected at once. [ADR-0007](../adr/0007-custody-and-order-writing.md)
+- The owner's orders are never cancelled, sold back, resized or adopted; every unreserved whole long share is covered by exactly one house trail of the full net quantity, re-armed whenever that quantity changes, and pages are informational. [ADR-0007](../adr/0007-custody-and-order-writing.md)
 - One writer and one pacer per account, one exit per quantity, never a second full-size exit; a foreign order or a quantity mismatch freezes the symbol and pages. [ADR-0007](../adr/0007-custody-and-order-writing.md)
 - Recheck paper submission admission after durable registration, excluding only that request's own reservation; a refusal retains lineage and emits no native command or wire accounting. [ADR-0007](../adr/0007-custody-and-order-writing.md), [shared-node regression](../research/2026-11-06-shared-paper-node.md)
 - SELLs require row-8 custody readiness and enough unreserved residual before and after registration; an account callback cannot grant missing custody or bypass an unreported exit. [ADR-0007](../adr/0007-custody-and-order-writing.md), [flatten witness](../research/2026-11-06-shared-paper-node.md)
