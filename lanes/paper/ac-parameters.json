@@ -1,0 +1,125 @@
+{
+  "schema": 1,
+  "profiles": {
+    "a": {
+      "slot": null,
+      "lane": "alpaca-paper-a",
+      "a_risk_per_trade": {
+        "value": "0.01",
+        "unit": "fraction of the frozen segment basis",
+        "scope": "REVIEWED",
+        "calibration": "UNCALIBRATED",
+        "source": "docs/adr/0002-philosophy-and-lanes.md:26 A/Balanced Tier L 1.0%",
+        "last_change": "2026-11-09"
+      },
+      "a_target_names": {
+        "value": "5",
+        "unit": "names",
+        "scope": "REVIEWED",
+        "calibration": "UNCALIBRATED",
+        "source": "docs/adr/0002-philosophy-and-lanes.md:26 five-name profile",
+        "last_change": "2026-11-09"
+      },
+      "a_mover_slots": {
+        "value": "2",
+        "unit": "mover slots",
+        "scope": "REVIEWED",
+        "calibration": "UNCALIBRATED",
+        "source": "docs/adr/0024-extreme-mover-ranking-and-early-entry.md 2/5 split",
+        "last_change": "2026-11-09"
+      },
+      "a_rank_ceiling_top": {
+        "value": "2",
+        "unit": "risk multiple for ranks 1-5",
+        "scope": "REVIEWED",
+        "calibration": "UNCALIBRATED",
+        "source": "docs/adr/0002-philosophy-and-lanes.md:26 2x/1.5x/1x ceilings",
+        "last_change": "2026-11-09"
+      },
+      "a_rank_ceiling_mid": {
+        "value": "1.5",
+        "unit": "risk multiple for ranks 6-10",
+        "scope": "REVIEWED",
+        "calibration": "UNCALIBRATED",
+        "source": "docs/adr/0002-philosophy-and-lanes.md:26 2x/1.5x/1x ceilings",
+        "last_change": "2026-11-09"
+      },
+      "a_rank_ceiling_rest": {
+        "value": "1",
+        "unit": "risk multiple outside the top ten",
+        "scope": "REVIEWED",
+        "calibration": "UNCALIBRATED",
+        "source": "docs/adr/0002-philosophy-and-lanes.md:26 2x/1.5x/1x ceilings",
+        "last_change": "2026-11-09"
+      },
+      "a_equity_mode": {
+        "value": "fixed",
+        "unit": "sizing basis",
+        "scope": "REVIEWED",
+        "calibration": "UNCALIBRATED",
+        "source": "docs/adr/0011-sizing-and-auto-leverage.md S1 frozen full-portfolio basis",
+        "last_change": "2026-11-09"
+      }
+    },
+    "c": {
+      "slot": 3,
+      "lane": "alpaca-paper-c",
+      "c_risk_per_trade": {
+        "value": "0.01",
+        "unit": "fraction of current equity",
+        "scope": "FIXTURE_ONLY",
+        "calibration": "UNCALIBRATED",
+        "source": "docs/design.md:161 lead recommendation only; the owner has not decided the replacement risk",
+        "last_change": "2026-11-09"
+      },
+      "c_target_names": {
+        "value": "20",
+        "unit": "names",
+        "scope": "FIXTURE_ONLY",
+        "calibration": "UNCALIBRATED",
+        "source": "docs/adr/0002-philosophy-and-lanes.md:26 superseded 20-name shape; replacement unresolved",
+        "last_change": "2026-11-09"
+      },
+      "c_mover_slots": {
+        "value": "8",
+        "unit": "mover slots",
+        "scope": "REVIEWED",
+        "calibration": "UNCALIBRATED",
+        "source": "docs/adr/0024-extreme-mover-ranking-and-early-entry.md 8/20 split",
+        "last_change": "2026-11-09"
+      },
+      "c_rank_ceiling_top": {
+        "value": "1",
+        "unit": "risk multiple for ranks 1-5",
+        "scope": "FIXTURE_ONLY",
+        "calibration": "UNCALIBRATED",
+        "source": "docs/adr/0002-philosophy-and-lanes.md:26 superseded 1x shape; replacement unresolved",
+        "last_change": "2026-11-09"
+      },
+      "c_rank_ceiling_mid": {
+        "value": "1",
+        "unit": "risk multiple for ranks 6-10",
+        "scope": "FIXTURE_ONLY",
+        "calibration": "UNCALIBRATED",
+        "source": "docs/adr/0002-philosophy-and-lanes.md:26 superseded 1x shape; replacement unresolved",
+        "last_change": "2026-11-09"
+      },
+      "c_rank_ceiling_rest": {
+        "value": "1",
+        "unit": "risk multiple outside the top ten",
+        "scope": "FIXTURE_ONLY",
+        "calibration": "UNCALIBRATED",
+        "source": "docs/adr/0002-philosophy-and-lanes.md:26 superseded 1x shape; replacement unresolved",
+        "last_change": "2026-11-09"
+      },
+      "c_equity_mode": {
+        "value": "current",
+        "unit": "sizing basis",
+        "scope": "FIXTURE_ONLY",
+        "calibration": "UNCALIBRATED",
+        "source": "b-clean/BRIEF.md 10:4x addendum: C compounds on current equity; owner decision pending",
+        "last_change": "2026-11-09"
+      }
+    }
+  }
+}

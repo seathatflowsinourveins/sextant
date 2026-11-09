@@ -166,9 +166,10 @@ class Protector:
         *,
         now_ns: Callable[[], int] = time.time_ns,
         on_page: Callable[[Page], None] | None = None,
+        lane: str = B_LANE,
     ) -> None:
-        if account.lane != B_LANE:
-            raise ProtectorRefusal("B's protector runs only on the slot-2 B paper lane")
+        if account.lane != lane:
+            raise ProtectorRefusal(f"the protector runs only on the {lane} paper lane")
         self._client = client
         self._account = account
         self._parameters = parameters
@@ -180,6 +181,10 @@ class Protector:
         self._last_position: dict[str, Decimal] = {}
         self._last_reserved: dict[str, Decimal] = {}
         self._sequence = 0
+
+    @property
+    def account(self) -> PaperAccount:
+        return self._account
 
     def page(self, reason: str, symbol: str | None = None, detail: str = "") -> None:
         page = Page(reason=reason, symbol=symbol, detail=detail)
