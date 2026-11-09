@@ -40,6 +40,8 @@
         "host": {"pnpm": "pnpm@11.28.8", "openspec": "@fission-ai/openspec@1.14.3", "codegraph": "@colbymchenry/codegraph@1.6.2"},
         "plugins": [
           {"package": "@stardustlc/dsh-review", "spec": "@stardustlc/dsh-review@0.3.0"},
+          {"package": "dsh-goalloop-agentteams", "spec": "github:samirliu/dsh-goalloop-agentteams#6b4b1fad8cd61f98e6eedbb4f12ed10b5dc93f17"},
+          {"package": "sextant-dsh-review-cmd", "spec": "config/dsh/review-cmd"},
           {"package": "dsh-doublecheck", "spec": "dsh-doublecheck@0.9.29"},
           {"package": "dsh-openspec-opsx", "spec": "dsh-openspec-opsx@1.0.0"},
           {"package": "dsh-github-skills", "spec": "dsh-github-skills@0.2.1"},
