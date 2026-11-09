@@ -114,8 +114,48 @@ Final source verdict: **NOT CLEARED (2/4 bars); advisory-only**. Thresholds were
 Use the package's citations, IDs, dossiers and falsifications as seeds; sizes and line counts are in ADR-0027. Re-derive upstream prices/corporate actions, dated share-class membership including delistings/ticker reuse, actual public float and information-availability clocks; retain missing outcomes and build ordinary non-mover controls across every eligible stock-day. Pre-ignition labels, extended-hours/tick coverage, executable fills, costs and the complete cumulative trial family remain **unverified**.
 The existing source practice is one Nautilus catalog, one writer and immutable receipts: northstar-trading@8256c16c31dc:docs/adr/0007-storage-and-data-catalog.md, Decision 1 and all amendments; upstream `ParquetDataCatalog`/`StreamingConfig` references are carried there. This harvest changes no data vendor, engine, rank formula, risk limit, Jev contract or options admission, adds no manifest row and executes no package Python.
 
-## W8 extension check: local data stops at 2026-09-22 (2026-11-09)
+## W8 extension: 33 daily leaders, 2026-09-23 to 2026-11-06 (2026-11-09)
 
-The W8 ruling (`LEAD-0831`, item 2) asked for this daily series to be extended past 2026-09-22 from local data only, under the selection rule above, and to report UNKNOWN if the local data did not reach that date. It does not, so no day was added.
-The W1 capture `~/sextant-data/sharadar-42/` (as of 2026-11-06T16:58:52+00:00; `capture.json` sha256 `cd158d7932f58190b2ffddf2f380d0c2bbd235b5aad3789e079b08afc1ea7de3`) holds 945 SEP rows over 712 tickers and 773 dates, 2021-01-08 to 2026-09-22, with **zero price rows after 2026-09-22**; SFP has one row (2021-04-28); `report/events.jsonl` carries 946 price rows, all ≤ 2026-09-22; `report/sessions/` has 1,436 metadata-only files ending 2026-09-22. TICKERS' `lastpricedate` reaches 2026-11-05 for 24,032 rows, but that is vendor metadata, not local price rows. The SEP table is a literal-symbol harvest keyed to these events, not a daily cross-section, and the manifest (`4db0d36bd1892a06dc1e94b0afa77cbee207cf5988caccc28880ea4b3f0903b6`) has `members: []`, `pit_verified: false` and `survivor_only: true`.
-Verdict: **UNKNOWN — 0 new trading days added**; the collection stays at 957 gainers + 215 losers. Unblocking needs an owner-authorized capture of daily SEP rows for a dated US-equity universe (including delistings if the survivor-only defect is to be fixed) plus a per-day verification source; this check fetches no data.
+The lead's 2026-11-05 ruling (`LEAD-1105`, item 3; sha256 `31edb97a9bf3d93caf9e05dbe0cc42ed8f2928caaddd0a186c27cc31e8ad26da`) authorized a market-data fetch after the earlier local-only check found zero price rows after 2026-09-22. Slot 3 has no writer; the fetch used market data only, no order client and no live endpoint. This section supersedes that UNKNOWN verdict; the local audit through 2026-09-22 remains in the git history.
+
+**Method.** Daily bars came from Alpaca SIP through `src/sextant/data/alpaca_history.py` (`AlpacaHistory`, `StockHistoricalDataClient`), split-adjusted, for the 2026-09-22 baseline and the 33 XNYS sessions 2026-09-23..2026-11-06. The universe is the 5,868 Sharadar TICKERS common-stock symbols with a price in the window (16,738 window rows, 5,920 unique tickers; 52 `.U` unit suffixes removed), not a point-in-time membership. Batched requests returned 197,796 bars over 24 pages with 0 invalid symbols and 0 errors. For each session the leader is the largest close-to-close gain versus the prior XNYS session with volume > 0, prior close > 0 and no split action that day; one leader per session, 33/33 sessions covered, no session skipped. Eight `*U` acquisition shells were removed from the candidate list; that changed two sessions: 2026-10-08 from ALISU (+140.24%) to FLYE (+82.68%), and 2026-10-26 from RFAIU (+60.40%) to CLRO (+52.92%). No ≥50% threshold is applied; the package's 2026 collection is not rewritten, and these 33 rows are a separate extension.
+
+**Labels and limits.** `survivor_only = true`, `pit_verified = false`, `catalyst_verified = false`, `gov_policy_verified = false`. TICKERS includes names with `lastpricedate >= 2026-09-22`, but it is current vendor metadata, not a dated membership: delistings, ticker reuse and late symbol changes can be missed. The leader is a retrospective close-to-close session label, not a pre-open signal; information availability, intraday path, actual float, volume multiple, extended-hours coverage and executable fills are unverified. Tickers are as of the event date. FFTT split 1-for-8 on 2026-08-11 before its 09-25 event and had a ticker change on 2026-10-28; WFF split 1-for-25 on 2026-10-30 after its event; NIVF did reverse splits on 2026-10-12 and 2026-10-23 after its event; SAIQ SPAC-merged on 2026-10-02; AIOK listed 2026-10-09; SHFS split 1-for-12 on 2026-09-30. The CSV marks each of these in `Notes`.
+
+| Date | Ticker | Gain % | Prior close | Close | Volume |
+|---|---:|---:|---:|---:|---:|
+| 2026-09-23 | BENF | 438.73 | 0.5383 | 2.9 | 295,011,514 |
+| 2026-09-24 | APUS | 114.85 | 2.29 | 4.92 | 87,845,737 |
+| 2026-09-25 | FFTT | 309.64 | 1.97 | 8.07 | 56,123,813 |
+| 2026-09-28 | KNRX | 304.61 | 0.304 | 1.23 | 290,973,140 |
+| 2026-09-29 | SDEV | 108.28 | 1.57 | 3.27 | 192,555,532 |
+| 2026-09-30 | NIVF | 133.33 | 2.304 | 5.376 | 26,848,980 |
+| 2026-10-01 | SSM | 97.32 | 1.12 | 2.21 | 50,482,027 |
+| 2026-10-02 | AMOD | 198.29 | 1.17 | 3.49 | 194,459,091 |
+| 2026-10-05 | MI | 683.00 | 0.894 | 7 | 166,953,867 |
+| 2026-10-06 | OLB | 117.85 | 0.1882 | 0.41 | 765,745,527 |
+| 2026-10-07 | WORX | 442.45 | 1.06 | 5.75 | 165,048 |
+| 2026-10-08 | FLYE | 82.68 | 1.27 | 2.32 | 133,013,260 |
+| 2026-10-09 | WFF | 499.51 | 51.25 | 307.25 | 5,842,775 |
+| 2026-10-12 | MNDR | 257.65 | 0.85 | 3.04 | 192,515,785 |
+| 2026-10-13 | JBDI | 243.00 | 1 | 3.43 | 92,635,962 |
+| 2026-10-14 | GLND | 76.47 | 2.21 | 3.9 | 175,017,978 |
+| 2026-10-15 | ESLA | 68.35 | 0.3179 | 0.5352 | 63,107,567 |
+| 2026-10-16 | XLAB | 72.79 | 1.36 | 2.35 | 171,627,173 |
+| 2026-10-19 | SLN | 125.58 | 8.68 | 19.58 | 71,919,313 |
+| 2026-10-20 | SAIQ | 100.59 | 3.41 | 6.84 | 58,095,887 |
+| 2026-10-21 | SHFS | 71.52 | 0.0899 | 0.1542 | 571,955,869 |
+| 2026-10-22 | TANH | 181.84 | 8.81 | 24.83 | 2,212,652 |
+| 2026-10-23 | AIOK | 182.82 | 4.25 | 12.02 | 42,894,587 |
+| 2026-10-26 | CLRO | 52.92 | 3.25 | 4.97 | 83,112,411 |
+| 2026-10-27 | BRAI | 56.13 | 2.12 | 3.31 | 51,786,722 |
+| 2026-10-28 | ULBI | 145.44 | 6.36 | 15.61 | 2,503,001 |
+| 2026-10-29 | BURU | 115.98 | 0.1721 | 0.3717 | 936,648,753 |
+| 2026-10-30 | ONEG | 108.15 | 0.7831 | 1.63 | 109,705,370 |
+| 2026-11-02 | INO | 213.75 | 0.6024 | 1.89 | 222,260,402 |
+| 2026-11-03 | CHSN | 241.24 | 0.9905 | 3.38 | 90,898,532 |
+| 2026-11-04 | OMH | 432.53 | 2.92 | 15.55 | 93,411,151 |
+| 2026-11-05 | LABT | 182.45 | 0.1914 | 0.5406 | 753,750,596 |
+| 2026-11-06 | SDA | 144.80 | 0.1538 | 0.3765 | 566,320,480 |
+
+Artifacts: [`daily-leaders.csv`](2026-11-09-daily-movers-ext/daily-leaders.csv) (33 rows, sha256 `bd6b354e1be2e454acc6ae4e98fd0ea83359b10786c328929f48f8de9a6e27b1`) and [`provenance.json`](2026-11-09-daily-movers-ext/provenance.json) (fetch parameters, input and page hashes, universe counts, unit exclusions and output hashes; sha256 `1a11be9b88ae92172c1d96e51ba40ee128988a3391a779ffad0e7785eed2e8c0`). Verdict: **33 trading sessions added** (2026-09-23..2026-11-06), survivor-only, price-only; the package's 957 gainers + 215 losers remain unchanged and no trading claim follows.

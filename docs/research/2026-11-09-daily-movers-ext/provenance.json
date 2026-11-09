@@ -1,0 +1,271 @@
+{
+ "coverage": {
+  "bars": 197796,
+  "errors": [],
+  "invalid_symbols": [],
+  "page_sha256": [
+   "55e5dc2cf306f027b1a057125be42fa37b6d44ad7719e98a0eea0c66cec8ee3d",
+   "fb45f756334c4a915fc53c028f53ea9cb8f476680b4f64ea87000080ee24fb54",
+   "3a974bb4c37f47c92a101b6e3ae928bad84b72f3b4c9a46cc1ea3b8a9bc8aad4",
+   "47931408859913e0db33cbef9f206bf9692450182e82ae6528cfa2c159f4a744",
+   "79a6883b254ffe5d29068a0732cf7c183eb891c0fecf6f242b24e3d971907111",
+   "cfc963fd0aa35b6a75da8a55d4155eb82d3558fdae1ae73fc9bdc4eb527ca9c8",
+   "277f0632c76a1d2ab8f282eb48f3c68b66781c2f02c0a47ac65f2bd6c1634c5e",
+   "01fce5e18454edca51e0400228e5c2b3c975921bf4b56a41396878fe7d25a22d",
+   "f145007d8284d138624cda331e51e62e128cff37f58b22d7e1d61d9a426f0583",
+   "42ef00f5611105a8ea744b10a3040161a95f59a04e2ae237ab57d4d8e07d8a96",
+   "3aca73ff52c48b1d6114b3f3646ae4f6656df90230cbaf07e47d759707d57e93",
+   "726fa26fd9da30b985472f4eca2c522fbba9a58446bd787449f7fa554a3cfb77",
+   "5629aa6135b290c99437ce2f0d2a80353eafa949cc8eab4638f69be0722d42a5",
+   "2f9f72710d7d15a347d5138b700665caf8e455f11bc556a386fb3a272cbdcdb6",
+   "95960389a4140022740d880b13db0ea5239fe8b7cd9804c44384aef12e7406d1",
+   "e530ae293c7a9d96c31f3b801f1b4d2035e499a4edcb237e8cea67ff3fa6b6ed",
+   "51bb5ff892ac5347c15bdda00e091dc32a6f9e9dcf0c8e1beb15a2b81c3241e6",
+   "80aeec89585698fc04f3f5d995b6f64afad43f36f013c427caab2e30ff91a663",
+   "ca738acb2fc820a8e6564c2a7b4e375ab74733fb112633f1f8f9cd231df5794b",
+   "865c2f4f0bf96683fe2050ef4e2d2fe6c8d90412ae77bc7129edb7b22ffab4ac",
+   "674bc1ce078a8cd79f487322cb997d1c140521422f997b5bc0f2c20014a4a09c",
+   "cf4fb1702bf51ba0e74cb2fd9858f86688c88466ec565e281f97de23500d1bdf",
+   "b3ab93bc7913e1adc012b972daa97c2c9c8f6d41aad72a880d1e0a835408fad4",
+   "17fe917372c8ddbcaaa361aba39372b0c72c6c22ccd434313bf8053f5b81f1ee"
+  ],
+  "pages": 24,
+  "sessions_returned": [
+   "2026-09-22",
+   "2026-09-23",
+   "2026-09-24",
+   "2026-09-25",
+   "2026-09-28",
+   "2026-09-29",
+   "2026-09-30",
+   "2026-10-01",
+   "2026-10-02",
+   "2026-10-05",
+   "2026-10-06",
+   "2026-10-07",
+   "2026-10-08",
+   "2026-10-09",
+   "2026-10-12",
+   "2026-10-13",
+   "2026-10-14",
+   "2026-10-15",
+   "2026-10-16",
+   "2026-10-19",
+   "2026-10-20",
+   "2026-10-21",
+   "2026-10-22",
+   "2026-10-23",
+   "2026-10-26",
+   "2026-10-27",
+   "2026-10-28",
+   "2026-10-29",
+   "2026-10-30",
+   "2026-11-02",
+   "2026-11-03",
+   "2026-11-04",
+   "2026-11-05",
+   "2026-11-06"
+  ]
+ },
+ "fetch": {
+  "adjustment": "split",
+  "batch_size": 500,
+  "calls_per_minute": "150",
+  "elapsed_seconds": 106.4,
+  "end": "2026-11-06T23:59:59.999999-05:00",
+  "feed": "sip",
+  "source": "Alpaca SIP daily bars",
+  "start": "2026-09-22T00:00:00-04:00",
+  "timeframe": "1Day",
+  "transport": "src/sextant/data/alpaca_history.py (AlpacaHistory)"
+ },
+ "generated_at": "2026-11-09T12:09:02.460172-05:00",
+ "inputs": {
+  "actions": {
+   "file": "actions-10Y.csv",
+   "sha256": "e7d36a769f7fe0273f2f3b5f471e143c4a168806596aff142a2af8f038ca0ff8"
+  },
+  "package_zip_sha256": "f581ca7f771bf20ef05e212ce88aaaacda7325c640500d63926b23a0516d0577",
+  "ruling_sha256": "31edb97a9bf3d93caf9e05dbe0cc42ed8f2928caaddd0a186c27cc31e8ad26da",
+  "tickers": {
+   "file": "tickers.csv",
+   "sha256": "69c0a399139dbd8e572a523e09dfec2a68c4fd07191bad8be4a6d1a6d4af4fa7"
+  }
+ },
+ "labels": {
+  "pit_verified": false,
+  "survivor_only": true,
+  "catalyst_verified": false,
+  "gov_policy_verified": false,
+  "timing": "daily close-to-close; retrospective session label, not a pre-open signal"
+ },
+ "leaders": {
+  "count": 33,
+  "criteria": "largest close-to-close gain vs the prior XNYS session, volume > 0, prior close > 0, split-action day skipped, SPAC units excluded",
+  "skipped": []
+ },
+ "outputs": {
+  "daily_leaders_csv_sha256": "bd6b354e1be2e454acc6ae4e98fd0ea83359b10786c328929f48f8de9a6e27b1",
+  "daily_leaders_csv": "docs/research/2026-11-09-daily-movers-ext/daily-leaders.csv",
+  "leaders_final_json_sha256": "8745f5bd5e80c90de8cbb895d94b3177ebc356ea42a0428dd0a734f846273882",
+  "top10_final_json_sha256": "9606839350d4bf302c39551f760147134e9e1834941143deaea29aec53d92e4d"
+ },
+ "script_sha256": "fe89ca5338cf74a906c1b1002c1ad482bf29a54b56722c6a1a0984f059a3d72f",
+ "task": "W8 daily-mover extension (lead 2026-11-05 ruling item 3)",
+ "universe": {
+  "categories": {
+   "ADR Common Stock": 850,
+   "ADR Common Stock Primary Class": 173,
+   "ADR Common Stock Secondary Class": 8,
+   "Canadian Common Stock": 153,
+   "Canadian Common Stock Primary Class": 10,
+   "Domestic Common Stock": 3230,
+   "Domestic Common Stock Primary Class": 1162,
+   "Domestic Common Stock Secondary Class": 334
+  },
+  "exchanges": {
+   "BATS": 2,
+   "NASDAQ": 3700,
+   "NYSE": 1957,
+   "NYSEARCA": 3,
+   "NYSEMKT": 246,
+   "OTC": 3,
+   "TXSE": 9
+  },
+  "filter": "Sharadar TICKERS category contains 'Common Stock'; firstpricedate <= 2026-11-06; lastpricedate >= 2026-09-22",
+  "suffix_excluded": [
+   "AAC.U",
+   "AIIA.U",
+   "ALUB.U",
+   "BCSS.U",
+   "BEBE.U",
+   "BIII.U",
+   "BWIV.U",
+   "CLBR.U",
+   "COPL.U",
+   "DGAC.U",
+   "ETSS.U",
+   "EVAC.U",
+   "FCRS.U",
+   "FTRA.U",
+   "GLED.U",
+   "HYAC.U",
+   "IRAB.U",
+   "JACS.U",
+   "JENA.U",
+   "KCA.U",
+   "KCAC.U",
+   "KPET.U",
+   "KRSP.U",
+   "LEGO.U",
+   "MTAL.U",
+   "MTNE.U",
+   "MZYX.U",
+   "NWAX.U",
+   "OCAC.U",
+   "OTAI.U",
+   "PAII.U",
+   "PLUN.U",
+   "PNAQ.U",
+   "PORT.U",
+   "QRED.U",
+   "RAC.U",
+   "SAC.U",
+   "SAGU.U",
+   "SAMO.U",
+   "SBXD.U",
+   "SBXE.U",
+   "SOUL.U",
+   "TONT.U",
+   "TRAD.U",
+   "UAC.U",
+   "VACI.U",
+   "VECA.U",
+   "VII.U",
+   "WENC.U",
+   "WPAC.U",
+   "XFLH.U",
+   "YCY.U"
+  ],
+  "symbols_fetched": 5868,
+  "unique_tickers": 5920,
+  "window_rows": 16738,
+  "unit_like_symbols": 8,
+  "symbols_after_unit_exclusion": 5860
+ },
+ "window": {
+  "baseline_session": "2026-09-22",
+  "first_session": "2026-09-23",
+  "last_full_session": "2026-11-06",
+  "last_session": "2026-11-06",
+  "sessions": 33
+ },
+ "units_excluded": {
+  "rule": "ticker ends U and name contains ACQUISITION/SPAC/BLANK CHECK",
+  "count": 8,
+  "tickers": [
+   {
+    "ticker": "ALISU",
+    "name": "CALISA ACQUISITION CORP",
+    "category": "Domestic Common Stock Secondary Class"
+   },
+   {
+    "ticker": "BKHAU",
+    "name": "BLACK HAWK ACQUISITION CORP",
+    "category": "Domestic Common Stock Secondary Class"
+   },
+   {
+    "ticker": "CCAQU",
+    "name": "COLLECTIVE ACQUISITION CORP",
+    "category": "Domestic Common Stock Secondary Class"
+   },
+   {
+    "ticker": "FVNNU",
+    "name": "FUTURE VISION II ACQUISITION CORP",
+    "category": "Domestic Common Stock Secondary Class"
+   },
+   {
+    "ticker": "RDACU",
+    "name": "RISING DRAGON ACQUISITION CORP",
+    "category": "Domestic Common Stock Secondary Class"
+   },
+   {
+    "ticker": "RFAIU",
+    "name": "RF ACQUISITION CORP II",
+    "category": "Domestic Common Stock Secondary Class"
+   },
+   {
+    "ticker": "RIBBU",
+    "name": "RIBBON ACQUISITION CORP",
+    "category": "Domestic Common Stock Secondary Class"
+   },
+   {
+    "ticker": "XRPNU",
+    "name": "ARMADA ACQUISITION CORP II",
+    "category": "Domestic Common Stock Secondary Class"
+   }
+  ]
+ },
+ "leader_selection": {
+  "changed_days": {
+   "2026-10-08": {
+    "raw_leader": "ALISU",
+    "raw_gain_pct": "140.24",
+    "leader": "FLYE",
+    "gain_pct": "82.68",
+    "reason": "SPAC unit excluded"
+   },
+   "2026-10-26": {
+    "raw_leader": "RFAIU",
+    "raw_gain_pct": "60.40",
+    "leader": "CLRO",
+    "gain_pct": "52.92",
+    "reason": "SPAC unit excluded"
+   }
+  },
+  "note": "top-10 audit is price-only; in the two changed days the next non-unit candidate was used"
+ },
+ "finalized_at": "2026-11-09T17:13:16.175891+00:00",
+ "finalize_script_sha256": "13ddd0eeeceb312906580962d24dba7b5046f0063e49cf3d093c9b7b18ec4027",
+ "provenance_version": 1
+}
