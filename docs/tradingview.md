@@ -167,7 +167,8 @@ mutation replay or rollback. A refused/dry run records no successful-sync time.
 15:00–16:00 ET onset windows, 300s otherwise inside 04:00–20:00 ET, 900s above
 the 80% weekly-usage mark). It rereads the newest complete unit each tick; a
 missing, stale or invalid unit leaves both lists unchanged and pages once per
-distinct episode. It claims only when the observed `NS movers` and `NS focus`
+distinct episode. Pages go straight to stderr, not through `logging`: the
+OAuth redaction guard disables logging for the whole consent session. It claims only when the observed `NS movers` and `NS focus`
 pair differs from the last completed read-back, so unchanged membership never
 calls the cloud. It exits at the 20:00 ET display close with a window-closed
 message, and it never holds the OAuth session across the closed window. A failed

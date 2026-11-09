@@ -20,6 +20,7 @@ from mcp import Client
 from test_tradingview import NOW, Peer, change, unit
 
 from sextant.tradingview import sync as sync_module
+from sextant.tradingview.auth import sensitive_logging
 from sextant.tradingview.cadence import Cadence
 from sextant.tradingview.inputs import _ns, read_research_inputs
 from sextant.tradingview.sync import OfficialTools, SyncError
@@ -201,6 +202,37 @@ def test_loop_does_not_sync_an_unchanged_pair(tmp_path):
     assert result == 0
     assert syncs == [] and delays == [] and pages == []
     assert not (tmp_path / "state" / "j5-cadence.json").exists()
+
+
+def test_default_page_reaches_the_owner_inside_the_consent_session(tmp_path, capsys):
+    module = loop()
+    directory = unit(tmp_path / "unit")
+    change(directory, "top100.json", status="stale")
+    clock, delays = Clock(), []
+    gate = cadence(tmp_path, baseline={"NS movers": [], "NS focus": []})
+
+    async def sync(tools, inputs, *, apply):
+        raise AssertionError("a stale unit never syncs")
+
+    with sensitive_logging():
+        result = asyncio.run(
+            module.serve(
+                tools=object(),
+                cadence=gate,
+                research_dir=directory,
+                max_age=1200,
+                clock=clock,
+                sleep=sleeper(clock, delays),
+                page=module._page,
+                weekly_usage_pct=Decimal(0),
+                usage_source=NO_USAGE,
+                sync=sync,
+                cycles=1,
+            )
+        )
+    assert result == 0
+    assert delays == []
+    assert "lists unchanged" in capsys.readouterr().err
 
 
 def test_loop_pages_once_for_a_stale_unit_and_leaves_the_lists(tmp_path):

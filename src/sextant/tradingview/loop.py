@@ -12,9 +12,9 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 import re
 import subprocess
+import sys
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -52,8 +52,13 @@ _STOP = (
 
 
 def _page(reason: str) -> None:
-    """One ERROR line per episode, as exits/engine.py pages an unprotected holding."""
-    logging.getLogger(__name__).error("%s", reason)
+    """One page per episode on a channel the consent session cannot silence.
+
+    auth.sensitive_logging() disables logging at CRITICAL around the owner
+    consent session, so an ERROR record would be dropped. stderr is written
+    directly, as northstar-trading@8256c16c __main__.py:328 prints a refused unit.
+    """
+    print(reason, file=sys.stderr, flush=True)
 
 
 def _registry_receipt(path: Path) -> tuple[bool, str]:

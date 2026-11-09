@@ -191,7 +191,9 @@ the two explicit memberships into a display-admission view, and calls
 verified `applied` result with both read-back keys calls `finish(successful=True)`
 with the operation count and read-back sizes as its receipt. A refused or stale
 unit never becomes an empty desired list: it leaves both lists unchanged and
-pages once per distinct episode. A sync failure finishes the run as failed,
+pages once per distinct episode. The page is written straight to stderr
+because the OAuth redaction guard disables `logging` for the consent session,
+so an ERROR record would be dropped. A sync failure finishes the run as failed,
 latching the same no-retry policy, and stops the process. The loop exits at the
 20:00 ET display close rather than holding OAuth across the closed window, and it
 has no catch-up queue.
