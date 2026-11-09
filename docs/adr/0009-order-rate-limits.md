@@ -37,6 +37,7 @@ Broker requests, wire order actions, new orders and fills are separate counters;
 - COMMON.md, owner 2026-11-05/06, verbatim: "our compounding learning,reflecting, memory/rag etc need to be clean enhacned with sotarepos,adrs harvest with previous convergenced campaign but clean sota architecture never bloat, including the harness rules, our trading philosophy 24/5 24/7 and always previous stated limit ,1000trades/min live lane and 200 paper, 3000for ibkr paper and live"
 - COMMON.md, owner 2026-11-05/06, verbatim: "EVERY HARNESS,EVERY ACTIONS NEED TO BE BUILT FORM SOTA SOURCES ITSELF, INCLUDING THIS VERY HARNESS , FOCUING ON THE TRADING TOPIC , THE QUALITT AND SOTANESS ITSELF RATHER THAN SECURITY OVEREGINNERING ETC"
 - BRIEF-B.md requires the exact limits above and `lanes/limits.yaml`; it introduces no new rate mechanism or broker entitlement.
+- Pacing uses the upstream window reading: the bucket admits at most `request_budget` actions in any 60 s window, so the 180 budget is already below the broker's 200 and the burst does not add to it. A lane that declares N slots and carries the house 2/1 floor needs `burst >= 2N + 1`; a 20-slot lane starts only with a registry row that satisfies it (180/41 under this reading), UNCALIBRATED. Option (c), capping the admission reserve at `burst - 1`, remains rejected.
 
 ## Code and config to carry
 - northstar-trading: configs/lanes.yaml@8256c16c31dc — 166 lines.

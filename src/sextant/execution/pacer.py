@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from enum import IntEnum
 
-from sextant.risk.controls import Controls
+from sextant.risk.controls import ENTRY_RESERVE_EXCEEDS_BURST, Controls
 
 
 class ActionKind(IntEnum):
@@ -25,6 +25,10 @@ class ActionKind(IntEnum):
 
 class PacerRefused(RuntimeError):
     """The account pacer did not admit a broker call; the caller must fail closed."""
+
+    def __init__(self, reason: str, message: str | None = None):
+        self.reason = reason
+        super().__init__(message or reason)
 
 
 class TokenBucket:
@@ -87,18 +91,24 @@ class AccountPacer:
         exiting_positions: int = 0,
         position_counts: Callable[[], tuple[int, int]] | None = None,
     ):
-        heapq.heappush(
-            self.queue,
-            Queued(
-                int(kind),
-                next(self.sequence),
-                send,
-                admission,
-                open_positions,
-                exiting_positions,
-                position_counts,
-            ),
+        item = Queued(
+            int(kind),
+            next(self.sequence),
+            send,
+            admission,
+            open_positions,
+            exiting_positions,
+            position_counts,
         )
+        if item.kind == ActionKind.SUBMIT:
+            reserve = self._entry_reserve(item)
+            if reserve is not None and reserve >= self.bucket.burst:
+                raise PacerRefused(
+                    ENTRY_RESERVE_EXCEEDS_BURST,
+                    f"{ENTRY_RESERVE_EXCEEDS_BURST}: entry reserve {reserve} "
+                    f">= burst {self.bucket.burst}",
+                )
+        heapq.heappush(self.queue, item)
         self.drain()
 
     def _entry_reserve(self, item: Queued) -> int | None:
@@ -129,6 +139,9 @@ class AccountPacer:
             if item.kind == ActionKind.SUBMIT:
                 reserve = self._entry_reserve(item)
                 if reserve is None:
+                    heapq.heappop(self.queue)
+                    continue
+                if reserve >= self.bucket.burst:
                     heapq.heappop(self.queue)
                     continue
                 if self.bucket.tokens <= reserve:
