@@ -270,7 +270,7 @@ AO_TELEMETRY_SQL = (
 )
 
 ORCA_COMMANDS: tuple[tuple[str, ...], ...] = (
-    ("status",),
+    ("status", "--json"),
     ("worktree", "ps", "--json"),
     ("terminal", "list", "--json"),
     ("orchestration", "task-list", "--json"),
@@ -751,6 +751,9 @@ def _count(payload: Any) -> int | None:
     if isinstance(payload, list):
         return len(payload)
     if isinstance(payload, dict):
+        nested = payload.get("result")
+        if isinstance(nested, dict):
+            payload = nested
         for key in (
             "worktrees",
             "terminals",
@@ -765,10 +768,27 @@ def _count(payload: Any) -> int | None:
             value = payload.get(key)
             if isinstance(value, list):
                 return len(value)
-        for key in ("count", "total"):
+        for key in ("totalCount", "count", "total"):
             value = payload.get(key)
             if isinstance(value, int):
                 return value
+    return None
+
+
+def _ready(payload: Any) -> bool | None:
+    if isinstance(payload, dict):
+        result = payload.get("result")
+        if not isinstance(result, dict):
+            result = payload
+        runtime = result.get("runtime")
+        if isinstance(runtime, dict) and runtime.get("state") == "ready":
+            return True
+        app = result.get("app")
+        if isinstance(app, dict) and app.get("running") is True:
+            return True
+        ready = payload.get("ready")
+        if isinstance(ready, bool):
+            return ready
     return None
 
 
@@ -783,11 +803,13 @@ def orca_snapshot(binary: Path | None) -> dict[str, Any]:
         except (OSError, RuntimeError, subprocess.SubprocessError, json.JSONDecodeError) as exc:
             commands[key] = {"ok": False, "error": type(exc).__name__, "count": None}
             continue
-        ready = payload.get("ready") if isinstance(payload, dict) else None
+        if not isinstance(payload, dict) or payload.get("ok") is not True:
+            commands[key] = {"ok": False, "error": "orca_not_ok", "count": None}
+            continue
         commands[key] = {
             "ok": True,
             "count": _count(payload),
-            "ready": ready if isinstance(ready, bool) else None,
+            "ready": _ready(payload),
         }
     return {"binary": str(binary), "available": True, "commands": commands}
 

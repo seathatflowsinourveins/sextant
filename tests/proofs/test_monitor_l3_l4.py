@@ -477,6 +477,80 @@ def test_ao_telemetry_requires_the_file_policy_launcher_and_env(tmp_path: Path) 
     assert mon.ao_telemetry(ao_dir, launcher, env={})["effective"] is False
 
 
+def _orca_stdout(command: tuple[str, ...]) -> str:
+    """Mirror the pinned Orca CLI: YAML without --json, an envelope with it."""
+    if command == ("status",):
+        return "appRunning: true\nruntimeState: ready\n"
+    envelopes: dict[tuple[str, ...], dict[str, Any]] = {
+        ("status", "--json"): {
+            "id": "local-status",
+            "ok": True,
+            "result": {"app": {"running": True}, "runtime": {"state": "ready"}},
+        },
+        ("worktree", "ps", "--json"): {
+            "id": "worktrees",
+            "ok": True,
+            "result": {"worktrees": [{"path": "/a"}, {"path": "/b"}], "totalCount": 2},
+        },
+        ("terminal", "list", "--json"): {
+            "id": "terminals",
+            "ok": True,
+            "result": {"terminals": [{"id": "1"}, {"id": "2"}, {"id": "3"}]},
+        },
+        ("orchestration", "task-list", "--json"): {
+            "ok": False,
+            "error": {"code": "run_required"},
+        },
+        ("orchestration", "worker-list", "--json"): {
+            "id": "workers",
+            "ok": True,
+            "result": {"workers": [{"id": "1"}]},
+        },
+        ("orchestration", "gate-list", "--json"): {
+            "ok": False,
+            "error": {"code": "run_required"},
+        },
+        ("diagnostics", "memory", "--json"): {
+            "id": "memory",
+            "ok": True,
+            "result": {"worktrees": [{"path": "/a"}, {"path": "/b"}]},
+        },
+    }
+    return json.dumps(envelopes[command])
+
+
+def test_orca_status_uses_the_json_envelope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fake_run(argv: list[str], **kwargs: Any) -> SimpleNamespace:
+        return SimpleNamespace(returncode=0, stdout=_orca_stdout(tuple(argv[1:])))
+
+    monkeypatch.setattr(mon.subprocess, "run", fake_run)
+    snapshot = mon.orca_snapshot(tmp_path / "orca")
+    assert "status --json" in snapshot["commands"]
+    assert snapshot["commands"]["status --json"]["ok"] is True
+    assert snapshot["commands"]["status --json"]["ready"] is True
+
+
+def test_orca_counts_unwrap_the_result_envelope(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fake_run(argv: list[str], **kwargs: Any) -> SimpleNamespace:
+        return SimpleNamespace(returncode=0, stdout=_orca_stdout(tuple(argv[1:])))
+
+    monkeypatch.setattr(mon.subprocess, "run", fake_run)
+    commands = mon.orca_snapshot(tmp_path / "orca")["commands"]
+    assert commands["worktree ps --json"]["count"] == 2
+    assert commands["terminal list --json"]["count"] == 3
+    assert commands["orchestration worker-list --json"]["count"] == 1
+    assert commands["diagnostics memory --json"]["count"] == 2
+    assert commands["orchestration task-list --json"] == {
+        "ok": False,
+        "error": "orca_not_ok",
+        "count": None,
+    }
+
+
 def test_orca_runs_only_metadata_commands(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     for command in (
         ("search", "x"),
@@ -492,7 +566,7 @@ def test_orca_runs_only_metadata_commands(tmp_path: Path, monkeypatch: pytest.Mo
 
     def fake_run(argv: list[str], **kwargs: Any) -> SimpleNamespace:
         calls.append(argv)
-        return SimpleNamespace(returncode=0, stdout='{"worktrees": [], "ready": true}')
+        return SimpleNamespace(returncode=0, stdout=_orca_stdout(tuple(argv[1:])))
 
     monkeypatch.setattr(mon.subprocess, "run", fake_run)
     snapshot = mon.orca_snapshot(tmp_path / "orca")
@@ -504,7 +578,7 @@ def test_orca_runs_only_metadata_commands(tmp_path: Path, monkeypatch: pytest.Mo
         assert command[0] != "search"
         assert command[:2] not in {("terminal", "read"), ("terminal", "show")}
     for command in mon.ORCA_COMMANDS:
-        assert snapshot["commands"][" ".join(command)]["ok"] is True
+        assert isinstance(snapshot["commands"][" ".join(command)]["ok"], bool)
 
 
 def test_dsh_v4_derives_ttft_and_decode_rate(tmp_path: Path) -> None:
