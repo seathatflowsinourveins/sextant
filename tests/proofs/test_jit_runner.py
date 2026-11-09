@@ -490,8 +490,11 @@ def test_startup_arms_the_exit_cleanup_before_its_first_cleanup() -> None:
 
 
 def test_public_gate_retires_generated_private_review_locks() -> None:
+    import yaml
+
     assert not list(WORKFLOWS.glob("*.lock.yml"))
-    assert "- run: just ci" in (WORKFLOWS / "ci.yml").read_text()
+    ci = yaml.safe_load((WORKFLOWS / "ci.yml").read_text())
+    assert ci["jobs"]["ci"]["needs"] == ["lint", "tests", "budgets", "secrets"]
 
 
 def test_public_workflows_cannot_dispatch_old_runner_smokes() -> None:

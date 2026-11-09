@@ -1,0 +1,47 @@
+[
+  {
+    "name": "deepseek_cny_per_usd",
+    "unit": "CNY/USD",
+    "value": 6.7188,
+    "source": "People's Bank of China USD/CNY central parity 6.7188 on 2026-11-09 (previous fix 6.7168), read 2026-11-09; display conversion for DeepSeek's public USD rate table. Lead ruling 2026-11-08 22:40 EST: use the public rate table with a dated USD/CNY constant marked UNCALIBRATED",
+    "calibration": "UNCALIBRATED",
+    "last_change": "2026-11-09",
+    "scope": "DISPLAY_ONLY"
+  },
+  {
+    "name": "deepseek_input_usd_per_mtok",
+    "unit": "USD/1M tokens",
+    "value": 0.3,
+    "source": "DeepSeek Models & Pricing, api-docs.deepseek.com/quick_start/pricing, peak input rate read 2026-11-07; mirrored in .github/workflows/review.md:30-33",
+    "calibration": "UNCALIBRATED",
+    "last_change": "2026-11-07",
+    "scope": "DISPLAY_ONLY"
+  },
+  {
+    "name": "deepseek_output_usd_per_mtok",
+    "unit": "USD/1M tokens",
+    "value": 1.2,
+    "source": "DeepSeek Models & Pricing, api-docs.deepseek.com/quick_start/pricing, peak output rate read 2026-11-07; mirrored in .github/workflows/review.md:30-33",
+    "calibration": "UNCALIBRATED",
+    "last_change": "2026-11-07",
+    "scope": "DISPLAY_ONLY"
+  },
+  {
+    "name": "deepseek_cache_read_usd_per_mtok",
+    "unit": "USD/1M tokens",
+    "value": 0.006,
+    "source": "DeepSeek Models & Pricing, api-docs.deepseek.com/quick_start/pricing, peak cache-read rate read 2026-11-07; mirrored in .github/workflows/review.md:30-33",
+    "calibration": "UNCALIBRATED",
+    "last_change": "2026-11-07",
+    "scope": "DISPLAY_ONLY"
+  },
+  {
+    "name": "monitor_otlp_endpoint",
+    "unit": "url",
+    "value": "http://127.0.0.1:4318/v1/metrics",
+    "source": "RECONCILE.md:151 and the adopted monitor stack: grafana/docker-otel-lgtm v0.38.0 OTLP/HTTP receiver on the loopback interface; lead adopted 2026-11-08",
+    "calibration": "UNCALIBRATED",
+    "last_change": "2026-11-08",
+    "scope": "BINDING"
+  }
+]
