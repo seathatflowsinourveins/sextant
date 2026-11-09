@@ -25,10 +25,13 @@ import argparse
 import contextlib
 import json
 import os
+import re
 import signal
+import subprocess
 import sys
 import threading
 import time
+import uuid
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -37,6 +40,7 @@ from pathlib import Path
 from types import FrameType
 from typing import Any, Protocol, cast
 
+from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.trading.client import TradingClient
 from alpaca.trading.enums import OrderSide, QueryOrderStatus, TimeInForce
 from alpaca.trading.requests import (
@@ -48,6 +52,7 @@ from alpaca.trading.requests import (
 from nautilus_trader.model import Currency, Equity, InstrumentId, Price, Quantity, Symbol
 
 from sextant.entry.parameters import EntryParameters
+from sextant.entry.slots import Candidate, SlotPool
 from sextant.execution.alpaca import OrderCommand
 from sextant.execution.custody import (
     AccountScope,
@@ -61,13 +66,14 @@ from sextant.execution.custody import (
 from sextant.execution.pacer import AccountPacer, ActionKind
 from sextant.paper.alpaca_feed import AlpacaTickFeed
 from sextant.paper.c_session import CConfig, CSession
+from sextant.paper.c_universe import rank_universe
 from sextant.paper.config import PaperAccount
 from sextant.paper.sessions import Session
 from sextant.ranking.baseline import BaselineTable, load_baseline, segment_start
 from sextant.ranking.engine import Segment
 from sextant.risk.controls import Controls
 from sextant.risk.guard import Guard
-from sextant.validation.trials import WITNESS_PATH, TrialLog
+from sextant.validation.trials import WITNESS_PATH, TrialLog, snapshot_hash
 
 ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_CONTROLS = ROOT / "lanes/custody-parameters.json"
@@ -77,6 +83,8 @@ C_LANE = "alpaca-paper-c"
 KEY_NAMES = ("ALPACA_PAPER_3_API_KEY", "ALPACA_PAPER_3_SECRET_KEY")
 EXPECTED_SUFFIX_ENV = "C_EXPECTED_ACCOUNT_SUFFIX"
 DEFAULT_CLIENT_FACTORY: Callable[..., Any] = cast(Callable[..., Any], TradingClient)
+DEFAULT_DATA_FACTORY: Callable[..., Any] = cast(Callable[..., Any], StockHistoricalDataClient)
+C_ARM_ID = "paper-c-24x5"
 POLL_INTERVAL_S = 0.5
 ORDER_TIMEOUT_S = 30.0
 OPEN_ORDER_LIMIT = 500
@@ -90,6 +98,7 @@ SEGMENT_BASELINES = {
     "POST": "post.json",
 }
 _NS_PER_S = 1_000_000_000
+_SHA = re.compile(r"[0-9a-f]{40}")
 _PROTECTION_ACKS = frozenset({"NEW", "ACCEPTED", "PENDING_NEW", "PARTIALLY_FILLED"})
 _PROTECTION_GONE = frozenset({"CANCELED", "CANCELLED", "REPLACED"})
 
@@ -110,6 +119,8 @@ class TradingClientLike(Protocol):
     def get_all_positions(self) -> Any: ...
 
     def get_orders(self, filter: Any = None) -> Any: ...
+
+    def get_all_assets(self, filter: Any = None) -> Any: ...
 
     def get_asset(self, symbol_or_asset_id: object) -> Any: ...
 
@@ -155,6 +166,9 @@ class PacedTradingClient:
     def get_orders(self, filter: Any = None) -> Any:
         return self._call(ActionKind.QUERY, self._client.get_orders, filter)
 
+    def get_all_assets(self, filter: Any = None) -> Any:
+        return self._call(ActionKind.QUERY, self._client.get_all_assets, filter)
+
     def get_asset(self, symbol_or_asset_id: object) -> Any:
         return self._call(ActionKind.QUERY, self._client.get_asset, symbol_or_asset_id)
 
@@ -183,6 +197,8 @@ class RunRecord:
     dry_run: bool = False
     snapshot: dict[str, Any] = field(default_factory=dict)
     flags: int = 0
+    receipt_id: str = ""
+    armings: list[dict[str, Any]] = field(default_factory=list)
 
 
 def load_account_config(path: Path) -> PaperAccount:
@@ -424,7 +440,8 @@ def _write_receipt(
     symbols: Sequence[str],
     run: RunRecord,
     baseline: BaselineTable | None,
-    config: CConfig,
+    segment: Segment,
+    entry_params_hash: str,
     final_segment: str,
     stamp: str,
 ) -> Path:
@@ -432,7 +449,9 @@ def _write_receipt(
         "tier": "BROKER-PAPER",
         "lane": account.lane,
         "account_suffix": account_suffix,
+        "receipt_id": run.receipt_id,
         "symbols": list(symbols),
+        "arming": run.armings,
         "commands": run.commands,
         "protection_cid": run.protection_cid,
         "errors": run.errors,
@@ -443,16 +462,16 @@ def _write_receipt(
             "known_at": baseline.known_at,
             "feed": baseline.feed,
         },
-        "entry_params_hash": config.params.params_hash,
+        "entry_params_hash": entry_params_hash,
         "dry_run": run.dry_run,
         "started_ns": run.started_ns,
         "stopped_ns": run.stopped_ns,
         "final_segment": final_segment,
         "segment": {
-            "name": config.segment.name,
-            "session_date": config.segment.session_date.isoformat(),
-            "start_ns": config.segment.start_ns,
-            "end_ns": config.segment.end_ns,
+            "name": segment.name,
+            "session_date": segment.session_date.isoformat(),
+            "start_ns": segment.start_ns,
+            "end_ns": segment.end_ns,
         },
     }
     path = Path("reports/paper-c") / stamp / "session.json"
@@ -461,13 +480,88 @@ def _write_receipt(
     return path
 
 
-def _trial_config(config: CConfig, started_ns: int) -> dict[str, str]:
+def _trial_config(segment: Segment, started_ns: int) -> dict[str, str]:
     return {
         "tier": "BROKER-PAPER",
-        "block_set_id": (
-            f"paper-c:{config.segment.session_date.isoformat()}:{config.segment.name}:{started_ns}"
-        ),
+        "block_set_id": (f"paper-c:{segment.session_date.isoformat()}:{segment.name}:{started_ns}"),
     }
+
+
+def _head_sha() -> str:
+    """The full HEAD commit, or a refusal; the ledger admits only 40 lowercase hex."""
+
+    try:
+        raw = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True, stderr=subprocess.DEVNULL
+        ).strip()
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise LiveRefusal(f"cannot read HEAD for the trial ledger: {exc}") from exc
+    if _SHA.fullmatch(raw) is None:
+        raise LiveRefusal(f"HEAD is not a 40-hex implementation sha: {raw!r}")
+    return raw
+
+
+def _custody_open(book: Custody) -> int | None:
+    """Count open positions the slot pool must charge before arming new symbols."""
+
+    snapshot = book.snapshot
+    if snapshot is None:
+        return None
+    return sum(1 for quantity in snapshot.positions.values() if quantity > 0)
+
+
+@dataclass(frozen=True)
+class _Arming:
+    eligible: int
+    slots: int
+    armed: tuple[str, ...]
+    custody_open: int | None
+    reason: str
+
+
+def _arm_universe(
+    *,
+    client: PacedTradingClient,
+    data: Any,
+    segment: Segment,
+    custody_open: int | None,
+    now: datetime,
+) -> tuple[_Arming, str | None]:
+    """Rank the eligible 24/5 universe and let the 0.4 slot pool pick the session's symbols."""
+
+    try:
+        ranked = rank_universe(client, data, segment.name.lower(), now=now)
+    except Exception as exc:  # the broker/data surface must fail closed, not arm blindly
+        return (
+            _Arming(0, 0, (), custody_open, "universe ranking failed"),
+            f"refused: the {segment.name} universe ranking failed: {type(exc).__name__}: {exc}",
+        )
+    if not ranked:
+        reason = f"no eligible symbols for the {segment.name} session"
+        return _Arming(0, 0, (), custody_open, reason), f"refused: {reason}"
+    candidates = tuple(Candidate(f"{row.symbol}.ALPACA", index) for index, row in enumerate(ranked))
+    allocation = SlotPool().allocate(candidates, custody_open=custody_open)
+    reason = (
+        f"slot pool {allocation.reason}: eligible={len(ranked)} slots={allocation.slots} "
+        f"custody_open={custody_open}"
+    )
+    arming = _Arming(len(ranked), allocation.slots, tuple(allocation.armed), custody_open, reason)
+    if not allocation.armed:
+        return arming, f"refused: {reason}"
+    return arming, None
+
+
+def _record_arming(run: RunRecord, segment: Segment, arming: _Arming) -> None:
+    run.armings.append(
+        {
+            "segment": segment.name,
+            "eligible": arming.eligible,
+            "slots": arming.slots,
+            "armed": list(arming.armed),
+            "custody_open": arming.custody_open,
+            "reason": arming.reason,
+        }
+    )
 
 
 def _record_trial(
@@ -475,17 +569,20 @@ def _record_trial(
     ledger_path: Path,
     run: RunRecord,
     baseline: BaselineTable | None,
-    config: CConfig,
+    symbols: Sequence[str],
+    segment: Segment,
+    entry_params_hash: str,
     failure: str | None,
 ) -> None:
-    """Append one BROKER-PAPER row; flags/entries/fills are counts, never a P&L claim."""
+    """Append one BROKER-PAPER row with the full ADR-0018 identity; counts, never a P&L claim."""
 
     entries = sum(1 for row in run.commands if row["kind"] == "LIMIT" and row["side"] == "BUY")
     fills = sum(1 for row in run.commands if Decimal(str(row["fill"])) > 0)
     params = {
-        "symbols": list(config.symbols),
-        "segment": config.segment.name,
-        "session_date": config.segment.session_date.isoformat(),
+        "symbols": list(symbols),
+        "arming": run.armings,
+        "segment": segment.name,
+        "session_date": segment.session_date.isoformat(),
         "flags": run.flags,
         "entries": entries,
         "fills": fills,
@@ -495,19 +592,36 @@ def _record_trial(
         "errors": list(run.errors),
         "baseline_known_at": None if baseline is None else baseline.known_at,
         "baseline_provenance": "" if baseline is None else baseline.provenance,
-        "entry_params_hash": config.params.params_hash,
+        "entry_params_hash": entry_params_hash,
     }
-    identity = _trial_config(config, run.started_ns)
-
-    class TrialFailed(Exception):
-        """Carries the session failure into the ledger's FAIL state."""
-
-    try:
-        with TrialLog(ledger_path).attempts({"c-live-main": {}}, params, identity):
-            if failure is not None:
-                raise TrialFailed(failure)
-    except TrialFailed:
-        return
+    sandbox = _trial_config(segment, run.started_ns)
+    # TrialLog validates params_hash as snapshot_hash(params), so the registry
+    # digest travels inside params as entry_params_hash instead.
+    identity = {
+        "arm_id": C_ARM_ID,
+        "arm_run_id": run.receipt_id,
+        "implementation_sha": _head_sha(),
+        "factor_mask": [],
+        "sandbox_config": sandbox,
+        "sandbox_config_hash": snapshot_hash(sandbox),
+        "evidence_weights": {},
+        "evidence_weights_hash": snapshot_hash({}),
+        "params_hash": snapshot_hash(params),
+        "tier": "BROKER-PAPER",
+        "block_set_id": sandbox["block_set_id"],
+        "funding_divergent_session_count": None,
+        "funding_unverified_session_count": None,
+        "condition_returns": {},
+    }
+    state = "FAIL" if failure is not None else "COMPLETE"
+    TrialLog(ledger_path).append(
+        C_ARM_ID,
+        params,
+        identity,
+        None,
+        state=state,
+        error="" if failure is None else failure,
+    )
 
 
 @dataclass
@@ -672,12 +786,18 @@ def _flag_count(snapshot: dict[str, Any]) -> int:
     )
 
 
-def _config_for(symbols: Sequence[str], params: EntryParameters, segment: Segment) -> CConfig:
+def _config_for(
+    symbols: Sequence[str],
+    params: EntryParameters,
+    segment: Segment,
+    *,
+    slot_count: int = 2,
+) -> CConfig:
     return CConfig(
         symbols=tuple(symbols),
         chase_cap_fraction=Decimal("0.03"),  # 0.03 = the recorded first_leg_max_move
         trail_fraction=Decimal("0.025"),  # ADR-0025 C-scope, UNCALIBRATED
-        slot_count=2,  # ADR-0024 2-of-5 pool
+        slot_count=slot_count,  # --symbols keeps ADR-0024's 2-of-5; --universe uses the pool
         segment=segment,
         params=params,
     )
@@ -687,6 +807,7 @@ def main(
     argv: Sequence[str] | None = None,
     *,
     client_factory: Callable[..., TradingClientLike] = DEFAULT_CLIENT_FACTORY,
+    data_factory: Callable[..., Any] = DEFAULT_DATA_FACTORY,
     feed_factory: Callable[..., Any] = AlpacaTickFeed,
     now_ns: Callable[[], int] = time.time_ns,
     sleep: Callable[[float], None] = time.sleep,
@@ -699,12 +820,17 @@ def main(
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True, help="C PaperAccount JSON")
-    parser.add_argument(
+    selector = parser.add_mutually_exclusive_group(required=True)
+    selector.add_argument(
         "--symbols",
         nargs="+",
-        required=True,
         metavar="FULL_ID",
-        help="full Alpaca instrument ids, e.g. OMH.ALPACA",
+        help="full Alpaca instrument ids, e.g. OMH.ALPACA (tests and dry runs)",
+    )
+    selector.add_argument(
+        "--universe",
+        action="store_true",
+        help="rank the eligible 24/5 universe and arm the slot pool at every segment",
     )
     baseline_source = parser.add_mutually_exclusive_group(required=True)
     baseline_source.add_argument(
@@ -791,15 +917,9 @@ def main(
             raise SystemExit("C live main refused: the start snapshot is not observable")
         guard.initialize(book.flat_receipt())
 
-        symbols = tuple(args.symbols)
         first, _, _ = segment_start(now_ns())
         if first is None:
             raise SystemExit("C live main refused: the XNYS session is closed")
-        try:
-            first_baseline = _segment_baseline(args.baseline, args.baseline_dir, first)
-            first_instruments = _instruments_for(client, symbols, first)
-        except LiveRefusal as exc:
-            raise SystemExit(f"C live main refused: {exc}") from exc
         try:
             params = EntryParameters.from_rows(
                 json.loads(DEFAULT_ENTRY_PARAMETERS.read_text()),
@@ -807,8 +927,47 @@ def main(
             )
         except (OSError, ValueError, json.JSONDecodeError, KeyError) as exc:
             raise SystemExit(f"C live main refused: entry parameters unavailable: {exc}") from exc
+        try:
+            current_baseline = _segment_baseline(args.baseline, args.baseline_dir, first)
+        except LiveRefusal as exc:
+            raise SystemExit(f"C live main refused: {exc}") from exc
 
         run.started_ns = now_ns()
+        run.receipt_id = uuid.uuid4().hex
+        failure: str | None = None
+        data_client: Any = None
+        current_symbols: tuple[str, ...] = ()
+        current_slot_count = 2
+        current_instruments: dict[str, Equity] = {}
+        final_segment_obj = first
+        if args.universe:
+            try:
+                data_client = data_factory(api_key=api_key, secret_key=secret_key)
+            except Exception as exc:
+                failure = f"refused: data client unavailable: {type(exc).__name__}: {exc}"
+            else:
+                arming, failure = _arm_universe(
+                    client=client,
+                    data=data_client,
+                    segment=first,
+                    custody_open=_custody_open(book),
+                    now=datetime.fromtimestamp(now_ns() / _NS_PER_S, tz=UTC),
+                )
+                _record_arming(run, first, arming)
+                current_symbols = arming.armed
+                current_slot_count = arming.slots
+            if failure is None:
+                try:
+                    current_instruments = _instruments_for(client, current_symbols, first)
+                except LiveRefusal as exc:
+                    failure = f"refused: {exc}"
+        else:
+            current_symbols = tuple(args.symbols)
+            try:
+                current_instruments = _instruments_for(client, current_symbols, first)
+            except LiveRefusal as exc:
+                raise SystemExit(f"C live main refused: {exc}") from exc
+
         deadline = monotonic() + float(args.seconds)
         stop_requested = [False]
         active_feed: list[Any] = [None]
@@ -1157,18 +1316,18 @@ def main(
 
         previous_term = signal.signal(signal.SIGTERM, stop_feed)
         previous_int = signal.signal(signal.SIGINT, stop_feed)
-        failure: str | None = None
         final_segment = first.name
-        final_baseline: BaselineTable | None = first_baseline
-        final_config: CConfig | None = None
+        final_segment_obj = first
+        final_baseline: BaselineTable | None = current_baseline
         current = first
-        current_baseline = first_baseline
-        current_instruments = first_instruments
         try:
-            while True:
+            while failure is None:
+                final_segment_obj = current
                 final_segment = current.name
                 final_baseline = current_baseline
-                final_config = _config_for(symbols, params, current)
+                final_config = _config_for(
+                    current_symbols, params, current, slot_count=current_slot_count
+                )
                 snapshot, failure, stopped, boundary = run_segment(
                     current, current_baseline, current_instruments, final_config
                 )
@@ -1197,30 +1356,50 @@ def main(
                         break
                     if nxt.name == current.name:
                         break
+                final_segment_obj = nxt
                 final_segment = nxt.name
                 try:
                     next_baseline = _segment_baseline(args.baseline, args.baseline_dir, nxt)
                 except LiveRefusal as exc:
                     failure = f"refused: {exc}"
                     final_baseline = None
-                    final_config = _config_for(symbols, params, nxt)
                     break
+                next_symbols = current_symbols
+                next_slot_count = current_slot_count
+                if args.universe:
+                    arming, failure = _arm_universe(
+                        client=client,
+                        data=data_client,
+                        segment=nxt,
+                        custody_open=_custody_open(book),
+                        now=datetime.fromtimestamp(now_ns() / _NS_PER_S, tz=UTC),
+                    )
+                    _record_arming(run, nxt, arming)
+                    next_symbols = arming.armed
+                    next_slot_count = arming.slots
+                    current_symbols = next_symbols
+                    current_slot_count = next_slot_count
+                    if failure is not None:
+                        final_baseline = next_baseline
+                        break
+                else:
+                    current_symbols = next_symbols
+                    current_slot_count = next_slot_count
                 try:
-                    next_instruments = _instruments_for(client, symbols, nxt)
+                    next_instruments = _instruments_for(client, next_symbols, nxt)
                 except LiveRefusal as exc:
                     failure = f"refused: {exc}"
                     final_baseline = next_baseline
-                    final_config = _config_for(symbols, params, nxt)
                     break
                 current = nxt
                 current_baseline = next_baseline
                 current_instruments = next_instruments
+                current_symbols = next_symbols
+                current_slot_count = next_slot_count
         finally:
             signal.signal(signal.SIGTERM, previous_term)
             signal.signal(signal.SIGINT, previous_int)
 
-        if final_config is None:
-            raise SystemExit("C live main refused: no segment was configured")
         if failure is not None:
             run.errors.append(failure)
         run.stopped_ns = now_ns()
@@ -1229,10 +1408,11 @@ def main(
             receipt = _write_receipt(
                 account=account,
                 account_suffix=account_number[-4:],
-                symbols=symbols,
+                symbols=current_symbols,
                 run=run,
                 baseline=final_baseline,
-                config=final_config,
+                segment=final_segment_obj,
+                entry_params_hash=params.params_hash,
                 final_segment=final_segment,
                 stamp=stamp,
             )
@@ -1250,7 +1430,9 @@ def main(
                 ledger_path=Path(ledger_path) if ledger_path is not None else Path(WITNESS_PATH),
                 run=run,
                 baseline=final_baseline,
-                config=final_config,
+                symbols=current_symbols,
+                segment=final_segment_obj,
+                entry_params_hash=params.params_hash,
                 failure=failure,
             )
         except Exception as exc:
