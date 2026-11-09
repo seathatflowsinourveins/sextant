@@ -107,7 +107,14 @@ J5 proofs remain the controller-policy witness; this producer never calls it.
 ## Registry and disabled owner cadence
 
 Every ranking knob stays in main's required `Registry` (all twelve rows, explicit
-source/date, UNCALIBRATED; no defaults). The explicit snapshot allocation remains
+source/date, UNCALIBRATED; no defaults). The shipped operational rows live in
+[`k2-ranking.params.json`](../../lanes/tradingview/k2-ranking.params.json): the
+eight mover/publication values and `top_n` are pinned, and the DISPLAY
+deployment ages take the display registry's sourced freshness bounds
+(`input_max_age_s` 600, `generation_max_age_s` 1200, `heartbeat_max_age_s`
+1200; see [the display parameter registry](../tradingview.md#display-parameter-registry)),
+so an operational display `Registry` builds from the file. The trading/entry
+deployment's ages stay UNAVAILABLE until sourced. The explicit snapshot allocation remains
 `snapshot_requests_per_minute` (>0 and <=200, no default; source: Alpaca's lowest
 documented data quota and native Pacer). Symbol groups are explicit inputs with
 no default size or undocumented maximum. `top_n` remains main's row, bounded by
