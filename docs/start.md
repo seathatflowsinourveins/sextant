@@ -38,6 +38,17 @@ New-NetFirewallHyperVRule -Name 'Sextant-Orca-6771' -DisplayName 'Sextant Orca T
 
 If a step stops, the window says so and waits. A session outside the distro can read what happened in `/mnt/wsl/sextant/first-login.log`, which never holds the pairing link or a sign-in, and fix it on GitHub. You press Enter to pull the fix and try again, and you don't type a command.
 
+## The next lead session
+
+A fresh lead starts from `AGENTS.md`, this page and the memory index, and needs nothing from chat history (the owner's ask and the Sextant lead's lessons, 2026-11-09).
+
+- **The goal** is [the design](design.md)'s focus: rank the most potential extreme movers as they start, enter the first rising second, seek to protect gains with following broker-held protection, sell fast on the first persistent non-noise breach, then re-enter or rotate. [Philosophy](handbook/philosophy.md) states the principles and [practices](handbook/practices.md) the working rules that survived review.
+- **The lanes** are [Research](../lanes/research/README.md), [Sim](../lanes/sim/README.md), [Paper](../lanes/paper/README.md), [Live](../lanes/live/README.md), [Options](../lanes/options/README.md) and [TradingView](../lanes/tradingview/README.md); each lane names the step of the focus its row serves.
+- **The runtimes** install through `just lane-runtimes`, whose parity step runs `deploy/wsl/lane-runtimes/parity.py`, and through the hard-lines bundle (`deploy/wsl/hard-lines/`, `just hard-lines`); the local pre-push review runs under `DSH_HOME=~/.dsh-full`.
+- **The roles:** one Claude lead orchestrates and does no lane work itself; Roster ops dispatches writers; Landing merges; the trading lead owns Paper B; dsh, Codex, Muse and agy do the work. Each writer turn takes one consolidated rule delivery from its dispatcher.
+- **Landing** follows [the practices landing standard](handbook/practices.md#harness): squash auto-merge only when ci, source and review pass, one concern per PR, at most two reviewed commits.
+- **Standing duties** are restored by the lead at session start, by description only — no script for them is copied into this repo: a sweep at :17 and :47 past the hour that checks open PRs including a missing `review` context, not only failures; monitors on a 30-minute cadence; and a weekly consolidation that folds lessons into the handbook and the skill or rule each one changes, through PRs.
+
 ## What it is and is not
 - **Clean:** the distro has its own home, so no old `~/.claude` rules or hooks load. Its Orca server lists only this project. Your Orca app shows it as a separate server, and can remove the old ones whenever you like.
 - **Settings:** New York time, not the Windows clock; systemd on; services outlive a logout; Ubuntu's metrics off, so it asks nothing at first login. `.wslconfig` is shared by every distro and already tuned, so this leaves it alone. `just accept` proves each of these in the distro.
