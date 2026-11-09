@@ -191,10 +191,15 @@ def test_environments_restrict_branches() -> None:
 
 
 def test_dependabot_covers_every_ecosystem() -> None:
+    import yaml
+
     dependabot = _read(".github/dependabot.yml")
+    config = yaml.safe_load(dependabot)
     for ecosystem in ("npm", "uv", "docker", "github-actions", "devcontainers"):
         assert f"package-ecosystem: {ecosystem}" in dependabot
-    assert dependabot.count("cooldown") == 6
+    assert len(config["updates"]) == 6
+    for update in config["updates"]:
+        assert update["cooldown"] == {"default-days": 14}
     for path in ("/.devcontainer/agents", "/.devcontainer/qmd", "/deploy/wsl/dsh", "/config/dsh"):
         assert path in dependabot
 
