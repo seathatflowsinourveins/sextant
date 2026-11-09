@@ -47,7 +47,11 @@ def test_src_stays_under_budget() -> None:
     # shows its native replacements, a weekly report from maintained tools proposes deletions,
     # and a later raise must cite that report. One-off study code stays on tagged research
     # branches. The owner: "it can be grow but with sota sustainable consolidation".
-    assert sum(_lines(path) for path in (ROOT / "src").rglob("*.py")) < 26500
+    # Then to 26,600 on 2026-11-09 after #149's research merge and #138's 56-line overnight
+    # baseline: the merged tree measured 26,554 against 26,500. The report (#90, 6750396545)
+    # still shows only three safe dead lines and four duplicate blocks, so this raise leaves
+    # 46 lines of headroom and those deletions stay the follow-up consolidation.
+    assert sum(_lines(path) for path in (ROOT / "src").rglob("*.py")) < 26600
 
 
 def test_design_stays_short() -> None:
