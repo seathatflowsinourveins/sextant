@@ -61,7 +61,14 @@ def warm(pub) -> None:
         pub.on_trade(tick(START + second * NS, "0.55"))
 
 
-def consumer(pub, *, heartbeat: int = 2, generation: int = 2, inputs: int = 2) -> RankingConsumer:
+def consumer(
+    pub,
+    *,
+    heartbeat: int = 2,
+    generation: int = 2,
+    inputs: int = 2,
+    alarm: Any = None,
+) -> RankingConsumer:
     return RankingConsumer(
         registry=registry(),
         feed="sip",
@@ -71,7 +78,13 @@ def consumer(pub, *, heartbeat: int = 2, generation: int = 2, inputs: int = 2) -
         entry_heartbeat_max_age_s=heartbeat,
         entry_generation_max_age_s=generation,
         entry_input_max_age_s=inputs,
+        alarm=alarm,
     )
+
+
+def recorder():
+    calls: list[tuple[str, str | None]] = []
+    return calls, lambda reason, symbol=None: calls.append((reason, symbol))
 
 
 def published(pub, *, at: int):
@@ -172,6 +185,84 @@ def test_entry_input_age_binds_before_the_reader_age() -> None:
     assert entry.reader.fresh(later)
     assert entry.ranked_names(now=later) == ()
     assert entry.reason == "entry_input_stale"
+
+
+def test_a_stale_candidate_input_refuses_a_rank_and_a_name() -> None:
+    # Reviewer's witness: PENNY's own features stop at 360 s while another symbol keeps the
+    # generation's latest event current, so only the per-candidate entry age can refuse it.
+    pub = publisher()
+    warm(pub)
+    now = START + 361 * NS + NS // 2
+    pub.on_trade(tick(now, name="ADR"))
+    generation = pub.publish(now=now)
+    assert generation is not None
+    calls, alarm = recorder()
+    entry = consumer(pub, inputs=1, alarm=alarm)
+    assert entry.handle(CustomData(ranking_data_type("sip"), generation), now=now)
+    assert entry.accept_heartbeat(at=now, received_ns=now)
+    assert entry.reader.fresh(now)
+    assert entry.entry_rank("PENNY", now=now) is None
+    assert entry.reason == "symbol_input_stale"
+    assert entry.ranked_names(now=now) == ()
+    assert entry.reason == "symbol_input_stale"
+    assert calls == [("symbol_input_stale", "PENNY"), ("symbol_input_stale", "PENNY")]
+
+
+def test_a_stale_entry_generation_calls_the_alarm() -> None:
+    pub = publisher()
+    at = START + 360 * NS
+    generation = published(pub, at=at)
+    calls, alarm = recorder()
+    entry = consumer(pub, generation=1, alarm=alarm)
+    assert entry.handle(CustomData(ranking_data_type("sip"), generation), now=at)
+    assert entry.accept_heartbeat(at=at, received_ns=at)
+    later = at + NS + NS // 2
+    assert entry.reader.fresh(later)
+    assert entry.ranked_names(now=later) == ()
+    assert entry.reason == "entry_generation_stale"
+    assert calls == [("entry_generation_stale", None)]
+
+
+def test_a_stale_entry_heartbeat_calls_the_alarm() -> None:
+    pub = publisher()
+    at = START + 360 * NS
+    generation = published(pub, at=at)
+    calls, alarm = recorder()
+    entry = consumer(pub, heartbeat=1, alarm=alarm)
+    assert entry.handle(CustomData(ranking_data_type("sip"), generation), now=at)
+    assert entry.accept_heartbeat(at=at, received_ns=at)
+    later = at + 2 * NS
+    assert entry.reader.fresh(later)
+    assert entry.ranked_names(now=later) == ()
+    assert entry.reason == "entry_heartbeat_stale"
+    assert calls == [("entry_heartbeat_stale", None)]
+
+
+def test_a_stale_entry_input_calls_the_alarm() -> None:
+    pub = publisher()
+    at = START + 360 * NS
+    generation = published(pub, at=at)
+    calls, alarm = recorder()
+    entry = consumer(pub, inputs=1, alarm=alarm)
+    assert entry.handle(CustomData(ranking_data_type("sip"), generation), now=at)
+    assert entry.accept_heartbeat(at=at, received_ns=at)
+    later = at + NS + NS // 2
+    assert entry.reader.fresh(later)
+    assert entry.ranked_names(now=later) == ()
+    assert entry.reason == "entry_input_stale"
+    assert calls == [("entry_input_stale", None)]
+
+
+def test_a_missing_heartbeat_calls_the_alarm() -> None:
+    pub = publisher()
+    at = START + 360 * NS
+    generation = published(pub, at=at)
+    calls, alarm = recorder()
+    entry = consumer(pub, alarm=alarm)
+    assert entry.handle(CustomData(ranking_data_type("sip"), generation), now=at)
+    assert entry.ranked_names(now=at) == ()
+    assert entry.reason == "heartbeat_missing"
+    assert calls == [("heartbeat_missing", None)]
 
 
 def test_a_mismatched_generation_topic_clears_names() -> None:

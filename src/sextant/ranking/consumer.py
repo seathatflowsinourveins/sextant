@@ -14,11 +14,13 @@ from nautilus_trader.config import DataActorConfig
 from nautilus_trader.model import CustomData
 
 from sextant.ranking.engine import Segment
+from sextant.ranking.generation import RankingRow
 from sextant.ranking.publisher import ranking_data_type
 from sextant.ranking.reader import GenerationReader
 from sextant.ranking.registry import Registry
 
 NS = 1_000_000_000
+_ENTRY_FEATURES = frozenset({"price", "move", "dvol_ratio", "trades_accel"})
 
 
 def _positive_age(name: str, value: object) -> int:
@@ -42,9 +44,10 @@ class RankingConsumer:
         entry_heartbeat_max_age_s: int,
         entry_generation_max_age_s: int,
         entry_input_max_age_s: int,
-        alarm: Callable[[str], None] | None = None,
+        alarm: Callable[[str, str | None], None] | None = None,
     ) -> None:
         self.feed = feed
+        self._alarm = alarm
         self._entry_heartbeat_ns = (
             _positive_age("entry_heartbeat_max_age_s", entry_heartbeat_max_age_s) * NS
         )
@@ -58,7 +61,7 @@ class RankingConsumer:
             segment=segment,
             universe_hash=universe_hash,
             baseline_hash=baseline_hash,
-            alarm=alarm,
+            alarm=None if alarm is None else lambda reason: alarm(reason, None),
         )
         self._heartbeat: tuple[int, int] | None = None
         self.reason = self.reader.reason
@@ -80,6 +83,14 @@ class RankingConsumer:
     def entry_rank(self, symbol: str, *, now: int) -> int | None:
         if not self._entry_fresh(now):
             return None
+        generation = self.reader.generation
+        row = (
+            None
+            if generation is None
+            else next((row for row in generation.rows if row.symbol == symbol), None)
+        )
+        if row is not None and not self._candidate_fresh(row, now):
+            return None
         rank = self.reader.entry_rank(symbol, now=now)
         self.reason = self.reader.reason
         return rank
@@ -95,9 +106,39 @@ class RankingConsumer:
             (row for row in generation.rows if row.rank is not None and row.focus_eligible is True),
             key=lambda row: row.rank if row.rank is not None else 0,
         )
-        return tuple(
-            row.symbol for row in focused if self.reader.entry_rank(row.symbol, now=now) is not None
+        names: list[str] = []
+        filtered = False
+        for row in focused:
+            if not self._candidate_fresh(row, now):
+                filtered = True
+                continue
+            if self.reader.entry_rank(row.symbol, now=now) is not None:
+                names.append(row.symbol)
+        if names:
+            self.reason = "fresh"
+        elif filtered:
+            self.reason = "symbol_input_stale"
+        else:
+            self.reason = self.reader.reason
+        return tuple(names)
+
+    def _candidate_fresh(self, row: RankingRow, now: int) -> bool:
+        # The generation-level clock is the latest event across all symbols; each candidate's
+        # own required features must also fit the entry input age before it gets a rank or name.
+        stale = any(
+            feature.ts_event is None or not 0 <= now - feature.ts_event <= self._entry_input_ns
+            for feature in row.features
+            if feature.name in _ENTRY_FEATURES
         )
+        if stale:
+            self._refuse("symbol_input_stale", row.symbol)
+            return False
+        return True
+
+    def _refuse(self, reason: str, symbol: str | None = None) -> None:
+        self.reason = reason
+        if self._alarm is not None:
+            self._alarm(reason, symbol)
 
     def _entry_fresh(self, now: int) -> bool:
         if not self.reader.fresh(now):
@@ -106,16 +147,16 @@ class RankingConsumer:
         generation = self.reader.generation
         heartbeat = self._heartbeat
         if heartbeat is None or not 0 <= now - heartbeat[0] <= self._entry_heartbeat_ns:
-            self.reason = "entry_heartbeat_stale"
+            self._refuse("entry_heartbeat_stale")
             return False
         if generation is None:
             self.reason = "generation_missing"
             return False
         if not 0 <= now - generation.known_at <= self._entry_generation_ns:
-            self.reason = "entry_generation_stale"
+            self._refuse("entry_generation_stale")
             return False
         if not 0 <= now - generation.ts_event <= self._entry_input_ns:
-            self.reason = "entry_input_stale"
+            self._refuse("entry_input_stale")
             return False
         self.reason = "fresh"
         return True
