@@ -137,6 +137,10 @@ class World:
         self.ao_doctor = {"failures": 0}
         self.watch_turn_start = "observed"
         self.watch_timeout_ms = 60_000
+        self.watch_provider = "claude"
+        self.watch_observation = "supported"
+        self.watch_stages = ["input_accepted"]
+        self.watch_screen_confirm: str | None = None
         self.omni_due = 1
         self.bind = 'LISTEN 0 4096 127.0.0.1:22128 0.0.0.0:* users:(("omniroute",pid=1,fd=1))'
         self.build()
@@ -326,7 +330,7 @@ class World:
         _write(repo / "deploy/wsl/reflection-prompt.md", REFLECTION)
         _write(repo / "deploy/wsl/lifecycle-precheck.sh", "exit 1\n", 0o755)
         _write(repo / "deploy/wsl/reflection-precheck.sh", "exit 1\n", 0o755)
-        codex = '#!/bin/sh\n# -c model="$pool"\n# model_reasoning_effort="$effort"\n'
+        codex = (ROOT / "deploy/wsl/lane-runtimes/codex-launch.sh").read_text()
         muse = (
             "#!/bin/sh\n# --contributor-mode=on\n# *-contributor*\n"
             "# reasoning-effort\n# runtime_capabilities\n"
@@ -483,7 +487,14 @@ class World:
             "stage": "input_accepted",
             "turnStart": self.watch_turn_start,
             "timeoutMs": self.watch_timeout_ms,
+            "prompt": {
+                "stages": list(self.watch_stages),
+                "provider": self.watch_provider,
+                "observation": self.watch_observation,
+            },
         }
+        if self.watch_screen_confirm is not None:
+            receipt["screenConfirm"] = self.watch_screen_confirm
         connection.execute(
             "insert into mutation_receipts values (?,?,?,?,?,?,?,?)",
             (
@@ -509,6 +520,30 @@ class World:
         ).fetchone()
         receipt = json.loads(row[2])
         receipt["turnStart"] = value
+        connection.execute(
+            "update mutation_receipts set receipt = ? "
+            "where caller_fingerprint = ? and request_id = ?",
+            (json.dumps(receipt), row[0], row[1]),
+        )
+        connection.commit()
+        connection.close()
+
+    def set_watch_unobservable(self) -> None:
+        path = self.home / ".config/orca/orchestration.db"
+        connection = sqlite3.connect(path)
+        row = connection.execute(
+            "select caller_fingerprint, request_id, receipt from mutation_receipts "
+            "where method = 'orchestration.workerStart'"
+        ).fetchone()
+        receipt = json.loads(row[2])
+        receipt["turnStart"] = "unsupported"
+        receipt["prompt"] = {
+            "stages": ["input_accepted"],
+            "provider": "unsupported",
+            "observation": "unsupported",
+        }
+        if self.watch_screen_confirm is not None:
+            receipt["screenConfirm"] = self.watch_screen_confirm
         connection.execute(
             "update mutation_receipts set receipt = ? "
             "where caller_fingerprint = ? and request_id = ?",
@@ -639,26 +674,74 @@ def test_good_fixture_is_green(tmp_path):
     assert len(report.checked) == 41
 
 
-def test_watch_alerts_when_a_dispatch_has_no_observed_turn_start(tmp_path):
+def test_watch_skips_an_unobservable_provider_and_reports_it(tmp_path):
     world = World(tmp_path)
-    world.set_watch_turn_start("unsupported")
+    world.watch_screen_confirm = "running"
+    world.set_watch_unobservable()
+    report = inspect(world)
+    assert "watch.turn_started" not in codes(report)
+    note = next(note for note in report.notes if "ctx_fixture" in note)
+    assert "unobservable" in note
+    assert "running" in note
+
+
+def test_watch_alerts_when_an_observable_dispatch_has_not_started(tmp_path):
+    world = World(tmp_path)
+    world.set_watch_turn_start("unobserved")
     report = inspect(world)
     assert "watch.turn_started" in codes(report)
     message = next(f.message for f in report.findings if f.code == "watch.turn_started")
     assert "ctx_fixture" in message
-    assert "unsupported" in message
     assert "60" in message
 
 
-def test_watch_uses_the_dispatch_timeout_when_the_start_receipt_is_missing(tmp_path):
+def test_watch_skips_a_dispatch_with_no_start_receipt(tmp_path):
     world = World(tmp_path)
     world.remove_worker_start_receipt()
     report = inspect(world)
-    assert "watch.turn_started" in codes(report)
-    message = next(f.message for f in report.findings if f.code == "watch.turn_started")
-    assert "ctx_fixture" in message
-    assert "missing" in message
-    assert "60s" in message
+    assert "watch.turn_started" not in codes(report)
+
+
+def test_historical_plugin_records_for_other_checkouts_are_not_drift(tmp_path):
+    world = World(tmp_path)
+    world.plugins.append(
+        {
+            "id": "old@archive",
+            "version": "1.0.0",
+            "scope": "local",
+            "enabled": True,
+            "installPath": str(world.home / ".claude" / "plugins" / "old"),
+            "installedAt": "2026-11-09T00:00:00Z",
+            "projectPath": "/home/sextant/sextant",
+            "projectEnabled": True,
+        }
+    )
+    report = inspect(world)
+    assert "claude.repository" not in codes(report)
+    assert "claude.parity" not in codes(report)
+
+
+def test_main_checkout_is_the_first_worktree(tmp_path):
+    world = World(tmp_path)
+    doctor = _load_doctor(world.repo)
+
+    class MainOnly:
+        def __call__(self, command, **kwargs):
+            del command, kwargs
+            return doctor.Result(0, f"worktree {world.repo}\n", "")
+
+    host = doctor.Host(world.home, tmp_path / "clone", world.prefix, MainOnly())
+    assert doctor._main_checkout(host) == world.repo
+    assert doctor._current_repository(host, str(world.repo / ".claude"))
+    assert not doctor._current_repository(host, "/srv/old-sextant")
+
+
+def test_codex_launcher_wires_the_pool_and_effort_from_its_recipe(tmp_path):
+    world = World(tmp_path)
+    report = inspect(world)
+    assert "codex.model_effort" not in codes(report), [
+        f.message for f in report.findings if f.code == "codex.model_effort"
+    ]
 
 
 def _set_settings(world: World, **changes) -> None:
@@ -716,7 +799,7 @@ DEFECTS = [
     ),
     (
         "claude.repository",
-        lambda w: w.plugins[0].__setitem__("projectPath", "/srv/old-sextant"),
+        lambda w: w.automations[0]["runContext"].__setitem__("path", "/srv/old-sextant"),
     ),
     ("dsh.version", lambda w: w.versions.__setitem__("dsh", "0.2.1")),
     (

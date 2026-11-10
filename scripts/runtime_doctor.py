@@ -115,6 +115,7 @@ class Finding:
 class Report:
     findings: list[Finding] = field(default_factory=list)
     checked: list[tuple[str, str]] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -240,19 +241,25 @@ def _slug(url: str) -> str:
     return found.group(1) if found else ""
 
 
-def _allowed_roots(host: Host) -> list[Path]:
-    roots = [host.repo.resolve()]
+def _main_checkout(host: Host) -> Path:
+    """The first checkout in the worktree list is the repository's main checkout."""
     result = host.run(["git", "-C", str(host.repo), "worktree", "list", "--porcelain"])
     if result.code == 0:
         for line in result.out.splitlines():
             if line.startswith("worktree "):
-                roots.append(Path(line.removeprefix("worktree ")).resolve())
-    return roots
+                return Path(line.removeprefix("worktree ")).resolve()
+    return host.repo.resolve()
 
 
-def _current_repository(host: Host, value: object, roots: list[Path] | None = None) -> bool:
-    """A path names this repository when it is the checkout, one of its worktrees, or a clone
-    whose origin is the same GitHub repository. Stale checkouts and lane handoff trees fail."""
+def _current_repository(
+    host: Host, value: object, main: Path | None = None, allow_clone: bool = False
+) -> bool:
+    """A host path names this checkout when it is the main checkout or below it.
+
+    A separate clone of the same repository is only accepted where a clone is the
+    expected shape (AO's project and its repos directory), never for an installed
+    path or another checkout's plugin record.
+    """
     if not isinstance(value, str) or not value:
         return False
     path = Path(value).expanduser()
@@ -262,19 +269,16 @@ def _current_repository(host: Host, value: object, roots: list[Path] | None = No
         resolved = path.resolve()
     except OSError:
         return False
-    allowed = roots or _allowed_roots(host)
     if not resolved.is_dir():
         return False
-    if any(resolved == root or root in resolved.parents for root in allowed):
+    checkout = main or _main_checkout(host)
+    if resolved == checkout or checkout in resolved.parents:
         return True
-    if not path.is_dir():
+    if not allow_clone or not path.is_dir():
         return False
     top = host.run(["git", "-C", str(path), "rev-parse", "--show-toplevel"])
     if top.code != 0:
         return False
-    checkout = Path(top.out.strip()).resolve()
-    if any(checkout == root or root in checkout.parents for root in allowed):
-        return True
     origin = host.run(["git", "-C", str(path), "remote", "get-url", "origin"])
     return origin.code == 0 and _slug(origin.out) == _slug(_remote(host))
 
@@ -330,7 +334,7 @@ def _check_repository_path(host: Host, row: str, out: dict[str, list[Finding]]) 
             out,
             row,
             "repository",
-            f"repository-path names {value.strip()}, not this checkout {host.repo}",
+            f"repository-path names {value.strip()}, not the main checkout {_main_checkout(host)}",
         )
 
 
@@ -407,9 +411,9 @@ def check_claude(host: Host) -> dict[str, list[Finding]]:
         _fail(out, "claude", "model_effort", "Orca has no Verified reflection automation")
     else:
         args = str(reflection.get("extraAgentArgs") or "")
+        reflection_policy = policy.get("claude_reflection") or policy.get("claude", {})
         want = (
-            f"--model {policy.get('claude', {}).get('model')} "
-            f"--effort {policy.get('claude', {}).get('effort')}"
+            f"--model {reflection_policy.get('model')} --effort {reflection_policy.get('effort')}"
         )
         if want not in args:
             _fail(
@@ -435,30 +439,17 @@ def check_claude(host: Host) -> dict[str, list[Finding]]:
     if not isinstance(records, list):
         _fail(out, "claude", "parity", "claude plugin list --json did not return a list")
     else:
-        foreign = sorted(
-            {
-                str(row.get("projectPath"))
-                for row in records
-                if isinstance(row, dict)
-                and row.get("projectPath")
-                and not _current_repository(host, row.get("projectPath"))
-            }
-        )
-        if foreign:
-            _fail(
-                out,
-                "claude",
-                "repository",
-                f"{len(foreign)} plugin install record path(s) name another checkout: "
-                f"{', '.join(foreign[:3])}{'...' if len(foreign) > 3 else ''}",
-            )
-        current = {
-            str(row.get("id")): row
-            for row in records
-            if isinstance(row, dict)
-            and row.get("projectPath")
-            and _current_repository(host, row.get("projectPath"))
-        }
+        main = _main_checkout(host)
+        current: dict[str, Any] = {}
+        for row in records:
+            if not isinstance(row, dict) or not row.get("projectPath"):
+                continue
+            try:
+                project = Path(str(row.get("projectPath"))).resolve()
+            except OSError:
+                continue
+            if project == main:
+                current[str(row.get("id"))] = row
         installed_ids = {key for key, row in current.items() if row.get("projectEnabled") is True}
         absent = [plugin for plugin in expected if plugin not in installed_ids]
         if absent:
@@ -667,7 +658,12 @@ def check_codex(host: Host) -> dict[str, list[Finding]]:
         host.repo / RUNTIMES.relative_to(ROOT) / "codex-launch.sh",
     )
     launcher = _read(host.prefix / "codex-launch.sh") or ""
-    for needle in ('-c model="$pool"', 'model_reasoning_effort="$effort"'):
+    for needle in (
+        'pool=$(jq -er .combo "$prefix/routing.json")',
+        'effort=$(jq -er .gpt.effort "$prefix/model-policy.json")',
+        '-c "model=\\"$pool\\""',
+        '-c "model_reasoning_effort=\\"$effort\\""',
+    ):
         if needle not in launcher:
             _fail(out, "codex", "model_effort", f"installed codex-launch.sh lacks {needle}")
 
@@ -984,7 +980,7 @@ def check_omniroute(host: Host) -> dict[str, list[Finding]]:
     working = host.run(
         ["systemctl", "--user", "show", "omniroute.service", "-p", "WorkingDirectory", "--value"]
     )
-    if working.code != 0 or Path(working.out.strip()).resolve() != host.repo.resolve():
+    if working.code != 0 or not _current_repository(host, working.out.strip()):
         _fail(
             out,
             "omniroute",
@@ -1010,7 +1006,9 @@ def check_orca(host: Host) -> dict[str, list[Finding]]:
             out, "orca", "version", f"Orca {installed or 'unknown'} does not match the pin {want}"
         )
 
-    policy = _policy(host).get("claude", {})
+    full_policy = _policy(host)
+    policy = full_policy.get("claude", {})
+    reflection_policy = full_policy.get("claude_reflection") or policy
     automations = _automations(host)
     by_name = {row.get("name"): row for row in automations}
     lifecycle = by_name.get("Lifecycle sweep")
@@ -1019,7 +1017,9 @@ def check_orca(host: Host) -> dict[str, list[Finding]]:
         _fail(out, "orca", "model_effort", "Orca has no Verified reflection automation")
     else:
         args = str(reflection.get("extraAgentArgs") or "")
-        want_args = f"--model {policy.get('model')} --effort {policy.get('effort')}"
+        want_args = (
+            f"--model {reflection_policy.get('model')} --effort {reflection_policy.get('effort')}"
+        )
         if want_args not in args:
             _fail(
                 out,
@@ -1196,7 +1196,7 @@ def check_ao(host: Host) -> dict[str, list[Finding]]:
         if needle not in script:
             _fail(out, "ao", "guard", f"ao.sh claim guard lacks {needle}")
     for project in projects:
-        if not _current_repository(host, project.get("path")):
+        if not _current_repository(host, project.get("path"), allow_clone=True):
             _fail(
                 out,
                 "ao",
@@ -1220,7 +1220,7 @@ def check_ao(host: Host) -> dict[str, list[Finding]]:
     repos = host.home / ".ao" / "repos"
     if repos.is_dir():
         for clone in repos.iterdir():
-            if clone.is_dir() and not _current_repository(host, str(clone)):
+            if clone.is_dir() and not _current_repository(host, str(clone), allow_clone=True):
                 _fail(
                     out, "ao", "repository", f"AO clone {clone.name} does not name this repository"
                 )
@@ -1251,7 +1251,7 @@ def _age_seconds(text: object) -> float | None:
     return max(0.0, (datetime.now(UTC) - moment).total_seconds())
 
 
-def check_watch(host: Host) -> list[Finding]:
+def check_watch(host: Host, notes: list[str] | None = None) -> list[Finding]:
     """Alert when Orca accepted a prompt but no turn start followed its own dispatch bound."""
     path = host.home / ".config" / "orca" / "orchestration.db"
     if not path.is_file():
@@ -1313,9 +1313,39 @@ def check_watch(host: Host) -> list[Finding]:
         ):
             continue
         receipt_row = latest.get(dispatch_id)
-        receipt = receipt_row[1] if receipt_row is not None else {}
+        if receipt_row is None:
+            continue
+        receipt = receipt_row[1]
         turn_start = receipt.get("turnStart")
-        if turn_start == "observed":
+        if turn_start == "observed" or receipt.get("state") in (
+            "succeeded",
+            "failed",
+            "stopped",
+            "abandoned",
+        ):
+            continue
+        prompt = receipt.get("prompt") if isinstance(receipt.get("prompt"), dict) else {}
+        stages = prompt.get("stages") if isinstance(prompt.get("stages"), list) else []
+        if receipt.get("stage") != "input_accepted" and "input_accepted" not in stages:
+            continue
+        if "turn_started" in stages:
+            continue
+        provider = prompt.get("provider")
+        observation = prompt.get("observation")
+        if observation != "supported":
+            detail = (
+                f"dispatch {dispatch_id}: input accepted; provider {provider or 'unreported'} "
+                f"({observation or 'unreported'}) is unobservable, so Orca cannot claim "
+                "its turn start"
+            )
+            screen = (
+                receipt.get("screenConfirm")
+                or receipt.get("screen_confirm")
+                or receipt.get("screen")
+            )
+            detail += f"; screen-confirm: {screen}" if screen else "; no screen-confirm recorded"
+            if notes is not None:
+                notes.append(detail)
             continue
         bound = receipt.get("timeoutMs")
         if not isinstance(bound, (int, float)):
@@ -1326,8 +1356,13 @@ def check_watch(host: Host) -> list[Finding]:
             milliseconds = options.get("timeoutMs") if isinstance(options, dict) else None
             bound = milliseconds if isinstance(milliseconds, (int, float)) else None
         if not isinstance(bound, (int, float)):
+            if notes is not None:
+                notes.append(
+                    f"dispatch {dispatch_id}: input accepted; turn start has no Orca "
+                    "dispatch bound, so it is unobserved but not an alert"
+                )
             continue
-        age = receipt_row[0] if receipt_row is not None else _age_seconds(row["created_at"])
+        age = receipt_row[0]
         if age is None or age <= bound / 1000:
             continue
         findings.append(
@@ -1359,7 +1394,7 @@ def inspect_host(host: Host) -> Report:
                 report.add(finding)
     report.checked.append(WATCH_CHECK)
     try:
-        report.findings.extend(check_watch(host))
+        report.findings.extend(check_watch(host, report.notes))
     except Exception as error:
         report.add(
             _finding(
@@ -1387,6 +1422,7 @@ def main(argv: list[str] | None = None) -> int:
                 {
                     "ok": report.ok,
                     "checked": [f"{row}.{check}" for row, check in report.checked],
+                    "notes": report.notes,
                     "findings": [
                         {
                             "code": finding.code,
@@ -1401,6 +1437,8 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
     else:
+        for note in report.notes:
+            print(f"note: {note}")
         for finding in report.findings:
             print(f"{finding.code}: {finding.message}")
         print(
