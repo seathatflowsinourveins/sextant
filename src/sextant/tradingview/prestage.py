@@ -73,7 +73,10 @@ STREAM_SOURCE = "REST-only bar-fidelity display host; zero streams opened on slo
 SIP_AUTHORITY = "slot-3 SIP market-data entitlement; REST-only display host"
 MAPPING_SOURCE = "NASDAQ Trader nasdaqlisted.txt + otherlisted.txt read 2026-11-09"
 REFERENCE_SOURCE = "alpaca_sip_raw_1day official close"
-ASSET_SOURCE = "NASDAQ Trader directory operating-company superset; NOT PIT membership"
+ASSET_SOURCE = (
+    "NASDAQ Trader directory operating-company superset; NOT PIT membership; "
+    "halt status unknown (no status receipt)"
+)
 PROVENANCE = "alpaca_sip_raw_1min prior XNYS sessions; bar fidelity streaming one segment"
 BOUNDS = frozenset({"gap_bound", "rvol_bound", "max_age_s"})
 
@@ -156,13 +159,19 @@ def prior_sessions(day: date, count: int = 5) -> tuple[date, ...]:
 
 
 def baseline_sessions(day: date, segment: Segment, count: int = 5) -> tuple[date, ...]:
-    """Prior sessions whose segment start did not move (early closes are skipped)."""
+    """Prior sessions whose segment start and span did not move; early closes are skipped."""
     candidates = prior_sessions(day, count + 10)
+    expected_span = segment.end_ns - segment.start_ns
     chosen: list[date] = []
     for candidate in reversed(candidates):
         anchored = _session_start(candidate, segment)
         found, _, _ = segment_start(anchored + NS)
-        if found is None or found.name != segment.name or found.start_ns != anchored:
+        if (
+            found is None
+            or found.name != segment.name
+            or found.start_ns != anchored
+            or found.end_ns - anchored != expected_span
+        ):
             continue
         chosen.append(candidate)
         if len(chosen) == count:
@@ -356,14 +365,18 @@ def publish_tick(
     if not segment.start_ns <= now_ns < segment.end_ns:
         raise PrestageError("the publish clock is outside the supplied segment")
     start = datetime.fromtimestamp(segment.start_ns / NS, ET)
-    end = datetime.fromtimestamp(now_ns / NS, ET)
+    completed_end_ns = now_ns - now_ns % MINUTE_NS
+    if completed_end_ns <= segment.start_ns:
+        raise PrestageError("no completed minute bars for this segment")
+    end = datetime.fromtimestamp(completed_end_ns / NS, ET)
     bars = source.minute_bars(symbols, start=start, end=end)
-    future = tuple(item for item in bars if item.close_ns > now_ns)
-    if future:
-        raise PrestageError(f"{len(future)} bars close after the publish clock")
     by_minute: dict[int, list[Bar]] = {}
     for item in bars:
-        if item.start_ns < segment.start_ns or item.close_ns > segment.end_ns:
+        if (
+            item.start_ns < segment.start_ns
+            or item.close_ns > segment.end_ns
+            or item.close_ns > completed_end_ns
+        ):
             continue
         by_minute.setdefault(item.close_ns, []).append(item)
     clocks = sorted(by_minute)
@@ -385,7 +398,7 @@ def publish_tick(
         publisher.set_symbol(
             name,
             references=ReferencePrices(prior_closes[name], prior_close_ns, REFERENCE_SOURCE),
-            asset=AssetState(prior_close_ns, segment.end_ns, False, "common", ASSET_SOURCE),
+            asset=AssetState(prior_close_ns, segment.end_ns, None, "common", ASSET_SOURCE),
         )
     host = BarFidelityHost(
         publisher,

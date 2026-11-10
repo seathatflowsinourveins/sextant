@@ -18,7 +18,7 @@ from sextant.ranking.registry import Registry, RegistryRow
 from sextant.tradingview.bars import Bar
 from sextant.tradingview.baseline import build_baseline
 from sextant.tradingview.bridge import DisplayBounds
-from sextant.tradingview.inputs import read_research_inputs
+from sextant.tradingview.inputs import InputError, read_research_inputs
 from sextant.tradingview.loop import _admission
 from sextant.tradingview.prestage import build_segment_baseline, publish_tick
 from sextant.tradingview.producer import reserve_stream
@@ -181,6 +181,66 @@ def publish(segment_name: str, tmp_path: Path, *, now_minute: int = 8) -> Any:
     return receipt, section
 
 
+class TailSource(RecordedSource):
+    """A source that also returns a bar the vendor has not completed yet."""
+
+    def __init__(
+        self,
+        bars: tuple[Bar, ...],
+        closes: dict[str, Decimal] | None = None,
+        *,
+        tail: tuple[Bar, ...] = (),
+    ) -> None:
+        super().__init__(bars, closes)
+        self.tail = tuple(tail)
+
+    def minute_bars(self, symbols: Any, *, start: datetime, end: datetime) -> tuple[Bar, ...]:
+        return super().minute_bars(symbols, start=start, end=end) + tuple(
+            item for item in self.tail if item.symbol in set(symbols)
+        )
+
+
+def publish_at(
+    segment_name: str,
+    tmp_path: Path,
+    *,
+    bars: tuple[Bar, ...],
+    now_ns: int,
+    tail: tuple[Bar, ...] = (),
+) -> tuple[Any, TailSource]:
+    section = segment(segment_name)
+    source = TailSource(prior_bars(segment_name, PRIOR) + bars, tail=tail)
+    baseline = build_segment_baseline(
+        source,
+        segment=section,
+        symbols=SYMBOLS,
+        sessions=PRIOR,
+        known_at=at(PRIOR[-1], 20),
+        provenance="fixture five prior sessions",
+    )
+    with reserve_stream(
+        tmp_path / "leases", paper_slot=3, existing_streams=0, source="fixture"
+    ) as lease:
+        receipt = publish_tick(
+            lease=lease,
+            source=source,
+            segment=section,
+            baseline=baseline,
+            symbols=SYMBOLS,
+            prior_closes={name: D("10.00") for name in SYMBOLS},
+            prior_close_ns=at(PRIOR[-1], 16),
+            symbol_map={name: f"NASDAQ:{name}" for name in SYMBOLS},
+            registry=registry(),
+            epoch=f"tv-producer-fixture-{segment_name.lower()}-at",
+            universe_source="fixture directory; NOT PIT",
+            now_ns=now_ns,
+            unit_dir=tmp_path / "unit",
+            j5_path=tmp_path / "j5.json",
+            bounds=bounds(),
+        )
+    return receipt, source
+
+
 @pytest.mark.parametrize("segment_name", ["PRE", "RTH", "POST"])
 def test_prestage_publishes_each_segment_unit_that_reads_back(
     tmp_path: Path, segment_name: str
@@ -279,6 +339,16 @@ def test_prestage_prior_sessions_skip_a_moved_segment_start() -> None:
     assert date(2026, 11, 27) not in sessions  # 13:00 ET early close moved POST
     assert date(2026, 11, 25) in sessions
     assert all(day < date(2026, 11, 30) for day in sessions)
+
+
+def test_prestage_skips_a_short_prior_rth_session() -> None:
+    """A 13:00 early close cannot stand in for a 16:00 RTH baseline session."""
+    from sextant.tradingview.prestage import baseline_sessions
+
+    sessions = baseline_sessions(date(2026, 11, 30), segment("RTH"))
+    assert len(sessions) == 5
+    assert date(2026, 11, 27) not in sessions  # 13:00 ET early close
+    assert date(2026, 11, 25) in sessions
 
 
 def test_prestage_refuses_a_missing_prior_close() -> None:
@@ -449,6 +519,52 @@ def test_prestage_replays_every_completed_minute(tmp_path: Path, monkeypatch: An
             bounds=bounds(),
         )
     assert len(calls) == minutes
+
+
+def test_prestage_drops_an_unfinished_minute(tmp_path: Path) -> None:
+    """The in-progress minute is not replayed, and the request stops before it."""
+    section = segment("RTH")
+    unfinished = bar("RTH", DAY, 8, "AAA", "11.00", 100, 2)
+    now_ns = section.start_ns + 8 * MINUTE_NS + 30 * NS
+    receipt, source = publish_at(
+        "RTH",
+        tmp_path,
+        bars=current_bars("RTH"),
+        now_ns=now_ns,
+        tail=(unfinished,),
+    )
+    assert receipt["bars"] == 7 * len(SYMBOLS)
+    assert source.ranges[-1] == (section.start_ns, section.start_ns + 8 * MINUTE_NS)
+
+
+def test_prestage_keeps_halt_eligibility_unknown(tmp_path: Path) -> None:
+    """No status receipt means no name is eligible for focus, not a free pass."""
+    publish("RTH", tmp_path)
+    j5 = json.loads((tmp_path / "j5.json").read_text(encoding="utf-8"))
+    assert all(row["focus_eligible"] is False for row in j5["ranking_generation"]["rows"])
+    display = json.loads((tmp_path / "unit" / "display-lists.json").read_text(encoding="utf-8"))
+    assert display["ns_focus"] == []
+    assert display["counts"]["ns_focus"] == 0
+
+
+def test_prestage_unit_cannot_outlive_the_j5_deadline(tmp_path: Path) -> None:
+    """The projected unit keeps the J5 deadline, so a later read cannot revive it."""
+    bars = tuple(
+        bar("PRE", DAY, minute, symbol, "10.20", 5_000, 40)
+        for minute in range(320, 329)
+        for symbol in SYMBOLS
+    )
+    now_ns = at(DAY, 9, 29) + 30 * NS
+    publish_at("PRE", tmp_path, bars=bars, now_ns=now_ns)
+    now = datetime.fromtimestamp(now_ns / NS, UTC)
+    inputs = read_research_inputs(tmp_path / "unit", now=now, max_age=1_200)
+    assert inputs.expires_at == datetime(2026, 11, 9, 14, 30, tzinfo=UTC)
+    with pytest.raises(InputError):
+        read_research_inputs(
+            tmp_path / "unit",
+            now=datetime.fromtimestamp(at(DAY, 9, 31) / NS, UTC),
+            max_age=1_200,
+        )
 
 
 def test_prestage_post_reference_is_the_same_session_close(tmp_path: Path) -> None:

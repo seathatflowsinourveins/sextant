@@ -368,11 +368,18 @@ but this process supplies no usage figure, so it never applies it), releases
 the lease at the segment boundary, and waits for the next 04:00 ET session open.
 Overnight is not produced until #138 supplies a BOATS baseline.
 
-Each tick fetches the current segment's completed SIP minutes and replays every
-completed minute through the bar-fidelity host. The reference close is the same
-session's official close for POST and the prior session's official close for PRE
-and RTH. The tick rebuilds the five-session baseline once per segment from the
-five prior XNYS sessions, projects the fresh J5 document with the bridge, writes
+Each tick fetches the current segment's completed SIP minutes (the in-progress
+minute is never replayed) and passes every completed minute through the
+bar-fidelity host. The reference close is the same session's official close for
+POST and the prior session's official close for PRE and RTH. The tick rebuilds
+the five-session baseline once per segment from the five prior XNYS sessions
+whose start and span match the current segment; an early close is skipped
+rather than treated as a full session. Halt eligibility stays unknown because
+this REST path has no status receipt, so no name is focus-eligible and the NS
+focus list is empty until a status source exists. The projected display bound
+carries the remaining J5 lifetime, so `read_research_inputs` refuses the
+generation after its `expires_at_ns` even when the caller allows a longer age.
+The tick projects the fresh J5 document with the bridge, writes
 the three documents to a staging copy, validates that copy with
 `read_research_inputs(max_age=1200)`, and only then replaces the three files in
 the display directory. A refused tick leaves the previous complete unit in
