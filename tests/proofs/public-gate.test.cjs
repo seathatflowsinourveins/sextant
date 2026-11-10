@@ -281,9 +281,9 @@ function witness() {
   add('later', ['d8457400']);
   const reviews = names => names.map(name => ({user: {login: 'github-actions[bot]'},
     body: `Review of ${sha[name]}`}));
-  const install = (f, head) => {
+  const install = (f, head, base = sha.eb5236b) => {
     f.pr.head.sha = sha[head];
-    f.pr.base.sha = sha.eb5236b;
+    f.pr.base.sha = base;
     f.github.rest.repos.getCommit = async ({ref}) => {
       assert.ok(commits[ref], `unexpected commit read: ${ref}`);
       return commits[ref];
@@ -327,6 +327,37 @@ test('a base-branch update merge keeps the P0/P1 bar for the next author head (#
   const later = fixture();
   install(later, 'later');
   later.github.paginate = async () => reviews(['c39a8349', 'c74c9e59', 'd8457400']);
+  assert.equal(await gate.reviewedHeadCount(later.github, later.context, 7, sha.later), 2);
+  assert.equal(await gate.blockingPriority(later.github, later.context, 7, sha.later), 1);
+});
+
+test('two base updates in a row never count, even after the base moves', async () => {
+  const {sha, install, reviews} = witness();
+  const afterFirst = reviews(['c39a8349', 'c74c9e59']);
+  const afterSecond = reviews(['c39a8349', 'c74c9e59', 'd8457400']);
+
+  // At tip A the first update merge is an update.
+  const atA = fixture();
+  install(atA, 'c74c9e59', sha.f7314de);
+  atA.github.paginate = async () => afterFirst;
+  assert.equal(await gate.reviewedHeadCount(atA.github, atA.context, 7, sha.c74c9e59), 1);
+
+  // Once main advances to B the earlier update stays an update, not an author head.
+  const movedBase = fixture();
+  install(movedBase, 'c74c9e59');
+  movedBase.github.paginate = async () => afterFirst;
+  assert.equal(await gate.reviewedHeadCount(movedBase.github, movedBase.context, 7, sha.c74c9e59), 1);
+
+  // A second update merge at B is also an update; the count stays 1.
+  const atB = fixture();
+  install(atB, 'd8457400');
+  atB.github.paginate = async () => afterSecond;
+  assert.equal(await gate.reviewedHeadCount(atB.github, atB.context, 7, sha.d8457400), 1);
+
+  // The next author head counts once, so the P0/P1 bar still applies.
+  const later = fixture();
+  install(later, 'later');
+  later.github.paginate = async () => afterSecond;
   assert.equal(await gate.reviewedHeadCount(later.github, later.context, 7, sha.later), 2);
   assert.equal(await gate.blockingPriority(later.github, later.context, 7, sha.later), 1);
 });
