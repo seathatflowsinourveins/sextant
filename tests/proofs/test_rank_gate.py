@@ -1,7 +1,10 @@
 """Offline proofs for the runner-independent rank veto."""
 
+import json
+from datetime import date
 from importlib import import_module
 from importlib.util import find_spec
+from pathlib import Path
 from types import ModuleType
 
 import pytest
@@ -99,5 +102,21 @@ def test_enabled_gate_requires_a_rank_in_fresh_evidence(
 def test_gate_refuses_incomplete_or_inconsistent_results(
     enabled: object, rank: object, consumer_reason: object, reason: str
 ) -> None:
-    decision = rank_gate().decide_rank_gate(enabled=enabled, rank=rank, consumer_reason=consumer_reason)
+    decision = rank_gate().decide_rank_gate(
+        enabled=enabled, rank=rank, consumer_reason=consumer_reason
+    )
     assert (decision.status.value, decision.reason) == ("refuse", reason)
+
+
+def test_rank_gate_registry_records_the_uncalibrated_default() -> None:
+    root = Path(__file__).parents[2]
+    path = root / "lanes/research/rank-gate-parameters.json"
+    assert path.is_file(), "rank gate parameter registry is missing"
+    (row,) = json.loads(path.read_text())
+    assert row["name"] == "rank_gate_enabled" and row["value"] is False
+    assert row["calibration_state"] == "UNCALIBRATED"
+    assert row["source"].strip()
+    assert date.fromisoformat(row["last_change"])
+
+    gate = rank_gate()
+    assert gate.decide_rank_gate(enabled=row["value"]) == gate.decide_rank_gate()
