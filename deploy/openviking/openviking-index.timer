@@ -1,0 +1,11 @@
+# git-maintenance@hourly.timer's shape: hourly, Persistent. Twenty minutes after git's prefetch at the hour,
+# so each run reads the main it just fetched. The cadence is an uncalibrated starting value.
+[Unit]
+Description=Sextant research index follows main
+
+[Timer]
+OnCalendar=*-*-* *:20:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

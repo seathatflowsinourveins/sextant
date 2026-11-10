@@ -158,7 +158,7 @@ def test_openviking_is_loopback_disposable_and_explicitly_selected() -> None:
     assert _json("deploy/openviking/ovcli.conf")["url"] == "http://127.0.0.1:21933"
     assert "url: http://127.0.0.1:21933/mcp" in _overlay("openviking")
     index = _read("deploy/openviking/index.sh")
-    assert "git archive HEAD docs" in index and "mktemp -d" in index
+    assert 'git archive "$revision" docs' in index and "mktemp -d" in index
     assert "ov add-resource" in index and "--processing-mode vectors_only" in index
     assert "--watch-interval 0" in index and "--reason ''" in index
     assert "OPENVIKING_CLI_CONFIG_FILE" in index

@@ -1,4 +1,5 @@
 # OpenViking v0.5.3 docs/en/guides/03-deployment.md, adapted to a user service.
+# deploy/openviking/install-units.sh installs it as sextant-openviking.service, with its checkout's path.
 [Unit]
 Description=Sextant disposable research retrieval
 After=network.target

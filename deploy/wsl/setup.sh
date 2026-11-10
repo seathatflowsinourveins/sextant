@@ -113,10 +113,7 @@ if ! printf '%s  %s\n' "$model_sha" "$model_dir/$model" | sha256sum --check --st
   mv "$model_dir/$model.download" "$model_dir/$model"
 fi
 docker compose -f deploy/openviking/compose.yaml up -d
-sed "s|%h/sextant/deploy|$PWD/deploy|" deploy/openviking/openviking.service \
-  > "$HOME/.config/systemd/user/sextant-openviking.service"
-systemctl --user daemon-reload
-systemctl --user enable --now sextant-openviking.service
+bash deploy/openviking/install-units.sh
 # An installed-but-failed service is not a completed setup.
 embedding_url=$(jq -r '.embedding.dense.api_base' deploy/openviking/ov.conf)
 curl -fsS --retry 30 --retry-all-errors --retry-delay 2 "${embedding_url%/v1}/health" -o /dev/null
