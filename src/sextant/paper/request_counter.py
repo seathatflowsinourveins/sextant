@@ -6,20 +6,42 @@ Pinned alpaca-py 0.44.0 discards HTTP response headers (``alpaca/common/rest.py`
 itself did: the account pacer's ``wire_requests`` and the calls to
 ``get_stock_bars``.  The line is a pure observer: a counter or print failure is
 swallowed with one ``c-requests unavailable`` line and never reaches trading.
+It writes stdout's raw stream rather than going through ``print`` so a full pipe
+never holds the buffered writer's lock at interpreter shutdown (see
+``_default_out``); the docs are cited in ``docs/manifest.md``.
 """
 
 from __future__ import annotations
 
 import contextlib
+import sys
 import threading
 from collections.abc import Callable
 from typing import Any
 
 REQUEST_LOG_INTERVAL_S = 60.0
+_UNAVAILABLE = "c-requests unavailable"
 
 
 def _default_out(line: str) -> None:
-    print(line, flush=True)
+    """Writes one line on stdout's raw stream, from the log's daemon thread.
+
+    ``print(..., flush=True)`` writes through ``sys.stdout``'s buffered writer,
+    which protects itself with a lock and holds it for as long as the pipe is
+    full; the interpreter's final flush then cannot take that lock and aborts
+    with ``_enter_buffered_busy``.  Raw streams "do not try to encapsulate" the
+    OS call (io docs), so a full pipe costs one undelivered line, and shutdown
+    has no buffer of ours to flush.  In-process capture (pytest) has no raw
+    stream and no pipe to fill, so it keeps ``print``.
+    """
+    raw = getattr(getattr(sys.stdout, "buffer", None), "raw", None)
+    if raw is None:
+        print(line, flush=True)
+        return
+    encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+    payload = (line + "\n").encode(encoding, "replace")
+    if raw.write(payload) != len(payload):
+        raise OSError("short write to stdout")
 
 
 class CountingMarketData:
@@ -73,7 +95,7 @@ class RequestLog:
             self._emit(f"c-requests wire={self._requests()} data={self.data_requests}")
         except Exception:
             self._failed = True
-            self._emit("c-requests unavailable")
+            self._emit(_UNAVAILABLE)
 
     def start(self) -> None:
         if self._thread is not None:
@@ -85,20 +107,28 @@ class RequestLog:
             self._thread = thread
         except Exception:
             self._failed = True
-            self._emit("c-requests unavailable")
+            self._emit(_UNAVAILABLE)
 
     def stop(self) -> None:
+        """Signals the thread and returns without waiting for it.
+
+        The sink writes the raw stream unbuffered, so there is nothing left to
+        drain, and joining a daemon that may be blocked in a write is how the
+        runner used to stall for a second at shutdown.
+        """
         self._stop.set()
-        thread, self._thread = self._thread, None
-        if thread is not None and thread is not threading.current_thread():
-            thread.join(timeout=1.0)
+        self._thread = None
 
     def _run(self) -> None:
         while not self._stop.wait(self.interval_s):
             self.maybe_log()
 
     def _emit(self, line: str) -> None:
+        """Writes one line; a failure disables the log after one marker attempt."""
         try:
             self._out(line)
         except Exception:
             self._failed = True
+            if line != _UNAVAILABLE:
+                with contextlib.suppress(Exception):
+                    self._out(_UNAVAILABLE)
