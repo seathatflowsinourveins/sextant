@@ -8,11 +8,14 @@ the pacer, custody, guard, writer lease, receipt and trial row all run.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pytest
 from alpaca.trading.enums import OrderSide, TimeInForce
@@ -30,7 +33,7 @@ from nautilus_trader.model import (
 from sextant.execution.custody import AccountScope, WriterLease
 from sextant.paper.c_live_main import _equity_ladder, main
 from sextant.ranking.baseline import BaselineSample, BaselineTable, dump_baseline
-from sextant.validation.trials import TrialLog
+from sextant.validation.trials import TrialLog, snapshot_hash
 
 NS = 1_000_000_000
 SEC = NS
@@ -45,6 +48,7 @@ SUFFIX = "CU3B"
 API_KEY = "test-api-key-3"
 SECRET = "test-secret-3"  # noqa: S105
 IID = InstrumentId.from_str("OMH.ALPACA")
+ET = ZoneInfo("America/New_York")
 D = Decimal
 
 
@@ -129,6 +133,7 @@ class FakeTradingClient:
         *,
         positions: tuple[Any, ...] = (),
         orders: tuple[Any, ...] = (),
+        assets: tuple[Any, ...] = (),
         account_number: str = ACCOUNT,
         ack_status: str = "filled",
         poll_status: str = "filled",
@@ -140,6 +145,7 @@ class FakeTradingClient:
         self.account = SimpleNamespace(account_number=account_number)
         self.positions = list(positions)
         self.orders = list(orders)
+        self.assets = list(assets)
         self.ack_status = ack_status
         self.poll_status = poll_status
         self.tradable = tradable
@@ -165,6 +171,10 @@ class FakeTradingClient:
     def get_orders(self, filter: Any = None) -> Any:
         self.calls.append("get_orders")
         return self.orders
+
+    def get_all_assets(self, filter: Any = None) -> Any:
+        self.calls.append("get_all_assets")
+        return self.assets
 
     def get_asset(self, symbol_or_asset_id: object) -> Any:
         self.calls.append("get_asset")
@@ -238,6 +248,50 @@ class FakeTradingClient:
         )
 
 
+class FakeDataClient:
+    def __init__(self, bars: dict[str, list[Any]], *, fail: bool = False) -> None:
+        self.bars_by_symbol = bars
+        self.fail = fail
+        self.calls: list[Any] = []
+
+    def get_stock_bars(self, request_params: Any) -> Any:
+        self.calls.append(request_params)
+        if self.fail:
+            raise RuntimeError("historical bars unavailable")
+        body = {
+            symbol: self.bars_by_symbol.get(symbol, ())
+            for symbol in request_params.symbol_or_symbols
+        }
+        return SimpleNamespace(data=body)
+
+
+def asset(symbol: str, *, overnight_tradable: bool = True) -> Any:
+    attributes = ["overnight_tradable"] if overnight_tradable else []
+    return SimpleNamespace(
+        id=f"id-{symbol}",
+        status="active",
+        asset_class="us_equity",
+        symbol=symbol,
+        tradable=True,
+        attributes=attributes,
+    )
+
+
+def daily_bars(close: str, volume: str) -> list[Any]:
+    return [
+        SimpleNamespace(
+            timestamp=datetime(2026, 11, 6, 10, 0, tzinfo=ET),
+            close=D("1.00"),
+            volume=D("100"),
+        ),
+        SimpleNamespace(
+            timestamp=datetime(2026, 11, 9, 9, 30, tzinfo=ET),
+            close=D(close),
+            volume=D(volume),
+        ),
+    ]
+
+
 def trade(seconds: int, price: str, size: int = 100, *, base: int = START) -> TradeTick:
     ts = base + seconds * SEC
     return TradeTick(
@@ -298,6 +352,12 @@ def switch_replay(feed: FakeFeed) -> None:
     feed.clock.value = PRE_SWITCH_CLOCK + 20 * SEC
 
 
+def rth_close_replay(feed: FakeFeed) -> None:
+    """Cross the RTH/post boundary without a fill."""
+
+    feed.clock.value = POST_CLOCK
+
+
 def post_replay(feed: FakeFeed) -> None:
     """The same surge in the post session, then a higher trade that moves the trail."""
 
@@ -348,6 +408,9 @@ def invoke(
     baseline_dir: Path | None = None,
     replays: list[Any] | None = None,
     feed_log: list[FakeFeed] | None = None,
+    universe: bool = False,
+    data: Any = None,
+    symbols: str = "OMH.ALPACA",
 ) -> int:
     calls = {"index": 0}
 
@@ -367,9 +430,11 @@ def invoke(
     argv = [
         "--config",
         str(write_config(tmp_path)),
-        "--symbols",
-        "OMH.ALPACA",
     ]
+    if universe:
+        argv.append("--universe")
+    else:
+        argv += ["--symbols", symbols]
     if baseline_dir is not None:
         argv += ["--baseline-dir", str(baseline_dir)]
     else:
@@ -380,6 +445,7 @@ def invoke(
     return main(
         argv,
         client_factory=lambda **_: client,
+        data_factory=lambda **_: data if data is not None else FakeDataClient({}),
         feed_factory=feed_factory,
         now_ns=clock,
         sleep=sleep,
@@ -792,3 +858,195 @@ def test_the_real_asset_shape_refuses_when_the_attribute_is_absent() -> None:
     segment = Segment("OVERNIGHT", date(2026, 11, 9), 0, 1, "receipt")
     with pytest.raises(LiveRefusal, match="not overnight-eligible"):
         _require_eligible(asset, "AAPL", segment)
+
+
+def test_the_universe_ranking_arms_the_slot_pool_and_drives_the_session(
+    live_env: Path,
+) -> None:
+    ranks = {
+        "OMH": daily_bars("1.10", "500"),
+        "DDD": daily_bars("1.08", "300"),
+        "CCC": daily_bars("1.06", "300"),
+        "BBB": daily_bars("1.04", "300"),
+        "AAA": daily_bars("1.02", "300"),
+    }
+    client = FakeTradingClient(assets=tuple(asset(symbol) for symbol in ranks))
+    data = FakeDataClient(ranks)
+    feed_log: list[FakeFeed] = []
+
+    code = invoke(
+        live_env,
+        client,
+        Clock(),
+        Monotonic(),
+        universe=True,
+        data=data,
+        feed_log=feed_log,
+    )
+
+    assert code == 0
+    assert len(feed_log) == 1
+    assert set(feed_log[0].instruments) == {"DDD.ALPACA", "OMH.ALPACA"}
+    assert data.calls
+    written = receipt(live_env)
+    assert written["symbols"] == ["OMH.ALPACA", "DDD.ALPACA"]
+    assert written["arming"][0]["eligible"] == 5
+    assert written["arming"][0]["slots"] == 2
+    assert written["arming"][0]["armed"] == ["OMH.ALPACA", "DDD.ALPACA"]
+    assert written["commands"]
+    assert client.submitted
+
+
+def test_a_universe_run_rearms_at_each_segment_boundary(live_env: Path) -> None:
+    ranks = {
+        "OMH": daily_bars("1.10", "500"),
+        "DDD": daily_bars("1.08", "300"),
+        "CCC": daily_bars("1.06", "300"),
+        "BBB": daily_bars("1.04", "300"),
+        "AAA": daily_bars("1.02", "300"),
+    }
+    client = FakeTradingClient(assets=tuple(asset(symbol) for symbol in ranks))
+    data = FakeDataClient(ranks)
+    feed_log: list[FakeFeed] = []
+
+    code = invoke(
+        live_env,
+        client,
+        Clock(),
+        Monotonic(),
+        universe=True,
+        data=data,
+        baseline_dir=write_baseline_dir(live_env),
+        replays=[rth_close_replay, noop_replay],
+        feed_log=feed_log,
+    )
+
+    assert code == 0
+    assert len(feed_log) == 2
+    assert [set(feed.instruments) for feed in feed_log] == [
+        {"OMH.ALPACA", "DDD.ALPACA"},
+        {"OMH.ALPACA", "DDD.ALPACA"},
+    ]
+    written = receipt(live_env)
+    assert [arming["segment"] for arming in written["arming"]] == ["RTH", "POST"]
+    assert written["final_segment"] == "POST"
+
+
+def test_an_empty_universe_refuses_without_arming(live_env: Path) -> None:
+    client = FakeTradingClient(assets=())
+    data = FakeDataClient({})
+    feed_log: list[FakeFeed] = []
+
+    code = invoke(
+        live_env,
+        client,
+        Clock(),
+        Monotonic(),
+        universe=True,
+        data=data,
+        feed_log=feed_log,
+    )
+
+    assert code == 1
+    assert feed_log == []
+    assert data.calls == []
+    assert "get_asset" not in client.calls
+    assert client.submitted == []
+    written = receipt(live_env)
+    assert written["symbols"] == []
+    assert written["arming"][0]["armed"] == []
+    assert any("no eligible symbols" in error for error in written["errors"])
+    rows = TrialLog(live_env / "trials.parquet").records
+    assert len(rows) == 1
+    assert rows[0]["state"] == "FAIL"
+
+
+def test_an_unusable_universe_ranking_refuses_without_arming(live_env: Path) -> None:
+    client = FakeTradingClient(assets=(asset("OMH"),))
+    data = FakeDataClient({}, fail=True)
+    feed_log: list[FakeFeed] = []
+
+    code = invoke(
+        live_env,
+        client,
+        Clock(),
+        Monotonic(),
+        universe=True,
+        data=data,
+        feed_log=feed_log,
+    )
+
+    assert code == 1
+    assert feed_log == []
+    assert data.calls
+    assert "get_asset" not in client.calls
+    written = receipt(live_env)
+    assert written["symbols"] == []
+    assert written["arming"][0]["eligible"] == 0
+    assert any("universe ranking failed" in error for error in written["errors"])
+    rows = TrialLog(live_env / "trials.parquet").records
+    assert len(rows) == 1
+    assert rows[0]["state"] == "FAIL"
+
+
+def test_universe_and_symbols_are_mutually_exclusive(tmp_path: Path) -> None:
+    with pytest.raises(SystemExit) as refused:
+        main(
+            [
+                "--config",
+                str(write_config(tmp_path)),
+                "--symbols",
+                "OMH.ALPACA",
+                "--universe",
+                "--baseline",
+                str(write_baseline(tmp_path)),
+                "--state",
+                str(tmp_path / "state"),
+            ]
+        )
+    assert refused.value.code == 2
+
+
+def test_a_completed_session_appends_one_full_identity_row(live_env: Path) -> None:
+    ledger = live_env / "session-ledger.parquet"
+    assert invoke(live_env, FakeTradingClient(), Clock(), Monotonic(), ledger=ledger) == 0
+
+    written = receipt(live_env)
+    rows = TrialLog(ledger).records
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["state"] == "COMPLETE"
+    config = json.loads(row["config"])
+    params = json.loads(row["params"])
+    assert config["arm_id"] == "paper-c-24x5"
+    assert config["arm_run_id"] == written["receipt_id"]
+    assert re.fullmatch(r"[0-9a-f]{40}", config["implementation_sha"])
+    assert config["factor_mask"] == []
+    assert config["sandbox_config_hash"] == snapshot_hash(config["sandbox_config"])
+    assert config["evidence_weights_hash"] == snapshot_hash(config["evidence_weights"])
+    assert config["params_hash"] == snapshot_hash(params)
+    assert config["tier"] == "BROKER-PAPER"
+    assert config["block_set_id"]
+    assert config["funding_divergent_session_count"] is None
+    assert config["funding_unverified_session_count"] is None
+    assert config["condition_returns"] == {}
+    assert params["entry_params_hash"] == written["entry_params_hash"]
+    assert params["symbols"] == ["OMH.ALPACA"]
+    assert "pnl" not in json.dumps(params).lower()
+    assert not (live_env / "reports/research/trials.parquet").exists()
+
+
+def test_a_ledger_failure_keeps_the_receipt_and_exits_non_zero(
+    live_env: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    blocker = live_env / "not-a-directory"
+    blocker.write_text("a file cannot hold a ledger")
+    ledger = blocker / "trials.parquet"
+
+    code = invoke(live_env, FakeTradingClient(), Clock(), Monotonic(), ledger=ledger)
+
+    assert code == 1
+    written = receipt(live_env)
+    assert written["commands"]
+    assert "trial ledger refused" in capsys.readouterr().err
+    assert not (live_env / "reports/research/trials.parquet").exists()

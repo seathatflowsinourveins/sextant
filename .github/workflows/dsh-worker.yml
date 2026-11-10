@@ -1,11 +1,13 @@
 # One dispatched dsh headless worker on a GitHub-hosted runner.
 #
-# Sources: GitHub workflow_dispatch/permissions/concurrency documentation, read
-# 2026-11-09; PerryLink/dsh-github@2fc0009c:action.yml:51-62,118-161 and
+# Sources: GitHub workflow_dispatch/permissions/concurrency documentation and
+# the github context's repository.default_branch field, read 2026-11-09;
+# PerryLink/dsh-github@2fc0009c:action.yml:51-62,118-161 and
 # scripts/action-patch.mjs:49-152; peter-evans/create-pull-request@v8.1.1
 # README.md:50-95; actions/create-github-app-token@v3.3.0 action.yml.
 # The worker edits only the checked-out workspace. It never receives a broker,
-# paper or live key, and never runs on main.
+# paper or live key, and runs only on the repository's default branch, so a
+# branch rename needs no edit here.
 name: dsh-worker
 on:
   workflow_dispatch:
@@ -21,7 +23,7 @@ on:
 permissions: {}
 jobs:
   worker:
-    if: ${{ github.actor == github.repository_owner && github.ref == 'refs/heads/gate' }}
+    if: ${{ github.actor == github.repository_owner && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     environment: hosted-workers
@@ -35,7 +37,7 @@ jobs:
       DSH_VERSION: 0.2.2-rc.1
       DSH_GITHUB_VERSION: 0.7.27
     steps:
-      - name: Check out the dispatched gate commit
+      - name: Check out the dispatched commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
@@ -183,7 +185,7 @@ jobs:
         with:
           token: ${{ steps.app-token.outputs.token }}
           branch: dsh-worker/${{ inputs.slug }}
-          base: gate
+          base: ${{ github.event.repository.default_branch }}
           title: 'dsh worker: ${{ inputs.slug }}'
           body-path: ${{ steps.brief.outputs.pr_body }}
           commit-message: 'dsh worker: ${{ inputs.slug }}'

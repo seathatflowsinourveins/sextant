@@ -9,7 +9,7 @@ One stage, one owner. The 25 pinned skills are shared by dsh and the lane runtim
 | Isolate | `using-git-worktrees` | `using-git-worktrees` | one task, one Orca worktree |
 | Implement | `test-driven-development` | `test-driven-development` | a failing test first |
 | Debug | `systematic-debugging` | `systematic-debugging` | root cause before a fix |
-| Review | `requesting-code-review` then `receiving-code-review` | the same pair, plus `ce-code-review` for a report-only full review | findings answered, or rejected with a reason |
+| Review | `requesting-code-review` then `receiving-code-review` | the same pair, report-only `ce-code-review` and native `/code-review` pending #180's measurement below | findings answered, or rejected with a reason |
 | Verify | `verification-before-completion` | `verification-before-completion` | the command and its output, not a claim |
 | PR | `finishing-a-development-branch`, `just pr` | the same | `ci`, `source` and `review` pass (ADR-0001) |
 | Feedback | `receiving-code-review`; the `gh` CLI for threads and failed jobs | `ce-resolve-pr-feedback`; the `gh` CLI | every thread resolved or answered |
@@ -20,8 +20,20 @@ One stage, one owner. The 25 pinned skills are shared by dsh and the lane runtim
 
 - Both families request a review with the Superpowers pair. A review is report-only until the invoker asks for the fix, and receiving one answers every finding or rejects it with a reason.
 - Claude adds `ce-code-review`, a report-only pipeline of personas, a validator and a rendered report. It reads its artifact root from `.compound-engineering/config.yaml` (default `docs`), dispatches through the host's subagent and collection semantics, and starts its cross-model peer through compound-engineering's own scripts.
+- Claude Code 2.1.321's built-in `/code-review` takes a diff, PR number or branch, an effort level and `--comment` to post findings inline. A Claude-family writer runs it on its branch before `just pr`; a Claude local cross-family reviewer runs it on the branch or PR under review. Default `high`; `xhigh` on `src/sextant/paper/`, `src/sextant/execution/`, `src/sextant/exits/`, `src/sextant/risk/` and `.github/`; `max` only on the owner's word, as the native skill requires.
+- Its findings follow the [landing verdict rule](../../.github/workflows/shared/review-rules.md#report) unchanged: only Always-P0 or a concrete failing witness at the exact head blocks; everything else goes to one follow-up issue per PR; from the third reviewed head, only P0 blocks.
+- Once #180 lands, compare `/code-review`, `ce-code-review` and the Superpowers pair on the same known-defect set; that measurement decides the Claude Review row's one owner. Until then they run beside each other by the owner's word, not a claim of measured superiority. The lead's first use is once on #197 at `xhigh` with inline findings; afterward this is the reviewers' step, not the lead's.
+- Every local review brief names the pinned upstream path and asks whether upstream has moved since the pin in a way that changes the PR. The weekly hosted panel remains the landscape check.
 - `ce-code-review` is not copied into dsh. The copy would bind a second owner to compound-engineering's config and peer route, and dsh would fail at a route it does not have. Reopen: compound-engineering publishes a harness-neutral review entry (documented non-Task dispatch and no CE config), then a leg and a row.
 - The PR gate is family-blind: one other family reviews, as ADR-0001 routes; live promotion keeps its separate exact-SHA two-family requirement. A session skill outside the 25 is not routed here; a stage's owner is a pinned skill or the native tool in its row.
+
+## Standing authority
+
+The owner, verbatim, 2026-11-09, in the lead's 17:59 EST standing-delegation ruling (SHA-256 `4ab39a83c800866c43416c5ea878a8d7ff3aa8adad811df52163a83686d34ecd`):
+
+> "should we stop all lanes and start a clean sota env with the new era clean sota workflow with every adhrs form sota convergenced repos? and please proceed wiht the sota decision making as long as they are evidance andresearch convergneced sota driven,we can make it as part of our standing rules with prs,/code-review etc also using the sota repos upstream to make sure they land cleanly to be sota aligned at current landscape"
+
+That ruling records the evidence-led delegation, owner-only reservations, draft hold and single lander now in `AGENTS.md`, and the native review step above. GitHub's [changing the stage of a pull request](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/proposing-changes-to-your-work-with-pull-requests/changing-the-stage-of-a-pull-request), read 2026-11-09, supplies the hold: a draft cannot merge until marked ready. Restricting who marks it ready and who merges is the owner's policy, not a GitHub permission claim. The review source is the installed Claude Code 2.1.321 runtime's built-in `code-review` skill; upstream release [anthropics/claude-code@v2.1.321](https://github.com/anthropics/claude-code/tree/a4fcccc70a89df6607e66cc30682d551269d0680), `a4fcccc70a89df6607e66cc30682d551269d0680` (`CHANGELOG.md:3-5` identifies the release), checked 2026-11-09. This adds no plugin or hosted gate.
 
 ## Feedback and learning
 
