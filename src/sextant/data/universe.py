@@ -76,10 +76,6 @@ class UniverseProvenance:
         if not self.survivor_only:
             raise ValueError("No accepted dated master: the universe must stay survivor_only")
 
-    @property
-    def pit_verified(self) -> bool:
-        return report_provenance({"universe_source": self.source}).get("pit_verified") is True
-
     def report_fields(self) -> dict[str, Any]:
         return {
             **report_provenance({"universe_source": self.source}),

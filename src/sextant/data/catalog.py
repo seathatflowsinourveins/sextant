@@ -46,7 +46,6 @@ from .alpaca_history import (
 
 PRICE_PRECISION = 9
 SIZE_PRECISION = 0
-DAY_NANOS = 86400 * 1_000_000_000
 CATALOG_METADATA = {
     "source": "alpaca_sip",
     "feed": "sip",

@@ -64,11 +64,6 @@ def _to_ns(instant: datetime) -> int:
     return (delta.days * 86400 + delta.seconds) * _NS + delta.microseconds * 1000
 
 
-def _eastern_date(instant_ns: int) -> date:
-    # Whole seconds suffice to select a local calendar date, even for negative ns.
-    return (_EPOCH + timedelta(seconds=instant_ns // _NS)).astimezone(_ET).date()
-
-
 def _at_et(day: date, clock: time) -> int:
     return _to_ns(datetime.combine(day, clock, tzinfo=_ET))
 
