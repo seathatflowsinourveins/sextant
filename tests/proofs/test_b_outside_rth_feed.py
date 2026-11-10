@@ -806,7 +806,7 @@ def test_a_hung_tape_read_leaves_the_loop_counting_breaches_and_paging(monkeypat
         feed="boats",
         data_client=BlockingHistory(),
     )
-    observed: dict[str, object] = {}
+    observed: dict[str, list[str] | bool] = {}
 
     def observe() -> None:
         time.sleep(0.4)
@@ -821,7 +821,8 @@ def test_a_hung_tape_read_leaves_the_loop_counting_breaches_and_paging(monkeypat
         # and the loop is free while the historical request is still in flight.
         await stream._start_ws()
         watcher.join(2)
-        assert "outside_rth_feed_silent" in observed.get("pages", [])
+        pages = observed.get("pages")
+        assert isinstance(pages, list) and "outside_rth_feed_silent" in pages
         assert observed.get("unfinished") is True
         release.set()
         task = getattr(stream, "_tape_task", None)
@@ -863,7 +864,7 @@ def test_a_timed_out_read_is_retried_on_a_later_cadence_tick() -> None:
         stream.protector.begin_tape("AAPL", Decimal("10"), clock[0])
         line, _ = stream.protector._state_snapshot("AAPL", clock[0])
         assert "tape=none" in line
-        stream._tape_task = pending
+        stream._tape_task = pending  # type: ignore[assignment]
         stream._tape_symbol = "AAPL"
         stream._tape_started_ns = clock[0]
         clock[0] += 6 * SEC
@@ -930,7 +931,7 @@ def test_a_timed_out_read_is_not_reported_as_ok_when_it_lands_late() -> None:
         stream = _probe_stream(clock)
         pending: asyncio.Future[TapeRead] = asyncio.get_running_loop().create_future()
         stream.protector.begin_tape("AAPL", Decimal("10"), clock[0])
-        stream._tape_task = pending
+        stream._tape_task = pending  # type: ignore[assignment]
         stream._tape_symbol = "AAPL"
         stream._tape_started_ns = clock[0]
         clock[0] += 6 * SEC
@@ -972,7 +973,7 @@ def test_a_previous_feed_result_does_not_complete_the_new_session() -> None:
             secret_key="test-secret",  # noqa: S106 - fixture, never a real key
             now_ns=lambda: clock[0],
             feed="boats",
-            data_client=history._client,
+            data_client=history._client,  # type: ignore[arg-type]
         )
         stream.protector.reconcile()
         stream.protector.set_feed("sip")
@@ -988,10 +989,11 @@ def test_a_previous_feed_result_does_not_complete_the_new_session() -> None:
             house_prefix=stream.protector._account.house_prefix,
         )
         assert result.status == "ok"
+        assert isinstance(history._client, FakeHistoricalClient)
         assert len(history._client.requests) == 1
         completed: asyncio.Future[TapeRead] = asyncio.get_running_loop().create_future()
         completed.set_result(result)
-        stream._tape_task = completed
+        stream._tape_task = completed  # type: ignore[assignment]
         stream._tape_symbol = "AAPL"
         stream._tape_started_ns = before
         clock[0] = after
