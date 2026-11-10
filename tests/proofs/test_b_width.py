@@ -326,3 +326,48 @@ def test_the_registry_refuses_a_native_under_the_minimum_and_a_fractional_count(
     BParameters(**facts)  # the registry's own values load
     with pytest.raises(ValueError):
         BParameters(**(facts | overrides))
+
+
+# --- Codex max on 1b at 37bb20e: the two follow-ups closed before the push ---------------------
+
+
+def honest_and_quiet() -> tuple[list[BarRow], list[BarRow]]:
+    """22 bars, 19 of range 2 then 3 of 0.10: the honest ATR22 is about 1.74 (the probe's)."""
+
+    spreads = [Decimal("2")] * 19 + [Decimal("0.10")] * 3
+    honest = [
+        BarRow(
+            et(9, 30) + i * 5 * MINUTE_NS, Decimal(100) + s / 2, Decimal(100) - s / 2, Decimal(100)
+        )
+        for i, s in enumerate(spreads)
+    ]
+    return honest, honest[-3:]
+
+
+def test_bars_merged_from_valid_pages_that_repeat_an_interval_are_refused():
+    from test_b_bars import page
+
+    from sextant.paper.b_feed import BHistoricalTape
+
+    honest, quiet = honest_and_quiet()
+    assert completed_atr(honest, 22, 5, et(11, 20), et(11, 20)).quantize(
+        Decimal("0.01")
+    ) == Decimal("1.74")
+    text = [datetime.fromtimestamp(r.ts_ns // SEC, tz=ET).isoformat() for r in reversed(quiet)]
+    rows = [
+        {"t": t, "o": 1, "h": 100.05, "l": 99.95, "c": 100, "v": 9, "n": 3, "vw": 100} for t in text
+    ]
+    merged: list[BarRow] = []
+    for _ in range(8):  # eight valid pages, each the same three quiet bars (Codex probe)
+        merged += BHistoricalTape(page({"AAPL": rows}), 10_000, 10_000).bar_page(
+            ["AAPL"], 5, et(11, 20)
+        )[0]["AAPL"]
+    with pytest.raises(ValueError):  # it gave 0.10 from three distinct intervals
+        completed_atr(merged, 22, 5, et(11, 20), et(11, 20))
+
+
+@pytest.mark.parametrize("period", [0, Decimal("2.5"), True, -1])
+def test_the_atr_refuses_a_period_that_is_not_a_positive_integer(period):
+    honest, _ = honest_and_quiet()
+    with pytest.raises(ValueError):  # never the AssertionError in DecimalATR.handle_bar
+        completed_atr(honest, period, 5, et(11, 20), et(11, 20))
