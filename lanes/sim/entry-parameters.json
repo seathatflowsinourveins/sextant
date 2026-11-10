@@ -135,6 +135,15 @@
     "scope": "REVIEWED"
   },
   {
+    "name": "max_armed_symbols",
+    "unit": "count",
+    "value": 5,
+    "source": "LEAD-1759 section 2 item 3 (2026-11-09 17:59 EST), confirmed by LEAD-1808 #201 (2026-11-09 18:08 EST): C inherits A's reviewed 5-name profile, UNCALIBRATED; docs/adr/0002-philosophy-and-lanes.md and docs/design.md profile table; docs/adr/0024-extreme-mover-ranking-and-early-entry.md: ceil(0.4 x 5) = 2 mover places; seathatflowsinourveins/northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:src/northstar_trading/strategies/premarket_gap/scanner.py:991-1105",
+    "calibration": "UNCALIBRATED",
+    "last_change": "2026-11-09",
+    "scope": "REVIEWED"
+  },
+  {
     "name": "bp_target_fraction",
     "unit": "ratio",
     "value": null,
