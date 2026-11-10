@@ -395,6 +395,44 @@ def test_l6_missing_trial_witness_is_unavailable_not_zero() -> None:
     assert ages["files"] > 0
 
 
+# Each monitor budget and where the gate asserts it: the function in tests/repo/test_budgets.py
+# and which of its compared integers, by source position. A budget added to either side goes here.
+GATE_BUDGETS = {
+    "src_lines": ("test_src_stays_under_budget", 0),
+    "justfile_lines": ("test_justfile_stays_short", 0),
+    "agent_docs_lines": ("test_agent_files_stay_short", 0),
+    "design_lines": ("test_design_stays_short", 0),
+    "practices_lines": ("test_practices_stay_short", 0),
+    "adr_count": ("test_at_most_thirty_one_page_adrs", 0),
+    "adr_lines": ("test_at_most_thirty_one_page_adrs", 1),
+    "research_count": ("test_at_most_thirty_research_notes", 0),
+    "lane_readme_lines": ("test_lane_readmes_stay_short", 0),
+}
+
+
+def test_l6_budget_limits_are_the_gates_own_numbers() -> None:
+    # The monitor copies the gate's budgets by hand (#165). A cap moved in the gate alone stays
+    # green until the tree crosses the stale copy, as #153 did, or, moved down, for good.
+    gate_path = ROOT / "tests" / "repo" / "test_budgets.py"
+    gate: dict[str, list[int]] = {}
+    for function in ast.parse(gate_path.read_text(encoding="utf-8")).body:
+        if isinstance(function, ast.FunctionDef):
+            # ast.walk yields "in no specified order", so the comparisons are put in source order.
+            compares = [node for node in ast.walk(function) if isinstance(node, ast.Compare)]
+            gate[function.name] = [
+                constant.value
+                for node in sorted(compares, key=lambda node: (node.lineno, node.col_offset))
+                for constant in node.comparators
+                if isinstance(constant, ast.Constant) and type(constant.value) is int
+            ]
+    assert set(GATE_BUDGETS) == set(evidence.BUDGETS)
+    for key, (function, index) in GATE_BUDGETS.items():
+        assert evidence.BUDGETS[key][1] == gate[function][index], (
+            f"scripts/monitor_evidence.py BUDGETS[{key!r}] must equal the number "
+            f"tests/repo/test_budgets.py::{function} asserts; move both in one PR"
+        )
+
+
 def test_l6_src_budget_sums_the_tree_not_its_longest_file(tmp_path: Path) -> None:
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "a.py").write_text("a\nb\n", encoding="utf-8")
