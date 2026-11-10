@@ -1,0 +1,764 @@
+"""The all-runtime doctor's proof: a good fixture is green and every cell names its defect.
+
+Each case builds a fixture home that stands in for the installed runtimes, injects one defect
+into the surface that runtime actually reads, and asserts the exact row.check code.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import importlib.util
+import json
+import sqlite3
+import sys
+from pathlib import Path
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[2]
+REMOTE = "https://github.com/seathatflowsinourveins/sextant-next"
+SLUG = "seathatflowsinourveins/sextant-next"
+PLUGINS = [
+    "superpowers@superpowers-dev",
+    "compound-engineering@compound-engineering-plugin",
+    "typesafe@typesafe-ai",
+    "pyright-lsp@sextant-lsp",
+    "typescript-lsp@sextant-lsp",
+]
+SHELF = ("writing-plans", "ce-compound", "typesafe-ai")
+LIFECYCLE = "# Lifecycle sweep\n\nSweep the merged worktrees.\n"
+REFLECTION = "# Verified reflection\n\nReflect on the session.\n"
+
+
+def _write(path: Path, text: str, mode: int = 0o644) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+    path.chmod(mode)
+
+
+def _load(path: Path, name: str):
+    spec = importlib.util.spec_from_file_location(name, path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_doctor(repo: Path):
+    return _load(repo / "scripts" / "runtime_doctor.py", f"runtime_doctor_{id(repo)}")
+
+
+class World:
+    """The installed surfaces the fake command runner answers from."""
+
+    def __init__(self, tmp_path: Path):
+        self.home = tmp_path / "home"
+        self.repo = tmp_path / "repo"
+        self.prefix = self.home / ".local" / "share" / "sextant-lane-runtimes"
+        self.versions = {
+            "claude": "2.1.321",
+            "dsh": "0.2.2-rc.1",
+            "codex": "0.167.0",
+            "agy": "1.4.6",
+            "muse": "1.4.6-R6000.1",
+            "omniroute": "3.8.53",
+            "orca": "1.4.251",
+            "ao": "0.14.10 commit 033d597032e4 built 2026-11-06T11:18:40Z",
+        }
+        self.dsh_dump = "\n".join(
+            [
+                "- id: agent-default-model",
+                "  config:",
+                "    provider: deepseek-official",
+                "    model: deepseek-flash",
+                "    reasoningEffort: max",
+                "- id: llm-deepseek",
+                "  config:",
+                "    thinking: enabled",
+                "    reasoningEffort: max",
+                "- id: mcp-context7",
+                "  config:",
+                "    serverName: context7",
+                "- id: mcp-exa",
+                "- id: mcp-deepwiki",
+                "- id: mcp-paper-search",
+                "- id: sextant-hard-lines",
+                "  name: >-",
+                "    file:///fixture/sextant-dsh-hard-lines/hard-lines.mjs",
+                "",
+            ]
+        )
+        self.plugins = [
+            {
+                "id": plugin,
+                "version": "1.0.0",
+                "scope": "local",
+                "enabled": True,
+                "installPath": str(self.home / ".claude" / "plugins" / plugin.split("@")[0]),
+                "installedAt": "2026-11-09T00:00:00Z",
+                "projectPath": str(self.repo),
+                "projectEnabled": True,
+            }
+            for plugin in PLUGINS
+        ]
+        for plugin in PLUGINS:
+            (self.home / ".claude" / "plugins" / plugin.split("@")[0]).mkdir(
+                parents=True, exist_ok=True
+            )
+        self.automations = [
+            self._automation("Lifecycle sweep", LIFECYCLE, "lifecycle-precheck.sh", ""),
+            self._automation(
+                "Verified reflection",
+                REFLECTION,
+                "reflection-precheck.sh",
+                "--model claude-fable-5-2 --effort max",
+            ),
+        ]
+        self.agy_mcp = [
+            ("context7", "enabled", "mcp-remote https://mcp.context7.com/mcp"),
+            ("deepwiki", "enabled", "https://mcp.deepwiki.com/mcp"),
+            ("exa", "enabled", "mcp-remote https://mcp.exa.ai/mcp"),
+            ("paper-search", "enabled", "paper-search-mcp"),
+            ("playwright", "disabled", "playwright-mcp"),
+            ("codegraph", "disabled", "codegraph serve --mcp"),
+        ]
+        self.combo = {
+            "combos": [
+                {
+                    "name": "sextant-gpt",
+                    "models": [{"kind": "model", "model": "codex/gpt-6.1-sol-max"}],
+                }
+            ],
+        }
+        self.unit_working = str(self.repo)
+        self.unit_exec = str(self.prefix / "router-start.sh")
+        self.ao_state = "running"
+        self.ao_doctor = {"failures": 0}
+        self.omni_due = 1
+        self.bind = 'LISTEN 0 4096 127.0.0.1:22128 0.0.0.0:* users:(("omniroute",pid=1,fd=1))'
+        self.build()
+
+    def _automation(self, name: str, prompt: str, precheck: str, extra: str) -> dict:
+        return {
+            "name": name,
+            "prompt": prompt,
+            "precheck": {
+                "command": f"bash {self.repo}/deploy/wsl/{precheck}",
+                "timeoutSeconds": 120,
+            },
+            "extraAgentArgs": extra,
+            "runContext": {"path": str(self.repo), "projectId": f"github:{SLUG}"},
+            "sourceContext": {
+                "providerIdentity": {"owner": "seathatflowsinourveins", "repo": "sextant-next"}
+            },
+            "projectId": "fixture-uuid",
+        }
+
+    def policy(self) -> dict:
+        return {
+            "gpt": {"model": "gpt-6.1-sol", "effort": "max"},
+            "claude": {"model": "claude-fable-5-2", "effort": "max"},
+            "google": {"antigravity": "gemini-4-argon-high", "effort": "high"},
+            "meta": {"model": "muse-wonder-full-1.0", "effort": "max", "contributor_mode": "off"},
+        }
+
+    def parity_spec(self) -> dict:
+        return {
+            "lock": ".claude/shelf.lock.json",
+            "shelf": {
+                "superpowers@superpowers-dev": {
+                    "cache": "superpowers",
+                    "skills": ["writing-plans"],
+                },
+                "compound-engineering@compound-engineering-plugin": {
+                    "cache": "compound-engineering",
+                    "skills": ["ce-compound"],
+                },
+                "typesafe@typesafe-ai": {"cache": "typesafe", "skills": ["typesafe-ai"]},
+                "trading": {"root": ".claude/skills", "skills": "lock"},
+            },
+            "mcp": {
+                "deepwiki": {"url": "https://mcp.deepwiki.com/mcp"},
+                "context7": {
+                    "url": "https://mcp.context7.com/mcp",
+                    "key": "CONTEXT7_API_KEY",
+                    "header": "Authorization",
+                    "scheme": "Bearer",
+                },
+                "exa": {
+                    "url": "https://mcp.exa.ai/mcp",
+                    "key": "EXA_API_KEY",
+                    "header": "x-api-key",
+                },
+                "paper-search": {"command": ".local/bin/paper-search-mcp"},
+                "playwright": {
+                    "command": ".local/share/sextant-agents/node_modules/.bin/playwright-mcp",
+                    "args": ["--headless"],
+                    "opt_in": True,
+                },
+                "codegraph": {
+                    "command": ".local/share/sextant-agents/node_modules/.bin/codegraph",
+                    "args": ["serve"],
+                    "opt_in": True,
+                },
+            },
+            "runtimes": {
+                "codex": {"home": ".local/share/sextant-lane-runtimes/codex-home"},
+                "dsh": {"profiles": ["acp", "headless"]},
+                "muse": {"shelf_and_mcp": "blocked on issue #256; one user config root"},
+            },
+        }
+
+    def build(self) -> None:
+        repo, home, prefix = self.repo, self.home, self.prefix
+        _write(repo / "scripts/runtime_doctor.py", (ROOT / "scripts/runtime_doctor.py").read_text())
+        _write(
+            repo / "deploy/wsl/lane-runtimes/parity.py",
+            (ROOT / "deploy/wsl/lane-runtimes/parity.py").read_text(),
+        )
+        _write(
+            repo / "deploy/wsl/lane-runtimes/parity.json", json.dumps(self.parity_spec(), indent=1)
+        )
+        _write(
+            repo / ".claude/shelf.lock.json", json.dumps({"plugins": {}, "skills": {"files": {}}})
+        )
+        _write(repo / ".devcontainer/Dockerfile", "RUN claude install 2.1.318\n")
+        _write(
+            repo / ".devcontainer/agents/package.json",
+            json.dumps({"dependencies": {"@openai/codex": "0.167.0"}}),
+        )
+        _write(repo / "deploy/wsl/lane-runtimes/model-policy.json", json.dumps(self.policy()))
+        _write(
+            repo / "deploy/wsl/lane-runtimes/routing.json",
+            json.dumps(
+                {
+                    "base_url": "http://127.0.0.1:22128/v1",
+                    "combo": "sextant-gpt",
+                    "models": ["codex/gpt-6.1-sol-max"],
+                }
+            ),
+        )
+        _write(
+            repo / "deploy/wsl/lane-runtimes/pins.json",
+            json.dumps(
+                {
+                    "orca": {"tag": "v1.4.251"},
+                    "runtimes": {"antigravity": {"version": "1.4.6"}},
+                    "omniroute": {"version": "3.8.53"},
+                    "muse": {"version": "1.4.6-R6000.1"},
+                }
+            ),
+        )
+        _write(repo / "scripts/omni_keys.py", "")
+        _write(repo / "config/dsh/profile.lock.json", json.dumps({"engine": "0.2.2-rc.1"}))
+        _write(
+            repo / "config/dsh/mcp/max-effort.cordis.yml",
+            "\n".join(
+                [
+                    "- id: agent-default-model",
+                    "  config:",
+                    "    provider: deepseek-official",
+                    "    model: deepseek-flash",
+                    "    reasoningEffort: max",
+                    "- id: llm-deepseek",
+                    "  config:",
+                    "    thinking: enabled",
+                    "    reasoningEffort: max",
+                    "",
+                ]
+            ),
+        )
+        _write(
+            repo / ".codex/rules/default.rules",
+            'prefix_rule(pattern=["git", "push"], decision="forbidden")\n',
+        )
+        _write(
+            repo / "deploy/wsl/hard-lines/antigravity.json",
+            json.dumps(
+                {
+                    "permissions": {"deny": [r"command(.*wsl\.exe.*)", r"write_file(.*/etc/.*)"]},
+                }
+            ),
+        )
+        deny = ["Bash(git push --force)", "Edit(//mnt/wsl/**)"]
+        _write(
+            repo / "deploy/wsl/hard-lines/claude-receipt.json",
+            json.dumps(
+                {
+                    "deny_sha256": hashlib.sha256(json.dumps(deny).encode()).hexdigest(),
+                    "permission_mode": "bypassPermissions",
+                    "model": "claude-opus-5-5",
+                    "effort": "max",
+                }
+            ),
+        )
+        _write(
+            repo / ".claude/settings.json",
+            json.dumps(
+                {
+                    "model": "claude-opus-5-5",
+                    "env": {"CLAUDE_CODE_EFFORT_LEVEL": "max"},
+                    "enabledPlugins": {plugin: True for plugin in PLUGINS},
+                    "permissions": {"defaultMode": "bypassPermissions", "deny": deny},
+                    "extraKnownMarketplaces": {},
+                }
+            ),
+        )
+        _write(
+            repo / "deploy/wsl/ao.sh",
+            "\n".join(
+                [
+                    "pin_version=0.14.10",
+                    "pin_commit=033d597032e448a0ea16c298350e36b099f74106",
+                    "--claim-pr --no-takeover",
+                    "review-family codex",
+                    'baseRefName == "main"',
+                    'mergeMethod == "SQUASH"',
+                    'select(.name == "ci"',
+                    "",
+                ]
+            ),
+        )
+        _write(repo / "deploy/wsl/lifecycle-prompt.md", LIFECYCLE)
+        _write(repo / "deploy/wsl/reflection-prompt.md", REFLECTION)
+        _write(repo / "deploy/wsl/lifecycle-precheck.sh", "exit 1\n", 0o755)
+        _write(repo / "deploy/wsl/reflection-precheck.sh", "exit 1\n", 0o755)
+        codex = '#!/bin/sh\n# -c model="$pool"\n# model_reasoning_effort="$effort"\n'
+        muse = (
+            "#!/bin/sh\n# --contributor-mode=on\n# *-contributor*\n"
+            "# reasoning-effort\n# runtime_capabilities\n"
+        )
+        dsh = "#!/bin/sh\n"
+        agy = '#!/bin/sh\n# AGY_CLI_DISABLE_AUTO_UPDATE=true\n# --model "$model"\n# --effort high\n'
+        for name, text in (
+            ("codex-launch.sh", codex),
+            ("muse-launch.sh", muse),
+            ("dsh-launch.sh", dsh),
+            ("antigravity-launch.sh", agy),
+        ):
+            _write(repo / "deploy/wsl/lane-runtimes" / name, text, 0o755)
+            _write(prefix / name, text, 0o755)
+        _write(prefix / "model-policy.json", json.dumps(self.policy()))
+        _write(
+            prefix / "routing.json",
+            json.dumps(
+                {
+                    "base_url": "http://127.0.0.1:22128/v1",
+                    "combo": "sextant-gpt",
+                    "models": ["codex/gpt-6.1-sol-max"],
+                }
+            ),
+        )
+        _write(prefix / "repository-path", str(repo))
+        _write(prefix / "router-start.sh", "#!/bin/sh\n", 0o755)
+        (prefix / "router/node_modules/.bin").mkdir(parents=True, exist_ok=True)
+        _write(prefix / "router/node_modules/.bin/omniroute", "", 0o755)
+        lane = prefix / "codex-home"
+        lane.mkdir(parents=True, exist_ok=True)
+        lane.chmod(0o700)
+        parity = _load(repo / "deploy/wsl/lane-runtimes/parity.py", f"parity_{id(self)}")
+        _write(lane / "config.toml", parity.codex_toml(home))
+        _write(
+            lane / "rules/sextant-hard-lines.rules",
+            (repo / ".codex/rules/default.rules").read_text(),
+        )
+        for name in SHELF:
+            _write(repo / ".claude/skills" / name / "SKILL.md", f"# {name}\n")
+            _write(lane / "skills" / name / "SKILL.md", f"# {name}\n")
+            _write(home / ".dsh/skills" / name / "SKILL.md", f"# {name}\n")
+
+        for name, target in (
+            ("claude", None),
+            ("dsh", prefix / "dsh-launch.sh"),
+            ("muse", prefix / "muse-launch.sh"),
+            ("sextant-codex", prefix / "codex-launch.sh"),
+            ("sextant-codex-review", prefix / "codex-launch.sh"),
+            ("agy", prefix / "antigravity-launch.sh"),
+        ):
+            if target is not None:
+                (home / ".local/bin").mkdir(parents=True, exist_ok=True)
+                (home / ".local/bin" / name).symlink_to(target)
+        _write(
+            home / ".gemini/antigravity-cli/settings.json",
+            json.dumps(
+                {
+                    "permissions": {"deny": [r"command(.*wsl\.exe.*)", r"write_file(.*/etc/.*)"]},
+                    "trustedWorkspaces": [str(repo)],
+                }
+            ),
+            0o600,
+        )
+        _write(
+            home / ".config/muse/settings.json",
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "reasoning_effort": "max",
+                    "contributor_mode_enabled": False,
+                    "contributor_mode_disclosure_acknowledged": True,
+                }
+            ),
+        )
+        for profile in ("acp", "headless", "dsh-tui"):
+            deps = {
+                "sextant-dsh-hard-lines": "link:../src/dsh/hard-lines",
+                "sextant-dsh-quality": "link:../src/dsh/quality",
+                "sextant-dsh-review-cmd": "link:../local/review-cmd",
+            }
+            bundles = ["sextant-dsh-hard-lines", "sextant-dsh-quality", "sextant-dsh-review-cmd"]
+            if profile != "dsh-tui":
+                deps["sextant-dsh-mcp"] = "link:../src/dsh/mcp"
+                bundles.append("sextant-dsh-mcp")
+            _write(
+                home / ".dsh/profiles" / profile / "package.json",
+                json.dumps(
+                    {
+                        "name": f"fixture-{profile}",
+                        "private": True,
+                        "dependencies": deps,
+                        "dsh": {"profile": {"bundles": bundles}},
+                    }
+                ),
+            )
+        (home / ".ao/data").mkdir(parents=True, exist_ok=True)
+        (home / ".ao/repos").mkdir(parents=True, exist_ok=True)
+        connection = sqlite3.connect(home / ".ao/data/ao.db")
+        connection.execute(
+            "create table projects (id text, path text, repo_origin_url text, display_name text, "
+            "registered_at text, archived_at text, config text, kind text)"
+        )
+        connection.execute(
+            "insert into projects values (?,?,?,?,?,?,?,?)",
+            (
+                "sextant",
+                str(repo),
+                REMOTE,
+                "Sextant (AO fix-CI/review)",
+                "",
+                "",
+                json.dumps(
+                    {
+                        "agentConfig": {"model": "claude-opus-5-5", "effort": "max"},
+                        "worker": {"agent": "claude-code"},
+                    }
+                ),
+                "single_repo",
+            ),
+        )
+        connection.commit()
+        connection.close()
+
+
+class Fake:
+    """Answer the native probes from the fixture surface, not from this host."""
+
+    def __init__(self, world: World):
+        self.w = world
+        self.Result = _load_doctor(world.repo).Result
+        self.calls: list[list[str]] = []
+
+    def __call__(self, command, **kwargs):
+        del kwargs
+        cmd = [str(part) for part in command]
+        self.calls.append(cmd)
+        w = self.w
+        text = " ".join(cmd)
+
+        def ok(out: str = "", code: int = 0):
+            return self.Result(code, out, "")
+
+        if cmd[:3] == ["git", "-C", str(w.repo)] and cmd[3:] == ["remote", "get-url", "origin"]:
+            return ok(REMOTE + "\n")
+        if cmd[:3] == ["git", "-C", str(w.repo)] and cmd[3:] == ["worktree", "list", "--porcelain"]:
+            return ok(f"worktree {w.repo}\n")
+        if cmd[:2] == ["git", "-C"]:
+            return ok("", 1)
+        if cmd == ["claude", "--version"]:
+            return ok(f"{w.versions['claude']} (Claude Code)\n")
+        if cmd == ["claude", "plugin", "list", "--json"]:
+            return ok(json.dumps(w.plugins))
+        if cmd == ["dsh", "--version"]:
+            return ok(w.versions["dsh"])
+        if cmd[:2] == ["dsh", "--profile"] and cmd[-1] == "--dump-config":
+            return ok(w.dsh_dump)
+        if cmd == ["codex", "--version"]:
+            return ok(f"codex-cli {w.versions['codex']}")
+        if cmd == ["agy", "--version"]:
+            return ok(w.versions["agy"])
+        if cmd == ["agy", "models"]:
+            return ok("gemini-4-argon-high\n")
+        if cmd == ["agy", "plugin", "list", "--json"]:
+            superpowers = ["writing-plans"]
+            shelf = [name for name in SHELF if name not in superpowers]
+            return ok(
+                json.dumps(
+                    [
+                        {
+                            "name": "sextant-shelf",
+                            "enabled": True,
+                            "version": "1.0.0",
+                            "skills": shelf,
+                        },
+                        {
+                            "name": "superpowers",
+                            "enabled": True,
+                            "version": "7.0.2",
+                            "skills": superpowers,
+                        },
+                    ]
+                )
+            )
+        if cmd == ["agy", "mcp", "list"]:
+            rows = ["NAME TYPE STATUS COMMAND/URL"]
+            rows += [f"{name} stdio {status} {command}" for name, status, command in w.agy_mcp]
+            return ok("\n".join(rows) + "\n")
+        if cmd == ["muse", "--version"]:
+            return ok(f"Muse Code 1.4.6 ({w.versions['muse']})")
+        if cmd[:3] == ["muse", "model-profile", "show"]:
+            return ok("model muse-wonder-full-1.0\neffort max\n")
+        if cmd[0].endswith("omniroute") and cmd[-1] == "--version":
+            return ok(w.versions["omniroute"])
+        if cmd[0].endswith("omniroute") and "combos" in cmd:
+            return ok(json.dumps(w.combo))
+        if cmd == ["systemctl", "--user", "is-active", "omniroute.service"]:
+            return ok("active\n")
+        if cmd[:3] == ["systemctl", "--user", "show"] and cmd[-1] == "--value":
+            return ok(w.unit_working + "\n")
+        if cmd[:3] == ["systemctl", "--user", "show"]:
+            return ok(
+                f"ExecStart={{{w.unit_exec}}}\nWorkingDirectory={w.unit_working}\nEnvironmentFiles=\n"
+            )
+        if cmd[:3] == ["python3", "-I", str(w.repo / "scripts/omni_keys.py")]:
+            return ok("", w.omni_due)
+        if cmd == ["ss", "-ltnp"]:
+            return ok(w.bind + "\n")
+        if cmd == ["ao", "version"]:
+            return ok(w.versions["ao"])
+        if cmd == ["ao", "status", "--json"]:
+            return ok(json.dumps({"state": w.ao_state}))
+        if cmd == ["ao", "doctor", "--json"]:
+            return ok(json.dumps(w.ao_doctor))
+        if cmd == ["orca-ide", "--version"]:
+            return ok(w.versions["orca"])
+        if cmd == ["orca-ide", "automations", "list", "--json"]:
+            return ok(json.dumps({"ok": True, "result": {"automations": w.automations}}))
+        raise AssertionError(f"unexpected command: {text}")
+
+
+def inspect(world: World):
+    doctor = _load_doctor(world.repo)
+    return doctor.inspect_host(doctor.Host(world.home, world.repo, world.prefix, Fake(world)))
+
+
+def codes(report) -> set[str]:
+    return {finding.code for finding in report.findings}
+
+
+def test_good_fixture_is_green(tmp_path):
+    world = World(tmp_path)
+    report = inspect(world)
+    assert report.findings == [], [f"{f.code}: {f.message}" for f in report.findings]
+    assert len(report.checked) == 40
+
+
+def _set_settings(world: World, **changes) -> None:
+    path = world.repo / ".claude/settings.json"
+    settings = json.loads(path.read_text())
+    settings.update(changes)
+    path.write_text(json.dumps(settings))
+
+
+def _set_muse(world: World, **changes) -> None:
+    path = world.home / ".config/muse/settings.json"
+    settings = json.loads(path.read_text())
+    settings.update(changes)
+    path.write_text(json.dumps(settings))
+
+
+def _set_agy(world: World, **changes) -> None:
+    path = world.home / ".gemini/antigravity-cli/settings.json"
+    settings = json.loads(path.read_text())
+    settings.update(changes)
+    path.write_text(json.dumps(settings))
+
+
+def _set_repository(world: World, value: str) -> None:
+    (world.prefix / "repository-path").write_text(value)
+
+
+def _set_dsh_profile(world: World, profile: str, change) -> None:
+    path = world.home / ".dsh/profiles" / profile / "package.json"
+    package = json.loads(path.read_text())
+    change(package)
+    path.write_text(json.dumps(package))
+
+
+DEFECTS = [
+    ("claude.version", lambda w: w.versions.__setitem__("claude", "2.0.0")),
+    ("claude.model_effort", lambda w: _set_settings(w, model="claude-wrong")),
+    (
+        "claude.parity",
+        lambda w: _set_settings(
+            w,
+            enabledPlugins={
+                "superpowers@superpowers-dev": True,
+                "compound-engineering@compound-engineering-plugin": True,
+                "pyright-lsp@sextant-lsp": True,
+                "typescript-lsp@sextant-lsp": True,
+            },
+        ),
+    ),
+    (
+        "claude.guard",
+        lambda w: _set_settings(
+            w, permissions={"defaultMode": "bypassPermissions", "deny": ["Bash(rm)"]}
+        ),
+    ),
+    (
+        "claude.repository",
+        lambda w: w.plugins[0].__setitem__("projectPath", "/srv/old-sextant"),
+    ),
+    ("dsh.version", lambda w: w.versions.__setitem__("dsh", "0.2.1")),
+    (
+        "dsh.model_effort",
+        lambda w: setattr(
+            w, "dsh_dump", w.dsh_dump.replace("model: deepseek-flash", "model: deepseek-other")
+        ),
+    ),
+    (
+        "dsh.parity",
+        lambda w: _set_dsh_profile(
+            w, "acp", lambda package: package["dependencies"].pop("sextant-dsh-mcp")
+        ),
+    ),
+    (
+        "dsh.guard",
+        lambda w: setattr(
+            w, "dsh_dump", w.dsh_dump.replace("- id: sextant-hard-lines", "- id: not-the-guard")
+        ),
+    ),
+    ("dsh.repository", lambda w: _set_repository(w, "/srv/old-sextant")),
+    ("codex.version", lambda w: w.versions.__setitem__("codex", "0.166.0")),
+    (
+        "codex.model_effort",
+        lambda w: (w.repo / "deploy/wsl/lane-runtimes/routing.json").write_text(
+            json.dumps({"models": ["codex/other"]})
+        ),
+    ),
+    ("codex.parity", lambda w: (w.prefix / "codex-home/config.toml").write_text("[otel]\n")),
+    ("codex.guard", lambda w: (w.prefix / "codex-home/rules/sextant-hard-lines.rules").unlink()),
+    ("codex.repository", lambda w: _set_repository(w, "/srv/old-sextant")),
+    ("antigravity.version", lambda w: w.versions.__setitem__("agy", "1.4.5")),
+    (
+        "antigravity.model_effort",
+        lambda w: (w.prefix / "antigravity-launch.sh").write_text("#!/bin/sh\n"),
+    ),
+    ("antigravity.parity", lambda w: w.agy_mcp.pop(3)),
+    ("antigravity.guard", lambda w: _set_agy(w, permissions={"deny": [r"command(.*wsl\.exe.*)"]})),
+    ("antigravity.repository", lambda w: _set_agy(w, trustedWorkspaces=["/srv/old-sextant"])),
+    ("muse.version", lambda w: w.versions.__setitem__("muse", "1.4.5")),
+    ("muse.model_effort", lambda w: _set_muse(w, reasoning_effort="low")),
+    (
+        "muse.parity",
+        lambda w: (w.repo / "deploy/wsl/lane-runtimes/parity.json").write_text(
+            json.dumps(
+                {
+                    **json.loads((w.repo / "deploy/wsl/lane-runtimes/parity.json").read_text()),
+                    "runtimes": {"muse": {"shelf_and_mcp": "done"}},
+                }
+            )
+        ),
+    ),
+    ("muse.guard", lambda w: (w.prefix / "muse-launch.sh").write_text("#!/bin/sh\n")),
+    ("muse.repository", lambda w: _set_repository(w, "/srv/old-sextant")),
+    ("omniroute.version", lambda w: w.versions.__setitem__("omniroute", "3.8.52")),
+    (
+        "omniroute.model_effort",
+        lambda w: w.combo["combos"][0].__setitem__(
+            "models", [{"kind": "model", "model": "codex/other"}]
+        ),
+    ),
+    ("omniroute.parity", lambda w: setattr(w, "unit_exec", str(w.repo / "router-start.sh"))),
+    (
+        "omniroute.guard",
+        lambda w: setattr(
+            w, "bind", 'LISTEN 0 4096 0.0.0.0:22128 0.0.0.0:* users:(("omniroute",pid=1,fd=1))'
+        ),
+    ),
+    ("omniroute.repository", lambda w: setattr(w, "unit_working", "/srv/old-sextant")),
+    ("orca.version", lambda w: w.versions.__setitem__("orca", "1.4.250")),
+    (
+        "orca.model_effort",
+        lambda w: w.automations[1].__setitem__(
+            "extraAgentArgs", "--model claude-opus-5-5 --effort max"
+        ),
+    ),
+    ("orca.parity", lambda w: w.automations[0].__setitem__("prompt", "old prompt")),
+    (
+        "orca.guard",
+        lambda w: w.automations[0].__setitem__(
+            "precheck", {"command": "bash /bin/true", "timeoutSeconds": 1}
+        ),
+    ),
+    (
+        "orca.repository",
+        lambda w: w.automations[0]["runContext"].__setitem__("path", "/srv/old-sextant"),
+    ),
+    ("ao.version", lambda w: w.versions.__setitem__("ao", "0.14.9")),
+    ("ao.model_effort", lambda w: _set_ao(w, model="claude-wrong")),
+    ("ao.parity", lambda w: setattr(w, "ao_state", "stopped")),
+    ("ao.guard", lambda w: (w.repo / "deploy/wsl/ao.sh").write_text("pin_version=0.14.10\n")),
+    ("ao.repository", lambda w: _set_ao(w, path="/srv/old-sextant")),
+]
+
+
+def _set_ao(world: World, **changes) -> None:
+    connection = sqlite3.connect(world.home / ".ao/data/ao.db")
+    config = json.loads(connection.execute("select config from projects").fetchone()[0])
+    if "model" in changes:
+        config["agentConfig"]["model"] = changes["model"]
+    path = changes.get("path", str(world.repo))
+    connection.execute("update projects set path = ?, config = ?", (path, json.dumps(config)))
+    connection.commit()
+    connection.close()
+
+
+@pytest.mark.parametrize("code,mutate", DEFECTS, ids=[code for code, _ in DEFECTS])
+def test_one_defect_per_cell_is_named(code, mutate, tmp_path):
+    world = World(tmp_path)
+    mutate(world)
+    report = inspect(world)
+    assert code in codes(report), [
+        f"{finding.code}: {finding.message}" for finding in report.findings
+    ]
+
+
+def test_session_start_runs_the_doctor_between_the_other_two_checks() -> None:
+    justfile = (ROOT / "justfile").read_text()
+    start = justfile.split("session-start:", 1)[1].split("\n\n", 1)[0]
+    assert (
+        start.index("dsh_profile_doctor.py")
+        < start.index("runtime_doctor.py")
+        < start.index("ecosystem_index.py")
+    )
+
+
+def test_cli_prints_json_and_exits_two_on_drift(tmp_path, capsys, monkeypatch) -> None:
+    world = World(tmp_path)
+    doctor = _load_doctor(world.repo)
+
+    green = doctor.Report()
+    green.checked = [(row, check) for row in doctor.ROWS for check in doctor.CHECKS]
+    monkeypatch.setattr(doctor, "inspect_host", lambda host: green)
+    assert doctor.main(["--home", str(world.home), "--repo", str(world.repo), "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert len(payload["checked"]) == 40
+    assert payload["findings"] == []
+
+    green.add(doctor.Finding("codex", "guard", "the lane rules are missing"))
+    assert doctor.main(["--home", str(world.home), "--repo", str(world.repo), "--json"]) == 2
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is False
+    assert payload["findings"][0]["code"] == "codex.guard"

@@ -14,6 +14,7 @@ ci: sync lint test secrets
 # Check the locked dsh profile, the live profile and the generated ecosystem index.
 session-start:
     python3 scripts/dsh_profile_doctor.py
+    python3 scripts/runtime_doctor.py
     python3 scripts/ecosystem_index.py --check
 
 lint:
