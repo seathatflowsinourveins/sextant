@@ -29,4 +29,6 @@ for field in LANE PR; do
   case "$value" in *[!a-zA-Z0-9_./:-]*) echo "claude-launch: invalid $name" >&2; exit 2 ;; esac
   [[ -z "$value" ]] || OTEL_RESOURCE_ATTRIBUTES+=",sextant.${field,,}=$value"
 done
+# Cumulative for the store's Prometheus (code.claude.com/docs/en/monitoring-usage, read 2026-11-10).
+export OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=cumulative
 exec claude "$@"
