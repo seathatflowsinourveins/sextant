@@ -14,7 +14,8 @@ def test_agent_files_stay_short() -> None:
 
 
 def test_justfile_stays_short() -> None:
-    assert _lines(ROOT / "justfile") < 105
+    # Raised from 104 to 107 on 2026-11-10 for #235's tracked c-baselines recipe.
+    assert _lines(ROOT / "justfile") < 108
 
 
 def test_at_most_thirty_one_page_adrs() -> None:
