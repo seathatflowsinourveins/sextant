@@ -49,7 +49,10 @@ def test_src_stays_under_budget() -> None:
     # shows its native replacements, a weekly report from maintained tools proposes deletions,
     # and a later raise must cite that report. One-off study code stays on tagged research
     # branches. The owner: "it can be grow but with sota sustainable consolidation".
-    assert sum(_lines(path) for path in (ROOT / "src").rglob("*.py")) < 28000
+    # Then to 29,500 on 2026-11-10 under the lead's ruling LEAD-1303: main 81ac238 measured
+    # 26,777 of 28,000; the unused-code inventory at 6ab5c48 with vulture 2.16 found 8 certain
+    # and 3 probable removable lines; the built queue is about 28,860 without prestage part 3.
+    assert sum(_lines(path) for path in (ROOT / "src").rglob("*.py")) < 29500
 
 
 def test_design_stays_short() -> None:
