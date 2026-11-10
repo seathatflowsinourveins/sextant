@@ -692,3 +692,37 @@ def test_a_stream_start_error_is_counted_once(
     assert next(line for line in _lines(path) if line["kind"] == "second")["failures"] == 1
     assert isinstance(feed.failure, ConnectionError)
     feed.stop()
+
+
+def test_a_writer_that_never_started_does_not_break_stop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def refuse(self: threading.Thread) -> None:
+        raise RuntimeError("can't start new thread")
+
+    monkeypatch.setattr(threading.Thread, "start", refuse)
+    tap = FeedTap(tmp_path / "feed-tap.jsonl", time_ns=_Now(_T0), perf_ns=_Clock())
+
+    tap.start()
+    tap.stop()
+
+    assert tap.init_errors == 1
+
+
+def test_a_quiet_stream_still_publishes_the_last_closed_second(tmp_path: Path) -> None:
+    now = _Now(_T0)
+    path = tmp_path / "feed-tap.jsonl"
+    tap = FeedTap(path, time_ns=now, perf_ns=_Clock(0, 0), flush_s=0.01)
+
+    tap.start()
+    _message(tap, "trade", "AAPL", _T0)
+    now.value = _T0 + 2 * _S
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
+        if any(r.get("kind") == "second" and r["second"] == _T0 // _S for r in _lines(path)):
+            break
+        time.sleep(0.01)
+
+    closed = [r for r in _lines(path) if r.get("kind") == "second" and r["second"] == _T0 // _S]
+    assert closed and closed[0]["trades"] == 1
+    tap.stop()

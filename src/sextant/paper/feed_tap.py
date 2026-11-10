@@ -104,6 +104,7 @@ class FeedTap:
         except Exception:
             # The feed's own run must not depend on the sidecar opening.
             self.init_errors += 1
+            self._thread = None
             handle, self._file = self._file, None
             if handle is not None:
                 with contextlib.suppress(Exception):
@@ -172,10 +173,10 @@ class FeedTap:
             return None
         entry_ns, perf_ns = self._time_ns(), self._perf_ns()
         second = entry_ns // _NS_PER_S
-        for old in sorted(s for s in self._seconds if s < second):
+        for old in sorted(s for s in list(self._seconds) if s < second):
             self._detach(old, partial=False)
         if len(self._seconds) >= _LIVE:
-            self._detach(min(self._seconds), partial=False)
+            self._detach(min(self._seconds, default=-1), partial=False)
         bucket = self._seconds.setdefault(second, _second(second))
         bucket[kind + "s"] += 1
         bucket["symbols"].add(symbol)
@@ -194,7 +195,9 @@ class FeedTap:
         return FeedTapToken(second, ts_event_ns, entry_ns, perf_ns)
 
     def _detach(self, second: int, *, partial: bool) -> None:
-        bucket = self._seconds.pop(second)
+        bucket = self._seconds.pop(second, None)
+        if bucket is None:
+            return
         bucket["partial"] = partial
         if len(self._pending) >= self._max_pending:
             self.dropped_buckets += 1
@@ -230,8 +233,16 @@ class FeedTap:
             "init_errors": self.init_errors,
         }
 
+    def _roll(self, now_ns: int) -> None:
+        if self._inflight:
+            return
+        now = now_ns // _NS_PER_S
+        for second in sorted(s for s in list(self._seconds) if s < now - 1):
+            self._detach(second, partial=False)
+
     def _run(self) -> None:
         while not self._closed or self._pending:
+            self._roll(self._time_ns())
             for record in self._drain():
                 self._write(record)
             if not self._closed:
