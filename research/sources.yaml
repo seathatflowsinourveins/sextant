@@ -4,8 +4,8 @@
     {
       "id": "nautilus-ema-cross",
       "title": "NautilusTrader EMA cross tutorial",
-      "citation": "NautilusTrader v2.0.0rc7, docs/tutorials/ema_cross.py; maintained plumbing baseline only.",
-      "url": "https://github.com/nautechsystems/nautilus_trader/blob/55c0e82053142bce3a5cba4de4221d3929c2d3bc/docs/tutorials/ema_cross.py",
+      "citation": "NautilusTrader v2.0.0rc8, docs/tutorials/ema_cross.py; maintained plumbing baseline only.",
+      "url": "https://github.com/nautechsystems/nautilus_trader/blob/d53849b216e20f2c122ca01b4dd0da377638b186/docs/tutorials/ema_cross.py",
       "spdx": "LGPL-3.0",
       "use": "template",
       "data_needs": [
@@ -16,8 +16,8 @@
       "status": "candidate",
       "pin": {
         "repo": "https://github.com/nautechsystems/nautilus_trader",
-        "tag": "v2.0.0rc7",
-        "commit": "55c0e82053142bce3a5cba4de4221d3929c2d3bc",
+        "tag": "v2.0.0rc8",
+        "commit": "d53849b216e20f2c122ca01b4dd0da377638b186",
         "path": "docs/tutorials/ema_cross.py"
       },
       "notes": "Existing ETHUSDT thin slice only; source publication date not asserted. US mover/PIT and OSAP/JKP/HXZ screens unverified; no new compute admitted. See lanes/research/ema-cross.md.",
