@@ -6,8 +6,11 @@ import ast
 import asyncio
 import itertools
 import json
+import threading
 from decimal import Decimal
 from pathlib import Path
+
+import pytest
 
 from nautilus_trader.model import (
     AggressorSide,
@@ -47,7 +50,7 @@ def tick(at: int, price: str = "0.50", name: str = "PENNY") -> TradeTick:
     )
 
 
-def make_host(tmp_path: Path, *, heartbeat=None):
+def make_host(tmp_path: Path, *, heartbeat=None, alarm=None):
     now = [START]
     mono = itertools.count(1_000_000_000_000, 1_000_000)
     host = RankingHost(
@@ -63,6 +66,7 @@ def make_host(tmp_path: Path, *, heartbeat=None):
         entry_input_max_age_s=2,
         state_dir=tmp_path,
         heartbeat=heartbeat,
+        alarm=alarm,
         clock=lambda: now[0],
         monotonic_ns=lambda: next(mono),
     )
@@ -184,7 +188,12 @@ def test_the_heartbeat_seam_fires_once_per_ready_publication_and_never_otherwise
     generation = drive(host, now, START + 362 * NS, "0.56", "PENNY")
     assert generation is not None and generation.coverage.state is CoverageState.DEGRADED
     assert len(calls) == before
-    # A throttled publication returns None and fires nothing.
+    # A throttled READY publication returns None and fires nothing.
+    host.set_symbol(
+        "ADR",
+        references=ReferencePrices(D("0.50"), START - NS, "fixture official close"),
+        asset=AssetState(START - NS, SCOPE.end_ns, False, "common", "fixture vendor"),
+    )
     assert drive(host, now, START + 362 * NS + NS // 2, "0.56", "ADR") is None
     assert len(calls) == before
     host.close()
@@ -202,7 +211,8 @@ def test_the_interval_file_holds_both_interval_series(tmp_path: Path) -> None:
     assert [row["sequence"] for row in generations] == list(range(len(generations)))
     published = [row["publication_ns"] for row in generations]
     beat_times = [row["heartbeat_at"] for row in heartbeats]
-    assert all(b > a for a, b in itertools.pairwise(published))
+    # DEGRADED vetoes are unthrottled, so generations are only non-decreasing.
+    assert all(b >= a for a, b in itertools.pairwise(published))
     assert all(b > a for a, b in itertools.pairwise(beat_times))
     assert all(row["generation_ns"] == row["publication_ns"] for row in generations)
     assert all(row["heartbeat_at"] == row["generation_ns"] for row in heartbeats)
@@ -220,7 +230,8 @@ def test_the_interval_file_holds_both_interval_series(tmp_path: Path) -> None:
 
 def test_the_host_imports_no_stream_socket_or_order_surface() -> None:
     imported: set[str] = set()
-    for node in ast.walk(ast.parse(HOST.read_text())):
+    tree = ast.parse(HOST.read_text())
+    for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             imported.update(alias.name.lower() for alias in node.names)
         elif isinstance(node, ast.ImportFrom):
@@ -229,6 +240,16 @@ def test_the_host_imports_no_stream_socket_or_order_surface() -> None:
     forbidden = ("alpaca", "socket", "stream", "order", "execution", "broker", "account")
     assert not [name for name in imported if any(word in name for word in forbidden)]
     assert not hasattr(RankingHost, "submit_order")
+    # The publisher heartbeat stays unset: the host owns the one seam call.
+    builds = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "RankingPublisher"
+    ]
+    assert len(builds) == 1
+    assert "heartbeat" not in {kw.arg for kw in builds[0].keywords}
 
 
 def _interval_generations(tmp_path: Path) -> list[dict]:
@@ -289,3 +310,63 @@ def test_the_wired_feed_opens_one_stream_and_a_raising_ingress_never_stops_it() 
     asyncio.run(stream.trade_handler(_trade(i=43)))
     assert stream.run_calls == 1 and len(ticks) == 2
     assert feed.ranking_ingress_errors == 2 and feed.failure is None
+
+
+def test_a_degraded_publication_bypasses_the_publish_interval(tmp_path: Path) -> None:
+    host, now, _ = wired(tmp_path)
+    warm(host, now)
+    at = START + 360 * NS
+    assert host.entry_rank("PENNY", now=at) == 1
+    half = at + NS // 2  # inside publish_min_interval_s (1 s fixture)
+    generation = drive(host, now, half, "0.56", "OUTSIDE")
+    assert generation is not None and generation.coverage.state is CoverageState.DEGRADED
+    assert generation.ts_init == half
+    assert all(host.entry_rank(name, now=half) is None for name in UNIVERSE)
+    host.close()
+
+
+def test_a_second_host_on_one_state_dir_refuses(tmp_path: Path) -> None:
+    host, _ = make_host(tmp_path)
+    with pytest.raises(ValueError, match="reserved"):
+        make_host(tmp_path)
+    host.close()
+    with pytest.raises(ValueError, match="reserved"):
+        make_host(tmp_path)
+
+
+def test_a_wrong_thread_call_refuses_and_the_host_survives(tmp_path: Path) -> None:
+    host, now = make_host(tmp_path)
+    refused: list[BaseException] = []
+
+    def foreign() -> None:
+        try:
+            host.on_trade(tick(START, name="PENNY"))
+        except BaseException as exc:  # noqa: BLE001 - the refusal is the witness
+            refused.append(exc)
+
+    worker = threading.Thread(target=foreign)
+    worker.start()
+    worker.join()
+    assert len(refused) == 1 and isinstance(refused[0], RuntimeError)
+    assert drive(host, now, START, "0.50", "PENNY") is not None
+    host.close()
+
+
+@pytest.mark.parametrize("returned", [None, 0, "", False, True])
+def test_heartbeat_delivered_only_for_a_real_delivery(tmp_path: Path, returned) -> None:
+    state = tmp_path / ("real" if returned is True else f"fake-{type(returned).__name__}")
+    host, now = make_host(state, heartbeat=lambda _gen: returned)
+    warm(host, now)
+    host.close()
+    lines = [json.loads(line) for line in (state / INTERVALS_NAME).read_text().splitlines()]
+    beats = [row["delivered"] for row in lines if row["kind"] == "heartbeat"]
+    assert beats and all(delivered is (returned is True) for delivered in beats)
+
+
+def test_every_degraded_generation_pages_the_alarm(tmp_path: Path) -> None:
+    pages: list[tuple[str, str | None]] = []
+    host, now = make_host(tmp_path, alarm=lambda reason, symbol: pages.append((reason, symbol)))
+    warm(host, now, names=("PENNY", "ADR"))  # LARGE never trades: always DEGRADED
+    host.close()
+    generations = _interval_generations(tmp_path)
+    assert pages.count(("generation_degraded", None)) == len(generations) >= 2
