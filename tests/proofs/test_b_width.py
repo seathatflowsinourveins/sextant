@@ -350,9 +350,8 @@ def test_bars_merged_from_valid_pages_that_repeat_an_interval_are_refused():
     from sextant.paper.b_feed import BHistoricalTape
 
     honest, quiet = honest_and_quiet()
-    assert completed_atr(honest, 22, 5, et(11, 20), et(11, 20)).quantize(
-        Decimal("0.01")
-    ) == Decimal("1.74")
+    honest_atr = completed_atr(honest, 22, 5, et(11, 20), et(11, 20))
+    assert honest_atr is not None and honest_atr.quantize(Decimal("0.01")) == Decimal("1.74")
     text = [datetime.fromtimestamp(r.ts_ns // SEC, tz=ET).isoformat() for r in reversed(quiet)]
     rows = [
         {"t": t, "o": 1, "h": 100.05, "l": 99.95, "c": 100, "v": 9, "n": 3, "vw": 100} for t in text

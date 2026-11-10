@@ -76,13 +76,15 @@ def completed_atr(
     bar is the bar of the interval that has just closed at ``now_ns``. A symbol with no trade
     in that interval has no bar for it, so it gets no new width and keeps its last one."""
 
+    if type(period) is not int or period < 1:
+        raise ValueError("the ATR period must be a positive integer")
+    ordered = sorted(rows, key=lambda item: item.ts_ns)
+    if len({row.ts_ns for row in ordered}) != len(ordered):
+        raise ValueError("the ATR takes each bar interval once, however its pages were merged")
     if session_at(now_ns) is not Session.RTH:
         return None
     open_ns, span_ns = session_start_ns(now_ns), bar_minutes * MINUTE_NS
-    done = sorted(
-        (row for row in rows if open_ns <= row.ts_ns <= min(now_ns, fetched_ns) - span_ns),
-        key=lambda item: item.ts_ns,
-    )
+    done = [row for row in ordered if open_ns <= row.ts_ns <= min(now_ns, fetched_ns) - span_ns]
     if not done or done[-1].ts_ns != now_ns - now_ns % span_ns - span_ns:
         return None
     atr = DecimalATR(period)
