@@ -18,6 +18,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 import pytest
+from alpaca.common.utils import validate_uuid_id_param
 from alpaca.trading.enums import OrderSide, TimeInForce
 from alpaca.trading.requests import LimitOrderRequest, TrailingStopOrderRequest
 from nautilus_trader.model import (
@@ -159,6 +160,8 @@ class FakeTradingClient:
         overnight_tradable: bool = True,
         overnight_halted: bool = False,
         exit_ack_status: str = "new",
+        trail_ack_status: str | None = None,
+        validate_order_ids: bool = False,
     ) -> None:
         self.account = SimpleNamespace(account_number=account_number)
         self.positions = list(positions)
@@ -170,10 +173,14 @@ class FakeTradingClient:
         self.overnight_tradable = overnight_tradable
         self.overnight_halted = overnight_halted
         self.exit_ack_status = exit_ack_status
+        self.trail_ack_status = ack_status if trail_ack_status is None else trail_ack_status
+        self.validate_order_ids = validate_order_ids
         self.calls: list[str] = []
         self.submitted: list[Any] = []
         self.polls = 0
+        self.client_polls: list[str] = []
         self.orders_by_id: dict[str, Any] = {}
+        self.orders_by_cid: dict[str, tuple[Any, str]] = {}
         self.overrides: dict[str, str] = {}
         self.cancelled: list[str] = []
         self.replaced: list[tuple[str, Any]] = []
@@ -219,11 +226,12 @@ class FakeTradingClient:
             filled_qty = order_data.qty
             filled_avg_price = "1.05"
         elif isinstance(order_data, TrailingStopOrderRequest):
-            status = self.ack_status
+            status = self.trail_ack_status
             filled_qty = order_data.qty
         elif isinstance(order_data, LimitOrderRequest) and order_data.side is OrderSide.SELL:
             status = self.exit_ack_status
         self.orders_by_id[order_id] = order_data
+        self.orders_by_cid[str(order_data.client_order_id)] = (order_data, order_id)
         return SimpleNamespace(
             id=order_id,
             client_order_id=order_data.client_order_id,
@@ -234,6 +242,8 @@ class FakeTradingClient:
 
     def get_order_by_id(self, order_id: object) -> Any:
         self.calls.append("get_order_by_id")
+        if self.validate_order_ids:
+            validate_uuid_id_param(str(order_id), "order_id")
         self.polls += 1
         key = str(order_id)
         request = self.orders_by_id.get(key)
@@ -248,6 +258,25 @@ class FakeTradingClient:
             id=order_id,
             status=status,
             filled_qty=filled_qty,
+            filled_avg_price=filled_avg_price,
+        )
+
+    def get_order_by_client_id(self, client_id: str) -> Any:
+        self.calls.append("get_order_by_client_id")
+        self.client_polls.append(client_id)
+        request, order_id = self.orders_by_cid[client_id]
+        status = self.overrides.get(client_id, self.poll_status)
+        filled = status.upper() == "FILLED"
+        requested = D(str(getattr(request, "qty", 0)))
+        filled_qty: Any = requested if filled else D(0)
+        filled_avg_price: str | None = None
+        if isinstance(request, LimitOrderRequest) and request.side is OrderSide.BUY:
+            filled_avg_price = "1.05" if filled else None
+        return SimpleNamespace(
+            id=order_id,
+            client_order_id=client_id,
+            status=status,
+            filled_qty=D(str(filled_qty)),
             filled_avg_price=filled_avg_price,
         )
 
@@ -681,7 +710,7 @@ def test_an_unknown_order_state_stops_without_a_resubmit(live_env: Path) -> None
     assert invoke(live_env, client, Clock(), Monotonic()) == 1
 
     assert len(client.submitted) == 1
-    assert client.polls > 0
+    assert client.client_polls
     written = receipt(live_env)
     assert written["commands"][0]["status"] == "SUBMITTED"
     assert written["commands"][0]["fill"] == "0"
@@ -694,6 +723,37 @@ def test_an_unknown_order_state_stops_without_a_resubmit(live_env: Path) -> None
     assert params["errors"]
     assert params["entries"] == 1
     assert params["fills"] == 0
+
+
+def test_c_polls_an_unfilled_entry_by_its_client_order_id(live_env: Path) -> None:
+    """Finding 4: the SDK rejects a client id at get_order_by_id, so poll by cid."""
+
+    client = FakeTradingClient(ack_status="new", validate_order_ids=True)
+    assert invoke(live_env, client, Clock(), Monotonic()) == 0
+
+    written = receipt(live_env)
+    entry = written["commands"][0]
+    assert entry["kind"] == "LIMIT"
+    assert entry["status"] == "FILLED"
+    assert entry["fill"] == "1"
+    assert client.client_polls == [entry["cid"]]
+    assert "get_order_by_id" not in client.calls
+
+
+def test_c_counts_a_resting_protective_trail_as_placed(live_env: Path) -> None:
+    """Finding 5: a working trail is placed; only entries and releases await FILLED."""
+
+    client = FakeTradingClient(ack_status="filled", trail_ack_status="new", validate_order_ids=True)
+    assert invoke(live_env, client, Clock(), Monotonic()) == 0
+
+    written = receipt(live_env)
+    trail = written["commands"][1]
+    assert trail["kind"] == "TRAILING_STOP"
+    assert trail["ack"] == "NEW"
+    assert trail["status"] == "NEW"
+    assert written["protection_cid"] == trail["cid"]
+    assert client.client_polls == []
+    assert "get_order_by_id" not in client.calls
 
 
 def test_the_trial_row_records_the_run_identity_and_outcome(live_env: Path) -> None:

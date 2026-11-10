@@ -49,9 +49,10 @@ function fixture() {
   const head = 'a'.repeat(40);
   const statuses = [], outputs = {}, failures = [], reviews = [];
   const pr = {number: 7, state: 'open', head: {sha: head}, base: {ref: 'gate', repo: {full_name: 'owner/project'}}};
+  const diff = 'diff --git a/example.txt b/example.txt\n+snapshot\n';
   const github = {rest: {
-    pulls: {get: async () => ({data: pr}), listReviews: 'reviews',
-      createReview: async args => reviews.push(args)},
+    pulls: {get: async params => ({data: params?.mediaType?.format === 'diff' ? diff : pr}),
+      listReviews: 'reviews', createReview: async args => reviews.push(args)},
     repos: {get: async () => ({data: {full_name: 'owner/project', default_branch: 'gate'}}),
       createCommitStatus: async status => statuses.push(status)},
   }, paginate: async () => []};
@@ -59,6 +60,21 @@ function fixture() {
     payload: {workflow_run: {conclusion: 'success'}}};
   const core = {setOutput: (name, value) => {outputs[name] = value;}, setFailed: value => failures.push(value)};
   return {github, context, core, head, pr, statuses, outputs, failures, reviews};
+}
+
+async function promptText(engine) {
+  const f = fixture();
+  const temporary = fs.mkdtempSync(path.join(process.cwd(), '.gate-prompt-test-'));
+  const previous = process.env.RUNNER_TEMP;
+  process.env.RUNNER_TEMP = temporary;
+  try {
+    await gate.prompt(f, 7, f.head, engine);
+    return fs.readFileSync(f.outputs.file, 'utf8');
+  } finally {
+    if (previous === undefined) delete process.env.RUNNER_TEMP;
+    else process.env.RUNNER_TEMP = previous;
+    fs.rmSync(temporary, {recursive: true, force: true});
+  }
 }
 
 test('source status cannot pass a moved head or failed CI', async () => {
@@ -203,6 +219,37 @@ test('the actual dsh prompt uses the upstream qualified PR reference accepted by
     else process.env.RUNNER_TEMP = previous;
     fs.rmSync(temporary, {recursive: true, force: true});
   }
+});
+
+test('the Codex reviewer is told the job is snapshot-only and offline', async () => {
+  const text = await promptText('codex');
+  assert.match(text, /snapshot-only/i);
+  assert.match(text, /no GitHub token/i);
+  assert.match(text, /denies network access/i);
+  assert.match(text, /not a review failure/i);
+  assert.match(text, /do not call gh, curl, the GitHub API or any network client/i);
+  assert.match(text, /do not run repository setup commands such as `just session-start`/i);
+  assert.match(text, /Never check out, import or execute PR code/);
+  assert.ok(!text.includes('Read PR content only through the GitHub API'));
+  assert.ok(text.includes('"diff"'));
+  assert.ok(text.includes('a'.repeat(40)));
+});
+
+test('the dsh reviewer keeps the GitHub-API-only instruction for its ci_run pipeline', async () => {
+  const text = await promptText('dsh');
+  assert.match(text, /Read PR content only through the GitHub API/);
+  assert.ok(!/snapshot-only/i.test(text));
+});
+
+test('the Codex reviewer prompt carries no unqualified GitHub-API read instruction', async () => {
+  const text = await promptText('codex');
+  const normalized = text.replace(/\s+/g, ' ');
+  assert.ok(!normalized.includes('Read its diff through the GitHub API'),
+    'review.md API-read sentence leaks into the offline prompt');
+  assert.ok(!normalized.includes('Read PR content only through the GitHub API'),
+    'shared API-read sentence leaks into the offline prompt');
+  assert.ok(!text.includes('Trusted default-branch guidelines: .github/workflows/review.md'),
+    'review.md is not part of the offline reviewer guidelines');
 });
 
 test('all nonblocking findings share one follow-up issue across heads and families', async () => {

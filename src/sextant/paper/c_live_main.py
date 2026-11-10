@@ -101,6 +101,7 @@ _NS_PER_S = 1_000_000_000
 _SHA = re.compile(r"[0-9a-f]{40}")
 _PROTECTION_ACKS = frozenset({"NEW", "ACCEPTED", "PENDING_NEW", "PARTIALLY_FILLED"})
 _PROTECTION_GONE = frozenset({"CANCELED", "CANCELLED", "REPLACED"})
+_PROTECTIVE_STOP_TYPES = frozenset({"TRAILING_STOP", "STOP", "STOP_LIMIT"})
 
 
 def _declared_slots(rows: Sequence[dict[str, Any]]) -> int | None:
@@ -136,6 +137,8 @@ class TradingClientLike(Protocol):
     def get_asset(self, symbol_or_asset_id: object) -> Any: ...
 
     def get_order_by_id(self, order_id: object) -> Any: ...
+
+    def get_order_by_client_id(self, client_id: str) -> Any: ...
 
     def submit_order(self, order_data: Any) -> Any: ...
 
@@ -185,6 +188,9 @@ class PacedTradingClient:
 
     def get_order_by_id(self, order_id: object) -> Any:
         return self._call(ActionKind.QUERY, self._client.get_order_by_id, order_id)
+
+    def get_order_by_client_id(self, client_id: str) -> Any:
+        return self._call(ActionKind.QUERY, self._client.get_order_by_client_id, client_id)
 
     def submit_order(self, order_data: Any, *, kind: ActionKind) -> Any:
         return self._call(kind, self._client.submit_order, order_data)
@@ -324,7 +330,7 @@ def _await_order(
     poll_interval_s: float,
     timeout_s: float,
 ) -> Any:
-    """Poll the acknowledged order; never resubmit and never guess its state."""
+    """Poll the acknowledged order by its client order id; never resubmit or guess."""
 
     order = ack
     deadline = monotonic() + timeout_s
@@ -340,7 +346,7 @@ def _await_order(
                 f"order {cid} state unknown after {timeout_s:g}s; it was not resubmitted"
             )
         sleep(min(poll_interval_s, deadline - current))
-        order = client.get_order_by_id(cid)
+        order = client.get_order_by_client_id(cid)
 
 
 def _house_cid(account: PaperAccount, command: OrderCommand) -> str:
@@ -1308,6 +1314,36 @@ def main(
                     f"command {cid} {command.side} {command.order_type} ack={row['ack']}",
                     flush=True,
                 )
+                if command.side == "SELL" and command.order_type in _PROTECTIVE_STOP_TYPES:
+                    # A broker-held resting stop is placed once it is working. Only
+                    # entries and releases await FILLED; a fill here is observed, not awaited.
+                    status = row["ack"]
+                    row["status"] = status
+                    if status == "FILLED":
+                        filled = _filled(ack)
+                        row["fill"] = _decimal_text(filled)
+                        run.protection_cid = cid
+                        _observe_fill(
+                            book,
+                            scope,
+                            command.instrument,
+                            -filled,
+                            source=f"alpaca exit {cid}",
+                            now=now_ns(),
+                        )
+                        return
+                    if status not in _PROTECTION_ACKS:
+                        raise LiveRefusal(
+                            f"the protective stop {cid} was not accepted "
+                            f"({status}); the position is unprotected"
+                        )
+                    if not row["venue_id"]:
+                        raise LiveRefusal(
+                            f"the protective stop {cid} has no venue id; "
+                            "the position is unprotected"
+                        )
+                    run.protection_cid = cid
+                    return
                 final = _await_order(
                     client,
                     cid,
