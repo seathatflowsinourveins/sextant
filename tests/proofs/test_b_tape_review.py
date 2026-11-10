@@ -3,8 +3,9 @@
 Each was a failing probe at 685695d (the review's scratch file); here each runs offline
 through the pinned alpaca-py 0.44.0 client with urllib3's pool stubbed, or through the
 protector's fakes. Two are adapted: the house-LIMIT fixture moved to the post-market
-(only outside-hours spans are read, G5), and a page with a continuation token is now
-partial (N3), so the one-admission-per-request witness expects that refusal.
+(only outside-hours spans are read, G5), and a continuation token is followed (R1, which
+replaced N3's "a token is partial"), so the one-admission-per-request witness expects the
+token back and the second page refused without its own admission.
 """
 
 from __future__ import annotations
@@ -35,11 +36,12 @@ from test_b_protector_outside_rth import (
     quote_at,
     start,
     tonight_client,
+    tonight_history,
 )
 from urllib3.connectionpool import HTTPSConnectionPool
 from urllib3.response import HTTPResponse
 
-from sextant.paper.b_feed import BHistoricalTape, TapeShapeError, bound_transport
+from sextant.paper.b_feed import BHistoricalTape, bound_transport
 from sextant.paper.b_protector import Protector
 from sextant.paper.b_protector_main import PacedHistoricalDataClient, PacedTradingClient
 
@@ -101,9 +103,17 @@ def test_one_pacer_admission_is_one_http_request(monkeypatch) -> None:
             (200, {"quotes": {"AAPL": [quote_payload("2026-11-09T22:00:00Z", 38.60)]}}),
         ],
     )
+    # R1 changes the expectation, not the property: the token is returned to the caller,
+    # and the next page is a second request that needs its own admission.
+    from sextant.execution.pacer import PacerRefused
+
     pacer = paced(1)
-    with pytest.raises(TapeShapeError):
-        bounded_tape(pacer).quotes("AAPL", POST_NS - 7200 * 1_000_000_000, POST_NS, "sip")
+    tape = bounded_tape(pacer)
+    _, token = tape.quote_page("AAPL", POST_NS - 7200 * 1_000_000_000, POST_NS, "sip")
+    assert token == "page-two"  # noqa: S105 - a page token
+    assert len(calls) == pacer.wire_requests == 1
+    with pytest.raises(PacerRefused):
+        tape.quote_page("AAPL", POST_NS - 7200 * 1_000_000_000, POST_NS, "sip", token)
     assert len(calls) == pacer.wire_requests == 1
 
 
@@ -225,3 +235,135 @@ def test_a_partial_start_read_keeps_breach_counting_and_silence_paging() -> None
         "outside_rth_tape_unreadable",
         "outside_rth_feed_silent",
     ]
+
+
+# R1-R3 (b-tape-pages): the start read follows continuation tokens inside the same deadline
+# and request budget, and a partial read still raises the trigger from the rows it read.
+
+AH_HIGH = datetime(2026, 11, 9, 16, 59, tzinfo=ET)
+
+
+def paged_history(page_size: int) -> FakeHistory:
+    # Newest first: page one is 18:09 then 16:59; page two is the 12:47 claim-time quote.
+    return FakeHistory(
+        [
+            quote_at("36.99", datetime(2026, 11, 9, 12, 47, 18, tzinfo=ET)),
+            quote_at("38.70", AH_HIGH),
+            quote_at("37.62", datetime(2026, 11, 9, 18, 9, tzinfo=ET)),
+            quote_at("39.50", datetime(2026, 11, 9, 16, 30, tzinfo=ET)),
+        ],
+        page_size=page_size,
+    )
+
+
+def budget_params(requests: int):
+    from dataclasses import replace
+
+    return replace(b_params(), tape_max_requests=Decimal(requests))
+
+
+def paged_manager(history: FakeHistory, requests: int) -> Protector:
+    return Protector(
+        tonight_client(),
+        b_account(),
+        budget_params(requests),
+        now_ns=lambda: POST_NS,
+        feed="sip",
+        history=history,
+    )
+
+
+def test_a_window_over_one_page_is_read_to_its_last_page_and_is_ok() -> None:
+    # R1/R2: two pages, two requests, the window complete only at the page without a token.
+    history = paged_history(page_size=2)
+    manager = paged_manager(history, requests=8)
+    start(manager)
+
+    assert len(history.requests) == 2
+    assert manager._tapes["AAPL"].status == "ok"
+    # 39.50 x 0.975 = 38.5125 -> 38.51: the high on the second (older) page is followed.
+    assert manager.emulated_trigger("AAPL") == Decimal("38.51")
+    assert "tape=ok" in line_for(manager, POST_NS, "38.60")
+    assert manager.pages == []
+
+
+def test_a_budget_that_ends_after_one_page_still_raises_the_trigger_from_it() -> None:
+    # R3: positions + orders + one page = 3 requests; the page read holds 37.62 and 38.70.
+    history = paged_history(page_size=2)
+    manager = paged_manager(history, requests=3)
+    start(manager)
+
+    tape = manager._tapes["AAPL"]
+    assert len(history.requests) == 1
+    assert tape.status == "partial"
+    # 38.70 x 0.975 = 37.7325 -> 37.73: a lower bound, never above the complete read's 38.51.
+    assert manager.emulated_trigger("AAPL") == Decimal("37.73")
+    assert "tape=partial" in line_for(manager, POST_NS, "38.60")
+    assert [page.reason for page in manager.pages] == ["outside_rth_tape_unreadable"]
+    assert "1 page" in manager.pages[0].detail
+
+
+def test_a_partial_read_below_the_native_stop_never_lowers_the_trigger() -> None:
+    # R3: the trigger is the maximum of the native stop, the broker hwm level and the read.
+    late = datetime(2026, 11, 9, 17, 30, tzinfo=ET)
+    history = FakeHistory([quote_at("36.00", AH_HIGH), quote_at("35.90", late)], page_size=1)
+    manager = paged_manager(history, requests=3)
+    start(manager)
+
+    assert manager._tapes["AAPL"].status == "partial"
+    assert manager._tapes["AAPL"].level == Decimal("35.00")  # 35.90 x 0.975 = 35.0025
+    assert manager.emulated_trigger("AAPL") == Decimal("36.465")
+
+
+def test_a_partial_read_never_takes_a_row_from_before_the_adoption_instant() -> None:
+    # R3: a row the server returns outside the requested window is never a source.
+    class Leaky(FakeHistory):
+        def quote_page(self, symbol, start_ns, end_ns, feed, page_token=None):
+            self.requests.append((symbol, start_ns, end_ns, feed))
+            early = quote_at("45.00", datetime(2026, 11, 9, 11, 0, tzinfo=ET))
+            return (early, quote_at("38.70", AH_HIGH)), "more"
+
+    history = Leaky()
+    manager = paged_manager(history, requests=3)
+    start(manager)
+
+    assert manager._tapes["AAPL"].status == "partial"
+    assert manager.emulated_trigger("AAPL") == Decimal("37.73")
+
+
+def test_a_read_interrupted_by_the_deadline_keeps_the_pages_it_read() -> None:
+    # R2/R3 with G1: the interval timer ends the second page; the first page still counts.
+    class SlowSecondPage(FakeHistory):
+        def quote_page(self, symbol, start_ns, end_ns, feed, page_token=None):
+            if page_token is not None:
+                for _ in range(500):
+                    time.sleep(0.01)
+            return super().quote_page(symbol, start_ns, end_ns, feed, page_token)
+
+    from dataclasses import replace
+
+    history = SlowSecondPage(paged_history(page_size=2).observations, page_size=2)
+    params = replace(b_params(), tape_deadline_s=Decimal("0.3"))
+    manager = Protector(
+        tonight_client(), b_account(), params, now_ns=lambda: POST_NS, feed="sip", history=history
+    )
+    began = time.monotonic()
+    start(manager)
+
+    assert time.monotonic() - began < 2
+    assert manager._tapes["AAPL"].status == "partial"
+    assert manager.emulated_trigger("AAPL") == Decimal("37.73")
+
+
+def test_a_start_read_off_the_main_thread_reports_tape_partial() -> None:
+    # The r7 follow-up: nothing is read, one page, and the state line says partial.
+    import threading
+
+    manager = protector(tonight_client(), history=tonight_history(), now_ns=POST_NS)
+    worker = threading.Thread(target=manager.rebuild_tapes)
+    worker.start()
+    worker.join()
+    manager.reconcile()
+
+    assert "tape=partial" in line_for(manager, POST_NS, "36.60")
+    assert manager.emulated_trigger("AAPL") == Decimal("36.465")
