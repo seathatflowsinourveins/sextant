@@ -41,6 +41,8 @@ def _second(second: int) -> dict[str, Any]:
         "partial": False,
         "trades": 0,
         "quotes": 0,
+        "extra_trades": 0,
+        "extra_quotes": 0,
         "symbols": set(),
         "failures": 0,
         "service_sum": 0,
@@ -83,6 +85,7 @@ class FeedTap:
         self._seconds: dict[int, dict[str, Any]] = {}
         self._flows: dict[str, list[int | None]] = {}
         self._pending: deque[dict[str, Any]] = deque()
+        self._last: dict[str, Any] | None = None
         self._started = self._closed = False
         self._file: Any = None
         self._thread: threading.Thread | None = None
@@ -127,11 +130,28 @@ class FeedTap:
     def pending(self) -> int:
         return len(self._pending)
 
+    @property
+    def started(self) -> bool:
+        return self._started
+
+    @property
+    def last_record(self) -> dict[str, Any] | None:
+        return self._last
+
+    def clear_last(self) -> None:
+        self._last = None
+
     def trade_entry(self, symbol: str, ts_event_ns: int | None) -> FeedTapToken | None:
         return self._enter("trade", symbol, ts_event_ns)
 
     def quote_entry(self, symbol: str, ts_event_ns: int | None) -> FeedTapToken | None:
         return self._enter("quote", symbol, ts_event_ns)
+
+    def extra_trade(self) -> None:
+        self._extra("trade")
+
+    def extra_quote(self) -> None:
+        self._extra("quote")
 
     def finish(self, token: FeedTapToken | None) -> None:
         if token is None:
@@ -194,6 +214,17 @@ class FeedTap:
         self._inflight += 1
         return FeedTapToken(second, ts_event_ns, entry_ns, perf_ns)
 
+    def _extra(self, kind: str) -> None:
+        if self._closed:
+            return
+        second = self._time_ns() // _NS_PER_S
+        for old in sorted(s for s in list(self._seconds) if s < second):
+            self._detach(old, partial=False)
+        if len(self._seconds) >= _LIVE:
+            self._detach(min(self._seconds, default=-1), partial=False)
+        bucket = self._seconds.setdefault(second, _second(second))
+        bucket["extra_" + kind + "s"] += 1
+
     def _detach(self, second: int, *, partial: bool) -> None:
         bucket = self._seconds.pop(second, None)
         if bucket is None:
@@ -208,17 +239,21 @@ class FeedTap:
         return [self._record(self._pending.popleft()) for _ in range(len(self._pending))]
 
     def _record(self, bucket: dict[str, Any]) -> dict[str, Any]:
-        return {
+        record = {
             "kind": "second",
             "second": bucket["second"],
             "partial": bucket["partial"],
             "trades": bucket["trades"],
             "quotes": bucket["quotes"],
+            "extra_trades": bucket["extra_trades"],
+            "extra_quotes": bucket["extra_quotes"],
             "symbols_seen": len(bucket["symbols"]),
             "lag_ns": _percentiles(bucket["lag"], bucket["max_lag"]),
             "service_ns": {"sum": bucket["service_sum"], "max": bucket["service_max"]},
             "failures": bucket["failures"],
         }
+        self._last = record
+        return record
 
     def _symbols(self) -> dict[str, Any]:
         gaps = [flow[1] for flow in self._flows.values() if flow[1] is not None]

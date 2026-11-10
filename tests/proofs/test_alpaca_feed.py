@@ -40,6 +40,20 @@ _QUOTE_TS = 1_794_234_600_000_000_000
 _FAR_PAST_TS = 1_577_977_200_000_000_000
 _TEST_API_KEY = "test-key"
 _TEST_API_CREDENTIAL = "test-credential"
+_T0 = 1_794_234_600 * 1_000_000_000
+_S = 1_000_000_000
+
+
+class _Now:
+    """A mutable wall clock the guard and the scripted exchange share."""
+
+    def __init__(self, value: int) -> None:
+        self.value = value
+
+    def __call__(self) -> int:
+        return self.value
+
+
 _EQUITY = Equity(
     InstrumentId.from_str("AAPL.ALPACA"),
     Symbol("AAPL"),
@@ -139,7 +153,6 @@ def _make_feed(
     stream: _FakeStream | None = None,
     tap: FeedTap | None = None,
     tap_symbols: tuple[str, ...] = (),
-    on_page: Callable[[str], None] | None = None,
 ) -> tuple[AlpacaTickFeed, _FakeStream]:
     fake = stream if stream is not None else _FakeStream()
     extra: dict[str, Any] = {}
@@ -147,8 +160,6 @@ def _make_feed(
         extra["tap"] = tap
     if tap_symbols:
         extra["tap_symbols"] = tap_symbols
-    if on_page is not None:
-        extra["on_page"] = on_page
     feed = AlpacaTickFeed(
         {"AAPL.ALPACA": _EQUITY},
         on_trade=on_trade,
@@ -161,7 +172,7 @@ def _make_feed(
     return feed, fake
 
 
-def _trade(symbol: str = "AAPL", **overrides: Any) -> Trade:
+def _trade(*, symbol: str = "AAPL", **overrides: Any) -> Trade:
     raw: dict[str, Any] = {
         "t": "2026-11-09T14:30:00.123456789Z",
         "p": 123.4567,
@@ -175,7 +186,7 @@ def _trade(symbol: str = "AAPL", **overrides: Any) -> Trade:
     return Trade(symbol, raw)
 
 
-def _quote(symbol: str = "AAPL", **overrides: Any) -> Quote:
+def _quote(*, symbol: str = "AAPL", **overrides: Any) -> Quote:
     raw: dict[str, Any] = {
         "t": "2026-11-09T14:30:00Z",
         "bp": 100.12,
@@ -274,7 +285,7 @@ def test_zero_lot_quote_converts_to_zero_shares() -> None:
     feed, stream = _make_feed(on_quote=quotes.append)
     feed.start()
 
-    _deliver_quote(stream, _quote(bs=0, **{"as": 0}))
+    _deliver_quote(stream, _quote(bs=0, **{"as": 0}))  # pyright: ignore[reportArgumentType]
 
     assert len(quotes) == 1
     assert quotes[0].bid_size == Quantity.from_int(0)
@@ -727,10 +738,11 @@ def test_measurement_symbols_reach_only_the_tap_counters(tmp_path: Path) -> None
     assert ("EXTRA",) in [symbols for _, symbols in stream.trade_subscriptions]
 
 
-def test_a_breach_drops_only_measurement_subscriptions_and_pages_once(tmp_path: Path) -> None:
+def test_a_breach_drops_only_measurement_subscriptions_and_pages_once(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     now = _Now(_T0)
     tap = FeedTap(tmp_path / "feed-tap.jsonl", time_ns=now, perf_ns=lambda: 0, flush_s=0.01)
-    pages: list[str] = []
     trades: list[TradeTick] = []
 
     def script(stream: _FakeStream) -> None:
@@ -739,7 +751,7 @@ def test_a_breach_drops_only_measurement_subscriptions_and_pages_once(tmp_path: 
         now.value = _T0 + 3 * _S
         _deliver_to(stream, "trade", "AAPL", _trade())
         deadline = time.monotonic() + 2.0
-        while not pages and time.monotonic() < deadline:
+        while not stream.unsubscribed and time.monotonic() < deadline:
             time.sleep(0.01)
 
     stream = _ScriptedStream(script)
@@ -747,13 +759,14 @@ def test_a_breach_drops_only_measurement_subscriptions_and_pages_once(tmp_path: 
         on_trade=trades.append,
         tap=tap,
         tap_symbols=("EXTRA",),
-        on_page=pages.append,
         stream=stream,
     )
 
     feed.start()
 
-    assert len(pages) == 1
+    page = capsys.readouterr().err
+    assert page.count("feed tap guard") == 1
+    assert "drop requested" in page
     assert ("trades", ("EXTRA",)) in stream.unsubscribed
     assert ("quotes", ("EXTRA",)) in stream.unsubscribed
     assert all("AAPL" not in symbols for _, symbols in stream.unsubscribed)
@@ -763,10 +776,11 @@ def test_a_breach_drops_only_measurement_subscriptions_and_pages_once(tmp_path: 
     assert feed.failure is None
 
 
-def test_measurement_symbols_stay_subscribed_inside_the_bound(tmp_path: Path) -> None:
+def test_measurement_symbols_stay_subscribed_inside_the_bound(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     now = _Now(_T0)
     tap = FeedTap(tmp_path / "feed-tap.jsonl", time_ns=now, perf_ns=lambda: 0, flush_s=0.01)
-    pages: list[str] = []
 
     def script(stream: _FakeStream) -> None:
         _deliver_to(stream, "trade", "AAPL", _trade())
@@ -778,13 +792,12 @@ def test_measurement_symbols_stay_subscribed_inside_the_bound(tmp_path: Path) ->
     feed, _ = _make_feed(
         tap=tap,
         tap_symbols=("EXTRA",),
-        on_page=pages.append,
         stream=stream,
     )
 
     feed.start()
 
-    assert pages == []
+    assert "feed tap guard" not in capsys.readouterr().err
     assert stream.unsubscribed == []
     assert ("EXTRA",) in [symbols for _, symbols in stream.trade_subscriptions]
     assert feed.failure is None

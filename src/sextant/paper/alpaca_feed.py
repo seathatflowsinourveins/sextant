@@ -28,9 +28,10 @@ timestamp; ``ts_init`` comes from the local receipt clock.
 from __future__ import annotations
 
 import contextlib
+import sys
 import threading
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Mapping
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any, Protocol
@@ -65,6 +66,11 @@ _TRADE_ID_MAX = 36
 # "ask size in round lots" / "bid size in round lots". alpaca-py 0.44.0
 # alpaca.data.models.quotes.Quote carries the raw bs/as fields.
 _ROUND_LOT_SHARES = 100
+# Pre-registered capacity criteria (tag feed-capacity-2026-11-10b): own p99.9
+# receipt lag under 1 s and handler service max under 50 ms.  Criteria, not tunables.
+_MAX_RECEIPT_LAG_NS = 1_000_000_000
+_MAX_SERVICE_NS = 50_000_000
+_GUARD_INTERVAL_S = 0.25
 
 
 class Instrument(Protocol):
@@ -112,6 +118,10 @@ class AlpacaTickFeed:
     The constructor validates credentials, the feed and the cadence but performs no network
     I/O and calls no factory. ``start()`` either subscribes every instrument's bare Alpaca
     symbol on a SIP stream and runs alpaca-py's blocking loop, or polls BOATS until ``stop()``.
+
+    Measurement-only symbols ride the same SIP stream on handlers that reach the
+    tap's additive counters only.  A daemon guard reads the feed's own series and,
+    on a breach of the pre-registered bound, unsubscribes those extras and pages once.
     """
 
     def __init__(
@@ -129,11 +139,19 @@ class AlpacaTickFeed:
         data_client_factory: Callable[..., Any] | None = None,
         clock: Callable[[], float] = time.time,
         tap: FeedTap | None = None,
+        tap_symbols: Collection[str] = (),
     ) -> None:
         if not api_key or not secret_key:
             raise ValueError("Alpaca key and secret are required")
         if feed not in (_SIP, _BOATS):
             raise ValueError(f"paper arming uses SIP, or BOATS overnight; {feed!r} is refused")
+        if isinstance(tap_symbols, str):
+            raise ValueError("tap_symbols must be a collection of symbols, not a string")
+        extras = tuple(sorted(set(tap_symbols)))
+        if extras and tap is None:
+            raise ValueError("measurement symbols require the feed tap")
+        if any(not isinstance(symbol, str) or not symbol for symbol in extras):
+            raise ValueError("measurement symbols must be non-empty strings")
         if tap is not None and feed == _BOATS:
             raise ValueError("the read-only feed tap measures the SIP socket, not BOATS polls")
         if not 0 < poll_interval_s < 2 * overlap_s:
@@ -149,6 +167,9 @@ class AlpacaTickFeed:
             if symbol in by_symbol:
                 raise ValueError(f"duplicate instrument symbol {symbol}")
             by_symbol[symbol] = instrument
+        overlap = sorted(set(extras) & set(by_symbol))
+        if overlap:
+            raise ValueError(f"measurement symbol {overlap[0]} is already traded")
 
         self._instruments = by_symbol
         self._on_trade = on_trade
@@ -167,6 +188,9 @@ class AlpacaTickFeed:
         self._seen: dict[tuple[object, ...], int] = {}
         self._horizon_ns = 0
         self._tap = tap
+        self._tap_symbols = extras
+        self._guard_thread: threading.Thread | None = None
+        self._guard_stopped = False
         self.failure: Exception | None = None
 
     def start(self) -> None:
@@ -177,7 +201,8 @@ class AlpacaTickFeed:
             self._poll_until_stopped()
             return
 
-        if self._tap is not None:
+        started_here = self._tap is not None and not self._tap.started
+        if started_here and self._tap is not None:
             self._tap.start()
         try:
             stream = self._stream_factory(self._api_key, self._secret_key, feed=DataFeed.SIP)
@@ -185,6 +210,16 @@ class AlpacaTickFeed:
             symbols = tuple(sorted(self._instruments))
             stream.subscribe_trades(self._handle_trade, *symbols)
             stream.subscribe_quotes(self._handle_quote, *symbols)
+            if self._tap is not None:
+                self._tap.clear_last()
+                if self._tap_symbols:
+                    stream.subscribe_trades(self._handle_tap_trade, *self._tap_symbols)
+                    stream.subscribe_quotes(self._handle_tap_quote, *self._tap_symbols)
+                    guard = threading.Thread(
+                        target=self._guard_run, name="feed-tap-guard", daemon=True
+                    )
+                    self._guard_thread = guard
+                    guard.start()
             stream.run()
         except Exception as exc:
             self._observe_failure()
@@ -193,7 +228,10 @@ class AlpacaTickFeed:
             raise
         finally:
             # run() has returned, so no handler is mid-flight: finalize on this thread.
-            if self._tap is not None:
+            self._stopped.set()
+            if self._guard_thread is not None:
+                self._guard_thread.join(1.0)
+            if started_here and self._tap is not None:
                 self._tap.stop()
 
     def stop(self) -> None:
@@ -300,6 +338,51 @@ class AlpacaTickFeed:
         finally:
             if tap is not None and token is not None:
                 tap.finish(token)
+
+    async def _handle_tap_trade(self, trade: Trade | dict[str, Any]) -> None:
+        self._tap_extra(trade, Trade, "extra_trade")
+
+    async def _handle_tap_quote(self, quote: Quote | dict[str, Any]) -> None:
+        self._tap_extra(quote, Quote, "extra_quote")
+
+    def _tap_extra(self, message: Any, kind: type, counter: str) -> None:
+        tap = self._tap
+        if tap is None or self.failure is not None:
+            return
+        with contextlib.suppress(Exception):
+            if isinstance(message, kind):
+                getattr(tap, counter)()
+
+    def _guard_run(self) -> None:
+        tap = self._tap
+        if tap is None:
+            return
+        while not self._stopped.wait(_GUARD_INTERVAL_S):
+            if (record := tap.last_record) is None:
+                continue
+            lag, service = record["lag_ns"]["p999"], record["service_ns"]["max"]
+            if (lag is not None and lag >= _MAX_RECEIPT_LAG_NS) or (
+                service is not None and service >= _MAX_SERVICE_NS
+            ):
+                self._drop_extras(record)
+                return
+
+    def _drop_extras(self, record: dict[str, Any]) -> None:
+        if self._guard_stopped:
+            return
+        self._guard_stopped = True
+        for channel in ("trades", "quotes"):
+            with contextlib.suppress(Exception):
+                getattr(self._stream, f"unsubscribe_{channel}")(*self._tap_symbols)
+        lag, service = record["lag_ns"]["p999"], record["service_ns"]["max"]
+        lag_text = "unknown" if lag is None else f"{lag / 1_000_000:.1f} ms"
+        service_text = "unknown" if service is None else f"{service / 1_000_000:.1f} ms"
+        message = (
+            f"feed tap guard: own receipt lag p99.9 {lag_text} and handler service "
+            f"{service_text} crossed the capacity bound; drop requested for "
+            f"{len(self._tap_symbols)} measurement subscriptions; C's own symbols untouched"
+        )
+        print(message, file=sys.stderr, flush=True)
 
     def _trade_tick(self, trade: Trade, ts_init: int) -> TradeTick:
         instrument = self._instrument_for(trade.symbol)

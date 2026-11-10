@@ -68,6 +68,7 @@ from sextant.paper.alpaca_feed import AlpacaTickFeed
 from sextant.paper.c_session import CConfig, CSession
 from sextant.paper.c_universe import rank_universe
 from sextant.paper.config import PaperAccount
+from sextant.paper.feed_tap import SIDECAR_NAME, FeedTap
 from sextant.paper.request_counter import CountingMarketData, RequestLog
 from sextant.paper.sessions import Session
 from sextant.ranking.baseline import BaselineTable, load_baseline, segment_start
@@ -978,6 +979,8 @@ def main(
     parser.add_argument("--state", type=Path, required=True, help="writer/custody/guard state dir")
     parser.add_argument("--seconds", type=int, default=300, help="foreground run length")
     parser.add_argument("--dry-run", action="store_true", help="print commands; send nothing")
+    parser.add_argument("--feed-tap", action="store_true", help="write the SIP tap sidecar")
+    parser.add_argument("--feed-tap-universe", type=Path, help="K2 ranked universe to measure")
     args = parser.parse_args(argv)
 
     api_key = os.environ.get(KEY_NAMES[0])
@@ -989,6 +992,20 @@ def main(
         raise SystemExit(f"{EXPECTED_SUFFIX_ENV} must be set")
     if args.seconds < 0:
         raise SystemExit("--seconds must not be negative")
+    if args.feed_tap_universe is not None and not args.feed_tap:
+        raise SystemExit("C live main refused: --feed-tap-universe requires --feed-tap")
+    measurement_symbols: tuple[str, ...] = ()
+    if args.feed_tap and args.feed_tap_universe is not None:
+        try:
+            from sextant.data.baseline_recipe import resolve_universe
+
+            measurement_symbols = resolve_universe(args.feed_tap_universe)
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            raise SystemExit(f"C live main refused: feed tap universe unavailable: {exc}") from exc
+    tap_stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ") if args.feed_tap else None
+    session_tap: FeedTap | None = None
+    if tap_stamp is not None:
+        session_tap = FeedTap(Path("reports/paper-c") / tap_stamp / SIDECAR_NAME)
 
     try:
         account = load_account_config(args.config)
@@ -1468,15 +1485,22 @@ def main(
                 session.on_quote(tick)
                 flush_fills()
 
-            try:
-                feed = feed_factory(
-                    instruments,
-                    on_trade=on_trade,
-                    on_quote=on_quote,
-                    api_key=api_key,
-                    secret_key=secret_key,
-                    feed=_feed_for(segment),
+            feed_name = _feed_for(segment)
+            feed_kwargs: dict[str, Any] = {
+                "on_trade": on_trade,
+                "on_quote": on_quote,
+                "api_key": api_key,
+                "secret_key": secret_key,
+                "feed": feed_name,
+            }
+            if session_tap is not None and feed_name == "sip":
+                own_symbols = {bare_symbol(key) for key in instruments}
+                feed_kwargs["tap"] = session_tap
+                feed_kwargs["tap_symbols"] = tuple(
+                    symbol for symbol in measurement_symbols if symbol not in own_symbols
                 )
+            try:
+                feed = feed_factory(instruments, **feed_kwargs)
             except Exception as exc:
                 return (
                     {},
@@ -1529,6 +1553,8 @@ def main(
         final_segment_obj = first
         final_baseline: BaselineTable | None = current_baseline
         current = first
+        if session_tap is not None:
+            session_tap.start()
         try:
             while failure is None:
                 final_segment_obj = current
@@ -1634,10 +1660,12 @@ def main(
             signal.signal(signal.SIGTERM, previous_term)
             signal.signal(signal.SIGINT, previous_int)
 
+        if session_tap is not None:
+            session_tap.stop()
         if failure is not None:
             run.errors.append(failure)
         run.stopped_ns = now_ns()
-        stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+        stamp = tap_stamp or datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
         try:
             receipt = _write_receipt(
                 account=account,
@@ -1677,6 +1705,8 @@ def main(
             return 1
         return 0 if failure is None and receipt_written else 1
     finally:
+        if session_tap is not None:
+            session_tap.stop()
         request_log.stop()
         lease.close()
 
