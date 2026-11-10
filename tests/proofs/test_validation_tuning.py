@@ -1,35 +1,24 @@
-"""PR-4 proofs: Optuna TPE with CPCV and one untouched holdout, on registry parameters only.
+"""Proofs for the reusable ``sextant.validation.tuning`` engine: CPCV scoring and purge, the
+cumulative trial ledger, one untouched holdout, and the deflated-Sharpe/PBO statistics.
 
-The sources are Optuna 5.0.0's multivariate TPE and ``WilcoxonPruner``
-(``optuna/optuna@v5.0.0 01ddd17ab9f36c3d2817aed9afe376e1cb047d35``), skfolio 1.12.5's
-``CombinatorialPurgedCV``, and northstar-trading@8256c16c31dc
-``src/northstar_trading/validation/cv.py:26-84`` (path ids, purge and embargo),
-``stats.py:43-50`` (annualized Sharpe) and ``contract_gates.py:510-626`` (every CPCV path covers
-every observation exactly once). Every trial is a cumulative MODELED TrialLog row; proposals
-never edit a registry row.
+These tests are restored unchanged from ``tests/proofs/test_b_tuning.py`` at 5830f0e, whose
+B-specific adapter and replay tests continue on the tagged research branch
+``research/b-replay-5830f0e`` at ``b-replay-2026-11-10``. ``PARAMETERS`` is the six-row search
+space those tests ran with, kept here as test support because the adapter that defined it
+archived with the study.
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
 from collections import Counter
 from datetime import date, timedelta
-from decimal import Decimal
 from pathlib import Path
-from types import SimpleNamespace
-from typing import cast
 
 import numpy as np
 import pytest
 
-from sextant.backtest import b_e2e_cohort
-from sextant.backtest.b_e2e import EntryRule
-from sextant.research import b_tuning
 from sextant.validation import tuning
-
-REPO = Path(__file__).resolve().parents[2]
-FIXTURE = REPO / "tests/fixtures/b-e2e-cohort.json"
 
 
 def _sessions(count: int = 60) -> tuple[str, ...]:
@@ -47,12 +36,40 @@ _WEIGHTS = {
 }
 
 
+_TRAIL = "docs/adr/0025-gain-protection-and-fast-exit.md B scope (0.025 cap)"
+_N = "northstar-trading@8256c16c31dc "
+_E = "entry-parameters.json:"
+_WINDOW = f"{_E}first_leg_window_s; {_N}profiles.yaml:114"
+_TRADES = f"{_E}first_leg_trades_count; {_N}profiles.yaml:126"
+_SPAN = f"{_E}first_leg_span_s; {_N}profiles.yaml:138"
+_MOVE = f"{_E}first_leg_max_move; {_N}profiles.yaml:162 and ADR-0024"
+_AGE = f"{_E}max_data_age_s; {_N}profiles.yaml:174 and base.py:144"
+
+
+def _float(name: str, low: float, high: float, step: float, source: str) -> tuning.FloatParameter:
+    return tuning.FloatParameter(name, low, high, step=step, source=source)
+
+
+def _int(name: str, low: int, high: int, step: int, source: str) -> tuning.IntParameter:
+    return tuning.IntParameter(name, low, high, step=step, source=source)
+
+
+PARAMETERS = (
+    _float("native_trail_fraction", 0.0025, 0.025, 0.0025, _TRAIL),
+    _int("first_leg_window_s", 30, 300, 30, _WINDOW),
+    _int("first_leg_trades_count", 2, 10, 1, _TRADES),
+    _int("first_leg_span_s", 0, 10, 1, _SPAN),
+    _float("first_leg_max_move", 0.01, 0.03, 0.0025, _MOVE),
+    _int("max_data_age_s", 1, 30, 1, _AGE),
+)
+
+
 def _spec(**changes: object) -> tuning.StudySpec:
     base: dict[str, object] = dict(
         name="b-parameters",
         symbol_class="mover",
         arm="2-slot",
-        parameters=b_tuning.PARAMETERS,
+        parameters=PARAMETERS,
         n_trials=100,
         n_folds=4,
         n_test_folds=2,
@@ -383,152 +400,6 @@ def test_the_wilcoxon_pruner_can_stop_a_bad_trial(tmp_path: Path) -> None:
     assert any(record["state"] == "PRUNED" for record in records)
     assert result.n_pruned >= 1
     assert seen
-
-
-def test_the_search_space_is_registry_parameters_and_excludes_k2_and_k3() -> None:
-    names = {parameter.name for parameter in b_tuning.PARAMETERS}
-    assert names == {
-        "native_trail_fraction",
-        "first_leg_window_s",
-        "first_leg_trades_count",
-        "first_leg_span_s",
-        "first_leg_max_move",
-        "max_data_age_s",
-    }
-    assert 5 <= len(names) <= 8
-    assert "mover_min_move" not in names
-    assert "premarket_gap" not in names
-    trail = next(
-        parameter for parameter in b_tuning.PARAMETERS if parameter.name == "native_trail_fraction"
-    )
-    assert Decimal(str(trail.high)) <= Decimal("0.025")
-    assert all(parameter.source for parameter in b_tuning.PARAMETERS)
-
-
-def test_the_adapter_threads_the_tuned_rule_into_the_cohort_replay(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    cases = b_e2e_cohort.load_cases(FIXTURE)
-    seen: list[dict[str, object]] = []
-
-    def fake_run_arms(
-        cases, *, capacity, rotation, arm=None, rule=None, trail_fraction=None, max_age_s=None
-    ):
-        seen.append(
-            dict(
-                capacity=capacity,
-                rotation=rotation,
-                arm=arm,
-                rule=rule,
-                trail_fraction=trail_fraction,
-                max_age_s=max_age_s,
-            )
-        )
-        return tuple(
-            SimpleNamespace(
-                case=SimpleNamespace(case=case.case),
-                state="COMPLETE",
-                walked=SimpleNamespace(protected=0.01),
-            )
-            for case in cases
-        )
-
-    monkeypatch.setattr(b_e2e_cohort, "run_arms", fake_run_arms)
-    params = {
-        "native_trail_fraction": 0.0125,
-        "first_leg_window_s": 90,
-        "first_leg_trades_count": 4,
-        "first_leg_span_s": 3,
-        "first_leg_max_move": 0.02,
-        "max_data_age_s": 2,
-    }
-    evaluate = b_tuning.replay_for(
-        cases,
-        arm=b_tuning.MOVER_ARMS[0],
-        session_of={case.case: "2026-11-09" for case in cases},
-    )
-    observations = evaluate(params, ("2026-11-09",))
-    assert len(observations) == len(cases)
-    assert seen[0]["capacity"] == 2
-    assert seen[0]["rotation"] is False
-    assert seen[0]["arm"] == "2-slot"
-    rule = cast(EntryRule, seen[0]["rule"])
-    assert rule.window_s == 90
-    assert rule.trades == 4
-    assert rule.span_s == 3
-    assert rule.max_move == Decimal("0.02")
-    assert seen[0]["trail_fraction"] == Decimal("0.0125")
-    assert seen[0]["max_age_s"] == 2
-
-
-def test_the_cohort_trail_takes_a_fraction_and_keeps_the_default() -> None:
-    case = b_e2e_cohort.load_cases(FIXTURE)[0]
-    entry = b_e2e_cohort.Entry(
-        ts_ns=case.trades[2].ts_ns, price=case.trades[2].price, quote_ts_ns=case.trades[2].ts_ns
-    )
-    default = b_e2e_cohort.trail(case, entry)
-    tight = b_e2e_cohort.trail(case, entry, trail_fraction=Decimal("0.01"))
-    assert default.level == default.high * (1 - Decimal("0.025"))
-    assert tight.level == tight.high * (1 - Decimal("0.01"))
-
-
-def test_proposals_never_write_a_registry(tmp_path: Path) -> None:
-    paths = (
-        REPO / "lanes/sim/entry-parameters.json",
-        REPO / "src/sextant/paper/b_protector.py",
-    )
-    before = {path: hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}
-    result = tuning.StudyResult(
-        spec=_spec(),
-        decision="PROPOSED",
-        reason="test",
-        merit="OK",
-        holdout="PASS",
-        holdout_sharpe=1.0,
-        n_sessions=60,
-        n_train_sessions=47,
-        n_holdout_sessions=13,
-        n_trials=100,
-        n_complete=100,
-        n_failed=0,
-        n_pruned=0,
-        n_trades=47,
-        best_params=(("p0", "3"),),
-        best_objective=1.0,
-        dsr=0.99,
-        pbo=0.0,
-        proposals=(
-            tuning.Proposal(
-                registry="lanes/sim/entry-parameters.json",
-                row="first_leg_window_s",
-                current="120",
-                proposed="90",
-                source="test",
-                evidence="test",
-            ),
-        ),
-    )
-    tuning.write_report(tmp_path / "proposals.json", [result])
-    after = {path: hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}
-    assert before == after
-
-
-def test_the_real_cohort_is_not_evaluable_and_writes_no_trial_row(tmp_path: Path) -> None:
-    cases = b_e2e_cohort.load_cases(FIXTURE)
-    results = b_tuning.run_mover_study(
-        cases,
-        session_of={case.case: "2026-11-09" for case in cases},
-        sessions=("2026-11-09",),
-        log_path=tmp_path / "trials.parquet",
-        report_path=tmp_path / "proposals.json",
-        n_trials=100,
-    )
-    assert len(results) == len(b_tuning.MOVER_ARMS)
-    assert all(result.decision == "NOT_EVALUABLE" for result in results)
-    assert all(result.n_trials == 0 for result in results)
-    assert not (tmp_path / "trials.parquet").exists()
-    payload = json.loads((tmp_path / "proposals.json").read_text())
-    assert payload["results"] and all(row["proposals"] == [] for row in payload["results"])
 
 
 def test_pbo_uses_average_ranks_for_tied_trials() -> None:
