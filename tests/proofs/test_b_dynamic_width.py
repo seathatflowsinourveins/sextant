@@ -24,6 +24,7 @@ SEC = 1_000_000_000
 RTH_NS = int(datetime(2026, 11, 9, 10, 0, tzinfo=ET).timestamp()) * SEC
 POST_NS = int(datetime(2026, 11, 9, 18, 10, tzinfo=ET).timestamp()) * SEC
 INTERVAL_NS = 5 * MINUTE_NS
+NATIVE_FALLBACK = "dynamic_width_native_fallback"  # the first arm, before any width is stored
 WIDTH_ROWS = {
     "alpaca_min_trail_fraction": Decimal("0.001"),
     "trail_atr_period": Decimal("3"),
@@ -185,7 +186,7 @@ def test_too_few_completed_bars_keeps_the_native_width_and_pages_once_per_episod
     p.refresh_widths_when_due()
 
     assert p.trail_width("AAPL") == Decimal("0.025")
-    assert reasons(p) == ["dynamic_width_bars_unavailable"]
+    assert reasons(p) == [NATIVE_FALLBACK, "dynamic_width_bars_unavailable"]
 
     clock[0] += INTERVAL_NS
     bars.rows["AAPL"] = steady_bars(clock[0])  # a computed width ends the episode
@@ -194,7 +195,7 @@ def test_too_few_completed_bars_keeps_the_native_width_and_pages_once_per_episod
     bars.error = TimeoutError("bars")
     clock[0] += INTERVAL_NS
     p.refresh_widths_when_due()
-    assert reasons(p) == ["dynamic_width_bars_unavailable"] * 2
+    assert reasons(p) == [NATIVE_FALLBACK] + ["dynamic_width_bars_unavailable"] * 2
 
 
 def test_a_failed_bars_request_keeps_the_last_width_and_pages_once():
@@ -209,7 +210,7 @@ def test_a_failed_bars_request_keeps_the_last_width_and_pages_once():
         p.refresh_widths_when_due()
 
     assert p.trail_width("AAPL") == Decimal("0.0018")
-    assert reasons(p) == ["dynamic_width_bars_unavailable"]
+    assert reasons(p) == [NATIVE_FALLBACK, "dynamic_width_bars_unavailable"]
 
 
 def test_a_missing_invalid_or_failed_quote_keeps_the_last_width_and_pages_once():
@@ -226,7 +227,7 @@ def test_a_missing_invalid_or_failed_quote_keeps_the_last_width_and_pages_once()
         p.refresh_widths_when_due()
 
     assert p.trail_width("AAPL") == Decimal("0.0018")
-    assert reasons(p) == ["dynamic_width_quote_unavailable"]
+    assert reasons(p) == [NATIVE_FALLBACK, "dynamic_width_quote_unavailable"]
 
 
 def test_with_no_width_ever_computed_a_missing_quote_keeps_the_native_width():
@@ -235,7 +236,7 @@ def test_with_no_width_ever_computed_a_missing_quote_keeps_the_native_width():
     p.reconcile()
     p.refresh_widths_when_due()
     assert p.trail_width("AAPL") == Decimal("0.025")
-    assert reasons(p) == ["dynamic_width_quote_unavailable"]
+    assert reasons(p) == [NATIVE_FALLBACK, "dynamic_width_quote_unavailable"]
 
 
 def test_main_gives_the_protector_bounded_width_reads_off_the_account_pacer(tmp_path, monkeypatch):
@@ -343,7 +344,7 @@ def test_a_width_quote_older_than_the_last_one_taken_is_rejected_as_on_quote_doe
     quotes.quotes = [quote("100.00", "100.01", RTH_NS - SEC)]  # older: 0.0036 if it were taken
     p.refresh_widths_when_due()
     assert p.trail_width("AAPL") == Decimal("0.0018")
-    assert reasons(p) == ["dynamic_width_quote_unavailable"]
+    assert reasons(p) == [NATIVE_FALLBACK, "dynamic_width_quote_unavailable"]
 
 
 class TapeData:
@@ -399,7 +400,7 @@ def test_main_counts_both_width_reads_as_data_requests_never_on_the_account_pace
 CALLS_AT_37BB20E = "c3906ea16f601329cde4b6ffabd417d8937af9002d8b6aae6530051e21fc8495"
 
 
-def order_and_trigger_calls(clock, bars=None, quotes=None) -> tuple[str, Protector]:
+def order_and_trigger_calls(clock, bars=None, quotes=None) -> tuple[str, Protector, dict]:
     """One RTH trail, its re-arm after the broker loses it, then three outside-hours quotes."""
 
     import hashlib
@@ -420,14 +421,17 @@ def order_and_trigger_calls(clock, bars=None, quotes=None) -> tuple[str, Protect
         triggers.append(str(p.emulated_trigger("AAPL")))
     calls = [request.model_dump(mode="json") for request in client.submitted]
     record = {"submitted": calls, "cancelled": len(client.cancelled), "triggers": triggers}
-    return hashlib.sha256(json.dumps(record, sort_keys=True).encode()).hexdigest(), p
+    return hashlib.sha256(json.dumps(record, sort_keys=True).encode()).hexdigest(), p, record
 
 
-def test_2a_changes_no_order_trigger_or_submitted_width_against_37bb20e():
-    measured, p = order_and_trigger_calls([RTH_NS], *calm(RTH_NS))
-    assert p.trail_width("AAPL") == Decimal("0.0018")  # the width was computed, and not used
-    assert measured == CALLS_AT_37BB20E
-    assert order_and_trigger_calls([RTH_NS])[0] == CALLS_AT_37BB20E  # no width source at all
+def test_a_stored_width_changes_only_the_rearm_percent_against_37bb20e():
+    measured, p, record = order_and_trigger_calls([RTH_NS], *calm(RTH_NS))
+    assert p.trail_width("AAPL") == Decimal("0.0018")
+    plain, _, before = order_and_trigger_calls([RTH_NS])  # no width source at all
+    assert plain == CALLS_AT_37BB20E
+    assert [r.pop("trail_percent") for r in record["submitted"]] == [2.5, 0.18]  # the re-arm
+    assert [r.pop("trail_percent") for r in before["submitted"]] == [2.5, 2.5]
+    assert record == before and measured != CALLS_AT_37BB20E  # nothing else moved
 
 
 # --- 2a-res v4 (LEAD-1445): the width reads are data requests, never on the trading pacer -------
