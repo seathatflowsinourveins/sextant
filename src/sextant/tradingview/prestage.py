@@ -102,7 +102,15 @@ def load_registry(path: Path) -> Registry:
         kind = ROWS.get(name)
         if kind is None or kind[1] != unit:
             raise PrestageError(f"unknown registry row: {name}")
-        value = kind[0](item["value"])
+        raw_value = item["value"]
+        if kind[0] is int:
+            if type(raw_value) is not int:
+                raise PrestageError(f"invalid registry value: {name}")
+            value = raw_value
+        else:
+            if type(raw_value) not in (int, str):
+                raise PrestageError(f"invalid registry value: {name}")
+            value = Decimal(raw_value)
         rows.append(
             RegistryRow(
                 name,
@@ -155,7 +163,7 @@ def prior_sessions(day: date, count: int = 5) -> tuple[date, ...]:
 
 
 def baseline_sessions(day: date, segment: Segment, count: int = 5) -> tuple[date, ...]:
-    """Prior sessions whose segment start and span did not move; early closes are skipped."""
+    """Prior sessions whose start did not move and whose span covers this prefix."""
     candidates = prior_sessions(day, count + 10)
     expected_span = segment.end_ns - segment.start_ns
     chosen: list[date] = []
@@ -166,7 +174,7 @@ def baseline_sessions(day: date, segment: Segment, count: int = 5) -> tuple[date
             found is None
             or found.name != segment.name
             or found.start_ns != anchored
-            or found.end_ns - anchored != expected_span
+            or found.end_ns - anchored < expected_span
         ):
             continue
         chosen.append(candidate)
@@ -436,17 +444,21 @@ def publish_tick(
         raise PrestageError(f"the J5 unit is not fresh: {j5.get('reason')}")
     projected = project_display_unit(j5, bounds=bounds)
     unit_dir = Path(unit_dir)
-    staging = unit_dir.parent / f".{unit_dir.name}.staging"
+    if unit_dir.exists() and not unit_dir.is_symlink():
+        raise PrestageError("the display unit is not a generation pointer; move it aside once")
+    generations = unit_dir.parent / f"{unit_dir.name}.generations"
+    generation = generations / j5["generation_sha256"]
     for filename, document in projected.documents().items():
-        write_atomic(staging / filename, document)
+        write_atomic(generation / filename, document)
     validated = read_research_inputs(
-        staging,
+        generation,
         now=datetime.fromtimestamp(publish_clock_ns / NS, UTC),
         max_age=max_age,
     )
-    unit_dir.mkdir(parents=True, exist_ok=True)
-    for filename in projected.documents():
-        os.replace(staging / filename, unit_dir / filename)
+    pointer = unit_dir.parent / f".{unit_dir.name}.pointer"
+    pointer.unlink(missing_ok=True)
+    os.symlink(f"{generations.name}/{generation.name}", pointer, target_is_directory=True)
+    os.replace(pointer, unit_dir)
     return {
         "schema": "sextant.tv-prestage-receipt/1",
         "segment": segment.name,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import UTC, date, datetime, time
 from decimal import Decimal
 from pathlib import Path
@@ -272,6 +273,69 @@ def test_prestage_publishes_each_segment_unit_that_reads_back(
     assert (tmp_path / "j5.json").is_file()
 
 
+def test_prestage_switches_the_display_generation_atomically(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """A reader sees the whole old or whole new unit, never a mixed generation."""
+    from sextant.tradingview import prestage
+
+    publish("RTH", tmp_path, now_minute=8)
+    unit = tmp_path / "unit"
+    old_sha = json.loads((unit / "display-lists.json").read_text(encoding="utf-8"))["generation"][
+        "sha256"
+    ]
+    now = datetime.fromtimestamp(at(DAY, 9, 41) / NS, UTC)
+    observed: list[str] = []
+    real_replace = os.replace
+
+    def observe(src: Any, dst: Any, *args: Any, **kwargs: Any) -> Any:
+        try:
+            observed.append(read_research_inputs(unit, now=now, max_age=1_200).generation["sha256"])
+        except InputError:
+            observed.append("MIXED")
+        result = real_replace(src, dst, *args, **kwargs)
+        if Path(dst) == unit:
+            observed.append(read_research_inputs(unit, now=now, max_age=1_200).generation["sha256"])
+        return result
+
+    monkeypatch.setattr(prestage.os, "replace", observe)
+    publish("RTH", tmp_path, now_minute=9)
+    new_sha = json.loads((unit / "display-lists.json").read_text(encoding="utf-8"))["generation"][
+        "sha256"
+    ]
+    assert old_sha != new_sha
+    assert "MIXED" not in observed
+    assert old_sha in observed and new_sha in observed
+
+
+def test_prestage_interrupted_pointer_switch_keeps_the_previous_unit(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """An interruption before the switch leaves the previous complete unit readable."""
+    from sextant.tradingview import prestage
+
+    publish("RTH", tmp_path, now_minute=8)
+    unit = tmp_path / "unit"
+    resolved = unit.resolve()
+    previous = {
+        name: (unit / name).read_bytes()
+        for name in ("top100.json", "focus.json", "display-lists.json")
+    }
+    real_replace = os.replace
+
+    def interrupt(src: Any, dst: Any, *args: Any, **kwargs: Any) -> Any:
+        if Path(dst) == unit:
+            raise OSError("simulated interruption before the pointer switch")
+        return real_replace(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(prestage.os, "replace", interrupt)
+    with pytest.raises(OSError):
+        publish("RTH", tmp_path, now_minute=9)
+    assert unit.resolve() == resolved
+    assert all((unit / name).read_bytes() == data for name, data in previous.items())
+    read_research_inputs(unit, now=datetime.fromtimestamp(at(DAY, 9, 41) / NS, UTC), max_age=1_200)
+
+
 def test_prestage_uses_the_shipped_cadence_floors(tmp_path: Path) -> None:
     from sextant.tradingview.prestage import cadence_floor
 
@@ -363,6 +427,39 @@ def test_prestage_skips_a_short_prior_rth_session() -> None:
     assert len(sessions) == 5
     assert date(2026, 11, 27) not in sessions  # 13:00 ET early close
     assert date(2026, 11, 25) in sessions
+
+
+def test_prestage_baseline_covers_an_early_close_target() -> None:
+    """An early-close target is covered by the normal prior prefix, not rejected."""
+    from sextant.tradingview.prestage import baseline_sessions
+
+    early = date(2026, 11, 27)
+    target = segment_start(at(early, 9, 30) + NS)[0]
+    assert target is not None and target.name == "RTH"
+    assert target.end_ns == at(early, 13)
+    sessions = baseline_sessions(early, target)
+    assert len(sessions) == 5
+    assert all(day < early for day in sessions)
+    normal_day = date(2026, 11, 30)
+    normal = segment_start(at(normal_day, 9, 30) + NS)[0]
+    assert normal is not None
+    assert date(2026, 11, 27) not in baseline_sessions(normal_day, normal)
+
+
+def test_prestage_rejects_registry_values_that_need_coercion(tmp_path: Path) -> None:
+    """Booleans and floats are refused before any int/Decimal conversion."""
+    from sextant.tradingview.prestage import PrestageError, load_registry
+
+    source = Path(__file__).resolve().parents[2] / "lanes/tradingview/k2-ranking.params.json"
+    base = json.loads(source.read_text(encoding="utf-8"))
+    for name, bad in (("top_n", True), ("top_n", 1.9), ("mover_min_move", 0.03)):
+        document = json.loads(json.dumps(base))
+        row = next(item for item in document["rows"] if item["name"] == name)
+        row["value"] = bad
+        path = tmp_path / f"registry-{name}-{bad}.json"
+        path.write_text(json.dumps(document), encoding="utf-8")
+        with pytest.raises(PrestageError):
+            load_registry(path)
 
 
 def test_prestage_reference_session_ignores_the_baseline_filter() -> None:
