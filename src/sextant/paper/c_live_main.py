@@ -512,13 +512,62 @@ def _head_sha() -> str:
     return raw
 
 
-def _custody_open(book: Custody) -> int | None:
-    """Count open positions the slot pool must charge before arming new symbols."""
+def _retained_symbols(book: Custody) -> frozenset[str]:
+    """Read held and working symbols from the same reconciled custody snapshot."""
 
     snapshot = book.snapshot
-    if snapshot is None:
-        return None
-    return sum(1 for quantity in snapshot.positions.values() if quantity > 0)
+    if snapshot is None or not snapshot.complete:
+        raise LiveRefusal("custody symbols unavailable for C arming")
+    held = {symbol for symbol, quantity in snapshot.positions.items() if quantity > 0}
+    working = {order.instrument for order in snapshot.orders if order.leaves > 0}
+    return frozenset(held | working)
+
+
+def _observe_fill(
+    book: Custody,
+    scope: AccountScope,
+    instrument: str,
+    delta: Decimal,
+    *,
+    source: str,
+    now: int,
+) -> None:
+    """Merge one fill into the last complete snapshot instead of replacing it.
+
+    C's retained set is the custody snapshot's held and working symbols. A
+    fill-only snapshot that replaces the previous one hides every earlier fill
+    (and earlier exit), so the next segment's capacity count is too low.
+    """
+
+    previous = book.snapshot
+    if previous is None or not previous.complete:
+        raise LiveRefusal(f"the fill snapshot for {source} is not observable")
+    positions = dict(previous.positions)
+    net = positions.get(instrument, Decimal(0)) + delta
+    if net > 0:
+        positions[instrument] = net
+    else:
+        positions.pop(instrument, None)
+    managed = {
+        symbol: authority for symbol, authority in previous.managed.items() if symbol in positions
+    }
+    if net > 0:
+        managed[instrument] = PositionAuthority(net, source)
+    observed = book.observe(
+        AccountSnapshot(
+            scope,
+            previous.epoch + 1,
+            positions,
+            managed,
+            previous.orders,
+            True,
+            now,
+            source,
+        ),
+        now=now,
+    )
+    if not observed:
+        raise LiveRefusal(f"the fill snapshot for {source} is not observable")
 
 
 @dataclass(frozen=True)
@@ -528,6 +577,8 @@ class _Arming:
     armed: tuple[str, ...]
     custody_open: int | None
     reason: str
+    max_armed_symbols: int
+    held_back: tuple[str, ...] = ()
 
 
 def _arm_universe(
@@ -535,29 +586,60 @@ def _arm_universe(
     client: PacedTradingClient,
     data: Any,
     segment: Segment,
-    custody_open: int | None,
+    max_armed_symbols: int,
+    retained: frozenset[str],
+    mover_armed: frozenset[str],
     now: datetime,
 ) -> tuple[_Arming, str | None]:
-    """Rank the eligible 24/5 universe and let the 0.4 slot pool pick the session's symbols."""
+    """Preserve the ranked universe and fill C's configured shared-pool capacity."""
 
+    custody_open = len(retained)
     try:
         ranked = rank_universe(client, data, segment.name.lower(), now=now)
     except Exception as exc:  # the broker/data surface must fail closed, not arm blindly
         return (
-            _Arming(0, 0, (), custody_open, "universe ranking failed"),
+            _Arming(0, 0, (), custody_open, "universe ranking failed", max_armed_symbols),
             f"refused: the {segment.name} universe ranking failed: {type(exc).__name__}: {exc}",
         )
     if not ranked:
         reason = f"no eligible symbols for the {segment.name} session"
-        return _Arming(0, 0, (), custody_open, reason), f"refused: {reason}"
-    candidates = tuple(Candidate(f"{row.symbol}.ALPACA", index) for index, row in enumerate(ranked))
-    allocation = SlotPool().allocate(candidates, custody_open=custody_open)
+        return _Arming(0, 0, (), custody_open, reason, max_armed_symbols), f"refused: {reason}"
+    candidates = tuple(Candidate(f"{row.symbol}.ALPACA") for row in ranked)
+    allocation = SlotPool().allocate(
+        candidates,
+        max_armed_symbols=max_armed_symbols,
+        potential=(),
+        retained=retained,
+        mover_armed=mover_armed,
+    )
+    armed = tuple(
+        candidate.symbol for candidate in candidates if candidate.symbol in allocation.chosen
+    )
+    ranked_symbols = {f"{row.symbol}.ALPACA" for row in ranked}
+    held_back: list[str] = []
+    for symbol in sorted(retained):
+        if symbol in ranked_symbols:
+            continue
+        try:
+            iid = InstrumentId.from_str(symbol)
+            _require_eligible(client.get_asset(iid.symbol.value), iid.symbol.value, segment)
+        except Exception:  # an ineligible hold stays charged but leaves the segment's feed
+            held_back.append(symbol)
+    armed += tuple(symbol for symbol in retained if symbol not in armed and symbol not in held_back)
     reason = (
         f"slot pool {allocation.reason}: eligible={len(ranked)} slots={allocation.slots} "
         f"custody_open={custody_open}"
     )
-    arming = _Arming(len(ranked), allocation.slots, tuple(allocation.armed), custody_open, reason)
-    if not allocation.armed:
+    arming = _Arming(
+        len(ranked),
+        allocation.slots,
+        armed,
+        custody_open,
+        reason,
+        max_armed_symbols,
+        tuple(held_back),
+    )
+    if not armed:
         return arming, f"refused: {reason}"
     return arming, None
 
@@ -568,8 +650,10 @@ def _record_arming(run: RunRecord, segment: Segment, arming: _Arming) -> None:
             "segment": segment.name,
             "eligible": arming.eligible,
             "slots": arming.slots,
+            "max_armed_symbols": arming.max_armed_symbols,
             "armed": list(arming.armed),
             "custody_open": arming.custody_open,
+            "held_back": list(arming.held_back),
             "reason": arming.reason,
         }
     )
@@ -803,6 +887,7 @@ def _config_for(
     segment: Segment,
     *,
     slot_count: int = 2,
+    held_symbols: frozenset[str] = frozenset(),
 ) -> CConfig:
     return CConfig(
         symbols=tuple(symbols),
@@ -811,6 +896,7 @@ def _config_for(
         slot_count=slot_count,  # --symbols keeps ADR-0024's 2-of-5; --universe uses the pool
         segment=segment,
         params=params,
+        held_symbols=held_symbols,
     )
 
 
@@ -964,12 +1050,14 @@ def main(
                     client=client,
                     data=data_client,
                     segment=first,
-                    custody_open=_custody_open(book),
+                    max_armed_symbols=params["max_armed_symbols"],
+                    retained=_retained_symbols(book),
+                    mover_armed=frozenset(current_symbols),
                     now=datetime.fromtimestamp(now_ns() / _NS_PER_S, tz=UTC),
                 )
                 _record_arming(run, first, arming)
                 current_symbols = arming.armed
-                current_slot_count = arming.slots
+                current_slot_count = arming.max_armed_symbols
             if failure is None:
                 try:
                     current_instruments = _instruments_for(client, current_symbols, first)
@@ -1036,6 +1124,14 @@ def main(
                     row["status"] = "FILLED"
                     row["fill"] = _decimal_text(quantity)
                     run.protection_cid = cid
+                    _observe_fill(
+                        book,
+                        scope,
+                        instrument,
+                        -quantity,
+                        source=f"alpaca exit {cid}",
+                        now=now_ns(),
+                    )
                     return
                 if row["ack"] not in _PROTECTION_ACKS:
                     raise LiveRefusal(
@@ -1100,6 +1196,14 @@ def main(
                             f"the limit exit for {protection.instrument} filled {filled} "
                             f"of {protection.quantity}; the rest is unprotected"
                         )
+                    _observe_fill(
+                        book,
+                        scope,
+                        protection.instrument,
+                        -filled,
+                        source=f"alpaca exit {protection.cid}",
+                        now=now_ns(),
+                    )
                     protections.pop(protection.instrument, None)
                     return
                 if status not in _PROTECTION_GONE:
@@ -1218,24 +1322,24 @@ def main(
                 row["status"] = _status(final)
                 if command.side == "SELL":
                     run.protection_cid = cid
+                    if filled > 0:
+                        _observe_fill(
+                            book,
+                            scope,
+                            command.instrument,
+                            -filled,
+                            source=f"alpaca exit {cid}",
+                            now=now_ns(),
+                        )
                     return
-                now = now_ns()
-                epoch = (book.snapshot.epoch + 1) if book.snapshot is not None else 2
-                observed = book.observe(
-                    AccountSnapshot(
-                        scope,
-                        epoch,
-                        {command.instrument: filled},
-                        {command.instrument: PositionAuthority(filled, f"alpaca fill {cid}")},
-                        (),
-                        True,
-                        now,
-                        f"alpaca fill {cid}",
-                    ),
-                    now=now,
+                _observe_fill(
+                    book,
+                    scope,
+                    command.instrument,
+                    filled,
+                    source=f"alpaca fill {cid}",
+                    now=now_ns(),
                 )
-                if not observed:
-                    raise LiveRefusal(f"the fill snapshot for {cid} is not observable")
                 pending_fills.append(
                     OrderFact(
                         cid,
@@ -1340,7 +1444,11 @@ def main(
                 final_segment = current.name
                 final_baseline = current_baseline
                 final_config = _config_for(
-                    current_symbols, params, current, slot_count=current_slot_count
+                    current_symbols,
+                    params,
+                    current,
+                    slot_count=current_slot_count,
+                    held_symbols=_retained_symbols(book),
                 )
                 snapshot, failure, stopped, boundary = run_segment(
                     current, current_baseline, current_instruments, final_config
@@ -1385,12 +1493,14 @@ def main(
                         client=client,
                         data=data_client,
                         segment=nxt,
-                        custody_open=_custody_open(book),
+                        max_armed_symbols=params["max_armed_symbols"],
+                        retained=_retained_symbols(book),
+                        mover_armed=frozenset(current_symbols),
                         now=datetime.fromtimestamp(now_ns() / _NS_PER_S, tz=UTC),
                     )
                     _record_arming(run, nxt, arming)
                     next_symbols = arming.armed
-                    next_slot_count = arming.slots
+                    next_slot_count = arming.max_armed_symbols
                     current_symbols = next_symbols
                     current_slot_count = next_slot_count
                     if failure is not None:
