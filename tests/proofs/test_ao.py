@@ -10,9 +10,16 @@ import pytest
 ROOT = Path(__file__).parents[2]
 AO = ROOT / "deploy" / "wsl" / "ao.sh"
 PIN = "033d597032e448a0ea16c298350e36b099f74106"
-# Stand-ins: `gh` answers with the PR in $FAKE_PR, `ao` records each call.
+REPO = "https://github.com/seathatflowsinourveins/sextant"
+# Stand-ins: `gh` answers the PR view from $FAKE_PR and the repository's default branch from
+# $FAKE_DEFAULT_BRANCH; each gh and ao call is recorded.
 FAKE_GH = """#!/usr/bin/env bash
-cat "$FAKE_PR"
+printf 'gh %s\\n' "$*" >> "$FAKE_LOG"
+case "$*" in
+  "pr view "*) cat "$FAKE_PR" ;;
+  "repo view "*) echo "$FAKE_DEFAULT_BRANCH" ;;
+  *) exit 2 ;;
+esac
 """
 FAKE_AO = """#!/usr/bin/env bash
 all="$*"
@@ -51,6 +58,7 @@ def _run(
     version: str | None = None,
     worker: str | None = None,
     default_mode: str | None = None,
+    default_branch: str = "main",
 ):
     bin_dir = tmp / "bin"
     bin_dir.mkdir(exist_ok=True)
@@ -63,6 +71,7 @@ def _run(
         "PATH": f"{bin_dir}:{os.defpath}",
         "FAKE_PR": str(tmp / "pr.json"),
         "FAKE_LOG": str(tmp / "calls"),
+        "FAKE_DEFAULT_BRANCH": default_branch,
     }
     if worker:
         env["FAKE_WORKER"] = worker
@@ -88,7 +97,7 @@ def test_ao_is_pinned_and_claims_only_a_handed_off_pr(tmp_path: Path) -> None:
     assert "port=3301" in script and "AO_TELEMETRY_REMOTE=off" in script
     # Phase 2's active identity is sextant-next; AO's project id stays `sextant`.
     assert 'clone="$HOME/.ao/repos/sextant-next"' in script
-    assert "repo_url=https://github.com/seathatflowsinourveins/sextant-next" in script
+    assert "repo_url=https://github.com/seathatflowsinourveins/sextant\n" in script
     assert "project=sextant" in script
     assert "\nao *args:\n" in (ROOT / "justfile").read_text()
     assert PIN in (ROOT / "docs" / "manifest.md").read_text()
@@ -101,6 +110,38 @@ def test_ao_is_pinned_and_claims_only_a_handed_off_pr(tmp_path: Path) -> None:
     assert "Never merge" in spawn and "a" * 40 in spawn
     # The worker pushes the way .codex/rules/default.rules allows: plain git push, its upstream.
     assert "with plain git push" in spawn
+
+
+@pytest.mark.parametrize(
+    ("default_branch", "base", "accepted"),
+    [
+        ("gate", "gate", True),  # gate is the repository's default branch today
+        ("main", "main", True),  # and main after Phase 3's cutover
+        ("gate", "main", False),  # the literal main is not a hand-off while gate is default
+        ("main", "gate", False),  # nor gate after the cutover
+    ],
+)
+def test_claim_reads_the_repository_default_branch(
+    tmp_path: Path, default_branch: str, base: str, accepted: bool
+) -> None:
+    """The hand-off base is the repository's own default branch, read once, not the literal
+    `main`: a gate PR hands off while gate is default, and the same check holds after the
+    cutover. Fails before claim() reads the default branch, because the literal main refuses
+    gate/gate, and it would fail if a non-default base were accepted."""
+    run, calls = _run(
+        tmp_path,
+        "claim",
+        "57",
+        pr={**HANDED_OFF, "baseRefName": base},
+        default_branch=default_branch,
+    )
+    assert run.returncode == (0 if accepted else 1), run.stderr
+    assert any(call.startswith("spawn ") for call in calls) is accepted
+    if not accepted:
+        assert "default branch" in run.stderr
+    # One read of the repository itself, through gh's own JSON and jq, per claim.
+    repo_view = f"gh repo view {REPO} --json defaultBranchRef --jq .defaultBranchRef.name"
+    assert calls.count(repo_view) == 1
 
 
 @pytest.mark.parametrize("default_mode", ["chat", "tui"])

@@ -28,7 +28,10 @@ if tool == 'git':
     assert Path(target).is_relative_to(Path(os.environ['HOME'])), args
 if tool == 'ao' and args[:2] == ['project', 'get']:
     sys.exit(0 if os.environ['FIXTURE_PROJECT_EXISTS'] == '1' else 1)
-if tool == 'gh':
+if tool == 'gh' and args[:2] == ['repo', 'view']:
+    assert args[3:] == ['--json', 'defaultBranchRef', '--jq', '.defaultBranchRef.name'], args
+    print('main')
+elif tool == 'gh':
     assert args[:2] == ['pr', 'view'], args
     fields = args[args.index('--json') + 1].split(',')
     pr = json.loads(Path(os.environ['FIXTURE_PR']).read_text())

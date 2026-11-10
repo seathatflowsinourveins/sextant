@@ -11,7 +11,7 @@ import pytest
 
 ROOT = Path(__file__).parents[2]
 WORKFLOWS = ROOT / ".github" / "workflows"
-REPO = "repos/seathatflowsinourveins/sextant-next"
+REPO = "repos/seathatflowsinourveins/sextant"
 
 
 def _read(relative: str) -> str:
