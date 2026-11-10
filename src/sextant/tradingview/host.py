@@ -230,7 +230,16 @@ class BarFidelityHost:
         return True
 
     def _anchor(self, symbol: str, price: Decimal, *, market_ns: int, received_ns: int) -> None:
-        at = self.publisher.segment.start_ns
+        segment = self.publisher.segment
+        if segment.name == "POST":
+            # ADR-0003 K5: the regular close belongs to no extended segment, so a POST
+            # anchor must land inside the segment to establish the prefix.
+            self.publisher.states[symbol] = replace(
+                self.publisher.states[symbol], segment_covered=True
+            )
+            at = segment.start_ns + 1
+        else:
+            at = segment.start_ns
         anchor = TradeTick(
             self._instrument(symbol),
             Price.from_str(_text(price)),
