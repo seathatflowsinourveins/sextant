@@ -16,16 +16,18 @@ git config fetch.prune true
 git maintenance start
 
 name="Lifecycle sweep"
-# An existing sweep takes this checkout's repository, current prompt and precheck, by Orca's own
-# `automations edit` (same pin, src/cli/specs/automations.ts), so a merged change to either, or a moved
-# checkout, reaches the scheduled run. Omitting the workspace mode keeps the stored one, so it still
-# runs in place and never creates a worktree of its own.
+# An existing sweep takes this checkout's workspace, current prompt and precheck, by Orca's own
+# `automations edit` (same pin, src/main/runtime/runtime-automation-controller.ts:251-315), so a merged
+# change to either, or a moved checkout, reaches the scheduled run. Its `resolveTarget` refuses a
+# repo-only update of an existing-workspace automation ("Repo updates ... require workspaceMode
+# new_per_run."), and a workspace update keeps the stored mode; omitting the workspace mode keeps it
+# too, so the sweep still runs in place and never creates a worktree of its own.
 id=$(orca-ide automations list --json | jq -r --arg name "$name" '.result.automations[] | select(.name == $name) | .id' | head -n 1)
 if [ -n "$id" ]; then
-  orca-ide automations edit "$id" --repo "path:$PWD" \
+  orca-ide automations edit "$id" --workspace "path:$PWD" \
     --precheck "bash $PWD/deploy/wsl/lifecycle-precheck.sh" --precheck-timeout 120 \
     --prompt "$(cat deploy/wsl/lifecycle-prompt.md)" --json > /dev/null
-  echo "Orca automation \"$name\" is set, with this checkout's repository, prompt and precheck."
+  echo "Orca automation \"$name\" is set, with this checkout's workspace, prompt and precheck."
   exit 0
 fi
 orca-ide automations create --name "$name" --trigger daily --time 05:00 --timezone America/New_York \

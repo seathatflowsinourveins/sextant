@@ -12,7 +12,10 @@ WSL = ROOT / "deploy" / "wsl"
 LIFECYCLE = WSL / "lifecycle.sh"
 PRECHECK = WSL / "lifecycle-precheck.sh"
 PROMPT = (WSL / "lifecycle-prompt.md").read_text()
-# Stand-ins that record each call, so no test touches real git config, timers or an Orca server.
+# Stand-ins that record each call, so no test touches real git config, timers or an Orca server. The
+# Orca stand-in enforces the pinned runtime's own rule (stablyai/orca@a162e08b, src/main/runtime/
+# runtime-automation-controller.ts resolveTarget): a repo-only update of an existing-workspace
+# automation is refused, while a workspace retarget is accepted and becomes its run-context path.
 FAKE = """#!/usr/bin/env bash
 echo "${0##*/} $*" >> "$FAKE_LOG"
 case "${0##*/} $*" in
@@ -21,6 +24,21 @@ case "${0##*/} $*" in
       echo '{"result": {"automations": [{"id": "a1", "name": "Lifecycle sweep"}]}}'
     else echo '{"result": {"automations": []}}'; fi ;;
   "orca-ide automations create"*) touch "$FAKE_STATE" ;;
+  "orca-ide automations edit "*)
+    repo=0 workspace=0 new_per_run=0
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --repo) repo=1 ;;
+        --workspace) workspace=1; shift
+          if [ $# -gt 0 ]; then printf '%s\\n' "${1#path:}" > "$FAKE_CONTEXT"; fi ;;
+        --workspace-mode) shift; if [ "${1:-}" = "new-per-run" ]; then new_per_run=1; fi ;;
+      esac
+      shift
+    done
+    if [ "$repo" = 1 ] && [ "$workspace" = 0 ] && [ "$new_per_run" = 0 ]; then
+      echo "Repo updates for existing-workspace automation require workspaceMode new_per_run." >&2
+      exit 1
+    fi ;;
   "gh release view"*) echo "$FAKE_RELEASE" ;;
   "git worktree list --porcelain") printf 'worktree %s\\n' "${FAKE_MAIN:-$PWD}" ;;
 esac
@@ -41,11 +59,14 @@ def test_the_sweep_runs_in_place_and_forces_only_merged_heads() -> None:
         assert subprocess.run(["bash", "-n", str(script)], check=False).returncode == 0, script
     lifecycle = LIFECYCLE.read_text()
     assert "git config fetch.prune true" in lifecycle and "git maintenance start" in lifecycle
-    # A workspace target on create, and on edit this checkout's repository too, so an existing sweep
-    # converges its stored run-context path; no run creates a worktree of its own.
-    assert "orca-ide automations create" in lifecycle and '--workspace "path:$PWD"' in lifecycle
-    assert '--repo "path:$PWD"' in lifecycle, "the edit path names this checkout's repository"
-    assert "--workspace-mode" not in lifecycle and "--precheck" in lifecycle
+    # Both paths retarget by workspace: the pinned runtime refuses a repo-only update of an
+    # existing-workspace automation, and neither path passes a workspace mode or an enabled state,
+    # so the stored mode (run in place) and the sweep's enabled state stand.
+    assert "orca-ide automations create" in lifecycle
+    assert lifecycle.count('--workspace "path:$PWD"') == 2, "both paths name this checkout"
+    assert "--repo" not in lifecycle
+    assert "--workspace-mode" not in lifecycle and "--enabled" not in lifecycle
+    assert "--precheck" in lifecycle
     assert "orca worktree rm --worktree branch:<branch> --delete-branch" in PROMPT
     assert "git branch -d <branch>" in PROMPT and "issue #89" in PROMPT
     # Squash merges never look merged to git, so the one forced delete is bound to GitHub's record:
@@ -77,6 +98,7 @@ def test_setting_up_the_sweep_twice_makes_one(tmp_path: Path) -> None:
         "PATH": f"{bin_dir}:{os.environ['PATH']}",
         "FAKE_LOG": str(log),
         "FAKE_STATE": str(tmp_path / "created"),
+        "FAKE_CONTEXT": str(tmp_path / "context"),
         "FAKE_MAIN": str(ROOT),
     }
     for _ in range(2):
@@ -89,7 +111,9 @@ def test_setting_up_the_sweep_twice_makes_one(tmp_path: Path) -> None:
     edits = [call for call in calls if call.startswith("orca-ide automations edit a1 ")]
     assert len(edits) == 1, "the second run brings the existing sweep to this checkout's prompt"
     assert "--prompt" in edits[0] and "lifecycle-precheck.sh" in edits[0]
-    assert f"--repo path:{ROOT}" in edits[0], "an existing sweep converges its run-context path"
+    assert f"--workspace path:{ROOT}" in edits[0], "the sweep re-points its run context"
+    assert "--repo" not in edits[0], "the pinned runtime refuses a repo-only update"
+    assert (tmp_path / "context").read_text().strip() == str(ROOT)
 
 
 def test_the_precheck_runs_the_sweep_only_when_there_is_work(tmp_path: Path) -> None:
