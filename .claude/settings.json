@@ -213,6 +213,29 @@
       "Edit(//mnt/wsl/**)"
     ]
   },
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -I \"${CLAUDE_PROJECT_DIR}/scripts/compact_context.py\" session-start || true"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -I \"${CLAUDE_PROJECT_DIR}/scripts/compact_context.py\" pre-compact || true"
+          }
+        ]
+      }
+    ]
+  },
   "enabledPlugins": {
     "superpowers@superpowers-dev": true,
     "compound-engineering@compound-engineering-plugin": true,
