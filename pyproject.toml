@@ -45,11 +45,13 @@ ignore = ["S101", "S603", "S607"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests/repo", "tests/proofs"]
-# Proofs that need the devcontainer itself (its firewall, sudo rule and pinned runtimes) and the ones that need the maintainer's own tools
-# are deselected by default, so `ci` runs everything else. `just prove` adds them back with an empty
-# `-m ""`, which overrides this one. pytest docs, "Registering marks" and "Specifying which tests to run".
+# Proofs that need the devcontainer itself, live GitHub settings, or the maintainer's own tools
+# are deselected by default, so `ci` runs the rest. `just prove` selects host proofs by default;
+# pass `-m` (for example `just prove github`) to widen it. pytest docs, "Registering marks".
 markers = [
-  "container: needs the sandbox container; deselected by default outside it",
+  "container: needs the sandbox container; runs in the devcontainer build, not the host",
+  "host: holds in a host checkout; the default `just prove` scope",
+  "github: asserts live GitHub settings and needs the maintainer's admin token",
   "local: needs the maintainer's own tools or login (the gitleaks binary, gh admin reads); deselected by default, so CI's read-only token skips it",
 ]
 pythonpath = ["src"]

@@ -38,12 +38,14 @@ def test_fresh_router_bind_and_available_memory() -> None:
 
 
 def test_router_is_durable_with_upstream_notify_watchdog_and_no_secret_file() -> None:
+    prefix = Path.home() / ".local/share/sextant-lane-runtimes"
     unit = (Path.home() / ".config/systemd/user/omniroute.service").read_text()
     for line in ("Type=notify", "NotifyAccess=all", "WatchdogSec=180", "Restart=on-failure"):
         assert line in unit
     assert "router-start.sh" in unit
     assert "EnvironmentFile=" not in unit
-    assert "WorkingDirectory=/home/sextant/sextant" in unit
+    repository_path = (prefix / "repository-path").read_text().strip()
+    assert f"WorkingDirectory={repository_path}" in unit
     active = subprocess.run(
         ["systemctl", "--user", "is-active", "omniroute.service"],
         capture_output=True,
