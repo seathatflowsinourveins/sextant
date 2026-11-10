@@ -841,10 +841,13 @@ class Protector:
         # R1-R3: each page is one paced request inside the same deadline and budget; a window
         # is complete at its page without a token. The level is the maximum over the pages
         # read (the rc8 trail only ratchets up), so a partial read keeps a lower bound.
+        # No rows and no token is a quiet window; rows of which none is inside the window,
+        # or a token the window already returned, is malformed: partial, no further page.
         level: Decimal | None = None
         pages = 0
         for start_ns, end_ns, feed in tape_windows(min(claimed), now_ns):
             token: str | None = None
+            seen: set[str] = set()
             while True:
                 why = f"{pages} page(s) read, the level a lower bound; at {feed}"
                 if not spend():
@@ -854,8 +857,9 @@ class Protector:
                 except Exception as exc:
                     return TapeRead(symbol, qty, level, "partial", f"{why}; {type(exc).__name__}")
                 pages += 1
+                inside = [row for row in rows if start_ns <= row.ts_ns <= end_ns]
                 found = rebuild_trigger(
-                    [row for row in rows if start_ns <= row.ts_ns <= end_ns],
+                    inside,
                     trail_fraction=self._parameters.native_trail_fraction,
                     params=self._exit_params,
                 )
@@ -863,8 +867,16 @@ class Protector:
                     level = found
                 # Kept at once, so the interval timer's expiry keeps the pages already read.
                 self._tapes[symbol] = TapeRead(symbol, qty, level, "partial", why)
+                why = f"{pages} page(s) read, the level a lower bound; at {feed}"
+                if rows and not inside:
+                    detail = f"{why}: no row inside its window"
+                    return TapeRead(symbol, qty, level, "partial", detail)
                 if token is None:
                     break
+                if token in seen:
+                    detail = f"{why}: a repeated continuation token"
+                    return TapeRead(symbol, qty, level, "partial", detail)
+                seen.add(token)
         return TapeRead(symbol, qty, level, "ok")
 
     def _adopt_outside(self, symbol: str, order: Order) -> None:

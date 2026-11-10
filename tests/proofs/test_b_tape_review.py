@@ -367,3 +367,135 @@ def test_a_start_read_off_the_main_thread_reports_tape_partial() -> None:
 
     assert "tape=partial" in line_for(manager, POST_NS, "36.60")
     assert manager.emulated_trigger("AAPL") == Decimal("36.465")
+
+
+# The Codex MAX delta review of 36c4a6f (btp-36c4a6f-codex-r1, test_local_review.py:183 and
+# :194): two false tape=ok witnesses, carried in under B's own names. A page is told apart
+# by what the vendor returned: no rows and no token is a quiet window (complete); rows of
+# which none falls inside the requested window is a malformed page (partial, paged).
+
+
+class RawPages:
+    """The data client's raw GET, one scripted JSON page a request (the last repeats)."""
+
+    def __init__(self, pages: list[dict[str, object]]) -> None:
+        self.pages = pages
+        self.calls: list[dict[str, object]] = []
+
+    def get(self, path: str, fields: dict[str, object]) -> dict[str, object]:
+        assert path == "/stocks/quotes"
+        self.calls.append(dict(fields))
+        return self.pages[min(len(self.calls) - 1, len(self.pages) - 1)]
+
+
+def raw_row(at: str = "2026-11-09T21:59:00Z", bid: str = "38.65") -> dict[str, object]:
+    return {"t": at, "bp": bid, "ap": str(Decimal(bid) + Decimal("0.01")), "bs": 1, "as": 1}
+
+
+def raw_manager(raw: RawPages, client: FakeClient) -> Protector:
+    history = BHistoricalTape(raw, 10000)
+    return Protector(
+        client, b_account(), budget_params(8), now_ns=lambda: POST_NS, feed="sip", history=history
+    )
+
+
+def test_a_window_whose_only_rows_fall_outside_it_is_partial_and_pages() -> None:
+    # The 16:00-18:10 EST window gets one 11:00 EST bid-900 row and no token: malformed.
+    raw = RawPages([{"quotes": {"AAPL": [raw_row("2026-11-09T16:00:00Z", "900")]}}])
+    client = tonight_client()
+    manager = raw_manager(raw, client)
+    start(manager)
+
+    assert manager._tapes["AAPL"].status == "partial"
+    assert "no row inside" in manager._tapes["AAPL"].detail
+    assert manager.emulated_trigger("AAPL") == Decimal("36.465")
+    assert client.cancelled == []
+    assert [page.reason for page in manager.pages] == ["outside_rth_tape_unreadable"]
+    assert len(raw.calls) == 1
+
+
+def test_an_out_of_window_page_keeps_the_levels_of_the_pages_before_it() -> None:
+    # Page one is valid (bid 38.65 at 16:59 EST); page two returns only an 11:00 EST row.
+    raw = RawPages(
+        [
+            {"quotes": {"AAPL": [raw_row()]}, "next_page_token": "p2"},
+            {"quotes": {"AAPL": [raw_row("2026-11-09T16:00:00Z", "900")]}},
+        ]
+    )
+    client = tonight_client()
+    manager = raw_manager(raw, client)
+    start(manager)
+
+    assert manager._tapes["AAPL"].status == "partial"
+    assert manager.emulated_trigger("AAPL") == Decimal("37.68")  # 38.65 x 0.975
+    assert [page.reason for page in manager.pages] == ["outside_rth_tape_unreadable"]
+    assert len(raw.calls) == 2
+
+
+def test_a_repeated_continuation_token_ends_the_window_partial() -> None:
+    # Tokens "repeat", "repeat", then an empty tokenless page: the second "repeat" ends it.
+    raw = RawPages(
+        [
+            {"quotes": {"AAPL": [raw_row()]}, "next_page_token": "repeat"},
+            {"quotes": {"AAPL": [raw_row()]}, "next_page_token": "repeat"},
+            {"quotes": {"AAPL": []}},
+        ]
+    )
+    client = tonight_client()
+    manager = raw_manager(raw, client)
+    start(manager)
+
+    assert manager._tapes["AAPL"].status == "partial"
+    assert "repeated continuation token" in manager._tapes["AAPL"].detail
+    assert manager.emulated_trigger("AAPL") == Decimal("37.68")
+    assert client.cancelled == []
+    assert [page.reason for page in manager.pages] == ["outside_rth_tape_unreadable"]
+    assert len(raw.calls) == 2  # no request after the repeat
+    assert raw.calls[1]["page_token"] == "repeat"  # noqa: S105 - a page token
+
+
+def test_a_truly_empty_tokenless_window_is_still_a_complete_quiet_window() -> None:
+    # No rows and no token: the vendor had nothing in the window. That is ok, not malformed.
+    raw = RawPages([{"quotes": {"AAPL": []}}])
+    client = tonight_client()
+    manager = raw_manager(raw, client)
+    start(manager)
+
+    assert manager._tapes["AAPL"].status == "ok"
+    assert manager._tapes["AAPL"].level is None
+    assert manager.emulated_trigger("AAPL") == Decimal("36.465")
+    assert manager.pages == []
+    assert "tape=ok" in line_for(manager, POST_NS, "36.60")
+    assert len(raw.calls) == 1
+
+
+class DistinctTokens(RawPages):
+    """Endless pages, each with a new token: only the request budget ends the window."""
+
+    def get(self, path: str, fields: dict[str, object]) -> dict[str, object]:
+        assert path == "/stocks/quotes"
+        self.calls.append(dict(fields))
+        return {"quotes": {"AAPL": [raw_row()]}, "next_page_token": f"p{len(self.calls)}"}
+
+
+def test_distinct_endless_tokens_spend_one_admission_a_page_and_leave_ten_tokens() -> None:
+    # The review's pacing witness with a fresh token each page (a constant token now ends
+    # the window at its repeat): 1 positions + 1 orders + 6 pages = 8 of 18; 10 remain.
+    raw = DistinctTokens([])
+    pacer = paced(18)
+    client = PacedTradingClient(tonight_client(), pacer)
+    history = BHistoricalTape(PacedHistoricalDataClient(raw, pacer), 10000)  # type: ignore[arg-type]
+    manager = Protector(
+        client, b_account(), budget_params(8), now_ns=lambda: POST_NS, feed="sip", history=history
+    )
+    manager.rebuild_tapes()
+
+    tokens = [request.get("page_token") for request in raw.calls]
+    assert tokens == [None, "p1", "p2", "p3", "p4", "p5"]
+    assert pacer.wire_requests == 8
+    assert pacer.bucket.tokens == 10
+    assert manager._tapes["AAPL"].status == "partial"
+    assert manager._tapes["AAPL"].level == Decimal("37.68")
+    manager.reconcile()
+    assert pacer.bucket.tokens == 8
+    assert manager.emulated_trigger("AAPL") == Decimal("37.68")
