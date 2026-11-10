@@ -43,7 +43,10 @@ def test_retired_runtime_keeps_its_pin_in_history_with_its_authority(name: str) 
     row = pins["retired_runtimes"][name]
     assert row["retired_on"] == "2026-11-08"
     assert "ADR-0030" in row["authority"]
-    assert "docs/adr/0030-latest-sota-models.md:35" in row["authority"]
+    cited = re.search(r"docs/adr/0030-latest-sota-models\.md:(\d+)", row["authority"])
+    assert cited, "the authority cites ADR-0030 by line"
+    adr = (ROOT / "docs/adr/0030-latest-sota-models.md").read_text().splitlines()
+    assert adr[int(cited[1]) - 1].startswith("Retired from routing:"), cited[0]
     assert re.fullmatch(r"[0-9a-f]{40}", row["commit"])
 
 
@@ -89,18 +92,27 @@ def test_fresh_router_is_pinned_and_has_no_old_campaign_endpoint() -> None:
 
 def test_model_policy_keeps_the_approved_google_interim_and_native_claude() -> None:
     policy = json.loads((RUNTIMES / "model-policy.json").read_text())
-    assert policy["read_date"] == "2026-11-06"
+    assert policy["read_date"] == "2026-11-09"
     assert policy["comparison_source"] == "https://artificialanalysis.ai/models"
     assert policy["gpt"]["model"] == "gpt-6.1-sol" and policy["gpt"]["effort"] == "max"
     assert policy["google"]["antigravity"] == "gemini-4-argon-high"
     assert policy["google"]["effort"] == "high"
     assert policy["google"]["router_connections"] == ["agy", "antigravity"]
     assert policy["google"]["status"].startswith("interim: Carbon not in this account's catalog")
-    # The policy register moves on ADR-0030's measured gap; the project settings keep Opus 5.5 until
-    # the hard-lines receipt is regenerated on the host (test_hard_lines.py binds receipt["model"]
-    # to this file, and only a real Claude engine can re-record it).
-    assert policy["claude"]["model"] == "claude-fable-5-2" and policy["claude"]["effort"] == "max"
+    # ADR-0030's 2026-11-09 amendment, one entry per row of its table: the worker entry is the
+    # owner's named exception, Opus 5.5, and the project settings follow it (test_hard_lines.py
+    # binds the hard-lines receipt to them, and only a host engine run re-records it); the lead,
+    # the API reviewer and the reflection automation run Fable 5.2.
+    worker, lead = policy["claude"], policy["claude_lead"]
+    reviewer, reflection = policy["claude_reviewer"], policy["claude_reflection"]
+    assert (worker["model"], worker["effort"]) == ("claude-opus-5-5", "max")
+    assert (lead["model"], lead["effort"]) == ("claude-fable-5-2", "max")
+    assert lead["launch"] == "claude --model fable --effort max"
+    assert (reviewer["model"], reviewer["effort"]) == ("claude-fable-5-2", "max")
+    assert (reflection["model"], reflection["effort"]) == ("claude-fable-5-2", "max")
+    for entry in (worker, lead, reviewer, reflection):
+        assert "ADR-0030, 2026-11-09 amendment" in entry["authority"]
     claude = json.loads((ROOT / ".claude/settings.json").read_text())
-    assert claude["model"] == "claude-opus-5-5"
-    assert claude["env"]["CLAUDE_CODE_EFFORT_LEVEL"] == "max"
+    assert claude["model"] == worker["model"]
+    assert claude["env"]["CLAUDE_CODE_EFFORT_LEVEL"] == worker["effort"]
     assert "effortLevel" not in claude, "persistent max uses the upstream environment setting"

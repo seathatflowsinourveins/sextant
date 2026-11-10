@@ -12,6 +12,11 @@ AGENTS = json.loads((ROOT / ".devcontainer" / "agents" / "package.json").read_te
     "dependencies"
 ]
 DOCKERFILE = (ROOT / ".devcontainer" / "Dockerfile").read_text()
+# The host's Claude Code floats on latest, so it has a floor, not a pin: 2.1.321, the first build
+# with Fable 5.2 (anthropics/claude-code@v2.1.321 CHANGELOG.md:5; "Fable 5.2 requires Claude Code
+# v2.1.321 or later", code.claude.com/docs/en/model-config, read 2026-11-09). The devcontainer
+# keeps its own pin.
+FABLE_FLOOR = (2, 1, 321)
 
 
 def _run(*command: str) -> subprocess.CompletedProcess[str]:
@@ -47,10 +52,21 @@ def test_nothing_here_waits_on_a_prompt() -> None:
     settings = json.loads((Path.home() / ".claude" / "settings.json").read_text())
     assert settings["permissions"]["defaultMode"] == "bypassPermissions"
     assert settings["skipDangerousModePermissionPrompt"] is True
-    # Claude Code stays at the pin; bumps come by PR.
-    assert settings["env"]["DISABLE_AUTOUPDATER"] == "1"
     login = _run("gh", "auth", "status").stdout
     assert "'workflow'" in login and "'user'" in login
+
+
+def test_claude_code_updates_itself_on_the_latest_channel() -> None:
+    """ADR-0030's 2026-11-09 amendment: the host build is at or above FABLE_FLOOR, and every
+    settings home setup.sh provisions leaves the updater on, on latest. An absent channel is the
+    documented default, latest (code.claude.com/docs/en/setup, read 2026-11-09)."""
+    build = re.match(r"(\d+)\.(\d+)\.(\d+) ", _run("claude", "--version").stdout)
+    assert build and tuple(map(int, build.groups())) >= FABLE_FLOOR, "run `claude update`"
+    profiles = Path.home().glob(".config/orca/claude-profiles/*/home/settings.json")
+    for path in (Path.home() / ".claude" / "settings.json", *profiles):
+        settings = json.loads(path.read_text())
+        assert "DISABLE_AUTOUPDATER" not in settings.get("env", {}), path
+        assert settings.get("autoUpdatesChannel", "latest") == "latest", path
 
 
 def test_no_old_rules_or_hooks_load() -> None:
@@ -68,7 +84,6 @@ def test_tools_match_this_repos_pins() -> None:
     assert _pin(r"^FROM ghcr\.io/astral-sh/uv:([0-9.]+)@") in _run("uv", "--version").stdout
     assert _run("node", "--version").stdout.startswith("v" + _pin(r"^ARG NODE_VERSION=(\S+)"))
     assert _pin(r"^ARG JUST_VERSION=(\S+)") in _run("just", "--version").stdout
-    assert _pin(r"^RUN claude install (\S+)") in _run("claude", "--version").stdout
     assert AGENTS["@openai/codex"] in _run("codex", "--version").stdout
     assert AGENTS["@deepseek-ai/dsh"] in _run("dsh", "--version").stdout
 

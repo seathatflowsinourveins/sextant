@@ -11,18 +11,22 @@ cd "$(git worktree list --porcelain | sed -n '1s/^worktree //p')"
 
 name="Verified reflection"
 precheck="bash $PWD/deploy/wsl/reflection-precheck.sh"
+# model-policy.json claude_reflection. Both paths set it, so a re-run converges an existing automation:
+# orca-ide 1.4.251 `automations edit --help`, "--extra-agent-args=<args> Extra agent arguments for fresh
+# runs; empty clears", and automations.mdx above, "Extra agent arguments".
+agent_args="--model claude-fable-5-2 --effort max"
 default_branch=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name)
 base_branch="origin/${default_branch}"
 id=$(orca-ide automations list --json | jq -r --arg name "$name" '.result.automations[] | select(.name == $name) | .id' | head -n 1)
 if [ -n "$id" ]; then
   orca-ide automations edit "$id" --precheck "$precheck" --precheck-timeout 120 \
-    --repo "path:$PWD" --base-branch "$base_branch" \
+    --repo "path:$PWD" --base-branch "$base_branch" --extra-agent-args="$agent_args" \
     --prompt "$(cat deploy/wsl/reflection-prompt.md)" --json > /dev/null
-  echo "Orca automation \"$name\" is set, with this checkout's prompt and precheck; its enabled state is unchanged."
+  echo "Orca automation \"$name\" is set to this checkout's prompt, precheck and agent args; enabled state unchanged."
   exit 0
 fi
 orca-ide automations create --name "$name" --trigger "26 3 * * *" --timezone UTC \
-  --provider claude --extra-agent-args="--model claude-fable-5-2 --effort max" \
+  --provider claude --extra-agent-args="$agent_args" \
   --repo "path:$PWD" --workspace-mode new-per-run --base-branch "$base_branch" --setup skip \
   --precheck "$precheck" --precheck-timeout 120 --disabled \
   --prompt "$(cat deploy/wsl/reflection-prompt.md)" --json > /dev/null
