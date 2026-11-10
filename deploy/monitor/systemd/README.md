@@ -1,21 +1,22 @@
 # Monitor bridge scheduler
 
-The `scripts/` bridges are one-shot; a timer must run them. This directory
-adds checked-in per-user units.
+The `scripts/` bridges are one-shot; a timer runs them.
 
 - `sextant-monitor.service` — `Type=oneshot`; two `ExecStart` lines:
   `monitor_l3_l4.py --otlp --dsh-home %h/.dsh-full` and
   `monitor_evidence.py --otlp`. Each starts with `-`, so one bridge's failure
-  is recorded but the next still runs.
-- `sextant-monitor.timer` — `OnStartupSec=60s`, `OnUnitActiveSec=60s`,
-  `AccuracySec=1s`; `OnStartupSec` is relative to the user manager's start.
+  is recorded but the next still runs. No `TimeoutStartSec`: systemd.service(5)'s
+  90 s default applies (read 2026-11-10).
+- `sextant-monitor.timer` — `OnStartupSec=60s`, `OnUnitActiveSec=60s`;
+  No `AccuracySec`:
+  systemd.timer(5)'s 1 min default applies (read 2026-11-10).
 - `parameters.json` — the period row: 60 s, `UNCALIBRATED`, sourced to the
   OpenTelemetry SDK's `OTEL_METRIC_EXPORT_INTERVAL` default of 60000 ms and
   bounded by `monitor_staleness_seconds_max` (900 s). A period change touches
   this row, the timer and the Grafana group interval.
 - `install.sh` — substitutes `%h/sextant` for the checkout
   (`SEXTANT_REPO` overrides), installs into `~/.config/systemd/user`, then
-  `daemon-reload` and `enable --now`.
+  enables the timer.
 
 The dsh home is `~/.dsh-full`, named by `docs/start.md:47`
 (`DSH_HOME=~/.dsh-full`) and `scripts/dsh_profile_doctor.py`'s

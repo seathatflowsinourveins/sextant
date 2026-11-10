@@ -282,7 +282,7 @@ def test_alert_thresholds_are_registered_uncalibrated_and_informational() -> Non
     )
     assert len(pairs) == 11
     parameters = _parameters()
-    assert len(parameters) == 15
+    assert len(parameters) == 17
     assert all(row["status"] == "UNCALIBRATED" for row in parameters.values())
     for name, value in pairs:
         assert name in parameters
