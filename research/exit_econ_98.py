@@ -2,7 +2,7 @@
 
 Sources, each pinned:
 - Inputs, cohort and both controls: the pinned b-exit-replay study and #41's hash-checked inputs,
-  through sextant.research.exit_study_41 (#67): its catalog, `opening_entries`, `prepare`, `replay`.
+  through research.exit_study_41 (#67): its catalog, `opening_entries`, `prepare`, `replay`.
 - Tape: northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:
   src/northstar_trading/research_e2e/backtests/b_gain_protection.py:856-905 (`replay_minute_bars`),
   per the lead's ruling B2 on #98: at each completed minute, a quote at the bar low, then a trade at
@@ -24,6 +24,7 @@ import argparse
 import hashlib
 import json
 import subprocess
+import sys
 from collections import defaultdict
 from dataclasses import asdict, dataclass
 from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
@@ -57,7 +58,12 @@ from nautilus_trader.model import (
 from sextant.exits import policy
 from sextant.exits.engine import ExitEngine, ExitEngineConfig
 from sextant.exits.policy import ExitParams
-from sextant.research import exit_study_41 as x41
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from research import exit_study_41 as x41  # noqa: E402
 
 BPS = Decimal(10_000)
 COSTS = (Decimal(3), Decimal(6))  # bps per side, the study's own assumption and its stress

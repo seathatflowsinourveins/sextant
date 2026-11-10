@@ -1,7 +1,8 @@
 """Design row 7's proof: the 96-variant exit study, rerun from the catalog on its exact inputs.
 
 The study is northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:
-scripts/research/b_exit_replay.py, vendored verbatim as b_exit_replay.py (SHA-256 STUDY_SHA256)
+scripts/research/b_exit_replay.py, vendored verbatim as research/b_exit_replay.py (SHA-256
+STUDY_SHA256)
 and run unmodified. Its write-up is docs/research/2026-10-29-b-exit-replay.md at the same commit.
 
 What this module adds, and nothing else:
@@ -88,7 +89,10 @@ def load_study() -> types.ModuleType:
         "northstar_trading.scanner", types.ModuleType("northstar_trading.scanner")
     )
     sys.modules["northstar_trading.scanner.day_files"] = stub
-    module = importlib.import_module("sextant.research.b_exit_replay")
+    root = Path(__file__).resolve().parents[1]
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    module = importlib.import_module("research.b_exit_replay")
     if sha256(Path(module.__file__ or "")) != STUDY_SHA256:
         raise ValueError("the vendored study is not the pinned file")
     return module

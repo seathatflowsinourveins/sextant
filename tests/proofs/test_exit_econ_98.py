@@ -7,6 +7,7 @@ SEXTANT_RERUN_98=1, with the inputs in ~/sextant-data/exit-study-41 or SEXTANT_E
 import dataclasses
 import json
 import os
+import sys
 from decimal import Decimal as D
 from pathlib import Path
 
@@ -15,11 +16,15 @@ import pytest
 from sextant.backtest.exit_witness import FIXTURE, run
 from sextant.exits import policy
 from sextant.exits.policy import REGISTRY, ExitParams
-from sextant.research.exit_econ_98 import LABELS, trial_rows
-from sextant.research.exit_econ_98 import run as rerun
-from sextant.research.exit_study_41 import DEFAULT_INPUTS, INPUTS
 
 ROOT = Path(__file__).parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from research.exit_econ_98 import LABELS, trial_rows  # noqa: E402
+from research.exit_econ_98 import run as rerun  # noqa: E402
+from research.exit_study_41 import DEFAULT_INPUTS, INPUTS  # noqa: E402
+
 EVIDENCE = ROOT / "docs" / "research" / "2026-11-06-exit-econ-98"
 # Lead ruling (a), 2026-11-07: PR 2's raise rule moves the rows, so its engine's run is recorded
 # beside the committed rows, which stay as history (ADR-0018). The full rerun reproduces this run.
