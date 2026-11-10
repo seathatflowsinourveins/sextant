@@ -183,9 +183,29 @@ def test_main_ruleset_turns_off_extra_approval_for_unattributed_changes() -> Non
     assert parameters["require_extra_approval_for_unattributed_changes"] is False
 
 
+def test_every_ruleset_and_environment_recipe_is_applied() -> None:
+    """A recipe the apply step skips is a protection the repository does not have."""
+    apply = _read(".github/rulesets/apply.sh")
+    for recipe in ("main.json", "live.json", "ledger.json"):
+        assert recipe in apply
+    assert ".github/rulesets/environments.json" in apply
+    recipe = json.loads(_read(".github/rulesets/environments.json"))
+    assert {entry["name"]: entry["branches"] for entry in recipe["environments"]} == {
+        "review": ["main"],
+        "hosted-workers": ["main"],
+        "paper": ["main"],
+        "live": ["live"],
+    }
+
+
 @pytest.mark.local
 def test_environments_restrict_branches() -> None:
-    for name, branch in (("review", "main"), ("paper", "main"), ("live", "live")):
+    for name, branch in (
+        ("review", "main"),
+        ("hosted-workers", "main"),
+        ("paper", "main"),
+        ("live", "live"),
+    ):
         policies = _gh(f"{REPO}/environments/{name}/deployment-branch-policies")
         assert [p["name"] for p in policies["branch_policies"]] == [branch]
 
