@@ -241,6 +241,17 @@ test('the dsh reviewer keeps the GitHub-API-only instruction for its ci_run pipe
   assert.ok(!/snapshot-only/i.test(text));
 });
 
+test('the Codex reviewer prompt carries no unqualified GitHub-API read instruction', async () => {
+  const text = await promptText('codex');
+  const normalized = text.replace(/\s+/g, ' ');
+  assert.ok(!normalized.includes('Read its diff through the GitHub API'),
+    'review.md API-read sentence leaks into the offline prompt');
+  assert.ok(!normalized.includes('Read PR content only through the GitHub API'),
+    'shared API-read sentence leaks into the offline prompt');
+  assert.ok(!text.includes('Trusted default-branch guidelines: .github/workflows/review.md'),
+    'review.md is not part of the offline reviewer guidelines');
+});
+
 test('all nonblocking findings share one follow-up issue across heads and families', async () => {
   const f = fixture(), issues = [];
   let creates = 0, updates = 0;
