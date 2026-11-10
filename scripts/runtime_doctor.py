@@ -434,12 +434,21 @@ def check_claude(host: Host) -> dict[str, list[Finding]]:
             f"project model {settings.get('model')!r} differs from the hard-lines receipt "
             f"model {receipt.get('model')!r}",
         )
-    if env.get("CLAUDE_CODE_EFFORT_LEVEL") != claude_policy.get("effort"):
+    if "CLAUDE_CODE_EFFORT_LEVEL" in env:
         _fail(
             out,
             "claude",
             "model_effort",
-            f"CLAUDE_CODE_EFFORT_LEVEL is {env.get('CLAUDE_CODE_EFFORT_LEVEL')!r}, not "
+            f"env.CLAUDE_CODE_EFFORT_LEVEL is {env.get('CLAUDE_CODE_EFFORT_LEVEL')!r} and "
+            "overrides the project effortLevel; the tracked settings keep the level at the "
+            "project top",
+        )
+    if settings.get("effortLevel") != claude_policy.get("effort"):
+        _fail(
+            out,
+            "claude",
+            "model_effort",
+            f"project effortLevel is {settings.get('effortLevel')!r}, not the policy "
             f"{claude_policy.get('effort')!r}",
         )
     automations = _automations(host)
