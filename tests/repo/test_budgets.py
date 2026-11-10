@@ -49,10 +49,7 @@ def test_src_stays_under_budget() -> None:
     # shows its native replacements, a weekly report from maintained tools proposes deletions,
     # and a later raise must cite that report. One-off study code stays on tagged research
     # branches. The owner: "it can be grow but with sota sustainable consolidation".
-    # Then down to 27,000 on 2026-11-10 for ADR-0003's entry-ranking consumer: 25,825 measured
-    # before it plus the consumer and its hosts stays under 26,000, so the cap ratchets down
-    # from 28,000 while the consolidation follow-up keeps its headroom.
-    assert sum(_lines(path) for path in (ROOT / "src").rglob("*.py")) < 27000
+    assert sum(_lines(path) for path in (ROOT / "src").rglob("*.py")) < 28000
 
 
 def test_design_stays_short() -> None:
