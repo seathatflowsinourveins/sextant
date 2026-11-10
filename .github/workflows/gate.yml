@@ -157,6 +157,8 @@ jobs:
           HEAD: ${{ needs.source.outputs.head }}
         with:
           script: await require('./.github/gate/gate.cjs').prompt({github, context, core}, process.env.PR, process.env.HEAD, 'codex')
+      # Snapshot-only reviewer: the gate supplies the complete diff, no GitHub token
+      # reaches this step, and :read-only denies the network. The prompt says so.
       - id: review
         uses: openai/codex-action@bdf19a4a223ec2549a3e2274a0cf61556bc07675 # v1.13
         with:
@@ -171,6 +173,8 @@ jobs:
           allow-bots: true
           allow-bot-users: 'dependabot[bot],sextant-lanes-seathatflows[bot]'
       - id: verdict
+        # A failed review action still runs this step so the missing verdict is named.
+        if: always()
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         env:
           PR: ${{ needs.source.outputs.pr }}
@@ -246,6 +250,8 @@ jobs:
               core.warning(detail);
             }
       - id: verdict
+        # A failed review action still runs this step so the missing verdict is named.
+        if: always()
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         env:
           PR: ${{ needs.source.outputs.pr }}

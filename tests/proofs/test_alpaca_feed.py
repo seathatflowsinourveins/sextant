@@ -1,11 +1,16 @@
-"""Proofs for the live Alpaca SIP tick feed; the stream is injected, so no network."""
+"""Proofs for the live Alpaca tick feed; the stream and REST client are injected, so no network."""
 
 from __future__ import annotations
 
 import asyncio
+import inspect
+import json
+import threading
 import time
 from collections.abc import Callable
+from datetime import datetime
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -13,6 +18,7 @@ from alpaca.data.enums import DataFeed
 from alpaca.data.live import StockDataStream
 from alpaca.data.models.quotes import Quote
 from alpaca.data.models.trades import Trade
+from alpaca.data.requests import StockQuotesRequest, StockTradesRequest
 from nautilus_trader.model import (
     AggressorSide,
     Currency,
@@ -353,3 +359,282 @@ def test_mapping_key_must_match_the_instrument_id() -> None:
             stream_factory=_factory_for(fake),
         )
     assert fake.credentials is None
+
+
+# -- BOATS overnight: REST polling through an injected fake data client ----------------------
+
+_NOW_S = 1_794_272_400.25  # 2026-11-10T01:00:00.25Z, 20:00:00.25 ET
+_NOW_NS = 1_794_272_400_250_000_000
+_AT_57 = 1_794_272_397_000_000_000  # 00:59:57Z
+_AT_58 = 1_794_272_398_000_000_000
+_AT_59 = 1_794_272_399_000_000_000
+_MSFT = Equity(
+    InstrumentId.from_str("MSFT.ALPACA"),
+    Symbol("MSFT"),
+    Currency.from_str("USD"),
+    2,
+    Price.from_str("0.01"),
+    0,
+    0,
+    lot_size=Quantity.from_int(1),
+)
+_Rows = dict[str, list[dict[str, Any]]]
+
+
+def _noop() -> None:
+    pass
+
+
+class _FakeDataClient:
+    """StockHistoricalDataClient(raw_data=True) stand-in: records requests, opens no socket.
+
+    Poll n answers ``polls[n]`` as raw rows ``{symbol: [row, ...]}``, the shape alpaca-py
+    0.44's ``_get_marketdata`` returns; later polls answer empty. After ``stop_after`` polls it
+    calls ``stop``.
+    """
+
+    def __init__(self, *polls: tuple[_Rows, _Rows], stop_after: int = 0) -> None:
+        self.polls = polls
+        self.stop_after = stop_after
+        self.stop: Callable[[], None] = _noop
+        self.credentials: tuple[str, str] | None = None
+        self.raw_data: bool | None = None
+        self.trade_requests: list[StockTradesRequest] = []
+        self.quote_requests: list[StockQuotesRequest] = []
+        self.polled = threading.Event()
+
+    def get_stock_trades(self, request: StockTradesRequest) -> _Rows:
+        self.trade_requests.append(request)
+        return self._answer(len(self.trade_requests), 0)
+
+    def get_stock_quotes(self, request: StockQuotesRequest) -> _Rows:
+        self.quote_requests.append(request)
+        return self._answer(len(self.quote_requests), 1)
+
+    def _answer(self, count: int, side: int) -> _Rows:
+        self.polled.set()
+        done = min(len(self.trade_requests), len(self.quote_requests))
+        if self.stop_after and done >= self.stop_after:
+            self.stop()
+        return self.polls[count - 1][side] if count <= len(self.polls) else {}
+
+
+class _FailingDataClient(_FakeDataClient):
+    def get_stock_trades(self, request: StockTradesRequest) -> _Rows:
+        raise ConnectionError("data API unreachable")
+
+
+def _boats_feed(
+    client: _FakeDataClient,
+    *,
+    on_trade: Callable[[TradeTick], None] = _ignore_trade,
+    on_quote: Callable[[QuoteTick], None] = _ignore_quote,
+    feed: str = "boats",
+    poll_interval_s: float = 0.001,
+    instruments: dict[str, Equity] | None = None,
+    clock: Callable[[], float] = lambda: _NOW_S,
+) -> AlpacaTickFeed:
+    def factory(*, api_key: str, secret_key: str, raw_data: bool) -> _FakeDataClient:
+        client.credentials = (api_key, secret_key)
+        client.raw_data = raw_data
+        return client
+
+    tick_feed = AlpacaTickFeed(
+        instruments or {"AAPL.ALPACA": _EQUITY},
+        on_trade=on_trade,
+        on_quote=on_quote,
+        api_key=_TEST_API_KEY,
+        secret_key=_TEST_API_CREDENTIAL,
+        feed=feed,
+        poll_interval_s=poll_interval_s,
+        data_client_factory=factory,
+        clock=clock,
+    )
+    client.stop = tick_feed.stop
+    return tick_feed
+
+
+def _row_trade(t: str, **overrides: Any) -> dict[str, Any]:
+    row: dict[str, Any] = {"t": t, "p": 123.4567, "s": 100, "x": "NASDAQ", "i": 42}
+    return row | {"c": ["@"], "z": "C"} | overrides
+
+
+def _row_quote(t: str, **overrides: Any) -> dict[str, Any]:
+    return {"t": t, "bp": 100.12, "bs": 3, "ap": 100.18, "as": 5} | overrides
+
+
+@pytest.mark.parametrize("name", ["iex", "overnight", "delayed_sip"])
+def test_feeds_other_than_sip_and_boats_are_refused(name: str) -> None:
+    client = _FakeDataClient()
+    with pytest.raises(ValueError, match="SIP"):
+        _boats_feed(client, feed=name)
+    assert client.credentials is None
+
+
+def test_one_boats_poll_sends_one_batched_trades_and_one_batched_quotes_request() -> None:
+    client = _FakeDataClient(stop_after=1)
+    feed = _boats_feed(client, instruments={"MSFT.ALPACA": _MSFT, "AAPL.ALPACA": _EQUITY})
+
+    feed.start()
+
+    assert client.credentials == (_TEST_API_KEY, _TEST_API_CREDENTIAL)
+    assert client.raw_data is True
+    assert len(client.trade_requests) == 1
+    assert len(client.quote_requests) == 1
+    for request in (client.trade_requests[0], client.quote_requests[0]):
+        assert request.symbol_or_symbols == ["AAPL", "MSFT"]
+        assert request.feed is DataFeed.BOATS
+        assert request.start == datetime(2026, 11, 10, 0, 59, 50, 250_000)
+        assert request.end == datetime(2026, 11, 10, 1, 0, 0, 250_000)
+    assert feed.failure is None
+
+
+def test_boats_polls_deliver_each_print_once() -> None:
+    trades: list[TradeTick] = []
+    quotes: list[QuoteTick] = []
+    numbered = _row_trade("2026-11-10T00:59:57.5Z")
+    unnumbered = _row_trade("2026-11-10T00:59:58Z", i=None)
+    second_unnumbered = _row_trade("2026-11-10T00:59:58Z", i=None, p=123.5)
+    new = _row_trade("2026-11-10T00:59:59Z", i=43)
+    quote = _row_quote("2026-11-10T00:59:57Z")
+    new_quote = _row_quote("2026-11-10T00:59:59Z", ap=100.19)
+    client = _FakeDataClient(
+        ({"AAPL": [numbered, unnumbered]}, {"AAPL": [quote]}),
+        ({"AAPL": [numbered, unnumbered, second_unnumbered, new]}, {"AAPL": [quote, new_quote]}),
+        stop_after=2,
+    )
+    feed = _boats_feed(client, on_trade=trades.append, on_quote=quotes.append)
+
+    feed.start()
+
+    assert len(client.trade_requests) == 2
+    assert [(tick.ts_event, str(tick.price)) for tick in trades] == [
+        (1_794_272_397_500_000_000, "123.4567"),
+        (_AT_58, "123.4567"),
+        (_AT_58, "123.5000"),
+        (_AT_59, "123.4567"),
+    ]
+    assert [(tick.ts_event, str(tick.ask_price)) for tick in quotes] == [
+        (_AT_57, "100.1800"),
+        (_AT_59, "100.1900"),
+    ]
+
+
+def test_boats_trade_converts_to_an_exact_native_tick() -> None:
+    trades: list[TradeTick] = []
+    client = _FakeDataClient(
+        ({"AAPL": [_row_trade("2026-11-10T00:59:58.123456789Z")]}, {}), stop_after=1
+    )
+
+    _boats_feed(client, on_trade=trades.append).start()
+
+    assert len(trades) == 1
+    tick = trades[0]
+    assert tick.instrument_id == _EQUITY.id
+    assert tick.price == Price.from_decimal_dp(Decimal("123.4567"), 4)
+    assert tick.price.precision == 4
+    assert tick.size == Quantity.from_int(100)
+    assert tick.ts_event == 1_794_272_398_123_456_000
+    assert tick.ts_init == _NOW_NS
+
+
+def test_boats_quote_converts_round_lots_to_shares() -> None:
+    quotes: list[QuoteTick] = []
+    client = _FakeDataClient(({}, {"AAPL": [_row_quote("2026-11-10T00:59:57Z")]}), stop_after=1)
+
+    _boats_feed(client, on_quote=quotes.append).start()
+
+    assert len(quotes) == 1
+    tick = quotes[0]
+    assert tick.instrument_id == _EQUITY.id
+    assert tick.bid_price == Price.from_decimal_dp(Decimal("100.12"), 4)
+    assert tick.ask_price == Price.from_decimal_dp(Decimal("100.18"), 4)
+    assert tick.bid_price.precision == 4
+    assert tick.bid_size == Quantity.from_int(300)
+    assert tick.ask_size == Quantity.from_int(500)
+    assert tick.ts_event == _AT_57
+    assert tick.ts_init == _NOW_NS
+
+
+def test_boats_poll_delivers_trades_and_quotes_in_vendor_time_order() -> None:
+    events: list[tuple[str, int]] = []
+    quotes = [
+        _row_quote("2026-11-10T00:59:59Z", bp=100.14),
+        _row_quote("2026-11-10T00:59:57Z"),
+        _row_quote("2026-11-10T00:59:58Z", bp=100.13),
+    ]
+    client = _FakeDataClient(
+        ({"AAPL": [_row_trade("2026-11-10T00:59:58Z")]}, {"AAPL": quotes}), stop_after=1
+    )
+
+    _boats_feed(
+        client,
+        on_trade=lambda tick: events.append(("trade", tick.ts_event)),
+        on_quote=lambda tick: events.append(("quote", tick.ts_event)),
+    ).start()
+
+    # At one vendor time the trade goes first, so it meets the quote that prevailed before it.
+    assert events == [("quote", _AT_57), ("trade", _AT_58), ("quote", _AT_58), ("quote", _AT_59)]
+
+
+def test_a_clock_step_back_never_redelivers_a_pruned_print() -> None:
+    trades: list[TradeTick] = []
+    readings = iter([0.0, 0.0, 20.0, 20.0, 0.0, 0.0])  # two reads a poll: 20 s on, then back
+    rows: _Rows = {"AAPL": [_row_trade("2026-11-10T00:59:51Z")]}
+    client = _FakeDataClient((rows, {}), ({}, {}), (rows, {}), stop_after=3)
+    feed = _boats_feed(client, on_trade=trades.append, clock=lambda: _NOW_S + next(readings))
+
+    feed.start()
+
+    assert len(client.trade_requests) == 3
+    assert [tick.ts_event for tick in trades] == [1_794_272_391_000_000_000]
+
+
+def test_stop_interrupts_a_running_boats_poll_during_its_sleep() -> None:
+    client = _FakeDataClient()
+    feed = _boats_feed(client, poll_interval_s=1.0)
+    runner = threading.Thread(target=feed.start, daemon=True)
+    runner.start()
+    assert client.polled.wait(1.0)
+
+    feed.stop()
+    runner.join(timeout=0.5)
+
+    assert not runner.is_alive()
+    assert feed.failure is None
+
+
+def test_stop_before_start_is_a_noop_for_boats() -> None:
+    client = _FakeDataClient()
+    feed = _boats_feed(client)
+
+    feed.stop()
+    feed.stop()
+
+    assert client.credentials is None
+    assert client.trade_requests == []
+    assert client.quote_requests == []
+    assert feed.failure is None
+
+
+def test_a_failed_boats_request_is_recorded_and_raised() -> None:
+    feed = _boats_feed(_FailingDataClient())
+
+    with pytest.raises(ConnectionError, match="unreachable"):
+        feed.start()
+
+    assert isinstance(feed.failure, ConnectionError)
+
+
+@pytest.mark.parametrize("poll_interval_s", [0.0, -1.0, 10.0])
+def test_boats_cadence_must_be_positive_and_inside_the_window(poll_interval_s: float) -> None:
+    with pytest.raises(ValueError, match="poll_interval_s"):
+        _boats_feed(_FakeDataClient(), poll_interval_s=poll_interval_s)
+
+
+def test_the_default_cadence_is_the_registry_feed_poll_interval() -> None:
+    registry = Path(__file__).parents[2] / "lanes/paper/b-parameters.json"
+    row = next(r for r in json.loads(registry.read_text()) if r["name"] == "feed_poll_interval_s")
+    default = inspect.signature(AlpacaTickFeed).parameters["poll_interval_s"].default
+
+    assert Decimal(str(default)) == Decimal(row["value"])

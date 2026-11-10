@@ -170,6 +170,15 @@ def test_landing_standard_and_fail_on_error_are_wired_into_the_verdict() -> None
     assert ".github/workflows/shared/review-rules.md" in adapter
 
 
+def test_quality_verdict_runs_even_when_the_review_action_fails() -> None:
+    """A failed action leaves no verdict; the verdict step still runs to name it."""
+    for family in ("codex", "claude"):
+        verdict = next(
+            step for step in _gate()["jobs"][family]["steps"] if step.get("id") == "verdict"
+        )
+        assert verdict.get("if") == "always()", family
+
+
 def test_paper_carveout_keeps_only_the_hard_lines_blocking() -> None:
     rules = (WORKFLOWS / "shared/review-rules.md").read_text()
     owner = (
