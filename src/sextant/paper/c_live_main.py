@@ -68,6 +68,7 @@ from sextant.paper.alpaca_feed import AlpacaTickFeed
 from sextant.paper.c_session import CConfig, CSession
 from sextant.paper.c_universe import rank_universe
 from sextant.paper.config import PaperAccount
+from sextant.paper.request_counter import CountingMarketData, RequestLog
 from sextant.paper.sessions import Session
 from sextant.ranking.baseline import BaselineTable, load_baseline, segment_start
 from sextant.ranking.baseline_coverage import bare_symbol
@@ -1049,7 +1050,9 @@ def main(
 
     run = RunRecord(dry_run=bool(args.dry_run))
     receipt_written = False
+    request_log = RequestLog(lambda: pacer.wire_requests, monotonic)
     try:
+        request_log.start()
         start_now = now_ns()
         started = book.observe(
             AccountSnapshot(scope, 1, {}, {}, (), True, start_now, "alpaca paper start"),
@@ -1082,7 +1085,10 @@ def main(
         final_segment_obj = first
         if args.universe:
             try:
-                data_client = data_factory(api_key=api_key, secret_key=secret_key)
+                data_client = CountingMarketData(
+                    data_factory(api_key=api_key, secret_key=secret_key),
+                    request_log.count_data_request,
+                )
             except Exception as exc:
                 failure = f"refused: data client unavailable: {type(exc).__name__}: {exc}"
             else:
@@ -1671,6 +1677,7 @@ def main(
             return 1
         return 0 if failure is None and receipt_written else 1
     finally:
+        request_log.stop()
         lease.close()
 
 
