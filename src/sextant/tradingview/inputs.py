@@ -214,6 +214,9 @@ def read_research_inputs(unit: Path, *, now: datetime, max_age: int = 1200) -> R
             raise ValueError
     except (KeyError, TypeError, ValueError, AttributeError, InvalidOperation):
         raise InputError("Invalid producer display contract") from None
+    effective = min(max_age, bounds["max_age_s"])
+    if _ns(now) - clocks[0] >= effective * 1_000_000_000:
+        raise InputError("Research generation expired; lists NOT synced")
     parent_unmapped: set[str] = set()
     parent = top.get("candidates")
     if (
@@ -234,7 +237,7 @@ def read_research_inputs(unit: Path, *, now: datetime, max_age: int = 1200) -> R
         raise InputError("Display movers empty or more than five unmapped names")
     return ResearchInputs(
         memberships,
-        EPOCH + timedelta(microseconds=clocks[0] // 1000, seconds=max_age),
+        EPOCH + timedelta(microseconds=clocks[0] // 1000, seconds=effective),
         frozenset(unmapped),
         generation,
     )

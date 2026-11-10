@@ -7,8 +7,10 @@ for the j5 document; `ranking/reader.py` stateless checks where no registry,
 heartbeat or sequence state is available. No I/O, clock, ranking or sync here.
 Display bounds have no j5 source and no default: the caller supplies sourced
 `DisplayBounds` (ADR-0018), or the projection stays unavailable. The target
-contract carries no expiry field, so consumers must bound `max_age` by the
-j5 document's `expires_at_ns`; this projection never extends it.
+contract carries no separate expiry field: the projection narrows the display
+bound's `max_age_s` to the remaining J5 lifetime, and `read_research_inputs`
+refuses a generation past that bound; this projection never extends the j5
+document's `expires_at_ns`.
 """
 
 from __future__ import annotations
@@ -330,6 +332,12 @@ def project_display_unit(j5: Mapping[str, Any], *, bounds: DisplayBounds) -> Dis
 
         movers, focus = members(False), members(True)
         identity = {"as_of": clocks[0], "sha256": j5["generation_sha256"]}
+        remaining_ns = j5["expires_at_ns"] - generation.ts_event
+        if remaining_ns <= 0:
+            raise BridgeError("j5 generation expired; lists NOT synced")
+        display_age_s = min(bounds.max_age_s, remaining_ns // 1_000_000_000)
+        if display_age_s <= 0:
+            raise BridgeError("j5 generation has no display lifetime; lists NOT synced")
         common = {
             "session_date": session,
             "generated_at": clocks[2],
@@ -348,7 +356,7 @@ def project_display_unit(j5: Mapping[str, Any], *, bounds: DisplayBounds) -> Dis
             "bounds": {
                 "gap_bound": str(bounds.gap_bound),
                 "rvol_bound": str(bounds.rvol_bound),
-                "max_age_s": bounds.max_age_s,
+                "max_age_s": display_age_s,
             },
             "counts": {"ns_movers": len(movers), "ns_focus": len(focus)},
             "excluded_unknown": sum(row.rank is None for row in generation.rows),

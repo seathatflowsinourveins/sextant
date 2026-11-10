@@ -162,8 +162,8 @@ def build_baseline(
     if span <= 0 or span % MINUTE_NS:
         raise ValueError("A baseline segment spans whole minutes")
     points = span // MINUTE_NS + 1
-    if segment.name not in {"PRE", "RTH"}:
-        raise ValueError("A baseline covers a supplied PRE or RTH segment")
+    if segment.name not in {"PRE", "RTH", "POST"}:
+        raise ValueError("A baseline covers a supplied PRE, RTH or POST segment")
     dv_curves: list[array] = []
     count_curves: list[array] = []
     digest = sha256()
