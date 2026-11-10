@@ -57,3 +57,28 @@ def test_enabled_gate_refuses_missing_or_stale_evidence(
     assert rank is None and entry.reason == reason
     decision = rank_gate().decide_rank_gate(enabled=True, rank=rank, consumer_reason=entry.reason)
     assert (decision.status.value, decision.reason) == ("refuse", reason)
+
+
+@pytest.mark.parametrize(
+    ("ranked", "expected"),
+    [(True, ("pass", "fresh")), (False, ("refuse", "candidate_unranked"))],
+    ids=("ranked", "unranked"),
+)
+def test_enabled_gate_requires_a_rank_in_fresh_evidence(
+    ranked: bool, expected: tuple[str, str]
+) -> None:
+    pub = publisher()
+    at = START + 360 * NS
+    generation = published(pub, at=at)
+    candidate = next(row.symbol for row in generation.rows if (row.focus_eligible is True) == ranked)
+    entry = consumer(pub, heartbeat=1, generation=1, inputs=1)
+    assert entry.handle(CustomData(ranking_data_type(pub.feed), generation), now=at)
+    assert entry.accept_heartbeat(at=at, received_ns=at)
+
+    rank = entry.entry_rank(candidate, now=at + NS)
+    assert (rank is not None) == ranked and entry.reason == "fresh"
+    gate = rank_gate()
+    decision = gate.decide_rank_gate(enabled=True, rank=rank, consumer_reason=entry.reason)
+    assert isinstance(decision, gate.RankGateDecision)
+    assert isinstance(decision.status, gate.RankGateStatus)
+    assert (decision.status.value, decision.reason) == expected
