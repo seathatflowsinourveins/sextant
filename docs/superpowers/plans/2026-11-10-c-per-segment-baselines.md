@@ -27,7 +27,7 @@
 - The `--universe` mode uses the K2 scanner's own artifact, records which source it used, and never re-ranks.
 - A missing slice must be visible (refused or `baseline_missing`) and must not consume a slot.
 - Tickers containing dots (`BRK.B`) map to their baseline key; only the trailing `.ALPACA` venue is stripped.
-- `just c-baselines` is the only advertised path; no ad-hoc `python -c` call.
+- `python -m sextant.data.baseline_recipe` is the only advertised path; no ad-hoc `python -c` call, and the justfile is not grown.
 
 ---
 
@@ -91,17 +91,16 @@
 ### Task 4: The tracked command and its documentation
 
 **Files:**
-- Modify: `justfile` (add `c-baselines` before host-only recipes)
 - Modify: `lanes/paper/README.md` (C baseline build paragraph; four files, manifest, coverage-checked arming, `--universe` source)
 - Modify: `docs/manifest.md` (new row after "Overnight baseline fetcher for the 24/5 lane")
 - Modify: `docs/superpowers/plans/2026-11-10-c-per-segment-baselines.md` (check off steps)
 
 **Interfaces:**
-- `just c-baselines --out DIR --symbols SYM...` or `just c-baselines --out DIR --universe PATH` -> `uv run --frozen python -m sextant.data.baseline_recipe ...`
+- `python -m sextant.data.baseline_recipe --out DIR --symbols SYM...` or `python -m sextant.data.baseline_recipe --out DIR --universe PATH`
 
-- [ ] **Step 1: Add the recipe** and read the parser help through it (no vendor call).
+- [ ] **Step 1: Document the module command** in the lane README and read its parser help (`python -m sextant.data.baseline_recipe --help`, no vendor call).
 - [ ] **Step 2: Add the lane README paragraph and the manifest row** naming both proof files.
-- [ ] **Step 3: Run `just --list`** and confirm the recipe is advertised.
+- [ ] **Step 3: Confirm the documented command is in the README and the manifest row; the justfile stays at 104 lines.
 
 ### Task 5: Verification and hand-off report
 

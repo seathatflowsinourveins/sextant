@@ -97,9 +97,6 @@ omc:
 # The trading path: research card, backtest, sim replay, ledger, merit page.
 slice:
     uv run --frozen python -m sextant.backtest.thin_slice
-# Build C's four per-segment baseline files and their manifest from one recorded run (#235).
-c-baselines *ARGS:
-    uv run --frozen python -m sextant.data.baseline_recipe {{ARGS}}
 # Push a branch and open its PR; pass false as the third argument to leave auto-merge off.
 pr title body_file automerge="true":
     git push -u origin HEAD
