@@ -24,12 +24,19 @@ This module starts no timer and manufactures no heartbeat (``reader.py:3``).
 From its first run the host also appends one JSON line per published
 generation and per heartbeat call under the caller-supplied session state
 directory (outside git). The record only observes the two interval series;
-it computes and registers no threshold, age or default.
+it computes and registers no threshold, age or default. The state directory
+is reserved by its producer epoch at construction, so a second host on one
+directory refuses; every call is bound to the constructing thread and
+refuses from any other, because the bus aborts across threads; and a
+DEGRADED veto publication is never throttled, so a known-bad input reaches
+the consumer at once and pages the alarm on every such generation.
 """
 
 from __future__ import annotations
 
 import json
+import os
+import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -45,6 +52,7 @@ from sextant.ranking.publisher import AssetState, RankingPublisher
 from sextant.ranking.registry import Registry
 
 INTERVALS_NAME = "ranking-intervals.jsonl"
+EPOCH_NAME = "ranking-epoch.json"
 
 
 class IntervalLog:
@@ -124,6 +132,14 @@ class RankingHost:
         clock: Callable[[], int] = time.time_ns,
         monotonic_ns: Callable[[], int] = time.monotonic_ns,
     ) -> None:
+        self._thread = threading.get_ident()
+        state_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            fd = os.open(state_dir / EPOCH_NAME, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        except FileExistsError:
+            raise ValueError("state directory already reserved by another ranking host") from None
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            stream.write(json.dumps({"producer_epoch": epoch}, sort_keys=True))
         self.publisher = RankingPublisher(
             bus=MessageBus(TraderId.from_str("RANKING-001")),
             epoch=epoch,
@@ -149,20 +165,27 @@ class RankingHost:
         self.intervals = IntervalLog(
             state_dir / INTERVALS_NAME, wall_ns=clock, monotonic_ns=monotonic_ns
         )
-        self._heartbeat, self._clock = heartbeat, clock
-        self.ingress_errors = self.publish_errors = self.heartbeat_errors = 0
+        self._heartbeat, self._clock, self._alarm = heartbeat, clock, alarm
+        self.ingress_errors = self.publish_errors = self.heartbeat_errors = self.alarm_errors = 0
         self.last_error: str | None = None
+
+    def _require_thread(self) -> None:
+        if threading.get_ident() != self._thread:
+            raise RuntimeError("RankingHost is bound to its constructing thread")
 
     def set_symbol(
         self, name: str, *, references: ReferencePrices, asset: AssetState | None
     ) -> None:
+        self._require_thread()
         self.publisher.set_symbol(name, references=references, asset=asset)
 
     def set_coverage(self, coverage: Coverage) -> None:
+        self._require_thread()
         self.publisher.set_coverage(coverage)
 
     def on_trade(self, tick: TradeTick) -> RankingGeneration | None:
         """Advance one full-universe trade, then publish; a bad trade only degrades."""
+        self._require_thread()
         try:
             self.publisher.on_trade(tick)
         except (ValueError, KeyError, TypeError, ArithmeticError) as exc:
@@ -171,12 +194,15 @@ class RankingHost:
         return self._publish()
 
     def entry_rank(self, symbol: str, *, now: int) -> int | None:
+        self._require_thread()
         return self.consumer.entry_rank(symbol, now=now)
 
     def ranked_names(self, *, now: int) -> tuple[str, ...]:
+        self._require_thread()
         return self.consumer.ranked_names(now=now)
 
     def close(self) -> None:
+        self._require_thread()
         self.intervals.close()
 
     def _publish(self) -> RankingGeneration | None:
@@ -190,12 +216,14 @@ class RankingHost:
                 for name in publisher.universe
             )
         )
-        supplied = publisher.coverage
+        supplied, published_at = publisher.coverage, publisher.published_at
         if not ready:
             publisher.set_coverage(Coverage(CoverageState.DEGRADED, False))
+            publisher.published_at = None  # a veto publication is never throttled
         try:
             generation = publisher.publish(now=now)
         except (ValueError, KeyError, TypeError, ArithmeticError) as exc:
+            publisher.published_at = published_at
             self.publish_errors += 1
             self.last_error = type(exc).__name__
             return None
@@ -205,14 +233,18 @@ class RankingHost:
             return None
         self.intervals.generation(generation)
         emitted = generation.coverage
-        if (
-            emitted.state is CoverageState.READY
-            and emitted.complete
-            and self._heartbeat is not None
-        ):
+        if emitted.state is not CoverageState.READY or not emitted.complete:
+            if self._alarm is not None:
+                try:
+                    self._alarm("generation_degraded", None)
+                except Exception as exc:
+                    self.alarm_errors += 1
+                    self.last_error = type(exc).__name__
+            return generation
+        if self._heartbeat is not None:
             delivered, error = True, None
             try:
-                delivered = self._heartbeat(generation) is not False
+                delivered = self._heartbeat(generation) is True
             except Exception as exc:
                 delivered, error = False, type(exc).__name__
                 self.heartbeat_errors += 1

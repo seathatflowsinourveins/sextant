@@ -11,7 +11,6 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
-
 from nautilus_trader.model import (
     AggressorSide,
     InstrumentId,
@@ -341,7 +340,7 @@ def test_a_wrong_thread_call_refuses_and_the_host_survives(tmp_path: Path) -> No
     def foreign() -> None:
         try:
             host.on_trade(tick(START, name="PENNY"))
-        except BaseException as exc:  # noqa: BLE001 - the refusal is the witness
+        except BaseException as exc:
             refused.append(exc)
 
     worker = threading.Thread(target=foreign)
