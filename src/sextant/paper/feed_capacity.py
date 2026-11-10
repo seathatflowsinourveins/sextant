@@ -1,10 +1,14 @@
 """Read-only capacity analyzer for the feed-tap sidecar: the pre-registered gate, with numbers.
 
 The tap (``sextant.paper.feed_tap``) writes one JSON line per wall-clock second while the C
-lane's single SIP socket runs: per-second trade and quote counts, distinct symbols, the
-wall-clock receipt lag (count, p99, p99.9 and exact max), handler service time (sum and max),
-and feed failures; its final line carries aggregate per-symbol freshness as counts and a
-maximum, never ticker names. This module reads that file and nothing else: it opens no socket,
+lane's single SIP socket runs: per-second own-symbol trade and quote counts plus the extra
+full-universe measurement trades and quotes, distinct symbols, the wall-clock receipt lag
+(count, p99, p99.9 and exact max), handler service time (sum and max), and feed failures; its
+final line carries aggregate per-symbol freshness as counts and a maximum, never ticker names.
+The capacity figures count every delivered message, own and extra, and report own, extra and
+total separately; the receipt-lag and service statistics stay own-symbol-only because the
+tap's lag histogram and service samples cover only the feed's own handlers. This module reads
+that file and nothing else: it opens no socket,
 calls no broker, writes no file and prints no price or symbol name. Section 5 of the entry-ages
 screen fixed the six criteria and the overload rule before the open; this module applies them
 unchanged: a 1 s p99.9 receipt-lag bound with p99 inside the ruled ``entry_input_max_age_s``, a
@@ -49,7 +53,7 @@ from statistics import NormalDist
 from typing import Any
 from zoneinfo import ZoneInfo
 
-__all__ = ["Check", "GateReport", "Second", "Sidecar", "evaluate", "load", "main"]
+__all__ = ["Check", "GateReport", "Rate", "Second", "Sidecar", "evaluate", "load", "main"]
 
 _ET = ZoneInfo("America/New_York")
 _NS_PER_S = 1_000_000_000
@@ -81,6 +85,8 @@ class Second:
     second: int
     trades: int
     quotes: int
+    extra_trades: int
+    extra_quotes: int
     symbols_seen: int
     lag_p99_ns: int | None
     lag_p999_ns: int | None
@@ -92,8 +98,28 @@ class Second:
     partial: bool
 
     @property
-    def messages(self) -> int:
+    def own_messages(self) -> int:
+        """Messages on the feed's own symbols; the lag and service samples cover these."""
         return self.trades + self.quotes
+
+    @property
+    def extra_messages(self) -> int:
+        """Full-universe measurement messages the tap counted beside the own-symbol ones."""
+        return self.extra_trades + self.extra_quotes
+
+    @property
+    def messages(self) -> int:
+        """Every message the tap delivered: own-symbol plus the measurement extras."""
+        return self.own_messages + self.extra_messages
+
+
+@dataclass(frozen=True, slots=True)
+class Rate:
+    """A measured messages-per-second rate, split by delivery source."""
+
+    own_mps: float
+    extra_mps: float
+    total_mps: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,8 +154,8 @@ class GateReport:
     checks: tuple[Check, ...]
     overload: bool
     overload_reasons: tuple[str, ...]
-    peak_mps: float
-    sustained_mps: float
+    peak: Rate
+    sustained: Rate
     entry_input_max_age_s: float
 
     @property
@@ -148,8 +174,10 @@ class GateReport:
         ]
         lines.append(f"overall: {self.overall}")
         lines.append(
-            f"capacity: peak {self.peak_mps:.1f} messages/s, "
-            f"sustained {self.sustained_mps:.1f} messages/s over {_CAPACITY_WINDOW_S} s"
+            f"capacity: peak messages/s own {self.peak.own_mps:.1f}, "
+            f"extra {self.peak.extra_mps:.1f}, total {self.peak.total_mps:.1f}; "
+            f"sustained over {_CAPACITY_WINDOW_S} s own {self.sustained.own_mps:.1f}, "
+            f"extra {self.sustained.extra_mps:.1f}, total {self.sustained.total_mps:.1f}"
         )
         if self.overload:
             lines.append("overload: YES — " + "; ".join(self.overload_reasons))
@@ -188,6 +216,8 @@ def _parse_second(record: Mapping[str, Any]) -> Second:
         second=int(record["second"]),
         trades=_int(record.get("trades")),
         quotes=_int(record.get("quotes")),
+        extra_trades=_int(record.get("extra_trades")),
+        extra_quotes=_int(record.get("extra_quotes")),
         symbols_seen=_int(record.get("symbols_seen")),
         lag_p99_ns=_opt_int(lag.get("p99")),
         lag_p999_ns=_opt_int(lag.get("p999")),
@@ -206,6 +236,8 @@ def _merge(left: Second, right: Second) -> Second:
         second=left.second,
         trades=left.trades + right.trades,
         quotes=left.quotes + right.quotes,
+        extra_trades=left.extra_trades + right.extra_trades,
+        extra_quotes=left.extra_quotes + right.extra_quotes,
         symbols_seen=max(left.symbols_seen, right.symbols_seen),
         lag_p99_ns=_max_optional(left.lag_p99_ns, right.lag_p99_ns),
         lag_p999_ns=_max_optional(left.lag_p999_ns, right.lag_p999_ns),
@@ -272,8 +304,8 @@ def load(path: str | Path) -> Sidecar:
 
 
 def _measured(seconds: Sequence[Second]) -> list[Second]:
-    """Closed seconds that actually carried traffic; a partial second is a fragment."""
-    return [second for second in seconds if not second.partial and second.messages > 0]
+    """Closed seconds with own-symbol traffic; extras have no lag or service sample."""
+    return [second for second in seconds if not second.partial and second.own_messages > 0]
 
 
 def _open_second(seconds: Sequence[Second]) -> int | None:
@@ -348,7 +380,7 @@ def _check_receipt_lag(seconds: Sequence[Second], bound_ns: int) -> Check:
     unmeasured = [
         second
         for second in measured
-        if second.lag_count != second.messages
+        if second.lag_count != second.own_messages
         or second.lag_p99_ns is None
         or second.lag_p999_ns is None
     ]
@@ -572,20 +604,32 @@ def _stale_burst(seconds: Sequence[Second], bound_ns: int) -> str | None:
     return None
 
 
-def _capacity(seconds: Sequence[Second]) -> tuple[float, float]:
+def _sustained_mps(seconds: Sequence[Second], counts: Mapping[int, int]) -> float:
+    """The best rolling _CAPACITY_WINDOW_S average of a per-second message count."""
+    best = 0.0
+    for second in seconds:
+        window = range(second.second, second.second + _CAPACITY_WINDOW_S)
+        best = max(best, sum(counts.get(anchor, 0) for anchor in window) / _CAPACITY_WINDOW_S)
+    return best
+
+
+def _capacity(seconds: Sequence[Second]) -> tuple[Rate, Rate]:
     closed = [second for second in seconds if not second.partial]
     if not closed:
-        return 0.0, 0.0
-    peak = float(max(second.messages for second in closed))
-    traffic = {second.second: second.messages for second in closed}
-    sustained = 0.0
-    for second in closed:
-        total = sum(
-            traffic.get(anchor, 0)
-            for anchor in range(second.second, second.second + _CAPACITY_WINDOW_S)
-        )
-        sustained = max(sustained, total / _CAPACITY_WINDOW_S)
-    return peak, sustained
+        return Rate(0.0, 0.0, 0.0), Rate(0.0, 0.0, 0.0)
+    own = {second.second: second.own_messages for second in closed}
+    extra = {second.second: second.extra_messages for second in closed}
+    total = {second.second: second.messages for second in closed}
+    peak = Rate(
+        own_mps=float(max(own.values())),
+        extra_mps=float(max(extra.values())),
+        total_mps=float(max(total.values())),
+    )
+    return peak, Rate(
+        own_mps=_sustained_mps(closed, own),
+        extra_mps=_sustained_mps(closed, extra),
+        total_mps=_sustained_mps(closed, total),
+    )
 
 
 def evaluate(sidecar: Sidecar, *, entry_input_max_age_s: float) -> GateReport:
@@ -613,13 +657,13 @@ def evaluate(sidecar: Sidecar, *, entry_input_max_age_s: float) -> GateReport:
     stale = _stale_burst(sidecar.seconds, bound_ns)
     if stale is not None:
         reasons.append(stale)
-    peak, capacity = _capacity(sidecar.seconds)
+    peak, sustained = _capacity(sidecar.seconds)
     return GateReport(
         checks=checks,
         overload=bool(reasons),
         overload_reasons=tuple(reasons),
-        peak_mps=peak,
-        sustained_mps=capacity,
+        peak=peak,
+        sustained=sustained,
         entry_input_max_age_s=entry_input_max_age_s,
     )
 
