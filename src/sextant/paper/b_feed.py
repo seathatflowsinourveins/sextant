@@ -90,15 +90,16 @@ def _price(value: object) -> Decimal | None:
 class BMarketDataFeed:
     """Poll alpaca-py for the latest quote and trade of the held symbols only.
 
-    A vendor timestamp is returned once per feed. Repeating the same latest print therefore
-    cannot count twice toward the breach run, and switching feeds restarts the observation
-    sequence so a stale BOATS quote is never mistaken for a fresh SIP one.
+    Every successful poll returns the standing latest quote, even when its vendor timestamp has
+    not changed: the quote is still the market's last bid, and its age is separate from whether
+    the poller is alive. A latest print is returned only once, so repeating it cannot count twice
+    toward the breach run. Switching feeds restarts the observation sequence so a stale BOATS
+    quote is never mistaken for a fresh SIP one.
     """
 
     def __init__(self, client: LatestDataClient) -> None:
         self._client = client
         self._feed: str | None = None
-        self._quote_ts: dict[str, int] = {}
         self._trade_ts: dict[str, int] = {}
         self._trade_price: dict[str, Decimal] = {}
 
@@ -110,7 +111,6 @@ class BMarketDataFeed:
             return FeedBatch(feed=feed)
         if feed != self._feed:
             self._feed = feed
-            self._quote_ts.clear()
             self._trade_ts.clear()
             self._trade_price.clear()
         data_feed = DataFeed(feed)
@@ -145,8 +145,4 @@ class BMarketDataFeed:
         at = getattr(raw, "timestamp", None)
         if bid is None or ask is None or bid > ask or not isinstance(at, datetime):
             return
-        ts_ns = _ns(at)
-        if ts_ns <= self._quote_ts.get(symbol, -1):
-            return
-        self._quote_ts[symbol] = ts_ns
-        fresh.append(QuoteObservation(symbol, bid, ask, self._trade_price.get(symbol), ts_ns))
+        fresh.append(QuoteObservation(symbol, bid, ask, self._trade_price.get(symbol), _ns(at)))
