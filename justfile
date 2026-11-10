@@ -16,7 +16,7 @@ session-start:
     python3 scripts/dsh_profile_doctor.py
     python3 scripts/runtime_doctor.py
     python3 scripts/ecosystem_index.py --check
-    python3 -I scripts/compact_context.py --check
+    python3 -I scripts/compact_context.py --check && python3 scripts/role_launch.py --check
 
 lint:
     uv run --frozen ruff check .

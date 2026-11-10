@@ -277,7 +277,7 @@ def test_just_session_start_runs_the_compact_check() -> None:
             recipe.append(line.strip())
         elif line.strip():
             break
-    assert any(line.endswith("scripts/compact_context.py --check") for line in recipe), recipe
+    assert any("scripts/compact_context.py --check" in line for line in recipe), recipe
 
 
 def test_manifest_and_adr_record_the_decision() -> None:
