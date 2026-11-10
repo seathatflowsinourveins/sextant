@@ -563,6 +563,26 @@ def test_parity_refuses_each_muse_mutation_and_preserves_state(
     assert _filesystem_snapshot(registry.parent) == before
 
 
+@pytest.mark.parametrize("change", ("payload", "mode"))
+def test_parity_reinstalls_only_the_clean_muse_package_when_source_moves(
+    muse_delivery, capsys, change
+):
+    run, source, registry, _config, _skills = muse_delivery
+    assert run() == 0
+    capsys.readouterr()
+    incoming = source / "skills/payload.md"
+    if change == "payload":
+        incoming.write_text("incoming changed bytes\n")
+        (source / "retired.txt").unlink()
+    else:
+        incoming.chmod(0o755)
+    assert run() == 0
+    assert 'muse: {"installed": 1, "unchanged": 11}' in capsys.readouterr().out
+    assert _filesystem_snapshot(_muse_package(registry)) == _filesystem_snapshot(source)
+    assert run() == 0
+    assert 'muse: {"unchanged": 12}' in capsys.readouterr().out
+
+
 def test_qmd_is_on_every_runtimes_path() -> None:
     setup = (ROOT / "deploy/wsl/setup.sh").read_text()
     assert 'ln -sfn "$qmd/node_modules/.bin/qmd" "$HOME/.local/bin/qmd"' in setup
