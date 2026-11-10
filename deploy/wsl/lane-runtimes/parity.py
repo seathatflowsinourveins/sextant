@@ -445,7 +445,7 @@ def preflight(home: Path) -> None:
         "router", "router/node_modules", "router/node_modules/omniroute/.env", "router-data",
         "pins.json", "model-policy.json", "repository-path", "codex-launch.sh",
         "claude-launch.sh", "antigravity-launch.sh", "dsh-launch.sh", "muse-launch.sh",
-        "router-start.sh",
+        "dsh-tui-launch.sh", "router-start.sh",
         "routing.json", "mcp-bridge/package.json", "mcp-bridge/package-lock.json",
         "router/package.json", "router/package-lock.json",
     )  # fmt: skip

@@ -39,7 +39,11 @@ def test_tui_uses_the_sandbox_dsh() -> None:
         assert lock[f"node_modules/{name}"]["integrity"].startswith("sha512-")
     setup = _read("deploy/wsl/setup.sh")
     assert 'dsh plugin --profile dsh-tui add --save-exact "${plugins[@]}"' in setup
-    assert "/@deepseek-harness-tui/dsh-tui/bin/dsh-tui.js" in setup
+    # Plain dsh-tui is the keyed launcher, never the raw keyless entry.
+    link = '"$HOME/.local/share/sextant-lane-runtimes/dsh-tui-launch.sh" "$HOME/.local/bin/dsh-tui"'
+    assert f"ln -sfn {link}" in setup and "dsh-tui/bin/dsh-tui.js" not in setup
+    launcher = _read("deploy/wsl/lane-runtimes/dsh-tui-launch.sh")
+    assert "/@deepseek-harness-tui/dsh-tui/bin/dsh-tui.js" in launcher
 
 
 def test_research_uses_native_ordered_bundle_patches() -> None:

@@ -339,6 +339,52 @@ def test_dsh_injects_its_three_keys_in_one_strict_hop_and_versions_stay_keyless(
     assert '"../sextant-agents/node_modules/@deepseek-ai/dsh/lib/bin.js"' in launcher.read_text()
 
 
+TUI_ENTRY = "profiles/dsh-tui/node_modules/@deepseek-harness-tui/dsh-tui/bin/dsh-tui.js"
+
+
+def test_plain_dsh_tui_is_keyed_in_one_strict_hop_on_the_enhanced_home_and_prints_no_key(
+    tmp_path: Path,
+) -> None:
+    keys = "--strict -k DEEPSEEK_API_KEY -k CONTEXT7_API_KEY -k EXA_API_KEY"
+    prefix, log, home = _keyed_layout(tmp_path, "dsh-tui-launch.sh", keys)
+    values = {name: f"fixture-{name.lower()}-value" for name in keys.split()[2::2]}
+    with_keys = tmp_path / "repo/scripts/with-keys.sh"
+    exports = "".join(f"export {name}={value}\n" for name, value in values.items())
+    _stub(
+        with_keys,
+        with_keys.read_text().removeprefix("#!/bin/sh\n").replace("shift", exports + "shift"),
+    )
+    record = (
+        f'echo "tui $* home=$DSH_HOME off=$DSH_TELEMETRY_DISABLED/$DSH_TELEMETRY_MODE" >> "{log}"\n'
+    )
+    for root in (home / ".dsh-full", tmp_path / "explicit"):
+        _stub(root / TUI_ENTRY, record)
+    launcher = prefix / "dsh-tui-launch.sh"
+    link = home / ".local/bin/dsh-tui"
+    link.parent.mkdir(parents=True)
+    link.symlink_to(launcher)
+    caller = {**os.environ, "HOME": str(home), "DEEPSEEK_API_KEY": values["DEEPSEEK_API_KEY"]}
+    caller.pop("DSH_HOME", None)
+    output = ""
+    for arguments, extra in (
+        ((".",), {}),
+        (("--version",), {}),
+        ((".",), {"DSH_HOME": str(tmp_path / "explicit")}),
+    ):
+        result = subprocess.run(
+            ["bash", "-x", str(link), *arguments], env={**caller, **extra},
+            capture_output=True, text=True, check=True,
+        )  # fmt: skip
+        output += result.stdout + result.stderr
+    off = "off=1/DISABLED"
+    assert log.read_text().splitlines() == [
+        "keyed", f"tui . home={home}/.dsh-full {off}",
+        f"tui --version home={home}/.dsh-full {off}",
+        "keyed", f"tui . home={tmp_path}/explicit {off}",
+    ]  # fmt: skip
+    assert not any(value in output or value in log.read_text() for value in values.values())
+
+
 def test_antigravity_sessions_are_keyed_and_its_config_commands_are_keyless(
     tmp_path: Path,
 ) -> None:
@@ -380,7 +426,7 @@ def test_qmd_is_on_every_runtimes_path() -> None:
 
 def test_parity_installs_the_launchers_the_verified_muse_binary_and_the_cooled_bridge() -> None:
     parity = (RUNTIMES / "parity.sh").read_text()
-    for name in ("agy", "dsh", "sextant-dsh", "muse"):
+    for name in ("agy", "dsh", "dsh-tui", "sextant-dsh", "muse"):
         assert f'"$HOME/.local/bin/{name}"' in parity
     assert "jq -r .muse.sha256" in parity and "sha256sum -c -" in parity
     assert (RUNTIMES / "install.sh").read_text().rstrip().endswith('bash "$here/parity.sh"')
