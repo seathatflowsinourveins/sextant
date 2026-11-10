@@ -73,7 +73,9 @@ def test_enabled_gate_requires_a_rank_in_fresh_evidence(
     pub = publisher()
     at = START + 360 * NS
     generation = published(pub, at=at)
-    candidate = next(row.symbol for row in generation.rows if (row.focus_eligible is True) == ranked)
+    candidate = next(
+        row.symbol for row in generation.rows if (row.focus_eligible is True) == ranked
+    )
     entry = consumer(pub, heartbeat=1, generation=1, inputs=1)
     assert entry.handle(CustomData(ranking_data_type(pub.feed), generation), now=at)
     assert entry.accept_heartbeat(at=at, received_ns=at)
@@ -97,7 +99,7 @@ def test_enabled_gate_requires_a_rank_in_fresh_evidence(
         (True, 0, "fresh", "candidate_rank_invalid"),
         ("false", 1, "fresh", "rank_gate_setting_invalid"),
     ],
-    ids=("no-result", "stale-with-rank", "invalid-generation", "bool-rank", "zero-rank", "bad-flag"),
+    ids=("no-result", "stale-rank", "invalid-generation", "bool-rank", "zero-rank", "bad-flag"),
 )
 def test_gate_refuses_incomplete_or_inconsistent_results(
     enabled: object, rank: object, consumer_reason: object, reason: str

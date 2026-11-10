@@ -1,0 +1,10 @@
+[
+  {
+    "name": "rank_gate_enabled",
+    "unit": "boolean",
+    "value": false,
+    "source": "LEAD-1759 item (b), 2026-11-10: default OFF; Release Toggles (https://martinfowler.com/articles/feature-toggles.html#ReleaseToggles), read 2026-11-10; enabled policy follows ADR-0003:24,42 and ADR-0024:33-34",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-10"
+  }
+]
