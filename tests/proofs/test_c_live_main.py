@@ -30,7 +30,14 @@ from nautilus_trader.model import (
     TradeTick,
 )
 
-from sextant.execution.custody import AccountScope, WriterLease
+from sextant.execution.custody import (
+    AccountScope,
+    AccountSnapshot,
+    Custody,
+    OrderFact,
+    PositionAuthority,
+    WriterLease,
+)
 from sextant.paper.c_live_main import _equity_ladder, main
 from sextant.ranking.baseline import BaselineSample, BaselineTable, dump_baseline
 from sextant.validation.trials import TrialLog, snapshot_hash
@@ -886,13 +893,32 @@ def test_the_universe_ranking_arms_the_slot_pool_and_drives_the_session(
 
     assert code == 0
     assert len(feed_log) == 1
-    assert set(feed_log[0].instruments) == {"DDD.ALPACA", "OMH.ALPACA"}
+    assert set(feed_log[0].instruments) == {
+        "OMH.ALPACA",
+        "DDD.ALPACA",
+        "CCC.ALPACA",
+        "BBB.ALPACA",
+        "AAA.ALPACA",
+    }
     assert data.calls
     written = receipt(live_env)
-    assert written["symbols"] == ["OMH.ALPACA", "DDD.ALPACA"]
+    assert written["symbols"] == [
+        "OMH.ALPACA",
+        "DDD.ALPACA",
+        "CCC.ALPACA",
+        "BBB.ALPACA",
+        "AAA.ALPACA",
+    ]
     assert written["arming"][0]["eligible"] == 5
     assert written["arming"][0]["slots"] == 2
-    assert written["arming"][0]["armed"] == ["OMH.ALPACA", "DDD.ALPACA"]
+    assert written["arming"][0]["max_armed_symbols"] == 5
+    assert written["arming"][0]["armed"] == [
+        "OMH.ALPACA",
+        "DDD.ALPACA",
+        "CCC.ALPACA",
+        "BBB.ALPACA",
+        "AAA.ALPACA",
+    ]
     assert written["commands"]
     assert client.submitted
 
@@ -924,12 +950,82 @@ def test_a_universe_run_rearms_at_each_segment_boundary(live_env: Path) -> None:
     assert code == 0
     assert len(feed_log) == 2
     assert [set(feed.instruments) for feed in feed_log] == [
-        {"OMH.ALPACA", "DDD.ALPACA"},
-        {"OMH.ALPACA", "DDD.ALPACA"},
+        {"OMH.ALPACA", "DDD.ALPACA", "CCC.ALPACA", "BBB.ALPACA", "AAA.ALPACA"},
+        {"OMH.ALPACA", "DDD.ALPACA", "CCC.ALPACA", "BBB.ALPACA", "AAA.ALPACA"},
     ]
     written = receipt(live_env)
     assert [arming["segment"] for arming in written["arming"]] == ["RTH", "POST"]
     assert written["final_segment"] == "POST"
+
+
+def test_c_arms_five_names_in_score_order_not_candidate_count_or_symbol_order(
+    live_env: Path,
+) -> None:
+    ranks = {
+        "AAA": daily_bars("1.02", "300"),
+        "BBB": daily_bars("1.04", "300"),
+        "CCC": daily_bars("1.06", "300"),
+        "DDD": daily_bars("1.08", "300"),
+        "YYY": daily_bars("1.10", "300"),
+        "ZZZ": daily_bars("1.12", "300"),
+        "OMH": daily_bars("1.14", "500"),
+    }
+    client = FakeTradingClient(assets=tuple(asset(symbol) for symbol in ranks))
+
+    code = invoke(
+        live_env,
+        client,
+        Clock(),
+        Monotonic(),
+        universe=True,
+        data=FakeDataClient(ranks),
+    )
+
+    assert code == 0
+    written = receipt(live_env)
+    assert written["symbols"] == [
+        "OMH.ALPACA",
+        "ZZZ.ALPACA",
+        "YYY.ALPACA",
+        "DDD.ALPACA",
+        "CCC.ALPACA",
+    ]
+    assert written["arming"][0]["eligible"] == 7
+    assert written["arming"][0]["max_armed_symbols"] == 5
+    assert written["arming"][0]["slots"] == 2
+
+
+def test_c_retains_held_and_working_symbols_instead_of_only_the_position_count(
+    tmp_path: Path,
+) -> None:
+    from sextant.paper.c_live_main import _retained_symbols
+
+    scope = AccountScope("alpaca", "fixture")
+    book = Custody(scope, tmp_path / "custody.json", create=True)
+    snapshot = AccountSnapshot(
+        scope,
+        1,
+        {"HELD.ALPACA": D(1), "FLAT.ALPACA": D(0)},
+        {"HELD.ALPACA": PositionAuthority(D(1), "fixture")},
+        (
+            OrderFact("working", "WORKING.ALPACA", "BUY", D(1), D(0), "NEW", "working"),
+            OrderFact("held", "HELD.ALPACA", "SELL", D(1), D(0), "NEW", "held"),
+            OrderFact("done", "DONE.ALPACA", "BUY", D(1), D(1), "FILLED", "done"),
+        ),
+        True,
+        1,
+        "fixture",
+    )
+    assert book.observe(snapshot, now=1)
+    assert _retained_symbols(book) == frozenset({"HELD.ALPACA", "WORKING.ALPACA"})
+
+
+def test_c_refuses_a_missing_symbol_snapshot_explicitly(tmp_path: Path) -> None:
+    from sextant.paper.c_live_main import LiveRefusal, _retained_symbols
+
+    book = Custody(AccountScope("alpaca", "fixture"), tmp_path / "custody.json", create=True)
+    with pytest.raises(LiveRefusal, match="custody symbols unavailable"):
+        _retained_symbols(book)
 
 
 def test_an_empty_universe_refuses_without_arming(live_env: Path) -> None:
