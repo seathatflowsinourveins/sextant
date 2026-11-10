@@ -209,16 +209,18 @@ def _datetime_at(ts_ns: int) -> datetime:
 
 
 class BHistoricalTape:
-    """Read one symbol's quotes between two instants: one page, one HTTP request.
+    """Read one page of one symbol's quotes between two instants: one page, one HTTP request.
 
-    The request is the one alpaca-py's ``get_stock_quotes`` sends first (``/stocks/quotes``
-    with ``StockQuotesRequest.to_request_fields()``, data/historical/stock.py:98-118), sent
-    once through ``RESTClient.get`` so that one pacer admission is one request (N1): the
-    SDK's page loop (common/rest.py:368-408) is not used. Completeness is judged on the raw
-    JSON before ``QuoteSet`` drops null rows (N3): a response without the symbol's
-    ``quotes``, a null or malformed row, a ``next_page_token`` or a page that reaches
-    ``max_quotes`` raises ``TapeShapeError``; the caller reports it as partial. A symbol
-    absent from ``quotes`` is an empty window.
+    The request is the one alpaca-py's ``get_stock_quotes`` sends (``/stocks/quotes`` with
+    ``StockQuotesRequest.to_request_fields()``, data/historical/stock.py:98-118), sent once
+    through ``RESTClient.get`` so that one pacer admission is one request (N1). The caller
+    follows the continuation token as the SDK's page loop does (common/rest.py:381,388,398:
+    ``page_token`` in, ``next_page_token`` out), one request per page (R1). Pages come newest
+    first (``sort``, alpaca-py 0.44.0 data/requests.py:40; common/enums.py:36-38), so a read
+    that stops early holds the most recent rows (R4). Completeness is judged on the raw JSON
+    before ``QuoteSet`` drops null rows (N3): a response without the symbol's ``quotes``, a
+    null or malformed row, a non-text token or a page over ``max_quotes`` raises
+    ``TapeShapeError``. A symbol absent from ``quotes`` is an empty page.
     """
 
     def __init__(self, client: HistoricalQuoteClient, max_quotes: int) -> None:
@@ -227,13 +229,14 @@ class BHistoricalTape:
         self._client = client
         self._max_quotes = max_quotes
 
-    def quotes(
+    def quote_page(
         self,
         symbol: str,
         start_ns: int,
         end_ns: int,
         feed: str,
-    ) -> tuple[QuoteObservation, ...]:
+        page_token: str | None = None,
+    ) -> tuple[tuple[QuoteObservation, ...], str | None]:
         if feed not in FEEDS:
             raise ValueError("B's historical tape feed must be sip or boats")
         request = StockQuotesRequest(
@@ -241,10 +244,13 @@ class BHistoricalTape:
             start=_datetime_at(start_ns),
             end=_datetime_at(end_ns),
             feed=DataFeed(feed),
-            sort=Sort.ASC,
+            sort=Sort.DESC,
             limit=self._max_quotes,
         )
-        response = self._client.get("/stocks/quotes", request.to_request_fields())
+        fields = request.to_request_fields()
+        if page_token is not None:
+            fields["page_token"] = page_token
+        response = self._client.get("/stocks/quotes", fields)
         data = response.get("quotes") if isinstance(response, Mapping) else None
         if (
             not isinstance(response, Mapping)
@@ -253,10 +259,11 @@ class BHistoricalTape:
         ):
             raise TapeShapeError(f"the {feed} response is not {symbol}'s quotes")
         rows = data.get(symbol, [])
-        if not isinstance(rows, Sequence) or len(rows) >= self._max_quotes:
-            raise TapeShapeError(f"the {feed} window is malformed or over its quote bound")
-        if response.get("next_page_token") is not None:
-            raise TapeShapeError(f"the {feed} window has an unread page")
+        if not isinstance(rows, Sequence) or len(rows) > self._max_quotes:
+            raise TapeShapeError(f"the {feed} page is malformed or over its quote bound")
+        token = response.get("next_page_token")
+        if token is not None and (not isinstance(token, str) or not token):
+            raise TapeShapeError(f"the {feed} page has a malformed continuation token")
         observations: list[QuoteObservation] = []
         for raw in rows:
             if not isinstance(raw, Mapping) or not {"t", "bp", "ap"} <= set(raw):
@@ -268,4 +275,4 @@ class BHistoricalTape:
                 observations.append(
                     QuoteObservation(symbol, bid, ask, None, timestamp_ns(row.timestamp))
                 )
-        return tuple(observations)
+        return tuple(observations), token

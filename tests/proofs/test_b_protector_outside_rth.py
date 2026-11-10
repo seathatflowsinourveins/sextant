@@ -214,23 +214,34 @@ class FakeHistory:
         *,
         by_feed: dict[str, Sequence[QuoteObservation]] | None = None,
         fail_feeds: set[str] | None = None,
+        page_size: int | None = None,
     ) -> None:
         self.observations = tuple(observations)
+        self.page_size = page_size
         self.error = error
         self.by_feed = {key: tuple(value) for key, value in (by_feed or {}).items()}
         self.fail_feeds = set(fail_feeds or ())
         self.requests: list[tuple[str, int, int, str]] = []
 
-    def quotes(
-        self, symbol: str, start_ns: int, end_ns: int, feed: str
-    ) -> tuple[QuoteObservation, ...]:
+    def quote_page(
+        self, symbol: str, start_ns: int, end_ns: int, feed: str, page_token: str | None = None
+    ) -> tuple[tuple[QuoteObservation, ...], str | None]:
+        """One request: the window newest first, ``page_size`` rows a page, offset tokens."""
+
         self.requests.append((symbol, start_ns, end_ns, feed))
         if self.error is not None:
             raise self.error
         if feed in self.fail_feeds:
             raise RuntimeError(f"the {feed} tape is down")
         items = self.by_feed.get(feed, self.observations)
-        return tuple(item for item in items if start_ns <= item.ts_ns <= end_ns)
+        window = sorted(
+            (item for item in items if start_ns <= item.ts_ns <= end_ns),
+            key=lambda item: -item.ts_ns,
+        )
+        offset = int(page_token or 0)
+        size = self.page_size or max(len(window), 1)
+        token = str(offset + size) if len(window) > offset + size else None
+        return tuple(window[offset : offset + size]), token
 
 
 def protector(
@@ -1041,9 +1052,9 @@ class StalledHistory(FakeHistory):
         super().__init__()
         self.clock, self.wait_s = clock, wait_s
 
-    def quotes(
-        self, symbol: str, start_ns: int, end_ns: int, feed: str
-    ) -> tuple[QuoteObservation, ...]:
+    def quote_page(
+        self, symbol: str, start_ns: int, end_ns: int, feed: str, page_token: str | None = None
+    ) -> tuple[tuple[QuoteObservation, ...], str | None]:
         self.requests.append((symbol, start_ns, end_ns, feed))
         self.clock[0] += self.wait_s
         raise TimeoutError("read timed out")
@@ -1112,13 +1123,13 @@ def test_five_positions_against_a_stalled_data_api_are_protected_inside_the_dead
 class SleepingHistory(FakeHistory):
     """A data API that keeps the socket busy in real time, longer than any deadline."""
 
-    def quotes(
-        self, symbol: str, start_ns: int, end_ns: int, feed: str
-    ) -> tuple[QuoteObservation, ...]:
+    def quote_page(
+        self, symbol: str, start_ns: int, end_ns: int, feed: str, page_token: str | None = None
+    ) -> tuple[tuple[QuoteObservation, ...], str | None]:
         self.requests.append((symbol, start_ns, end_ns, feed))
         for _ in range(500):
             time.sleep(0.01)  # each wait inside any read timeout; only an elapsed bound ends it
-        return ()
+        return (), None
 
 
 def test_the_interval_timer_ends_a_progressing_start_read_at_its_deadline() -> None:
@@ -1187,7 +1198,9 @@ def test_the_start_read_stops_at_its_request_budget() -> None:
     # windows per symbol; the eighth request is the second symbol's first window.
     assert len(client.calls) + len(history.requests) == 8
     assert [tape.status for tape in p._tapes.values()] == ["ok"] + ["partial"] * 4
-    assert p._tapes["MSFT"].detail == "start read over its deadline or budget"
+    # R1-R3: the detail now also says how many pages were read before the budget ended.
+    assert "start read over its deadline or budget" in p._tapes["MSFT"].detail
+    assert p._tapes["MSFT"].detail.startswith("1 page(s) read")
     assert history.requests[0][3] == "sip" and len(history.requests) == 5
 
 

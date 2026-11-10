@@ -239,6 +239,18 @@ class BaselineTable:
             self.provenance,
         )
 
+    def covers(self, symbol: str, segment: str) -> bool:
+        """Whether a slice exists for ``symbol`` in ``segment``.
+
+        A missing slice is not a zero: ``window`` returns ``None`` for it, so
+        arming must ask this before spending a slot.
+        """
+        return bool(self._curves(symbol, segment))
+
+    def sessions(self, symbol: str, segment: str) -> tuple[str, ...]:
+        """The baseline's session dates for ``symbol`` and ``segment``, ascending."""
+        return tuple(curve[0].session for curve in self._curves(symbol, segment))
+
 
 def dump_baseline(table: BaselineTable) -> str:
     """Serialize one table to JSON; :func:`load_baseline` is its inverse."""
