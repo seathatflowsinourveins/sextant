@@ -519,6 +519,9 @@ class FakeFeed:
         feed: str,
         clock: Clock,
         replay: Any,
+        tap: Any = None,
+        tap_symbols: tuple[str, ...] = (),
+        on_page: Any = None,
     ) -> None:
         self.instruments = instruments
         self.on_trade = on_trade
@@ -528,6 +531,9 @@ class FakeFeed:
         self.feed = feed
         self.clock = clock
         self.replay = replay
+        self.tap = tap
+        self.tap_symbols = tap_symbols
+        self.on_page = on_page
         self.failure: Exception | None = None
         self.stopped = False
 
@@ -554,6 +560,8 @@ def invoke(
     symbols: str = "OMH.ALPACA",
     state: Path | None = None,
     config: Path | None = None,
+    feed_tap: bool = False,
+    feed_tap_universe: Path | None = None,
 ) -> int:
     calls = {"index": 0}
 
@@ -585,6 +593,10 @@ def invoke(
     argv += ["--state", str(state if state is not None else tmp_path / "state"), "--seconds", "1"]
     if dry_run:
         argv.append("--dry-run")
+    if feed_tap:
+        argv.append("--feed-tap")
+    if feed_tap_universe is not None:
+        argv += ["--feed-tap-universe", str(feed_tap_universe)]
     return main(
         argv,
         client_factory=lambda **_: client,

@@ -18,18 +18,31 @@ from typing import Any, Protocol
 
 from alpaca.common.enums import Sort
 from alpaca.data.enums import DataFeed
+from alpaca.data.models.bars import Bar
 from alpaca.data.models.quotes import Quote
 from alpaca.data.requests import (
+    StockBarsRequest,
     StockLatestQuoteRequest,
     StockLatestTradeRequest,
     StockQuotesRequest,
 )
+from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 from requests.adapters import HTTPAdapter
 
-from sextant.paper.sessions import Session
+from sextant.paper.sessions import Session, session_at, session_start_ns
 
 NS_PER_SECOND = 1_000_000_000
 FEEDS = frozenset({"sip", "boats"})
+
+
+@dataclass(frozen=True, slots=True)
+class BarRow:
+    """One vendor bar; ``ts_ns`` is the bar's start, as Alpaca stamps it (ADR-0013:27)."""
+
+    ts_ns: int
+    high: Decimal
+    low: Decimal
+    close: Decimal
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,6 +148,22 @@ class BMarketDataFeed:
             self._observe_quote(symbol, quotes.get(symbol), fresh_quotes)
         return FeedBatch(tuple(fresh_quotes), tuple(fresh_trades), feed)
 
+    def latest_quotes(self, symbols: Sequence[str], feed: str) -> tuple[QuoteObservation, ...]:
+        """One batched latest-quote request; the poll's own validity rules (LEAD-1021 add. 1)."""
+
+        if feed not in FEEDS:
+            raise ValueError("B's market-data feed must be sip or boats")
+        names = tuple(dict.fromkeys(symbol for symbol in symbols if symbol))
+        if not names:
+            return ()
+        quotes = self._client.get_stock_latest_quote(
+            StockLatestQuoteRequest(symbol_or_symbols=list(names), feed=DataFeed(feed))
+        )
+        fresh: list[QuoteObservation] = []
+        for symbol in names:
+            self._observe_quote(symbol, quotes.get(symbol), fresh)
+        return tuple(fresh)
+
     def _observe_trade(self, symbol: str, raw: object, fresh: list[TradeObservation]) -> None:
         price = _price(getattr(raw, "price", None))
         at = getattr(raw, "timestamp", None)
@@ -166,6 +195,10 @@ class HistoricalQuoteClient(Protocol):
 
 class TapeShapeError(ValueError):
     """A historical response that is not the requested symbol's quotes, or one over its bound."""
+
+
+class BarsOutsideRth(RuntimeError):
+    """No bars page outside regular hours (LEAD-1021 item 6); never a refused page."""
 
 
 class BoundedAdapter(HTTPAdapter):
@@ -252,11 +285,16 @@ class BHistoricalTape:
     ``TapeShapeError``. A symbol absent from ``quotes`` is an empty page.
     """
 
-    def __init__(self, client: HistoricalQuoteClient, max_quotes: int) -> None:
+    def __init__(
+        self, client: HistoricalQuoteClient, max_quotes: int, max_bars: int | None = None
+    ) -> None:
         if max_quotes < 1:
             raise ValueError("the tape's quote bound must be positive")
         self._client = client
         self._max_quotes = max_quotes
+        if max_bars is not None and max_bars < 1:
+            raise ValueError("the tape's bars bound must be positive")
+        self._max_bars = max_bars  # the tape_max_bars row; no row, no bars page
 
     def quote_page(
         self,
@@ -305,3 +343,82 @@ class BHistoricalTape:
                     QuoteObservation(symbol, bid, ask, None, timestamp_ns(row.timestamp))
                 )
         return tuple(observations), token
+
+    def bar_page(
+        self,
+        symbols: Sequence[str],
+        bar_minutes: int,
+        now_ns: int,
+        page_token: str | None = None,
+    ) -> tuple[dict[str, tuple[BarRow, ...]], str | None, int]:
+        """One batched page of this session's RTH SIP bars, open to now: one HTTP request.
+
+        The request is the one alpaca-py's ``get_stock_bars`` sends (``/stocks/bars`` with
+        ``StockBarsRequest.to_request_fields()``, data/historical/stock.py:75-96), sent once
+        through ``RESTClient.get`` so one pacer admission is one request. Rows are sorted by
+        symbol, then time, and ``limit`` counts all symbols together
+        (docs.alpaca.markets/reference/stockbars, read 2026-11-10). A returned token means the
+        history is partial: pass it back as ``page_token``, or take no width from this page. A
+        bad bar, bar time, row set or token refuses the whole page, as quote_page does; a gap
+        is never data. The third value is ``now_ns``, the instant the page was fetched at: a bar
+        is complete only if it ended by then.
+        """
+
+        names = tuple(dict.fromkeys(symbol for symbol in symbols if symbol))
+        if not names:
+            return {}, None, now_ns
+        if session_at(now_ns) is not Session.RTH:
+            raise BarsOutsideRth("B reads bars in regular hours only (LEAD-1021 item 6)")
+        if self._max_bars is None:
+            raise ValueError("no tape_max_bars row: no bars page")
+        start_ns, span_ns = session_start_ns(now_ns), bar_minutes * 60 * NS_PER_SECOND
+        request = StockBarsRequest(
+            symbol_or_symbols=list(names),
+            timeframe=TimeFrame(bar_minutes, TimeFrameUnit("Min")),
+            start=_datetime_at(start_ns),
+            end=_datetime_at(now_ns),
+            feed=DataFeed.SIP,
+            sort=Sort.DESC,
+            limit=self._max_bars,
+        )
+        fields = request.to_request_fields()
+        if page_token is not None:
+            fields["page_token"] = page_token
+        response = self._client.get("/stocks/bars", fields)
+        data = response.get("bars") if isinstance(response, Mapping) else None
+        if (
+            not isinstance(response, Mapping)
+            or not isinstance(data, Mapping)
+            or set(data) - set(names)
+        ):
+            raise TapeShapeError("the bars response is not the held symbols' bars")
+        token = response.get("next_page_token")
+        if token is not None and (not isinstance(token, str) or not token):
+            raise TapeShapeError("the bars page has a malformed continuation token")
+        found: dict[str, tuple[BarRow, ...]] = {}
+        total = 0
+        for symbol in names:
+            rows = data.get(symbol, [])
+            total += len(rows) if isinstance(rows, list) else 0
+            if not isinstance(rows, list) or total > self._max_bars:
+                raise TapeShapeError(f"the bars page for {symbol} is malformed or over its bound")
+            kept: list[BarRow] = []
+            for raw in rows:
+                if not isinstance(raw, Mapping) or not {"t", "h", "l", "c"} <= set(raw):
+                    raise TapeShapeError("a bar has no time, high, low and close")
+                if not isinstance(raw["t"], str):
+                    raise TapeShapeError(f"a {symbol} bar time is not the documented text")
+                high, low, close = _price(raw["h"]), _price(raw["l"]), _price(raw["c"])
+                if high is None or low is None or close is None or not low <= close <= high:
+                    raise TapeShapeError(f"a {symbol} bar is not a whole, ordered bar")
+                try:
+                    at = Bar(symbol, dict(raw)).timestamp
+                except ValueError as exc:  # pydantic: a documented field is missing
+                    raise TapeShapeError(f"a {symbol} bar is not the documented shape") from exc
+                ts_ns = timestamp_ns(at)
+                newer = kept[-1].ts_ns if kept else now_ns + 1  # newest first, each one older
+                if ts_ns % span_ns or ts_ns < start_ns or ts_ns >= newer:
+                    raise TapeShapeError(f"a {symbol} bar time is repeated, off-grid or outside")
+                kept.append(BarRow(ts_ns=ts_ns, high=high, low=low, close=close))
+            found[symbol] = tuple(kept)
+        return found, token, now_ns

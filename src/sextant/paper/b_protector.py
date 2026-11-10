@@ -53,6 +53,7 @@ from sextant.paper.b_feed import (
     feed_for,
     timestamp_ns,
 )
+from sextant.paper.b_width import MAX_TRAIL_FRACTION
 from sextant.paper.config import PaperAccount
 from sextant.paper.decision_record import (
     Book,
@@ -81,7 +82,20 @@ TAPE_TIMEOUT_NAME = "tape_read_timeout_s"
 TAPE_QUOTES_NAME = "tape_max_quotes"
 TAPE_DEADLINE_NAME = "tape_deadline_s"
 TAPE_REQUESTS_NAME = "tape_max_requests"
-TAPE_NAMES = (TAPE_TIMEOUT_NAME, TAPE_QUOTES_NAME, TAPE_DEADLINE_NAME, TAPE_REQUESTS_NAME)
+TAPE_BARS_NAME = "tape_max_bars"
+TAPE_NAMES = (
+    TAPE_TIMEOUT_NAME,
+    TAPE_QUOTES_NAME,
+    TAPE_DEADLINE_NAME,
+    TAPE_REQUESTS_NAME,
+    TAPE_BARS_NAME,
+)
+WIDTH_NAMES = (
+    "alpaca_min_trail_fraction",
+    "trail_atr_period",
+    "trail_atr_bar_minutes",
+    "trail_atr_multiple",
+)
 PARAMETER_NAMES = frozenset(
     {
         TRAIL_PERCENT_NAME,
@@ -89,10 +103,10 @@ PARAMETER_NAMES = frozenset(
         FEED_POLL_NAME,
         FEED_SILENCE_NAME,
         *TAPE_NAMES,
+        *WIDTH_NAMES,
     }
 )
 PARAMETER_KEYS = frozenset({"name", "unit", "value", "source", "calibration_state", "last_change"})
-MAX_TRAIL_FRACTION = Decimal("0.025")
 FILL_EVENTS = frozenset({"fill", "partial_fill"})
 TERMINAL_EVENTS = frozenset({"canceled", "expired", "rejected", "stopped", "done_for_day"})
 OPEN_ORDER_LIMIT = 500
@@ -184,6 +198,11 @@ class BParameters:
     tape_max_quotes: Decimal | None = None
     tape_deadline_s: Decimal | None = None
     tape_max_requests: Decimal | None = None
+    tape_max_bars: Decimal | None = None
+    alpaca_min_trail_fraction: Decimal | None = None
+    trail_atr_period: Decimal | None = None
+    trail_atr_bar_minutes: Decimal | None = None
+    trail_atr_multiple: Decimal | None = None
 
     def __post_init__(self) -> None:
         fraction = _decimal(self.native_trail_fraction, TRAIL_PERCENT_NAME)
@@ -204,10 +223,16 @@ class BParameters:
             raise ValueError("feed_silence_s must be positive")
         if poll >= silence:
             raise ValueError("feed_poll_interval_s must be shorter than feed_silence_s")
-        for name in TAPE_NAMES:
+        for name in (*TAPE_NAMES, *WIDTH_NAMES):
             value = getattr(self, name)
             if value is not None and _decimal(value, name) <= 0:
                 raise ValueError(f"{name} must be positive")
+            whole = name in (TAPE_BARS_NAME, "trail_atr_period", "trail_atr_bar_minutes")
+            if whole and value is not None and _decimal(value, name) % 1:
+                raise ValueError(f"{name} must be a whole number")
+        minimum = self.alpaca_min_trail_fraction
+        if minimum is not None and _decimal(minimum, "alpaca_min_trail_fraction") > fraction:
+            raise ValueError("alpaca_min_trail_fraction must not exceed native_trail_fraction")
 
 
 def _decimal(value: object, field: str) -> Decimal:
@@ -260,7 +285,7 @@ def load_b_parameters(path: Path) -> BParameters:
         values[RECONCILE_INTERVAL_NAME],
         values[FEED_POLL_NAME],
         values[FEED_SILENCE_NAME],
-        *(values[name] for name in TAPE_NAMES),
+        *(values[name] for name in (*TAPE_NAMES, *WIDTH_NAMES)),
     )
 
 
