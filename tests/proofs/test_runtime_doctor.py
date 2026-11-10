@@ -139,7 +139,7 @@ class World:
         }
         self.unit_working = str(self.repo)
         self.unit_exec = str(self.prefix / "router-start.sh")
-        self.ao_state = "running"
+        self.ao_state: str | None = "ready"
         self.ao_doctor = {"failures": 0}
         self.watch_turn_start = "observed"
         self.watch_timeout_ms = 60_000
@@ -664,7 +664,7 @@ class Fake:
         if cmd == ["ao", "version"]:
             return ok(w.versions["ao"])
         if cmd == ["ao", "status", "--json"]:
-            return ok(json.dumps({"state": w.ao_state}))
+            return ok(json.dumps({} if w.ao_state is None else {"state": w.ao_state}))
         if cmd == ["ao", "doctor", "--json"]:
             return ok(json.dumps(w.ao_doctor))
         if cmd == ["orca-ide", "--version"]:
@@ -913,6 +913,31 @@ def test_renewal_checks_only_retained_router_runtimes(tmp_path):
         if call[:3] == ["python3", "-I", str(world.repo / "scripts" / "omni_keys.py")]
     ]
     assert due and due[0][-2:] == ["due", "codex"], due
+
+
+def test_ao_parity_accepts_the_pins_ready_state(tmp_path):
+    world = World(tmp_path)
+    report = inspect(world)
+    assert "ao.parity" not in codes(report), [
+        f.message for f in report.findings if f.code == "ao.parity"
+    ]
+
+
+@pytest.mark.parametrize("state", ["stopped", "stale", "unhealthy", "not_ready"])
+def test_ao_parity_names_every_state_other_than_ready(state, tmp_path):
+    world = World(tmp_path)
+    world.ao_state = state
+    report = inspect(world)
+    message = next(f.message for f in report.findings if f.code == "ao.parity")
+    assert state in message
+
+
+def test_ao_parity_names_a_missing_state(tmp_path):
+    world = World(tmp_path)
+    world.ao_state = None
+    report = inspect(world)
+    message = next(f.message for f in report.findings if f.code == "ao.parity")
+    assert "unknown" in message
 
 
 def test_ao_guard_reads_the_tracked_parameterized_script(tmp_path):
