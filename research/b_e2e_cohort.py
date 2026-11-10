@@ -32,10 +32,10 @@ from decimal import Decimal
 from functools import lru_cache
 from pathlib import Path
 
-from sextant.backtest.b_e2e import EntryRule, reviewed_rule
+from research.b_e2e import EntryRule, reviewed_rule
 from sextant.validation.trials import TrialLog, snapshot_hash
 
-REPO = Path(__file__).resolve().parents[3]
+REPO = Path(__file__).resolve().parents[1]
 RULE_PATH = REPO / "lanes/sim/entry-parameters.json"
 TRAIL_FRACTION = Decimal("0.025")
 QUANTITY = 1

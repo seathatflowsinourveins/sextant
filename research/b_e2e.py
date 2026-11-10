@@ -76,7 +76,7 @@ EASTERN = ZoneInfo("America/New_York")
 TRAIL_FRACTION = Decimal("0.025")
 QUANTITY = Decimal("50")
 ARMS = ("reference", "catalyst", "first_leg")
-_RULE_PATH = Path(__file__).resolve().parents[3] / "lanes/sim/entry-parameters.json"
+_RULE_PATH = Path(__file__).resolve().parents[1] / "lanes/sim/entry-parameters.json"
 
 
 @dataclass(frozen=True)
@@ -463,7 +463,7 @@ class _Protect(Strategy):
 
 
 def _head_sha() -> str:
-    root = Path(__file__).resolve().parents[3]
+    root = Path(__file__).resolve().parents[1]
     return subprocess.run(
         ["git", "rev-parse", "HEAD"], cwd=root, check=True, capture_output=True, text=True
     ).stdout.strip()

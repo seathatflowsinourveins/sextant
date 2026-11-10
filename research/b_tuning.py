@@ -11,7 +11,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
-from sextant.backtest.b_e2e_cohort import CaseData
+from research.b_e2e_cohort import CaseData
 from sextant.validation import tuning
 
 STUDY = "b-parameters"
@@ -70,7 +70,7 @@ def replay_for(
     """A fold evaluator: one arm's replay of the cases in the requested sessions."""
 
     def evaluate(params: Mapping[str, Any], days: Sequence[str]) -> tuple[tuning.Observation, ...]:
-        from sextant.backtest.b_e2e_cohort import EntryRule, run_arms
+        from research.b_e2e_cohort import EntryRule, run_arms
 
         requested = set(days)
         selected = tuple(case for case in cases if session_of[case.case] in requested)

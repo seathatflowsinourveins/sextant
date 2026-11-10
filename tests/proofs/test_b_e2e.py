@@ -17,6 +17,7 @@ These tests name behaviour, not implementation:
 from __future__ import annotations
 
 import hashlib
+import sys
 from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
@@ -27,7 +28,10 @@ import pyarrow.parquet as pq
 import pytest
 from nautilus_trader.model import InstrumentId, OrderSide, Price, Quantity
 
-from sextant.backtest.b_e2e import _Protect, _ProtectConfig, load_spec, run_case
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+
+from research.b_e2e import _Protect, _ProtectConfig, load_spec, run_case  # noqa: E402
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "b-e2e-owner-fill.json"
 FIXTURE_SHA256 = "87fc4a24a654f26466a07058bbf3d63c2e61254274e05677768997463f26636a"

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 from collections import Counter
 from datetime import date, timedelta
 from decimal import Decimal
@@ -23,12 +24,14 @@ from typing import cast
 import numpy as np
 import pytest
 
-from sextant.backtest import b_e2e_cohort
-from sextant.backtest.b_e2e import EntryRule
-from sextant.research import b_tuning
-from sextant.validation import tuning
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
 
-REPO = Path(__file__).resolve().parents[2]
+from research import b_e2e_cohort, b_tuning  # noqa: E402
+from research.b_e2e import EntryRule  # noqa: E402
+from sextant.validation import tuning  # noqa: E402
+
+REPO = ROOT
 FIXTURE = REPO / "tests/fixtures/b-e2e-cohort.json"
 
 

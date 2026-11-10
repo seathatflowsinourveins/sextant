@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
@@ -27,8 +28,11 @@ from pathlib import Path
 import pyarrow.parquet as pq
 import pytest
 
-from sextant.backtest.b_e2e import reviewed_rule
-from sextant.backtest.b_e2e_cohort import (
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+
+from research.b_e2e import reviewed_rule  # noqa: E402
+from research.b_e2e_cohort import (  # noqa: E402
     Quote,
     entry,
     find_run,
