@@ -4,7 +4,7 @@ Emits exactly what ``GenerationReader.accept_heartbeat`` accepts
 (``src/sextant/ranking/reader.py:52-64``): keyword-only ``at``/``received_ns``
 ints with ``0 <= at <= received_ns``, ``received_ns - at`` within
 ``heartbeat_max_age_s``, and ``at`` never regressing. ``at`` is the published
-generation's ``known_at`` (``src/sextant/ranking/publisher.py:276`` sets
+generation's ``known_at`` (``src/sextant/ranking/publisher.py:279`` sets
 ``known_at=now`` at publish), so a heartbeat exists only for a published,
 complete generation and ages out with it (``reader.py:70-73`` checks both
 stored clocks). Injected clock and sink only: no stream, socket or thread

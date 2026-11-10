@@ -1,7 +1,8 @@
 """ADR-0003 entry-heartbeat fixtures: schema-only ages and a post-publication hook.
 
-Source: northstar-trading@8256c16c31dc:manual_paper_runner.py (native heartbeat
-ingress). Every age value below is a synthetic fixture: ADR-0003, line 42, keeps
+Source: house composition over the pinned reader contract
+(`src/sextant/ranking/reader.py:52-64`); pinned rc8 has no producer heartbeat for
+custom ranking data. Every age value below is a synthetic fixture: ADR-0003, line 42, keeps
 the three entry ages UNAVAILABLE until sourced, so this file proves mechanics,
 never a market authority. No stream is started and no order surface is touched.
 """
@@ -497,7 +498,7 @@ def test_quiet_and_halted_markets_still_emit_a_fresh_heartbeat(mode: str) -> Non
 
     pub.heartbeat = HeartbeatEmitter(registry=registry(), clock=lambda: now[0], sink=sink)
     RawBusHost(entry, clock=lambda: now[0]).subscribe(pub.bus)
-    first = published(pub, at=AT)
+    published(pub, at=AT)
     assert len(calls) == 1
     if mode == "quiet":
         pub.on_trade(tick(now[0], "0.50"))
@@ -520,4 +521,3 @@ def test_quiet_and_halted_markets_still_emit_a_fresh_heartbeat(mode: str) -> Non
     assert entry.reason == "fresh"
     assert len(calls) == 2
     assert alarms == []
-    assert first.published_at if False else True
