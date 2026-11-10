@@ -53,6 +53,7 @@ from sextant.paper.b_feed import (
     feed_for,
     timestamp_ns,
 )
+from sextant.paper.b_width import MAX_TRAIL_FRACTION
 from sextant.paper.config import PaperAccount
 from sextant.paper.decision_record import (
     Book,
@@ -89,6 +90,12 @@ TAPE_NAMES = (
     TAPE_REQUESTS_NAME,
     TAPE_BARS_NAME,
 )
+WIDTH_NAMES = (
+    "alpaca_min_trail_fraction",
+    "trail_atr_period",
+    "trail_atr_bar_minutes",
+    "trail_atr_multiple",
+)
 PARAMETER_NAMES = frozenset(
     {
         TRAIL_PERCENT_NAME,
@@ -96,10 +103,10 @@ PARAMETER_NAMES = frozenset(
         FEED_POLL_NAME,
         FEED_SILENCE_NAME,
         *TAPE_NAMES,
+        *WIDTH_NAMES,
     }
 )
 PARAMETER_KEYS = frozenset({"name", "unit", "value", "source", "calibration_state", "last_change"})
-MAX_TRAIL_FRACTION = Decimal("0.025")
 FILL_EVENTS = frozenset({"fill", "partial_fill"})
 TERMINAL_EVENTS = frozenset({"canceled", "expired", "rejected", "stopped", "done_for_day"})
 OPEN_ORDER_LIMIT = 500
@@ -192,6 +199,10 @@ class BParameters:
     tape_deadline_s: Decimal | None = None
     tape_max_requests: Decimal | None = None
     tape_max_bars: Decimal | None = None
+    alpaca_min_trail_fraction: Decimal | None = None
+    trail_atr_period: Decimal | None = None
+    trail_atr_bar_minutes: Decimal | None = None
+    trail_atr_multiple: Decimal | None = None
 
     def __post_init__(self) -> None:
         fraction = _decimal(self.native_trail_fraction, TRAIL_PERCENT_NAME)
@@ -212,7 +223,7 @@ class BParameters:
             raise ValueError("feed_silence_s must be positive")
         if poll >= silence:
             raise ValueError("feed_poll_interval_s must be shorter than feed_silence_s")
-        for name in TAPE_NAMES:
+        for name in (*TAPE_NAMES, *WIDTH_NAMES):
             value = getattr(self, name)
             if value is not None and _decimal(value, name) <= 0:
                 raise ValueError(f"{name} must be positive")
@@ -268,7 +279,7 @@ def load_b_parameters(path: Path) -> BParameters:
         values[RECONCILE_INTERVAL_NAME],
         values[FEED_POLL_NAME],
         values[FEED_SILENCE_NAME],
-        *(values[name] for name in TAPE_NAMES),
+        *(values[name] for name in (*TAPE_NAMES, *WIDTH_NAMES)),
     )
 
 
