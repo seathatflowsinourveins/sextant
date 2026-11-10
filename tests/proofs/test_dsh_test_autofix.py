@@ -90,6 +90,8 @@ def test_the_register_row_records_the_five_gates() -> None:
         "`dsh-test-autofix 0.1.3 · yellow 58/100 · shell, fs-read, env`",
         "red lines none",
         "launches test processes",
+        "can start a suite in any existing directory",
+        "approval before `run_tests` starts a process was not established",
         "dsh-tui",
         f"dsh plugin --profile dsh-tui remove {PACKAGE}",
         "test_dsh_test_autofix.py::test_the_installed_tree_is_the_pinned_tree",
