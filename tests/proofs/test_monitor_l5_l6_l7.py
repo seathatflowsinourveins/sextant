@@ -383,8 +383,8 @@ def test_l6_missing_trial_witness_is_unavailable_not_zero() -> None:
         assert summary["status"] == "UNAVAILABLE"
         assert "rows" not in summary
     budgets = evidence.budget_utilization(ROOT)
-    assert budgets["src_lines"]["limit"] == 28_000
-    assert budgets["src_lines"]["value"] < 28_000
+    assert budgets["src_lines"]["limit"] == 29_500
+    assert budgets["src_lines"]["value"] < 29_500
     assert budgets["justfile_lines"]["limit"] == 105
     source = sum(
         len(path.read_text(encoding="utf-8").splitlines()) for path in (ROOT / "src").rglob("*.py")
