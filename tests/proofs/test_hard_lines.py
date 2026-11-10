@@ -96,7 +96,8 @@ def test_claudes_own_engine_refused_each_probe_and_ran_each_lane_command() -> No
     )
     assert receipt["permission_mode"] == "bypassPermissions"
     assert receipt["model"] == CLAUDE["model"]
-    assert receipt["effort"] == CLAUDE["env"]["CLAUDE_CODE_EFFORT_LEVEL"]
+    # ADR-0030's 2026-11-09 second amendment: the project's top-level effortLevel is the pin.
+    assert receipt["effort"] == CLAUDE["effortLevel"]
     assert receipt["exit_code"] == 0
     assert receipt["extra_calls"] == []
     outcome = {row["command"]: row["outcome"] for row in receipt["probes"]}

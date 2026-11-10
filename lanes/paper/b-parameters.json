@@ -3,9 +3,9 @@
     "name": "native_trail_fraction",
     "unit": "fraction below the high-water mark (Alpaca trail_percent / 100)",
     "value": "0.025",
-    "source": "docs/adr/0025-gain-protection-and-fast-exit.md B scope (0.025 cap); reviewed B registry 2026-11-07; UNCALIBRATED until PR-4 tunes it",
+    "source": "docs/adr/0025-gain-protection-and-fast-exit.md B scope (0.025 cap); the trailing pattern is upstream (nautechsystems/nautilus_trader v1.231.0 nautilus_trader/examples/strategies/ema_cross_trailing_stop.py), the 2.5% level is ours; reviewed B registry 2026-11-07; UNCALIBRATED until PR-4 tunes it",
     "calibration_state": "UNCALIBRATED",
-    "last_change": "2026-11-09"
+    "last_change": "2026-11-10"
   },
   {
     "name": "reconcile_interval_s",

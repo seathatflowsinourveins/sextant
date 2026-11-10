@@ -14,7 +14,9 @@ ci: sync lint test secrets
 # Check the locked dsh profile, the live profile and the generated ecosystem index.
 session-start:
     python3 scripts/dsh_profile_doctor.py
+    python3 scripts/runtime_doctor.py
     python3 scripts/ecosystem_index.py --check
+    python3 -I scripts/compact_context.py --check && python3 scripts/role_launch.py --check
 
 lint:
     uv run --frozen ruff check .
@@ -75,8 +77,8 @@ omni-keys *args:
 gh-app *args:
     bash deploy/wsl/github-app.sh {{args}}
 
-# Run every manifest row's proof. Pass a -m expression; the scoreboard passes "not local".
-prove marker="":
+# Run host proofs; container proofs run in the devcontainer build and GitHub-settings proofs need the admin token.
+prove marker="not container and not github":
     uv run --frozen pytest tests/proofs -m "{{marker}}"
 
 # Import a disposable copy of the committed research docs into local OpenViking.
@@ -95,7 +97,6 @@ omc:
 # The trading path: research card, backtest, sim replay, ledger, merit page.
 slice:
     uv run --frozen python -m sextant.backtest.thin_slice
-
 # Push a branch and open its PR; pass false as the third argument to leave auto-merge off.
 pr title body_file automerge="true":
     git push -u origin HEAD

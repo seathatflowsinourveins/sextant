@@ -31,3 +31,9 @@ Whether early entry, a tight trigger and re-entry beat hold-flat net of costs. T
 
 ## Lessons
 [`lessons.jsonl`](lessons.jsonl) seeds the journal: 130 lesson-v1 records, verbatim from [northstar-trading](https://github.com/seathatflowsinourveins/northstar-trading/blob/42e97f3eae0e4d5535c4f1cf89693e3a37215b29/docs/handbook/lessons.jsonl) at `42e97f3eae0e4d5535c4f1cf89693e3a37215b29`, with [their schema](lesson-v1.schema.json). Records are append-only: a correction is a new record. 53 of them cite evidence paths on the outgoing Mac, under `/Users/choreo/`, which this repo cannot read until that Mac's harvest runs.
+
+## One practice, one home
+
+Each rule of the practice has exactly one home in this repository, and everything else links to it. The order of authority is this page (why) → [the design](../design.md) (the trade path) → [the ADRs](../adr/) (decisions with sources) → [the manifest](../manifest.md) (each pick, its source, its proof) → [AGENTS.md](../../AGENTS.md) and [CLAUDE.md](../../CLAUDE.md) (short operating rules that link, never restate) → settings, hooks, launch definitions and `just` recipes (the rule as mechanism). A rule stated in two places is a defect; the lower layer links upward. A relaunched session needs only this repository, with no ruling file, memory or hand-typed step in between.
+
+Authority: owner direction D-13, LEAD-2359-consolidation-and-relaunch-gate.md, SHA-256 `1f357de2cf709978d46800eb1632c8adaf4841916c84a156e4bd2328b9432d1a`.

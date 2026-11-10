@@ -145,7 +145,7 @@ def refuse_unsafe(commands: list[str], stubs: Path, project: Path) -> None:
 
 
 def session(
-    claude: str, commands: list[str], settings: Path, model: str, effort: str, canary: str
+    claude: str, commands: list[str], settings: Path, model: str, canary: str
 ) -> tuple[int, dict, dict]:
     """One headless session in a fresh sandbox: its Bash calls and their results, by call id."""
     with tempfile.TemporaryDirectory(prefix="sextant-hard-lines-") as temp:
@@ -167,7 +167,9 @@ def session(
             "project",
         ]
         argv += ["--strict-mcp-config", "--tools", "Bash", "--no-session-persistence", "--verbose"]
-        argv += ["--output-format", "stream-json", "--model", model, "--effort", effort]
+        # ADR-0030's 2026-11-09 second amendment: no --effort flag, so the session runs at the
+        # project's top-level effortLevel, the setting this receipt records.
+        argv += ["--output-format", "stream-json", "--model", model]
         refuse_unsafe(commands, stubs, project)
         measured = facts(stubs, env["PATH"], project)
         assert measured["resolved_is_our_stub"] and not measured["path_has_windows_entry"]
@@ -215,7 +217,8 @@ def main() -> int:
     expected |= {command: "ran" for command in probes["lane_commands"]}
     settings = ROOT / ".claude" / "settings.json"
     config = json.loads(settings.read_text())
-    model, effort = config["model"], config["env"]["CLAUDE_CODE_EFFORT_LEVEL"]
+    # ADR-0030's 2026-11-09 second amendment: the project's top-level effortLevel is the pin.
+    model, effort = config["model"], config["effortLevel"]
     claude = shutil.which("claude")
     assert claude, "claude is not on PATH"
     version = subprocess.run(
@@ -254,14 +257,12 @@ def main() -> int:
         assert sandbox_facts["git_resolved_is_our_stub"] and not sandbox_facts["cwd_has_git_binary"]
         assert sandbox_facts["append_windows_path"] is True
     for batch in (commands[i::count] for i in range(count)):
-        code, batch_calls, batch_results = session(claude, batch, settings, model, effort, canary)
+        code, batch_calls, batch_results = session(claude, batch, settings, model, canary)
         sessions += 1
         for _ in range(2):
             if code or set(batch) <= set(batch_calls.values()):
                 break
-            code, batch_calls, batch_results = session(
-                claude, batch, settings, model, effort, canary
-            )
+            code, batch_calls, batch_results = session(claude, batch, settings, model, canary)
             sessions += 1
         calls |= batch_calls
         results |= batch_results

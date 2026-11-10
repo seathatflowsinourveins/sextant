@@ -1,6 +1,7 @@
 // GitHub workflow_run privilege separation and actions/github-script's Octokit REST pattern.
 // This adapter binds PR heads, routes the owner key policy and posts upstream verdicts/statuses.
 // Source paths, pins, REST pages and the Google landing-standard ruling: upstreams.json.
+const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -183,6 +184,74 @@ async function blockingPriority(github, context, number, head) {
   return (await reviewedHeadCount(github, context, number, head)) >= 3 ? 0 : 1;
 }
 
+// A clean base-branch update merge (GitHub REST pulls#update-a-pull-request-branch)
+// has two parents, the previous head and the base tip at merge time, and a tree
+// equal to the clean merge of those parents (git merge-tree --write-tree, read
+// 2026-11-09). A merge that also carries author changes, such as a fix folded into
+// a conflict resolution, has a different tree: it is an author head with its own
+// review, and the earlier head's failure is not carried into it.
+function cleanMergeTree(previous, base, repoPath = process.cwd()) {
+  const result = spawnSync('git', ['merge-tree', '--write-tree', '--no-messages', previous, base],
+    { cwd: repoPath, encoding: 'utf8' });
+  if (result.error) throw result.error;
+  // A conflicted merge exits 1, so an authored resolution produced this merge.
+  if (result.status === 1) return null;
+  if (result.status !== 0) throw Error(`git merge-tree failed: ${(result.stderr || '').trim()}`);
+  return result.stdout.split('\n')[0].trim();
+}
+
+async function isCleanBaseMerge(github, context, pr, commit, repoPath = process.cwd()) {
+  if (commit.parents?.length !== 2) return false;
+  const [previous, base] = commit.parents;
+  if (base.sha !== pr.base.sha) {
+    const { data: comparison } = await github.rest.repos.compareCommitsWithBasehead({
+      ...context.repo, basehead: `${base.sha}...${pr.base.sha}`,
+    });
+    if (comparison.status !== 'ahead' && comparison.status !== 'identical') return false;
+  }
+  return cleanMergeTree(previous.sha, base.sha, repoPath) === commit.commit.tree.sha;
+}
+
+// The last head the author changed behind a clean base-merge head: the merge
+// changes nothing the author wrote, so that head's review still speaks for the
+// work under review. Null when the head itself is not a clean base merge.
+async function lastAuthorHead(github, context, pr, head, repoPath = process.cwd()) {
+  let commit = (await github.rest.repos.getCommit({ ...context.repo, ref: head })).data;
+  if (!(await isCleanBaseMerge(github, context, pr, commit, repoPath))) return null;
+  for (let depth = 0; depth < 32; depth += 1) {
+    const sha = commit.parents[0].sha;
+    commit = (await github.rest.repos.getCommit({ ...context.repo, ref: sha })).data;
+    if (!(await isCleanBaseMerge(github, context, pr, commit, repoPath))) return sha;
+  }
+  throw Error('Base-branch update chain is longer than 32 merges');
+}
+
+// A clean base merge cannot clear a completed blocking verdict at the last author
+// head; only a fresh review at an author head can. Only a completed verdict is
+// carried. The reviewers record one status per family when they finish a review; a
+// run that was cancelled, lost its head or broke for infrastructure reasons records
+// nothing, so a clean base update is never blamed for it. The newest status per
+// family decides: a completed pass clears an earlier blocking verdict at the same head.
+async function recordVerdict(github, context, head, family, passed) {
+  await github.rest.repos.createCommitStatus({ ...context.repo, sha: head, context: `review-blocking-${family}`,
+    state: passed ? 'success' : 'failure',
+    description: passed ? 'The review completed without a blocking finding' : 'The review completed with a blocking finding' });
+}
+
+async function carriedReview(github, context, pr, head, repoPath = process.cwd()) {
+  const author = await lastAuthorHead(github, context, pr, head, repoPath);
+  if (!author) return '';
+  const statuses = await github.paginate(github.rest.repos.listCommitStatusesForRef,
+    { ...context.repo, ref: author, per_page: 100 });
+  const newest = new Map();
+  for (const status of statuses) {
+    if (!String(status.context || '').startsWith('review-blocking-') || newest.has(status.context)) continue;
+    newest.set(status.context, status);
+  }
+  if (![...newest.values()].some(status => status.state === 'failure' || status.state === 'error')) return '';
+  return `The last author head ${author.slice(0, 7)} has a completed blocking review verdict; a clean base merge cannot clear it`;
+}
+
 // The reviewer's schema: "patch is incorrect" is a verdict about the patch, so it
 // needs at least one finding. An incorrect verdict with no findings is an
 // incomplete review, whatever its prose says
@@ -239,6 +308,7 @@ async function qualityResult({ github, context, core }, number, head, text, fami
   }
   core.setOutput('followups', JSON.stringify(report.findings.filter(finding => finding.priority === null || finding.priority > threshold)
     .map(finding => `${family}: ${finding.title}\n${finding.body}`)));
+  await recordVerdict(github, context, head, family, passed);
   await github.rest.pulls.createReview({ ...context.repo, pull_number: Number(number), commit_id: head, event: 'COMMENT',
     body: `Review of ${head} (${family} quality review)\n\n${report.overall_explanation}\n\n` +
       report.findings.map(finding => `${finding.title}\n${finding.body}`).join('\n\n') });
@@ -251,6 +321,10 @@ async function dshResult({ github, context, core }, number, head, filename) {
   await current(github, context, number, head);
   core.setOutput('followups', JSON.stringify((report.findings || []).filter(finding => finding.severity !== 'error')
     .map(finding => `dsh: ${finding.file}:${finding.line ?? ''} ${finding.rule}\n${finding.message}`)));
+  if (report.headSha === head && !report.truncated && report.engine === 'model' &&
+      (report.verdict === 'pass' || report.verdict === 'needs-changes')) {
+    await recordVerdict(github, context, head, 'dsh', report.verdict === 'pass');
+  }
   if (report.headSha !== head || report.verdict !== 'pass' || report.truncated || report.engine !== 'model') {
     core.setFailed('The upstream report did not pass a complete model review at this head');
   }
@@ -275,14 +349,18 @@ async function finish({ github, context, core }, number, head, results, quality,
   if (!head) return;
   let passed = results.source === 'success' && results.dsh === 'success' &&
     (!quality || results[quality] === 'success');
+  let detail = '';
   try {
-    await current(github, context, number, head);
+    const pr = await current(github, context, number, head);
+    if (passed) detail = await carriedReview(github, context, pr, head);
+    if (detail) passed = false;
     await followupIssue(github, context, number, head, notes);
-  } catch { passed = false; }
+  } catch (error) { passed = false; detail = error.message; }
   await status(github, context, head, 'review', passed ? 'success' : 'failure',
-    passed ? 'dsh and every required quality review passed' : 'A required review failed, was skipped or did not complete');
-  if (!passed) core.setFailed('Required review did not pass');
+    passed ? 'dsh and every required quality review passed' : detail || 'A required review failed, was skipped or did not complete');
+  if (!passed) core.setFailed(detail || 'Required review did not pass');
 }
 
 module.exports = { marker, route, current, prepare, sourceResult, prompt, blockingPriority, reviewedHeadCount,
+  cleanMergeTree, isCleanBaseMerge, lastAuthorHead, carriedReview,
   qualityPassed, qualityResult, dshResult, followupIssue, finish };
