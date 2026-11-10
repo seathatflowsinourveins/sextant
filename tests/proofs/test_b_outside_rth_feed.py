@@ -18,14 +18,20 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 import pytest
+from alpaca.common.enums import Sort
 from alpaca.data.enums import DataFeed
 from alpaca.data.models import Quote, Trade
-from alpaca.data.requests import StockLatestQuoteRequest, StockLatestTradeRequest
+from alpaca.data.models.quotes import QuoteSet
+from alpaca.data.requests import (
+    StockLatestQuoteRequest,
+    StockLatestTradeRequest,
+    StockQuotesRequest,
+)
 from alpaca.trading.models import Order, Position, TradeAccount, TradeUpdate
 from alpaca.trading.requests import LimitOrderRequest, TrailingStopOrderRequest
 from alpaca.trading.stream import TradingStream
 
-from sextant.paper.b_feed import BMarketDataFeed, feed_for
+from sextant.paper.b_feed import BHistoricalTape, BMarketDataFeed, feed_for
 from sextant.paper.b_protector import BParameters, Protector, ProtectorStream
 from sextant.paper.config import PaperAccount
 from sextant.paper.sessions import Session
@@ -677,3 +683,51 @@ def test_the_silence_registry_row_says_what_is_measured() -> None:
     assert "UNCALIBRATED" in row["source"]
     assert "X4" not in row["source"]
     assert "docs/design.md" not in row["source"]
+
+
+class FakeHistoricalClient:
+    def __init__(self, rows: dict[str, list[dict[str, object]]]) -> None:
+        self.rows = rows
+        self.requests: list[StockQuotesRequest] = []
+
+    def get_stock_quotes(self, request: StockQuotesRequest) -> QuoteSet:
+        self.requests.append(request)
+        return QuoteSet(self.rows)
+
+
+def historical_rows() -> dict[str, list[dict[str, object]]]:
+    return {
+        "AAPL": [
+            {"t": "2026-11-09T21:59:00Z", "bp": 38.70, "ap": 38.71, "bs": 1, "as": 1},
+            {"t": "2026-11-09T17:47:18Z", "bp": 36.99, "ap": 37.00, "bs": 1, "as": 1},
+        ]
+    }
+
+
+def test_the_historical_tape_requests_the_session_feed_in_time_order() -> None:
+    client = FakeHistoricalClient(historical_rows())
+    tape = BHistoricalTape(client)
+    start = int(datetime(2026, 11, 9, 12, 47, tzinfo=ET).timestamp()) * SEC
+    end = int(datetime(2026, 11, 9, 18, 10, tzinfo=ET).timestamp()) * SEC
+
+    observations = tape.quotes("AAPL", start, end, "sip")
+
+    assert [item.bid for item in observations] == [Decimal("36.99"), Decimal("38.70")]
+    assert [item.ts_ns for item in observations] == sorted(item.ts_ns for item in observations)
+    request = client.requests[0]
+    assert request.symbol_or_symbols == "AAPL"
+    assert request.feed is DataFeed.SIP
+    assert request.sort is Sort.ASC
+    # alpaca-py converts the aware bounds to naive UTC before it sends them.
+    assert request.start == datetime(2026, 11, 9, 17, 47)
+    assert request.end == datetime(2026, 11, 9, 23, 10)
+
+
+@pytest.mark.parametrize(("feed", "expected"), [("sip", DataFeed.SIP), ("boats", DataFeed.BOATS)])
+def test_the_historical_tape_uses_the_sessions_feed(feed: str, expected: DataFeed) -> None:
+    client = FakeHistoricalClient(historical_rows())
+    tape = BHistoricalTape(client)
+
+    tape.quotes("AAPL", 0, 1, feed)
+
+    assert client.requests[0].feed is expected

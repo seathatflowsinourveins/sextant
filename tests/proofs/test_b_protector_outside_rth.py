@@ -8,15 +8,18 @@ Alpaca orders page read 2026-11-09).
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
 from decimal import Decimal
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 import pytest
+from alpaca.trading.enums import QueryOrderStatus
 from alpaca.trading.models import Order, Position, TradeAccount, TradeUpdate
 from alpaca.trading.requests import LimitOrderRequest, TrailingStopOrderRequest
 
+from sextant.paper.b_feed import QuoteObservation
 from sextant.paper.b_protector import BParameters, Protector
 from sextant.paper.config import PaperAccount
 from sextant.paper.sessions import Session
@@ -25,6 +28,10 @@ ET = ZoneInfo("America/New_York")
 NOW = datetime(2026, 11, 9, 20, 30, tzinfo=ET)  # after-hours, outside the regular session
 NOW_NS = int(NOW.timestamp()) * 1_000_000_000
 SEC = 1_000_000_000
+POST = datetime(2026, 11, 9, 18, 10, tzinfo=ET)  # the incident's post-session start
+POST_NS = int(POST.timestamp()) * SEC
+ENTRY = datetime(2026, 11, 9, 12, 47, 17, 479764, tzinfo=ET)  # the broker's filled entry
+ENTRY_NS = int(ENTRY.timestamp()) * SEC + ENTRY.microsecond * 1_000
 
 
 def b_account() -> PaperAccount:
@@ -89,6 +96,7 @@ def api_order(
     stop_price: str | None = None,
     limit_price: str | None = None,
     extended_hours: bool = False,
+    filled_at: str | None = None,
 ) -> Order:
     payload = {
         "id": str(uuid4()),
@@ -110,6 +118,8 @@ def api_order(
         payload["stop_price"] = stop_price
     if limit_price is not None:
         payload["limit_price"] = limit_price
+    if filled_at is not None:
+        payload["filled_at"] = filled_at
     return Order.model_validate(payload)
 
 
@@ -132,6 +142,7 @@ class FakeClient:
         self.account = api_account()
         self.positions: list[Position] = []
         self.orders: list[Order] = []
+        self.closed_orders: list[Order] = []
         self.submitted: list[TrailingStopOrderRequest | LimitOrderRequest] = []
         self.echoes: list[Order] = []
         self.cancelled: list[str] = []
@@ -148,6 +159,8 @@ class FakeClient:
 
     def get_orders(self, filter=None) -> list[Order]:
         self.calls.append("get_orders")
+        if getattr(filter, "status", None) == QueryOrderStatus.CLOSED:
+            return list(self.closed_orders)
         return list(self.orders)
 
     def get_order_by_client_id(self, client_id: str) -> Order:
@@ -183,8 +196,39 @@ class FakeClient:
         self.orders = [order for order in self.orders if str(order.id) != str(order_id)]
 
 
-def protector(client: FakeClient) -> Protector:
-    return Protector(client, b_account(), b_params(), now_ns=lambda: NOW_NS, feed="sip")
+class FakeHistory:
+    def __init__(
+        self,
+        observations: Sequence[QuoteObservation] = (),
+        error: Exception | None = None,
+    ) -> None:
+        self.observations = tuple(observations)
+        self.error = error
+        self.requests: list[tuple[str, int, int, str]] = []
+
+    def quotes(
+        self, symbol: str, start_ns: int, end_ns: int, feed: str
+    ) -> tuple[QuoteObservation, ...]:
+        self.requests.append((symbol, start_ns, end_ns, feed))
+        if self.error is not None:
+            raise self.error
+        return self.observations
+
+
+def protector(
+    client: FakeClient,
+    *,
+    history: FakeHistory | None = None,
+    now_ns: int = NOW_NS,
+) -> Protector:
+    return Protector(
+        client,
+        b_account(),
+        b_params(),
+        now_ns=lambda: now_ns,
+        feed="sip",
+        history=history,
+    )
 
 
 def drive_breach(p: Protector, *, bid: str = "99.505", trade: str = "99.40") -> None:
@@ -523,3 +567,146 @@ def test_the_0930_handover_snapshot_submits_only_the_released_limit() -> None:
     assert isinstance(exits[0], LimitOrderRequest)
     assert Decimal(str(exits[0].qty)) == Decimal("10")
     assert Decimal(str(exits[0].limit_price)) == Decimal("99.50")
+
+
+def ns(at: datetime) -> int:
+    return int(at.timestamp()) * SEC + at.microsecond * 1_000
+
+
+def quote_at(bid: str, at: datetime) -> QuoteObservation:
+    value = Decimal(bid)
+    return QuoteObservation("AAPL", value, value + Decimal("0.01"), None, ns(at))
+
+
+def tonight_client() -> FakeClient:
+    client = FakeClient()
+    client.positions = [api_position("55")]
+    client.orders = [api_order(qty="55", stop_price="36.465")]
+    client.closed_orders = [
+        api_order(
+            client_order_id="B001-entry-1",
+            qty="55",
+            filled_qty="55",
+            side="buy",
+            order_type="market",
+            status="filled",
+            filled_at="2026-11-09T17:47:17.479764Z",
+        )
+    ]
+    return client
+
+
+def tonight_history() -> FakeHistory:
+    return FakeHistory(
+        [
+            quote_at("38.70", datetime(2026, 11, 9, 16, 59, tzinfo=ET)),
+            quote_at("36.99", datetime(2026, 11, 9, 12, 47, 18, tzinfo=ET)),
+            quote_at("36.60", datetime(2026, 11, 9, 18, 9, tzinfo=ET)),
+        ]
+    )
+
+
+def test_a_start_rebuilds_the_after_hours_high_water_mark_from_the_tape() -> None:
+    client = tonight_client()
+    history = tonight_history()
+    p = protector(client, history=history, now_ns=POST_NS)
+    p.reconcile()
+
+    assert p.pages == []
+    assert client.submitted == []
+    assert p.emulated_trigger("AAPL") == Decimal("37.73")
+    assert history.requests == [("AAPL", ENTRY_NS, POST_NS, "sip")]
+
+    p.note_poll(POST_NS)
+    p.on_quote(
+        "AAPL",
+        bid=Decimal("36.60"),
+        ask=Decimal("36.61"),
+        last=None,
+        ts_ns=POST_NS,
+    )
+    p.watch()
+    line = next(line for line in reversed(p.states) if "tape=ok" in line)
+    assert "trigger=37.73" in line
+
+
+def test_a_restart_mid_session_keeps_the_rebuilt_level_and_never_lowers_it() -> None:
+    client = tonight_client()
+    first = protector(client, history=tonight_history(), now_ns=POST_NS)
+    first.reconcile()
+    assert first.emulated_trigger("AAPL") == Decimal("37.73")
+
+    second = protector(client, history=tonight_history(), now_ns=POST_NS)
+    second.reconcile()
+    assert second.pages == []
+    assert second.emulated_trigger("AAPL") == Decimal("37.73")
+
+    # A later native trail at a lower stop must not lower the rebuilt level.
+    client.orders = [api_order(qty="55", stop_price="36.00")]
+    second.reconcile()
+    assert second.emulated_trigger("AAPL") == Decimal("37.73")
+
+
+def test_a_session_change_rebuilds_on_the_new_feed_and_never_lowers_the_trigger() -> None:
+    client = tonight_client()
+    history = tonight_history()
+    clock = [POST_NS]
+    p = Protector(
+        client,
+        b_account(),
+        b_params(),
+        now_ns=lambda: clock[0],
+        feed="sip",
+        history=history,
+    )
+    p.reconcile()
+    assert p.emulated_trigger("AAPL") == Decimal("37.73")
+
+    overnight = datetime(2026, 11, 9, 20, 5, tzinfo=ET)
+    overnight_ns = ns(overnight)
+    clock[0] = overnight_ns
+    history.observations = (quote_at("37.00", overnight),)
+    p.set_feed("boats")
+    p.reconcile()
+
+    # The overnight tape's lower high cannot pull the after-hours level down.
+    assert p.emulated_trigger("AAPL") == Decimal("37.73")
+    assert history.requests[-1] == ("AAPL", ENTRY_NS, overnight_ns, "boats")
+
+
+def test_an_unreadable_tape_pages_once_and_keeps_the_native_stop() -> None:
+    client = tonight_client()
+    history = FakeHistory(error=RuntimeError("the tape is down"))
+    p = protector(client, history=history, now_ns=POST_NS)
+    p.reconcile()
+
+    assert p.emulated_trigger("AAPL") == Decimal("36.465")
+    assert [page.reason for page in p.pages] == ["outside_rth_tape_unreadable"]
+    p.reconcile()
+    assert [page.reason for page in p.pages] == ["outside_rth_tape_unreadable"]
+
+    p.note_poll(POST_NS)
+    p.on_quote("AAPL", bid=Decimal("36.60"), ask=Decimal("36.61"), last=None, ts_ns=POST_NS)
+    p.watch()
+    line = next(line for line in reversed(p.states) if "tape=unreadable" in line)
+    assert "trigger=36.465" in line
+    assert client.cancelled == []
+
+
+def test_an_unknown_entry_pages_and_keeps_the_native_stop() -> None:
+    client = FakeClient()
+    client.positions = [api_position("55")]
+    client.orders = [api_order(qty="55", stop_price="36.465")]
+    history = tonight_history()
+    p = protector(client, history=history, now_ns=POST_NS)
+    p.reconcile()
+
+    assert p.emulated_trigger("AAPL") == Decimal("36.465")
+    assert [page.reason for page in p.pages] == ["outside_rth_entry_unknown"]
+    assert history.requests == []
+
+    p.note_poll(POST_NS)
+    p.on_quote("AAPL", bid=Decimal("36.60"), ask=Decimal("36.61"), last=None, ts_ns=POST_NS)
+    p.watch()
+    line = next(line for line in reversed(p.states) if "tape=entry_unknown" in line)
+    assert "trigger=36.465" in line

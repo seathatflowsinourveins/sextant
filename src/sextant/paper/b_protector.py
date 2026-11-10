@@ -19,13 +19,14 @@ import asyncio
 import json
 import re
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from decimal import ROUND_FLOOR, Decimal, InvalidOperation
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
+from alpaca.common.enums import Sort
 from alpaca.common.exceptions import APIError
 from alpaca.trading.enums import OrderSide, QueryOrderStatus, TimeInForce
 from alpaca.trading.models import Order, Position, TradeAccount, TradeUpdate
@@ -39,9 +40,22 @@ from alpaca.trading.stream import TradingStream
 
 from sextant.execution.pacer import PacerRefused
 from sextant.exits.policy import ExitParams
-from sextant.paper.b_feed import BMarketDataFeed, FeedBatch, LatestDataClient, feed_for
+from sextant.paper.b_feed import (
+    BHistoricalTape,
+    BMarketDataFeed,
+    FeedBatch,
+    HistoricalQuoteClient,
+    LatestDataClient,
+    feed_for,
+    timestamp_ns,
+)
 from sextant.paper.config import PaperAccount
-from sextant.paper.outside_rth import OutsideRthError, OutsideRthTrail
+from sextant.paper.outside_rth import (
+    OutsideRthError,
+    OutsideRthTrail,
+    QuoteLike,
+    rebuild_trigger,
+)
 from sextant.paper.sessions import Session, session_at, session_start_ns
 
 B_LANE = "alpaca-paper-b"
@@ -178,6 +192,18 @@ class TradingClientLike(Protocol):
     def cancel_order_by_id(self, order_id: object) -> None: ...
 
 
+class HistoricalTape(Protocol):
+    """The historical-quote read the outside-RTH rebuild needs; the runner supplies alpaca-py."""
+
+    def quotes(
+        self,
+        symbol: str,
+        start_ns: int,
+        end_ns: int,
+        feed: str,
+    ) -> Sequence[QuoteLike]: ...
+
+
 def _event_name(event: object) -> str:
     return str(getattr(event, "value", event))
 
@@ -224,6 +250,7 @@ class Protector:
         exit_params: ExitParams | None = None,
         feed: str = "none",
         on_state: Callable[[str], None] | None = None,
+        history: HistoricalTape | None = None,
     ) -> None:
         if account.lane != B_LANE:
             raise ProtectorRefusal("B's protector runs only on the slot-2 B paper lane")
@@ -233,6 +260,7 @@ class Protector:
         self._now_ns = now_ns
         self._on_page = on_page
         self._on_state = on_state
+        self._history = history
         self.pages: list[Page] = []
         self.states: list[str] = []
         self._feed = feed
@@ -252,6 +280,10 @@ class Protector:
         self._released_symbols: set[str] = set()
         self._house: dict[str, list[Order]] = {}
         self._sequence = 0
+        self._tape_notes: dict[str, str] = {}
+        self._tape_paged: set[tuple[str, int]] = set()
+        self._entry_cache: dict[str, int | None] = {}
+        self._rebuilt_cache: dict[tuple[str, int], Decimal | None] = {}
         opened_ns = self._now_ns()
         self._feed_started_ns: int | None = opened_ns if feed != "none" else None
         self._segment_start_ns = session_start_ns(opened_ns)
@@ -345,6 +377,7 @@ class Protector:
                     trigger = state.trigger
                     basis = "bid"
         order_id = "none" if resting is None else str(resting.id)
+        note = self._tape_notes.get(symbol)
         line = (
             f"state mode={session.value} symbol={_safe_symbol(symbol)} "
             f"position={_state_number(position)} protected={_state_number(protected)} "
@@ -352,6 +385,8 @@ class Protector:
             f"feed={_safe_symbol(self._feed)} poll_age={self._poll_age(now_ns)} "
             f"quote_age={self._quote_age(symbol, now_ns)}"
         )
+        if note is not None:
+            line += f" tape={note}"
         key = (
             session.value,
             _state_number(position),
@@ -359,6 +394,7 @@ class Protector:
             tuple(sorted(str(order.id) for order in orders)),
             basis or "none",
             _safe_symbol(self._feed),
+            note or "none",
         )
         return line, key
 
@@ -565,8 +601,98 @@ class Protector:
             self._outside[symbol] = state
         return state
 
+    def _entry_ns(self, symbol: str) -> int | None:
+        """The fill that opened the held quantity, from the closed order history."""
+
+        if symbol in self._entry_cache:
+            return self._entry_cache[symbol]
+        remaining = self._last_position.get(symbol, Decimal(0))
+        if remaining <= 0:
+            self._entry_cache[symbol] = None
+            return None
+        orders = self._client.get_orders(
+            GetOrdersRequest(
+                status=QueryOrderStatus.CLOSED,
+                symbols=[symbol],
+                direction=Sort.DESC,
+                limit=OPEN_ORDER_LIMIT,
+            )
+        )
+        fills: list[tuple[datetime, str, Decimal]] = []
+        for order in orders:
+            filled = getattr(order, "filled_qty", None)
+            at = getattr(order, "filled_at", None)
+            if filled is None or not isinstance(at, datetime):
+                continue
+            try:
+                quantity = _decimal(filled, "order.filled_qty")
+            except ValueError:
+                continue
+            if quantity <= 0:
+                continue
+            fills.append((at, _event_name(getattr(order, "side", None)), quantity))
+        fills.sort(key=lambda item: item[0], reverse=True)
+        for at, side, quantity in fills:
+            if side == "sell":
+                remaining += quantity
+            elif side == "buy":
+                if quantity >= remaining:
+                    entry = timestamp_ns(at)
+                    self._entry_cache[symbol] = entry
+                    return entry
+                remaining -= quantity
+        self._entry_cache[symbol] = None
+        return None
+
+    def _rebuilt_trigger(self, symbol: str, now_ns: int) -> Decimal | None:
+        """Replay this session's tape since the entry; None when it cannot be trusted."""
+
+        session = session_at(now_ns)
+        feed = feed_for(session)
+        if self._history is None or feed is None:
+            return None
+        key = (symbol, self._segment_start_ns)
+        if key in self._rebuilt_cache:
+            return self._rebuilt_cache[key]
+        paged = key in self._tape_paged
+
+        def failed(note: str, reason: str, detail: str) -> Decimal | None:
+            self._tape_notes[symbol] = note
+            self._rebuilt_cache[key] = None
+            if not paged:
+                self._tape_paged.add(key)
+                self.page(reason, symbol, detail)
+            return None
+
+        try:
+            entry_ns = self._entry_ns(symbol)
+        except Exception as exc:
+            return failed(
+                "unreadable",
+                "outside_rth_tape_unreadable",
+                f"entry: {type(exc).__name__}",
+            )
+        if entry_ns is None:
+            return failed(
+                "entry_unknown",
+                "outside_rth_entry_unknown",
+                "no filled buy covers the held quantity",
+            )
+        try:
+            observations = self._history.quotes(symbol, entry_ns, now_ns, feed)
+            rebuilt = rebuild_trigger(
+                observations,
+                trail_fraction=self._parameters.native_trail_fraction,
+                params=self._exit_params,
+            )
+        except Exception as exc:
+            return failed("unreadable", "outside_rth_tape_unreadable", type(exc).__name__)
+        self._tape_notes[symbol] = "ok"
+        self._rebuilt_cache[key] = rebuilt
+        return rebuilt
+
     def _adopt_outside(self, symbol: str, order: Order) -> None:
-        """Keep the higher of the resting native stop and any existing emulated trigger."""
+        """Keep the higher of the native stop, the existing trigger and the rebuilt tape high."""
 
         state = self._outside_state(symbol)
         if state.released or state.pending:
@@ -580,9 +706,12 @@ class Protector:
             )
             return
         stop = _decimal(str(stop_price), "order.stop_price")
-        if state.trigger is not None and state.trigger >= stop:
+        now_ns = self._now_ns()
+        rebuilt = self._rebuilt_trigger(symbol, now_ns)
+        seed = stop if rebuilt is None or rebuilt <= stop else rebuilt
+        if state.trigger is not None and state.trigger >= seed:
             return
-        state.adopt(stop, self._now_ns())
+        state.adopt(seed, now_ns)
 
     def _begin_outside_release(self, symbol: str) -> None:
         """Cancel the trail and release one LIMIT after its terminal cancellation."""
@@ -768,6 +897,12 @@ class Protector:
             s: order_id for s, order_id in self._pending_rearm.items() if s in held
         }
         self._released_symbols &= held
+        self._tape_notes = {s: note for s, note in self._tape_notes.items() if s in held}
+        self._tape_paged = {key for key in self._tape_paged if key[0] in held}
+        self._entry_cache = {s: entry for s, entry in self._entry_cache.items() if s in held}
+        self._rebuilt_cache = {
+            key: value for key, value in self._rebuilt_cache.items() if key[0] in held
+        }
         if announce:
             self._announce_states(now_ns)
         return positions
@@ -1064,6 +1199,11 @@ class ProtectorStream(TradingStream):
         self._parameters = parameters
         self._now_ns = now_ns
         self._market_data = BMarketDataFeed(data_client) if data_client is not None else None
+        self._history = (
+            BHistoricalTape(cast(HistoricalQuoteClient, data_client))
+            if data_client is not None
+            else None
+        )
         self._last_feed_poll_ns = 0
         self._feed_failure: str | None = None
         self._feed_label = "none"
@@ -1076,6 +1216,7 @@ class ProtectorStream(TradingStream):
             on_page=on_page,
             feed=feed,
             on_state=on_state,
+            history=self._history,
         )
         self.subscribe_trade_updates(self._on_trade_update)
 

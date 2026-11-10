@@ -15,8 +15,13 @@ from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any, Protocol
 
+from alpaca.common.enums import Sort
 from alpaca.data.enums import DataFeed
-from alpaca.data.requests import StockLatestQuoteRequest, StockLatestTradeRequest
+from alpaca.data.requests import (
+    StockLatestQuoteRequest,
+    StockLatestTradeRequest,
+    StockQuotesRequest,
+)
 
 from sextant.paper.sessions import Session
 
@@ -71,7 +76,7 @@ def feed_for(session: Session) -> str | None:
     return None
 
 
-def _ns(value: datetime) -> int:
+def timestamp_ns(value: datetime) -> int:
     if value.tzinfo is None:
         value = value.replace(tzinfo=UTC)
     return int(value.timestamp()) * NS_PER_SECOND + value.microsecond * 1_000
@@ -133,7 +138,7 @@ class BMarketDataFeed:
         if price is None or not isinstance(at, datetime):
             return
         self._trade_price[symbol] = price
-        ts_ns = _ns(at)
+        ts_ns = timestamp_ns(at)
         if ts_ns <= self._trade_ts.get(symbol, -1):
             return
         self._trade_ts[symbol] = ts_ns
@@ -145,4 +150,61 @@ class BMarketDataFeed:
         at = getattr(raw, "timestamp", None)
         if bid is None or ask is None or bid > ask or not isinstance(at, datetime):
             return
-        fresh.append(QuoteObservation(symbol, bid, ask, self._trade_price.get(symbol), _ns(at)))
+        fresh.append(
+            QuoteObservation(symbol, bid, ask, self._trade_price.get(symbol), timestamp_ns(at))
+        )
+
+
+class HistoricalQuoteClient(Protocol):
+    """The alpaca-py historical-quote call the tape rebuild needs; a fake implements this."""
+
+    def get_stock_quotes(self, request: StockQuotesRequest) -> object: ...
+
+
+def _row_value(row: object, name: str) -> object:
+    if isinstance(row, Mapping):
+        return row.get(name)
+    return getattr(row, name, None)
+
+
+def _datetime_at(ts_ns: int) -> datetime:
+    seconds, nanos = divmod(ts_ns, NS_PER_SECOND)
+    return datetime.fromtimestamp(seconds, tz=UTC).replace(microsecond=nanos // 1_000)
+
+
+class BHistoricalTape:
+    """Read the session's historical quotes between two instants, oldest first."""
+
+    def __init__(self, client: HistoricalQuoteClient) -> None:
+        self._client = client
+
+    def quotes(
+        self,
+        symbol: str,
+        start_ns: int,
+        end_ns: int,
+        feed: str,
+    ) -> tuple[QuoteObservation, ...]:
+        if feed not in FEEDS:
+            raise ValueError("B's historical tape feed must be sip or boats")
+        response = self._client.get_stock_quotes(
+            StockQuotesRequest(
+                symbol_or_symbols=symbol,
+                start=_datetime_at(start_ns),
+                end=_datetime_at(end_ns),
+                feed=DataFeed(feed),
+                sort=Sort.ASC,
+            )
+        )
+        data = getattr(response, "data", response)
+        rows = data.get(symbol, ()) if isinstance(data, Mapping) else ()
+        observations: list[QuoteObservation] = []
+        for row in rows:
+            bid = _price(_row_value(row, "bid_price"))
+            ask = _price(_row_value(row, "ask_price"))
+            at = _row_value(row, "timestamp")
+            if bid is None or ask is None or bid > ask or not isinstance(at, datetime):
+                continue
+            observations.append(QuoteObservation(symbol, bid, ask, None, timestamp_ns(at)))
+        observations.sort(key=lambda item: item.ts_ns)
+        return tuple(observations)
