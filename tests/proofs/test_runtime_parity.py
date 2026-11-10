@@ -4,6 +4,7 @@ Fixture proofs of the installer and launchers. Native host listings are recorded
 deploy/wsl/lane-runtimes/parity-receipts.json.
 """
 
+import hashlib
 import importlib.util
 import json
 import os
@@ -371,6 +372,98 @@ def test_muse_is_pinned_to_metas_manifest_and_wonder_full_at_max() -> None:
     policy = json.loads((RUNTIMES / "model-policy.json").read_text())["meta"]
     assert policy["model"] == "muse-wonder-full-1.0" and policy["effort"] == "max"
     assert policy["contributor_mode"] == "off"
+
+
+@pytest.fixture
+def muse_delivery(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    parity, home = _parity(), tmp_path / "home"
+    cache = home / ".local/share/sextant-runtime-skills"
+    data = home / ".local/share/muse"
+    config = home / ".config/muse"
+    registry = data / "plugins/installed.json"
+    source = cache / "superpowers"
+    prefix = home / LANE
+    prefix.mkdir(parents=True)
+    (prefix / "repository-path").write_text(str(ROOT))
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config.parent))
+    monkeypatch.setenv("XDG_DATA_HOME", str(data.parent))
+    monkeypatch.setattr(sys, "argv", ["parity.py", "--runtime", "muse"])
+    skills = _skills(tmp_path / "skills")
+    monkeypatch.setattr(parity, "shelf", lambda _cache: skills)
+    (source / ".muse-plugin").mkdir(parents=True)
+    (source / ".muse-plugin/plugin.json").write_text(
+        '{"schemaVersion":1,"name":"superpowers","version":"7.0.2"}\n'
+    )
+    (source / "skills").mkdir()
+    (source / "skills/payload.md").write_text("original payload\n")
+    (source / "retired.txt").write_text("original retired payload\n")
+
+    def native(command: list[str]) -> None:
+        noun, verb, path, *args = command[1:]
+        assert (verb, args) == ("install", ["--scope", "user", "--json"])
+        origin = Path(path)
+        if noun == "skills":
+            shutil.copytree(origin, config / "skills" / origin.name)
+            return
+        assert noun == "plugins"
+        name = json.loads((origin / ".muse-plugin/plugin.json").read_text())["name"]
+        body = b"".join(
+            str(file.relative_to(origin)).encode() + b"\0" + file.read_bytes()
+            for file in sorted(origin.rglob("*"))
+            if file.is_file() and ".git" not in file.relative_to(origin).parts
+        )
+        digest = hashlib.sha256(body).hexdigest()
+        root = data / "plugins/cache/local" / name
+        if root.exists():
+            shutil.rmtree(root)
+        package = root / digest / "package"
+        shutil.copytree(origin, package, ignore=shutil.ignore_patterns(".git"))
+        state = (
+            json.loads(registry.read_text())
+            if registry.exists()
+            else {
+                "version": 1,
+                "plugins": {},
+            }
+        )
+        state["plugins"][name] = {
+            "id": name,
+            "enabled": True,
+            "source": {"provenance": "native-local", "path": str(origin)},
+            "cache_path": str(package.relative_to(data)),
+            "package_sha256": f"sha256:{digest}",
+        }
+        registry.write_text(json.dumps(state))
+
+    monkeypatch.setattr(parity, "_native", native)
+    return parity.main, source, registry, config, skills
+
+
+def test_parity_delivers_muse_skills_and_mcp_without_changing_settings(muse_delivery, capsys):
+    run, _source, registry, config, skills = muse_delivery
+    settings = config / "settings.json"
+    settings.parent.mkdir(parents=True)
+    settings.write_bytes(b'{"model":"owner-value"}\n')
+    assert run() == 0
+    first = capsys.readouterr()
+    assert 'muse: {"installed": 12}' in first.out
+    state = registry.read_bytes()
+    plugins = json.loads(state)["plugins"]
+    assert set(plugins) == {"superpowers", "sextant-mcp"}
+    mcp = registry.parents[1] / plugins["sextant-mcp"]["cache_path"]
+    manifest = json.loads((mcp / ".muse-plugin/plugin.json").read_text())
+    servers = {server["id"]: server for server in manifest["capabilities"]["mcpServers"]}
+    assert set(servers) == set(SPEC["mcp"])
+    for name, server in servers.items():
+        assert server["command"] == ["bash", f"mcp/{name}.sh"]
+        assert (mcp / server["command"][1]).is_file()
+    superpowers = set(SPEC["shelf"]["superpowers@superpowers-dev"]["skills"])
+    assert {path.name for path in (config / "skills").iterdir()} == set(skills) - superpowers
+    assert run() == 0
+    assert 'muse: {"unchanged": 12}' in capsys.readouterr().out
+    assert settings.read_bytes() == b'{"model":"owner-value"}\n'
+    assert registry.read_bytes() == state
 
 
 def test_qmd_is_on_every_runtimes_path() -> None:
