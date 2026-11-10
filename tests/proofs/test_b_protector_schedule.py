@@ -173,6 +173,8 @@ def test_the_registry_carries_the_scheduled_reconcile_interval(tmp_path):
         "reconcile_interval_s",
         "feed_poll_interval_s",
         "feed_silence_s",
+        "tape_read_timeout_s",
+        "tape_max_quotes",
     }
     assert all(row["calibration_state"] == "UNCALIBRATED" for row in rows)
     assert all(row["source"] for row in rows)

@@ -719,15 +719,15 @@ class FakeHistoricalClient:
 def historical_rows() -> dict[str, list[dict[str, object]]]:
     return {
         "AAPL": [
-            {"t": "2026-11-09T21:59:00Z", "bp": 38.70, "ap": 38.71, "bs": 1, "as": 1},
             {"t": "2026-11-09T17:47:18Z", "bp": 36.99, "ap": 37.00, "bs": 1, "as": 1},
+            {"t": "2026-11-09T21:59:00Z", "bp": 38.70, "ap": 38.71, "bs": 1, "as": 1},
         ]
     }
 
 
 def test_the_historical_tape_requests_the_session_feed_in_time_order() -> None:
     client = FakeHistoricalClient(historical_rows())
-    tape = BHistoricalTape(client)
+    tape = BHistoricalTape(client, 10_000)
     start = int(datetime(2026, 11, 9, 12, 47, tzinfo=ET).timestamp()) * SEC
     end = int(datetime(2026, 11, 9, 18, 10, tzinfo=ET).timestamp()) * SEC
 
@@ -739,6 +739,7 @@ def test_the_historical_tape_requests_the_session_feed_in_time_order() -> None:
     assert request.symbol_or_symbols == "AAPL"
     assert request.feed is DataFeed.SIP
     assert request.sort is Sort.ASC
+    assert request.limit == 10_000
     # alpaca-py converts the aware bounds to naive UTC before it sends them.
     assert request.start == datetime(2026, 11, 9, 17, 47)
     assert request.end == datetime(2026, 11, 9, 23, 10)
@@ -747,7 +748,7 @@ def test_the_historical_tape_requests_the_session_feed_in_time_order() -> None:
 @pytest.mark.parametrize(("feed", "expected"), [("sip", DataFeed.SIP), ("boats", DataFeed.BOATS)])
 def test_the_historical_tape_uses_the_sessions_feed(feed: str, expected: DataFeed) -> None:
     client = FakeHistoricalClient(historical_rows())
-    tape = BHistoricalTape(client)
+    tape = BHistoricalTape(client, 10_000)
 
     tape.quotes("AAPL", 0, 1, feed)
 
@@ -768,27 +769,13 @@ def test_the_tape_windows_split_at_the_feed_boundaries() -> None:
     assert feeds == ["boats", "sip"]
 
 
-def test_a_hung_tape_read_leaves_the_loop_counting_breaches_and_paging(monkeypatch) -> None:
-    import threading
-
-    entered = threading.Event()
-    release = threading.Event()
-    finished = threading.Event()
-    failures: list[BaseException] = []
-
-    class BlockingHistory(FakeDataClient):
-        def get_stock_quotes(self, request: StockQuotesRequest) -> object:
-            entered.set()
-            release.wait(5)
-            return QuoteSet({})
-
-    monkeypatch.setattr(TradingStream, "_start_ws", _noop_start_ws)
+def tonight_client() -> FakeClient:
     client = FakeClient()
     client.positions = [api_position("55")]
-    client.orders = [api_order(stop_price="36.465", submitted_at="2026-11-09T17:47:16Z")]
+    client.orders = [api_order(qty="55", stop_price="36.465", submitted_at="2026-11-09T17:47:18Z")]
     client.closed_orders = [
         api_order(
-            client_order_id="B001-entry",
+            client_order_id="owner-entry",
             side="buy",
             qty="55",
             filled_qty="55",
@@ -797,288 +784,178 @@ def test_a_hung_tape_read_leaves_the_loop_counting_breaches_and_paging(monkeypat
             filled_at="2026-11-09T17:47:17.479764Z",
         )
     ]
-    stream = ProtectorStream(
+    return client
+
+
+def started_line(client: FakeClient, history: object, at_ns: int) -> tuple[Protector, str]:
+    p = Protector(
         client,
         b_account(),
         b_params(),
-        api_key="test-key",
-        secret_key="test-secret",  # noqa: S106 - fixture, never a real key
-        now_ns=lambda: NOW_NS,
-        feed="boats",
-        data_client=BlockingHistory(),
+        now_ns=lambda: at_ns,
+        feed="sip",
+        history=history,  # type: ignore[arg-type]
     )
-
-    async def run_startup() -> None:
-        await stream._start_ws()
-        finished.set()
-        # Keep the loop (and its executor threads) alive until teardown releases
-        # the blocked read, so a failing run does not wait on executor shutdown.
-        await asyncio.to_thread(release.wait, 5)
-
-    def start() -> None:
-        try:
-            asyncio.run(run_startup())
-        except BaseException as error:
-            failures.append(error)
-        finally:
-            finished.set()
-
-    startup = threading.Thread(target=start, daemon=True)
-    startup.start()
-    try:
-        assert entered.wait(2), "the historical read was never entered"
-        assert finished.wait(2), (
-            "the loop did not return while the read hung: no watchdog page was emitted"
-        )
-        pages = [page.reason for page in stream.protector.pages]
-        assert "outside_rth_feed_silent" in pages, pages
-        task = stream._tape_task
-        assert task is not None and not task.done(), "the historical read should still be in flight"
-    finally:
-        release.set()
-        finished.wait(5)
-        startup.join(5)
-    assert not failures, failures
+    p.rebuild_tapes()
+    p.reconcile()
+    p.note_poll(at_ns)
+    p.on_quote("AAPL", bid=Decimal("36.60"), ask=Decimal("36.61"), last=None, ts_ns=at_ns)
+    p.watch()
+    return p, p.states[-1]
 
 
-async def _noop_start_ws(self: object) -> None:
-    return None
+class Shaped:
+    def __init__(self, data: object) -> None:
+        self.data = data
 
 
-def _probe_stream(clock: list[int], client: FakeClient | None = None) -> ProtectorStream:
-    if client is None:
-        client = FakeClient()
-        client.positions = [api_position("10")]
-        client.orders = [api_order(stop_price="99.45")]
-    stream = ProtectorStream(
-        client,
-        b_account(),
-        b_params(),
-        api_key="test-key",
-        secret_key="test-secret",  # noqa: S106 - fixture, never a real key
-        now_ns=lambda: clock[0],
-        feed="boats",
-        data_client=FakeDataClient(quote=api_quote()),
-    )
-    stream.protector.reconcile()
-    return stream
+class ShapeClient:
+    def __init__(self, response: object) -> None:
+        self.response = response
+
+    def get_stock_quotes(self, request: StockQuotesRequest) -> object:
+        return self.response
 
 
-def test_a_timed_out_read_is_retried_on_a_later_cadence_tick() -> None:
-    from sextant.paper.b_protector import TapeRead
-
-    async def scenario() -> None:
-        clock = [NOW_NS]
-        stream = _probe_stream(clock)
-        pending: asyncio.Future[TapeRead] = asyncio.get_running_loop().create_future()
-        stream.protector.begin_tape("AAPL", Decimal("10"), clock[0])
-        line, _ = stream.protector._state_snapshot("AAPL", clock[0])
-        assert "tape=none" in line
-        stream._tape_task = pending  # type: ignore[assignment]
-        stream._tape_symbol = "AAPL"
-        stream._tape_started_ns = clock[0]
-        clock[0] += 6 * SEC
-        stream._drain_tape()
-        assert stream.protector._tape_notes["AAPL"] == "none"
-        assert [page.reason for page in stream.protector.pages] == ["outside_rth_tape_unreadable"]
-        clock[0] += 10 * SEC
-        assert stream.protector.tape_candidates(clock[0]) == [("AAPL", Decimal("10"))]
-        stream._poll_tape()
-        assert stream._tape_task is not pending, "timed-out task still blocks the retry"
-        await asyncio.sleep(0)
-        stream._drain_tape()
-
-    asyncio.run(asyncio.wait_for(scenario(), 10))
+POST_AT_NS = ns(datetime(2026, 11, 9, 18, 10, tzinfo=ET))
 
 
-def test_incomplete_states_page_once_per_symbol_per_session() -> None:
-    from sextant.paper.b_protector import TapeRead
+@pytest.mark.parametrize(
+    "response",
+    [Shaped({"aapl": []}), Shaped([]), {"AAPL": []}],
+    ids=["other-symbol-key", "non-mapping", "no-data-attribute"],
+)
+def test_a_malformed_tape_response_is_partial_never_ok(response: object) -> None:
+    # F6: an unexpected shape is not an empty window.
+    tape = BHistoricalTape(ShapeClient(response), 10_000)
+    p, line = started_line(tonight_client(), tape, POST_AT_NS)
 
-    clock = [NOW_NS]
-    stream = _probe_stream(clock)
-    stream.protector.tape_timed_out("AAPL", clock[0])
-    stream.protector.tape_timed_out("AAPL", clock[0])
-    stream.protector.tape_failed("AAPL", clock[0], "fixture failure")
-    stream.protector.apply_tape(
-        TapeRead("AAPL", Decimal("10"), clock[0], None, "partial"), clock[0]
-    )
-    assert stream.protector._tape_notes["AAPL"] == "partial"
-    assert [page.symbol for page in stream.protector.pages] == ["AAPL"]
-    stream.protector.tape_failed("MSFT", clock[0], "fixture failure")
-    assert stream.protector._tape_notes["MSFT"] == "none"
-    assert [page.symbol for page in stream.protector.pages] == ["AAPL", "MSFT"]
-    clock[0] = ns(datetime(2026, 11, 10, 4, 5, tzinfo=ET))
-    stream.protector.set_feed("sip")
-    stream.protector.tape_failed("AAPL", clock[0], "fixture failure")
-    stream.protector.tape_timed_out("AAPL", clock[0])
-    assert stream.protector._tape_notes["AAPL"] == "none"
-    assert [page.symbol for page in stream.protector.pages] == ["AAPL", "MSFT", "AAPL"]
+    assert "tape=partial" in line and "trigger=36.465" in line, line
+    assert [page.reason for page in p.pages] == ["outside_rth_tape_unreadable"]
 
 
-def test_a_broker_record_read_failure_is_none(monkeypatch) -> None:
-    from sextant.paper.b_protector import read_tape as module_read_tape
-
-    client = FakeClient()
-
-    def unavailable(filter=None) -> list[Order]:
-        raise RuntimeError("fixture unavailable")
-
-    monkeypatch.setattr(client, "get_orders", unavailable)
-    stream = _probe_stream([NOW_NS])
-    result = module_read_tape(
-        client,
-        BHistoricalTape(FakeHistoricalClient(historical_rows())),
-        "AAPL",
-        Decimal("55"),
-        NOW_NS,
-        trail_fraction=stream._parameters.native_trail_fraction,
-        params=stream.protector._exit_params,
-        house_prefix=stream.protector._account.house_prefix,
-    )
-    assert result.status == "none"
-    assert result.reason == "outside_rth_tape_unreadable"
-
-
-def test_a_timed_out_read_is_not_reported_as_ok_when_it_lands_late() -> None:
-    from sextant.paper.b_protector import TapeRead
-
-    async def scenario() -> None:
-        clock = [NOW_NS]
-        stream = _probe_stream(clock)
-        pending: asyncio.Future[TapeRead] = asyncio.get_running_loop().create_future()
-        stream.protector.begin_tape("AAPL", Decimal("10"), clock[0])
-        stream._tape_task = pending  # type: ignore[assignment]
-        stream._tape_symbol = "AAPL"
-        stream._tape_started_ns = clock[0]
-        clock[0] += 6 * SEC
-        stream._drain_tape()
-        assert stream.protector._tape_notes["AAPL"] == "none"
-        pending.set_result(TapeRead("AAPL", Decimal("10"), clock[0], None, "ok"))
-        stream._drain_tape()
-        line, _ = stream.protector._state_snapshot("AAPL", clock[0])
-        assert "tape=ok" not in line, line
-
-    asyncio.run(asyncio.wait_for(scenario(), 10))
-
-
-def test_a_read_that_completed_after_its_budget_before_drain_is_not_ok() -> None:
-    from sextant.paper.b_protector import TapeRead
-
-    async def scenario() -> None:
-        clock = [NOW_NS]
-        stream = _probe_stream(clock)
-        pending: asyncio.Future[TapeRead] = asyncio.get_running_loop().create_future()
-        stream.protector.begin_tape("AAPL", Decimal("10"), clock[0])
-        stream._tape_task = pending  # type: ignore[assignment]
-        stream._tape_symbol = "AAPL"
-        stream._tape_started_ns = clock[0]
-        clock[0] += 6 * SEC
-        pending.set_result(TapeRead("AAPL", Decimal("10"), clock[0], None, "ok"))
-        stream._drain_tape()
-        line, _ = stream.protector._state_snapshot("AAPL", clock[0])
-        assert "tape=ok" not in line, line
-        assert stream.protector._tape_notes["AAPL"] == "none"
-        assert [page.reason for page in stream.protector.pages] == ["outside_rth_tape_unreadable"]
-
-    asyncio.run(asyncio.wait_for(scenario(), 10))
-
-
-def test_a_previous_feed_result_does_not_complete_the_new_session() -> None:
-    from sextant.paper.b_protector import TapeRead
-    from sextant.paper.b_protector import read_tape as module_read_tape
-
-    async def scenario() -> None:
-        before = ns(datetime(2026, 11, 9, 19, 59, 59, tzinfo=ET))
-        after = ns(datetime(2026, 11, 9, 20, 0, 1, tzinfo=ET))
-        clock = [before]
-        client = FakeClient()
-        client.positions = [api_position("55")]
-        client.orders = [api_order(stop_price="36.465", submitted_at="2026-11-09T17:47:16Z")]
-        client.closed_orders = [
-            api_order(
-                client_order_id="B001-entry",
-                side="buy",
-                qty="55",
-                filled_qty="55",
-                status="filled",
-                submitted_at="2026-11-09T17:47:16Z",
-                filled_at="2026-11-09T17:47:17.479764Z",
-            )
+def test_a_window_that_reaches_the_quote_bound_is_partial() -> None:
+    rows = {
+        "AAPL": [
+            {"t": "2026-11-09T21:59:00Z", "bp": 38.70, "ap": 38.71, "bs": 1, "as": 1},
+            {"t": "2026-11-09T22:00:00Z", "bp": 38.60, "ap": 38.61, "bs": 1, "as": 1},
         ]
-        history = BHistoricalTape(FakeHistoricalClient(historical_rows()))
-        stream = ProtectorStream(
-            client,
-            b_account(),
-            b_params(),
-            api_key="test-key",
-            secret_key="test-secret",  # noqa: S106 - fixture, never a real key
-            now_ns=lambda: clock[0],
-            feed="boats",
-            data_client=history._client,  # type: ignore[arg-type]
-        )
-        stream.protector.reconcile()
-        stream.protector.set_feed("sip")
-        stream.protector.begin_tape("AAPL", Decimal("55"), clock[0])
-        result = module_read_tape(
-            client,
-            history,
-            "AAPL",
-            Decimal("55"),
-            before,
-            trail_fraction=stream._parameters.native_trail_fraction,
-            params=stream.protector._exit_params,
-            house_prefix=stream.protector._account.house_prefix,
-        )
-        assert result.status == "ok"
-        assert isinstance(history._client, FakeHistoricalClient)
-        assert len(history._client.requests) == 1
-        completed: asyncio.Future[TapeRead] = asyncio.get_running_loop().create_future()
-        completed.set_result(result)
-        stream._tape_task = completed  # type: ignore[assignment]
-        stream._tape_symbol = "AAPL"
-        stream._tape_started_ns = before
-        clock[0] = after
-        stream.protector.set_feed("boats")
-        stream._drain_tape()
-        candidates = stream.protector.tape_candidates(after)
-        line, _ = stream.protector._state_snapshot("AAPL", after)
-        assert "tape=ok" not in line, line
-        assert candidates == [("AAPL", Decimal("55"))]
+    }
+    tape = BHistoricalTape(FakeHistoricalClient(rows), 2)
+    _, line = started_line(tonight_client(), tape, POST_AT_NS)
 
-    asyncio.run(asyncio.wait_for(scenario(), 10))
+    assert "tape=partial" in line and "trigger=36.465" in line, line
 
 
-class RecordingPacer:
-    def __init__(self) -> None:
-        self.kinds: list[object] = []
+def test_a_read_that_hangs_at_start_reaches_its_bound_and_b_starts_protecting() -> None:
+    # Witness iv: a server that accepts and never answers; the transport timeout ends the read.
+    import socket
+    import threading
+    import time
 
-    def request(self, kind: object, send, *, admission) -> None:
-        self.kinds.append(kind)
-        send(lambda: None)
+    from alpaca.data.historical.stock import StockHistoricalDataClient
+
+    from sextant.paper.b_feed import bound_transport
+
+    server = socket.socket()
+    server.bind(("127.0.0.1", 0))
+    server.listen(1)
+    hold = threading.Event()
+
+    def accept_and_hang() -> None:
+        connection, _ = server.accept()
+        hold.wait(3)  # the test's own hard bound: the RED side cannot hang past it
+        connection.close()
+
+    threading.Thread(target=accept_and_hang, daemon=True).start()
+    data = StockHistoricalDataClient(
+        "fixture-key", "fixture-secret", url_override=f"http://127.0.0.1:{server.getsockname()[1]}"
+    )
+    try:
+        bound_transport(data, Decimal("0.2"))
+        tape = BHistoricalTape(data, 10_000)
+        began = time.monotonic()
+        p, line = started_line(tonight_client(), tape, POST_AT_NS)
+        elapsed = time.monotonic() - began
+    finally:
+        hold.set()
+        server.close()
+
+    assert elapsed < 2, elapsed
+    assert "tape=partial" in line and "trigger=36.465" in line and "protected=55" in line, line
+    assert [page.reason for page in p.pages] == ["outside_rth_tape_unreadable"]
 
 
-class RefusingPacer:
-    def request(self, kind: object, send, *, admission) -> None:
-        return
+def paced(tokens: int):
+    from sextant.execution.pacer import AccountPacer
+    from sextant.paper.b_protector_main import BudgetControls
+    from sextant.paper.config import PaperBudget
+
+    budget = PaperBudget(requests=180, window_s=60, broker_cap=200, external_reserve=20, source="t")
+    pacer = AccountPacer(BudgetControls(budget), now_ns=lambda: 0)  # type: ignore[arg-type]
+    pacer.bucket.tokens = tokens
+    return pacer
 
 
 def test_historical_quote_reads_wait_on_the_account_pacer() -> None:
-    from sextant.execution.pacer import ActionKind
     from sextant.paper.b_protector_main import PacedHistoricalDataClient
 
-    pacer = RecordingPacer()
+    pacer = paced(1)
     client = FakeHistoricalClient(historical_rows())
-    tape = BHistoricalTape(PacedHistoricalDataClient(client, pacer))
+    tape = BHistoricalTape(PacedHistoricalDataClient(client, pacer), 10_000)  # type: ignore[arg-type]
     tape.quotes("AAPL", 0, 1, "sip")
-    assert pacer.kinds == [ActionKind.QUERY]
+    assert len(client.requests) == 1
+    assert pacer.bucket.tokens == 0
 
 
-def test_a_refused_historical_quote_read_does_not_touch_the_client() -> None:
+def test_a_refused_historical_read_is_withdrawn_and_never_runs_later() -> None:
+    # R4 / F2: a refused read leaves the pacer's queue; a later drain must not send it.
     from sextant.execution.pacer import PacerRefused
     from sextant.paper.b_protector_main import PacedHistoricalDataClient
 
+    pacer = paced(0)
     client = FakeHistoricalClient(historical_rows())
-    tape = BHistoricalTape(PacedHistoricalDataClient(client, RefusingPacer()))
+    tape = BHistoricalTape(PacedHistoricalDataClient(client, pacer), 10_000)  # type: ignore[arg-type]
     with pytest.raises(PacerRefused):
         tape.quotes("AAPL", 0, 1, "sip")
+    assert pacer.queue == []
+    pacer.bucket.tokens = 5
+    pacer.drain()
     assert client.requests == []
+
+
+def test_the_stream_reads_the_tape_once_before_its_loop_and_never_inside_it(monkeypatch) -> None:
+    # R1/R2: production's own path; the read runs before the loop exists, then never again.
+    reads: list[bool] = []
+
+    class LoopProbe:
+        def quotes(self, symbol: str, start_ns: int, end_ns: int, feed: str) -> tuple:
+            try:
+                asyncio.get_running_loop()
+                reads.append(True)
+            except RuntimeError:
+                reads.append(False)
+            return ()
+
+    async def no_connect(self) -> None:
+        return None
+
+    def loop_body(self) -> None:
+        asyncio.run(self._start_ws())
+
+    monkeypatch.setattr(TradingStream, "_start_ws", no_connect)
+    monkeypatch.setattr(TradingStream, "run", loop_body)
+    stream = ProtectorStream(
+        tonight_client(),
+        b_account(),
+        b_params(),
+        api_key="test-key",
+        secret_key="test-secret",  # noqa: S106 - fixture, never a real key
+        now_ns=lambda: POST_AT_NS,
+        history=LoopProbe(),  # type: ignore[arg-type]
+    )
+    stream.run()
+    stream.protector.reconcile()
+
+    assert reads == [False]
+    assert stream.protector.emulated_trigger("AAPL") == Decimal("36.465")

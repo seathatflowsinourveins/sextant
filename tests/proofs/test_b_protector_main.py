@@ -126,7 +126,9 @@ def test_main_wires_the_handler_refuses_a_slot_one_config_and_checks_the_account
     )
 
     assert result == 0
-    assert client.calls == ["get_account", "get_account"]
+    # The account check, then bind; outside RTH the one start tape read lists positions.
+    assert client.calls[:2] == ["get_account", "get_account"]
+    assert set(client.calls[2:]) <= {"get_all_positions"}
     assert runs == ["run"]
     assert len(wired) == 1
     assert asyncio.iscoroutinefunction(wired[0])
@@ -216,7 +218,9 @@ def test_main_prefers_a_full_expected_account_id_over_the_suffix(tmp_path, monke
     assert result == 0
     assert pages == []
     assert runs == ["run"]
-    assert client.calls == ["get_account", "get_account"]
+    # The account check, then bind; outside RTH the one start tape read lists positions.
+    assert client.calls[:2] == ["get_account", "get_account"]
+    assert set(client.calls[2:]) <= {"get_all_positions"}
 
 
 def test_a_second_writer_holding_the_account_lease_refuses_before_any_broker_call(

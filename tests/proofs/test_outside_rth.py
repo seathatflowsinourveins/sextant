@@ -194,3 +194,14 @@ def test_rebuild_trigger_replays_the_tape_in_order_and_keeps_the_high_mark() -> 
 
 def test_rebuild_trigger_is_none_without_observations() -> None:
     assert rebuild_trigger([], trail_fraction=D("0.025"), params=ExitParams.starts()) is None
+
+
+def test_raising_the_trigger_keeps_the_breach_run() -> None:
+    # F5: two prints already counted against 99.45; a higher adoption must not forget them.
+    state = trail()
+    state.adopt(D("99.45"), T0)
+    assert state.observe_trade(D("99.40"), T0) is False
+    assert state.observe_trade(D("99.40"), T0 + SEC // 2) is False
+    state.adopt(D("99.60"), T0 + SEC // 2)
+    assert state.trigger == D("99.60")
+    assert state.observe_trade(D("99.40"), T0 + SEC) is True

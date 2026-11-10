@@ -33,7 +33,7 @@ from alpaca.trading.client import TradingClient
 
 from sextant.execution.custody import AccountScope, WriterLease
 from sextant.execution.pacer import AccountPacer, ActionKind, PacerRefused
-from sextant.paper.b_feed import LatestDataClient
+from sextant.paper.b_feed import BHistoricalTape, LatestDataClient, bound_transport
 from sextant.paper.b_protector import (
     BParameters,
     Page,
@@ -67,19 +67,30 @@ class PacedTradingClient:
         self._client = client
         self._pacer = pacer
 
-    def _call(self, kind: ActionKind, method: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+    def _call(
+        self,
+        kind: ActionKind,
+        method: Callable[..., Any],
+        *args: Any,
+        withdraw: bool = False,
+    ) -> Any:
+        """One paced call; ``withdraw`` removes a refused request so it never runs later."""
+
         results: list[Any] = []
         state = {"cancelled": False}
 
         def send(before_wire: Callable[[], None]) -> None:
             before_wire()
-            results.append(method(*args, **kwargs))
+            results.append(method(*args))
 
         def admission() -> bool:
             return not state["cancelled"]
 
         self._pacer.request(kind, send, admission=admission)
         if not results:
+            state["cancelled"] = withdraw
+            if withdraw:
+                self._pacer.drain()
             raise PacerRefused(f"the account pacer did not admit {method.__name__}")
         return results[0]
 
@@ -102,30 +113,12 @@ class PacedTradingClient:
         self._call(ActionKind.CANCEL, self._client.cancel_order_by_id, order_id)
 
 
-class PacedHistoricalDataClient:
-    """Historical quote reads wait on the account pacer; latest polls stay direct."""
-
-    def __init__(self, client: Any, pacer: Any) -> None:
-        self._client = client
-        self._pacer = pacer
-
-    def get_stock_latest_quote(self, request: Any) -> Any:
-        return self._client.get_stock_latest_quote(request)
-
-    def get_stock_latest_trade(self, request: Any) -> Any:
-        return self._client.get_stock_latest_trade(request)
+class PacedHistoricalDataClient(PacedTradingClient):
+    """The start tape read waits on the account pacer; a refused read is withdrawn."""
 
     def get_stock_quotes(self, request: Any) -> Any:
-        results: list[Any] = []
-
-        def send(before_wire: Callable[[], None]) -> None:
-            before_wire()
-            results.append(self._client.get_stock_quotes(request))
-
-        self._pacer.request(ActionKind.QUERY, send, admission=lambda: True)
-        if not results:
-            raise PacerRefused("the account pacer did not admit the historical quote read")
-        return results[0]
+        client: Any = self._client
+        return self._call(ActionKind.QUERY, client.get_stock_quotes, request, withdraw=True)
 
 
 class BudgetControls:
@@ -276,8 +269,16 @@ def main(
         except Exception as exc:
             on_page(Page(reason="feed_client_failed", detail=type(exc).__name__))
             data_client = None
-        if data_client is not None:
-            data_client = cast(LatestDataClient, PacedHistoricalDataClient(data_client, pacer))
+        history: BHistoricalTape | None = None
+        timeout_s, max_quotes = parameters.tape_read_timeout_s, parameters.tape_max_quotes
+        if data_client is not None and timeout_s is not None and max_quotes is not None:
+            try:
+                tape_client = data_client_factory(api_key=api_key, secret_key=secret_key)
+                bound_transport(tape_client, timeout_s)
+                paced = PacedHistoricalDataClient(cast(TradingClientLike, tape_client), pacer)
+                history = BHistoricalTape(paced, int(max_quotes))
+            except Exception as exc:
+                on_page(Page(reason="outside_rth_tape_unreadable", detail=type(exc).__name__))
         stream = ProtectorStream(
             client,
             account,
@@ -288,6 +289,7 @@ def main(
             on_page=on_page,
             on_state=on_state,
             data_client=data_client,
+            history=history,
         )
         _check_expected_account(client, on_page)
         previous = signal.signal(signal.SIGTERM, _sigterm_handler(stream))

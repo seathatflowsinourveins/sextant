@@ -30,5 +30,21 @@
     "source": "lead decision 2026-11-09 (M4 outside-RTH witness; a quiet poller must page while protection is unarmed); the release's own freshness bound is OUTSIDE_QUOTE_MAX_AGE_S = 2 s in src/sextant/paper/outside_rth.py:29 (the quote_max_age_s row cited there), used only when no successful poll can vouch for the standing quote; 5 s is an uncalibrated poll-liveness bound that tolerates the 1 s poll plus jitter; UNCALIBRATED",
     "calibration_state": "UNCALIBRATED",
     "last_change": "2026-11-09"
+  },
+  {
+    "name": "tape_read_timeout_s",
+    "unit": "seconds of requests' connect and read timeout on each historical tape request at process start",
+    "value": "3.05",
+    "source": "requests docs, Advanced Usage > Timeouts, read 2026-11-10, requests 2.34.2 installed (connect timeouts slightly larger than a multiple of 3, the TCP retransmission window, with the 3.05 example; one value bounds connect and each read; neither is wall clock); applied through a mounted requests HTTPAdapter (Advanced Usage > Transport Adapters) on alpaca-py v0.44.0's RESTClient session (alpaca/common/rest.py:69,195); lead ruling LEAD-0010 R3; UNCALIBRATED",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-10"
+  },
+  {
+    "name": "tape_max_quotes",
+    "unit": "quotes per historical tape request at process start; a window that reaches it is partial",
+    "value": "10000",
+    "source": "alpacahq/alpaca-py v0.44.0 alpaca/common/rest.py:368-408 (_get_marketdata page_limit = 10,000 rows, so this is one page per window); lead ruling LEAD-0010 R3; UNCALIBRATED",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-10"
   }
 ]

@@ -590,13 +590,17 @@ def quote_at(bid: str, at: datetime) -> QuoteObservation:
     return QuoteObservation("AAPL", value, value + Decimal("0.01"), None, ns(at))
 
 
+CLAIM = datetime(2026, 11, 9, 12, 47, 18, tzinfo=ET)  # B's first house trail after the fill
+CLAIM_NS = ns(CLAIM)
+
+
 def tonight_client() -> FakeClient:
     client = FakeClient()
     client.positions = [api_position("55")]
-    client.orders = [api_order(qty="55", stop_price="36.465", submitted_at="2026-11-09T17:47:16Z")]
+    client.orders = [api_order(qty="55", stop_price="36.465", submitted_at="2026-11-09T17:47:18Z")]
     client.closed_orders = [
         api_order(
-            client_order_id="B001-entry-1",
+            client_order_id="owner-entry-1",
             qty="55",
             filled_qty="55",
             side="buy",
@@ -613,44 +617,48 @@ def tonight_history() -> FakeHistory:
     return FakeHistory(
         [
             quote_at("38.70", datetime(2026, 11, 9, 16, 59, tzinfo=ET)),
-            quote_at("36.99", datetime(2026, 11, 9, 12, 47, 18, tzinfo=ET)),
+            quote_at("36.99", CLAIM),
             quote_at("36.60", datetime(2026, 11, 9, 18, 9, tzinfo=ET)),
         ]
     )
+
+
+def start(p: Protector) -> None:
+    """The stream's process start: the one tape read, then the first reconcile."""
+
+    p.rebuild_tapes()
+    p.reconcile()
+
+
+def line_for(p: Protector, at_ns: int, bid: str) -> str:
+    p.note_poll(at_ns)
+    p.on_quote("AAPL", bid=Decimal(bid), ask=Decimal(bid) + Decimal("0.01"), last=None, ts_ns=at_ns)
+    p.watch()
+    return p.states[-1]
 
 
 def test_a_start_rebuilds_the_after_hours_high_water_mark_from_the_tape() -> None:
     client = tonight_client()
     history = tonight_history()
     p = protector(client, history=history, now_ns=POST_NS)
-    p.reconcile()
+    start(p)
 
     assert p.pages == []
     assert client.submitted == []
     assert p.emulated_trigger("AAPL") == Decimal("37.73")
-    assert history.requests == [("AAPL", ENTRY_NS, POST_NS, "sip")]
-
-    p.note_poll(POST_NS)
-    p.on_quote(
-        "AAPL",
-        bid=Decimal("36.60"),
-        ask=Decimal("36.61"),
-        last=None,
-        ts_ns=POST_NS,
-    )
-    p.watch()
-    line = next(line for line in reversed(p.states) if "tape=ok" in line)
-    assert "trigger=37.73" in line
+    assert history.requests == [("AAPL", CLAIM_NS, POST_NS, "sip")]
+    line = line_for(p, POST_NS, "36.60")
+    assert "tape=ok" in line and "trigger=37.73" in line
 
 
 def test_a_restart_mid_session_keeps_the_rebuilt_level_and_never_lowers_it() -> None:
     client = tonight_client()
     first = protector(client, history=tonight_history(), now_ns=POST_NS)
-    first.reconcile()
+    start(first)
     assert first.emulated_trigger("AAPL") == Decimal("37.73")
 
     second = protector(client, history=tonight_history(), now_ns=POST_NS)
-    second.reconcile()
+    start(second)
     assert second.pages == []
     assert second.emulated_trigger("AAPL") == Decimal("37.73")
 
@@ -660,7 +668,7 @@ def test_a_restart_mid_session_keeps_the_rebuilt_level_and_never_lowers_it() -> 
     assert second.emulated_trigger("AAPL") == Decimal("37.73")
 
 
-def test_a_session_change_rebuilds_on_the_new_feed_and_never_lowers_the_trigger() -> None:
+def test_the_tape_is_read_once_at_start_and_never_in_the_running_loop() -> None:
     client = tonight_client()
     history = tonight_history()
     clock = [POST_NS]
@@ -672,61 +680,45 @@ def test_a_session_change_rebuilds_on_the_new_feed_and_never_lowers_the_trigger(
         feed="sip",
         history=history,
     )
-    p.reconcile()
-    assert p.emulated_trigger("AAPL") == Decimal("37.73")
+    start(p)
+    assert len(history.requests) == 1
 
-    overnight = datetime(2026, 11, 9, 20, 5, tzinfo=ET)
-    overnight_ns = ns(overnight)
-    clock[0] = overnight_ns
-    history.observations = (quote_at("37.00", overnight),)
+    clock[0] = ns(datetime(2026, 11, 9, 20, 5, tzinfo=ET))
     p.set_feed("boats")
     p.reconcile()
-
-    # The overnight tape's lower high cannot pull the after-hours level down.
+    p.watch()
+    assert len(history.requests) == 1
     assert p.emulated_trigger("AAPL") == Decimal("37.73")
-    sip_end_ns = ns(datetime(2026, 11, 9, 20, 0, tzinfo=ET))
-    assert history.requests[-2:] == [
-        ("AAPL", ENTRY_NS, sip_end_ns, "sip"),
-        ("AAPL", sip_end_ns, overnight_ns, "boats"),
-    ]
 
 
 def test_an_unreadable_tape_pages_once_and_keeps_the_native_stop() -> None:
     client = tonight_client()
     history = FakeHistory(error=RuntimeError("the tape is down"))
     p = protector(client, history=history, now_ns=POST_NS)
-    p.reconcile()
+    start(p)
 
     assert p.emulated_trigger("AAPL") == Decimal("36.465")
     assert [page.reason for page in p.pages] == ["outside_rth_tape_unreadable"]
     p.reconcile()
     assert [page.reason for page in p.pages] == ["outside_rth_tape_unreadable"]
-
-    p.note_poll(POST_NS)
-    p.on_quote("AAPL", bid=Decimal("36.60"), ask=Decimal("36.61"), last=None, ts_ns=POST_NS)
-    p.watch()
-    line = next(line for line in reversed(p.states) if "tape=none" in line)
-    assert "trigger=36.465" in line
+    line = line_for(p, POST_NS, "36.60")
+    assert "tape=partial" in line and "trigger=36.465" in line
     assert client.cancelled == []
 
 
-def test_an_unknown_entry_pages_and_keeps_the_native_stop() -> None:
+def test_an_unknown_entry_is_its_own_status_and_page() -> None:
     client = FakeClient()
     client.positions = [api_position("55")]
     client.orders = [api_order(qty="55", stop_price="36.465")]
     history = tonight_history()
     p = protector(client, history=history, now_ns=POST_NS)
-    p.reconcile()
+    start(p)
 
     assert p.emulated_trigger("AAPL") == Decimal("36.465")
     assert [page.reason for page in p.pages] == ["outside_rth_entry_unknown"]
     assert history.requests == []
-
-    p.note_poll(POST_NS)
-    p.on_quote("AAPL", bid=Decimal("36.60"), ask=Decimal("36.61"), last=None, ts_ns=POST_NS)
-    p.watch()
-    line = next(line for line in reversed(p.states) if "tape=none" in line)
-    assert "trigger=36.465" in line
+    line = line_for(p, POST_NS, "36.60")
+    assert "tape=entry_unknown" in line and "trigger=36.465" in line
 
 
 def test_a_restart_at_nine_pm_reads_every_window_on_its_own_feed() -> None:
@@ -734,27 +726,22 @@ def test_a_restart_at_nine_pm_reads_every_window_on_its_own_feed() -> None:
     sip_high = quote_at("38.65", datetime(2026, 11, 9, 16, 59, tzinfo=ET))
     boats_high = quote_at("37.00", datetime(2026, 11, 9, 20, 30, tzinfo=ET))
     history = FakeHistory(by_feed={"sip": [sip_high], "boats": [boats_high]})
-    at = datetime(2026, 11, 9, 21, 0, tzinfo=ET)
-    at_ns = ns(at)
+    at_ns = ns(datetime(2026, 11, 9, 21, 0, tzinfo=ET))
     p = protector(client, history=history, now_ns=at_ns)
-    p.reconcile()
+    start(p)
 
     assert p.emulated_trigger("AAPL") == Decimal("37.68")
     assert p.pages == []
     sip_end_ns = ns(datetime(2026, 11, 9, 20, 0, tzinfo=ET))
     assert history.requests == [
-        ("AAPL", ENTRY_NS, sip_end_ns, "sip"),
+        ("AAPL", CLAIM_NS, sip_end_ns, "sip"),
         ("AAPL", sip_end_ns, at_ns, "boats"),
     ]
-
-    p.note_poll(at_ns)
-    p.on_quote("AAPL", bid=Decimal("37.00"), ask=Decimal("37.01"), last=None, ts_ns=at_ns)
-    p.watch()
-    line = next(line for line in reversed(p.states) if "tape=ok" in line)
-    assert "trigger=37.68" in line
+    line = line_for(p, at_ns, "37.00")
+    assert "tape=ok" in line and "trigger=37.68" in line
 
 
-def test_an_owner_fill_while_b_is_down_is_adopted_at_bs_first_claim() -> None:
+def down_window_client(*house: Order) -> FakeClient:
     client = FakeClient()
     client.positions = [api_position("100")]
     client.orders = [api_order(qty="100", stop_price="36.075", submitted_at="2026-11-09T16:00:00Z")]
@@ -768,9 +755,14 @@ def test_an_owner_fill_while_b_is_down_is_adopted_at_bs_first_claim() -> None:
             status="filled",
             filled_at="2026-11-09T14:45:00Z",
             submitted_at="2026-11-09T14:40:00Z",
-        )
+        ),
+        *house,
     ]
-    history = FakeHistory(
+    return client
+
+
+def down_window_history() -> FakeHistory:
+    return FakeHistory(
         by_feed={
             "sip": [
                 quote_at("40.00", datetime(2026, 11, 9, 10, 30, tzinfo=ET)),
@@ -778,12 +770,33 @@ def test_an_owner_fill_while_b_is_down_is_adopted_at_bs_first_claim() -> None:
             ]
         }
     )
+
+
+def test_an_owner_fill_while_b_is_down_is_adopted_at_bs_first_claim() -> None:
+    client = down_window_client()
+    history = down_window_history()
     at_ns = ns(datetime(2026, 11, 9, 16, 0, 5, tzinfo=ET))
     p = protector(client, history=history, now_ns=at_ns)
-    p.reconcile()
+    start(p)
 
     assert p.emulated_trigger("AAPL") == Decimal("36.08")
     assert p.pages == []
+    claim_ns = ns(datetime(2026, 11, 9, 11, 0, tzinfo=ET))
+    assert history.requests == [("AAPL", claim_ns, at_ns, "sip")]
+
+
+def test_a_house_trail_placed_while_the_owner_buy_rested_is_not_the_adoption() -> None:
+    # F3: a re-arm at 09:42 while the 09:40 buy rested; B was down at the 09:45 fill.
+    rearm = api_order(
+        qty="50", stop_price="35.00", status="canceled", submitted_at="2026-11-09T14:42:00Z"
+    )
+    client = down_window_client(rearm)
+    history = down_window_history()
+    at_ns = ns(datetime(2026, 11, 9, 16, 0, 5, tzinfo=ET))
+    p = protector(client, history=history, now_ns=at_ns)
+    start(p)
+
+    assert p.emulated_trigger("AAPL") == Decimal("36.08")
     claim_ns = ns(datetime(2026, 11, 9, 11, 0, tzinfo=ET))
     assert history.requests == [("AAPL", claim_ns, at_ns, "sip")]
 
@@ -825,7 +838,7 @@ def test_an_owner_add_is_adopted_at_the_add_and_excludes_the_earlier_high() -> N
     )
     at_ns = ns(datetime(2026, 11, 9, 16, 0, 5, tzinfo=ET))
     p = protector(client, history=history, now_ns=at_ns)
-    p.reconcile()
+    start(p)
 
     assert p.emulated_trigger("AAPL") == Decimal("11.456")
     assert p.pages == []
@@ -833,30 +846,67 @@ def test_an_owner_add_is_adopted_at_the_add_and_excludes_the_earlier_high() -> N
     assert history.requests == [("AAPL", add_claim_ns, at_ns, "sip")]
 
 
-def test_a_failed_tape_window_reports_partial_and_is_retried_on_the_next_tick() -> None:
+def test_a_read_for_another_quantity_is_never_applied() -> None:
+    # F4: the start read covers 100 shares; the owner adds 100 before the first reconcile.
+    client = FakeClient()
+    client.positions = [api_position("100")]
+    client.orders = [api_order(qty="100", stop_price="11.00", submitted_at="2026-11-09T15:00:01Z")]
+    entry = api_order(
+        client_order_id="owner-entry-1",
+        qty="100",
+        filled_qty="100",
+        side="buy",
+        order_type="market",
+        status="filled",
+        filled_at="2026-11-09T15:00:00Z",
+        submitted_at="2026-11-09T14:55:00Z",
+    )
+    client.closed_orders = [entry]
+    history = FakeHistory(
+        by_feed={"sip": [quote_at("12.00", datetime(2026, 11, 9, 11, 0, tzinfo=ET))]}
+    )
+    at_ns = ns(datetime(2026, 11, 9, 16, 0, 5, tzinfo=ET))
+    p = protector(client, history=history, now_ns=at_ns)
+    p.rebuild_tapes()
+
+    client.positions = [api_position("200")]
+    client.orders = [api_order(qty="200", stop_price="11.456", submitted_at="2026-11-09T21:00:04Z")]
+    p.reconcile()
+
+    assert p.emulated_trigger("AAPL") == Decimal("11.456")
+    assert "tape=ok" not in line_for(p, at_ns, "11.50")
+
+
+def test_a_failed_tape_window_reports_partial_keeps_the_stop_and_is_not_reread() -> None:
     client = tonight_client()
     sip_high = quote_at("38.65", datetime(2026, 11, 9, 16, 59, tzinfo=ET))
     boats_high = quote_at("37.00", datetime(2026, 11, 9, 20, 30, tzinfo=ET))
     history = FakeHistory(by_feed={"sip": [sip_high], "boats": [boats_high]}, fail_feeds={"sip"})
     at_ns = ns(datetime(2026, 11, 9, 21, 0, tzinfo=ET))
     p = protector(client, history=history, now_ns=at_ns)
-    p.reconcile()
+    start(p)
 
     assert p.emulated_trigger("AAPL") == Decimal("36.465")
     assert [page.reason for page in p.pages] == ["outside_rth_tape_unreadable"]
-    p.note_poll(at_ns)
-    p.on_quote("AAPL", bid=Decimal("36.60"), ask=Decimal("36.61"), last=None, ts_ns=at_ns)
-    p.watch()
-    line = next(line for line in reversed(p.states) if "tape=partial" in line)
-    assert "trigger=36.465" in line
-
-    # F1: the failed window is retried, never disabled for the session.
+    line = line_for(p, at_ns, "36.60")
+    assert "tape=partial" in line and "trigger=36.465" in line
     history.fail_feeds.clear()
     p.reconcile()
-    assert p.emulated_trigger("AAPL") == Decimal("37.68")
-    assert [page.reason for page in p.pages] == ["outside_rth_tape_unreadable"]
-    sip_end_ns = ns(datetime(2026, 11, 9, 20, 0, tzinfo=ET))
-    assert history.requests[-2:] == [
-        ("AAPL", ENTRY_NS, sip_end_ns, "sip"),
-        ("AAPL", sip_end_ns, at_ns, "boats"),
-    ]
+    assert p.emulated_trigger("AAPL") == Decimal("36.465")
+    assert len(history.requests) == 2
+
+
+def test_without_a_house_trail_after_the_fill_b_adopts_now_and_claims_no_tape() -> None:
+    # F6: nothing was read, so the line must not say tape=ok.
+    client = tonight_client()
+    client.orders = []
+    history = tonight_history()
+    p = protector(client, history=history, now_ns=POST_NS)
+    p.rebuild_tapes()
+
+    assert history.requests == []
+    assert p.pages == []
+    client.orders = [api_order(qty="55", stop_price="36.465", submitted_at="2026-11-09T23:10:01Z")]
+    p.reconcile()
+    line = line_for(p, POST_NS, "36.60")
+    assert "tape=" not in line and "trigger=36.465" in line, line

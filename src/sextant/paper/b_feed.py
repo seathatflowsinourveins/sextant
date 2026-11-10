@@ -22,6 +22,7 @@ from alpaca.data.requests import (
     StockLatestTradeRequest,
     StockQuotesRequest,
 )
+from requests.adapters import HTTPAdapter
 
 from sextant.paper.sessions import Session
 
@@ -68,6 +69,7 @@ class LatestDataClient(Protocol):
 
 def feed_for(session: Session) -> str | None:
     """The data feed for a session; None when the native trail owns protection."""
+
     if session in (Session.PRE, Session.POST):
         return "sip"
     if session is Session.OVERNIGHT:
@@ -93,6 +95,7 @@ def _price(value: object) -> Decimal | None:
 
 class BMarketDataFeed:
     """Poll alpaca-py for the latest quote and trade of the held symbols only.
+
     Every successful poll returns the standing latest quote, even when its vendor timestamp has
     not changed: the quote is still the market's last bid, and its age is separate from whether
     the poller is alive. A latest print is returned only once, so repeating it cannot count twice
@@ -156,13 +159,41 @@ class BMarketDataFeed:
 class HistoricalQuoteClient(Protocol):
     """The alpaca-py historical-quote call the tape rebuild needs; a fake implements this."""
 
-    def get_stock_quotes(self, request: StockQuotesRequest) -> object: ...
+    def get_stock_quotes(self, request: StockQuotesRequest, /) -> object: ...
 
 
-def _row_value(row: object, name: str) -> object:
-    if isinstance(row, Mapping):
-        return row.get(name)
-    return getattr(row, name, None)
+class TapeShapeError(ValueError):
+    """A historical response that is not the requested symbol's quotes, or one over its bound."""
+
+
+class BoundedAdapter(HTTPAdapter):
+    """requests' transport adapter with one connect and read timeout on every send."""
+
+    def __init__(self, timeout_s: float) -> None:
+        super().__init__()
+        self._timeout_s = timeout_s
+
+    def send(
+        self,
+        request: Any,
+        stream: bool = False,
+        timeout: Any = None,
+        verify: Any = True,
+        cert: Any = None,
+        proxies: Any = None,
+    ) -> Any:
+        return super().send(request, stream, self._timeout_s, verify, cert, proxies)
+
+
+def bound_transport(client: object, timeout_s: Decimal) -> None:
+    """Give an alpaca-py REST client's requests session a transport timeout (rest.py:69)."""
+
+    session = getattr(client, "_session", None)
+    if session is None:
+        raise TypeError("the historical client exposes no requests session to bound")
+    adapter = BoundedAdapter(float(timeout_s))
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
 
 
 def _datetime_at(ts_ns: int) -> datetime:
@@ -171,10 +202,19 @@ def _datetime_at(ts_ns: int) -> datetime:
 
 
 class BHistoricalTape:
-    """Read the session's historical quotes between two instants, oldest first."""
+    """Read one symbol's quotes between two instants, at most ``max_quotes`` rows.
 
-    def __init__(self, client: HistoricalQuoteClient) -> None:
+    alpaca-py returns a ``QuoteSet`` whose ``data`` maps each symbol to its quotes and omits
+    a symbol with none (``common/rest.py:368-408``), so a missing key is an empty window.
+    Any other key, a non-mapping, a row without a bid, ask and timestamp, or a page that
+    reaches ``max_quotes`` raises ``TapeShapeError``; the caller reports it as partial.
+    """
+
+    def __init__(self, client: HistoricalQuoteClient, max_quotes: int) -> None:
+        if max_quotes < 1:
+            raise ValueError("the tape's quote bound must be positive")
         self._client = client
+        self._max_quotes = max_quotes
 
     def quotes(
         self,
@@ -192,17 +232,22 @@ class BHistoricalTape:
                 end=_datetime_at(end_ns),
                 feed=DataFeed(feed),
                 sort=Sort.ASC,
+                limit=self._max_quotes,
             )
         )
-        data = getattr(response, "data", response)
-        rows = data.get(symbol, ()) if isinstance(data, Mapping) else ()
+        data = getattr(response, "data", None)
+        if not isinstance(data, Mapping) or set(data) - {symbol}:
+            raise TapeShapeError(f"the {feed} response is not {symbol}'s quotes")
+        rows = data.get(symbol, [])
+        if not isinstance(rows, Sequence) or len(rows) >= self._max_quotes:
+            raise TapeShapeError(f"the {feed} window is malformed or over its quote bound")
         observations: list[QuoteObservation] = []
         for row in rows:
-            bid = _price(_row_value(row, "bid_price"))
-            ask = _price(_row_value(row, "ask_price"))
-            at = _row_value(row, "timestamp")
-            if bid is None or ask is None or bid > ask or not isinstance(at, datetime):
-                continue
-            observations.append(QuoteObservation(symbol, bid, ask, None, timestamp_ns(at)))
-        observations.sort(key=lambda item: item.ts_ns)
+            bid = _price(getattr(row, "bid_price", None))
+            ask = _price(getattr(row, "ask_price", None))
+            at = getattr(row, "timestamp", None)
+            if bid is None or ask is None or not isinstance(at, datetime):
+                raise TapeShapeError(f"a {feed} row has no bid, ask and timestamp")
+            if bid <= ask:
+                observations.append(QuoteObservation(symbol, bid, ask, None, timestamp_ns(at)))
         return tuple(observations)
