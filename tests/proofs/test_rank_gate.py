@@ -82,3 +82,22 @@ def test_enabled_gate_requires_a_rank_in_fresh_evidence(
     assert isinstance(decision, gate.RankGateDecision)
     assert isinstance(decision.status, gate.RankGateStatus)
     assert (decision.status.value, decision.reason) == expected
+
+
+@pytest.mark.parametrize(
+    ("enabled", "rank", "consumer_reason", "reason"),
+    [
+        (True, None, None, "consumer_result_missing"),
+        (True, 1, "entry_generation_stale", "entry_generation_stale"),
+        (True, 1, "generation sequence discontinuity", "generation sequence discontinuity"),
+        (True, True, "fresh", "candidate_rank_invalid"),
+        (True, 0, "fresh", "candidate_rank_invalid"),
+        ("false", 1, "fresh", "rank_gate_setting_invalid"),
+    ],
+    ids=("no-result", "stale-with-rank", "invalid-generation", "bool-rank", "zero-rank", "bad-flag"),
+)
+def test_gate_refuses_incomplete_or_inconsistent_results(
+    enabled: object, rank: object, consumer_reason: object, reason: str
+) -> None:
+    decision = rank_gate().decide_rank_gate(enabled=enabled, rank=rank, consumer_reason=consumer_reason)
+    assert (decision.status.value, decision.reason) == ("refuse", reason)
