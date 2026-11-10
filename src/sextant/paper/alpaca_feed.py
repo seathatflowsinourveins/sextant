@@ -14,7 +14,10 @@ registry's ``feed_poll_interval_s`` (``lanes/paper/b-parameters.json``, 1 s, UNC
 the shared REST polling cadence, not a B-scoped strategy parameter.
 
 An optional read-only ``FeedTap`` counts handler entries and writes one JSON line
-per wall-clock second; with no tap nothing here changes.
+per wall-clock second; with no tap nothing here changes. An optional
+``ranking_ingress`` likewise receives each converted trade after the session's
+own handler; with none supplied nothing here changes, and a raising ingress is
+counted in ``ranking_ingress_errors`` and never stops the feed.
 
 The feed only converts market data. It places no order, reads no key from the
 environment or a file (the injected factories receive the pair), and adds no
@@ -141,6 +144,7 @@ class AlpacaTickFeed:
         clock: Callable[[], float] = time.time,
         tap: FeedTap | None = None,
         tap_symbols: Collection[str] = (),
+        ranking_ingress: Callable[[TradeTick], None] | None = None,
     ) -> None:
         if not api_key or not secret_key:
             raise ValueError("Alpaca key and secret are required")
@@ -192,6 +196,8 @@ class AlpacaTickFeed:
         self._tap_symbols = extras
         self._guard_thread: threading.Thread | None = None
         self._guard_stopped = False
+        self._ranking_ingress = ranking_ingress
+        self.ranking_ingress_errors = 0
         self.failure: Exception | None = None
         self._dropped_trade_count = 0
 
@@ -310,6 +316,7 @@ class AlpacaTickFeed:
             self._seen[key] = ts_event
             if isinstance(tick, TradeTick):
                 self._on_trade(tick)
+                self._forward_ranking(tick)
             else:
                 self._on_quote(tick)
 
@@ -330,6 +337,7 @@ class AlpacaTickFeed:
                 _LOG.error("Dropped Alpaca trades row for %s: %s", trade.symbol, exc)
                 return
             self._on_trade(tick)
+            self._forward_ranking(tick)
         except Exception as exc:
             await self._fail(exc)
         finally:
@@ -465,6 +473,14 @@ class AlpacaTickFeed:
         if not value:
             value = f"{ts_ns}-{trade.price}-{trade.size}"
         return TradeId(value[:_TRADE_ID_MAX])
+
+    def _forward_ranking(self, tick: TradeTick) -> None:
+        if self._ranking_ingress is None:
+            return
+        try:
+            self._ranking_ingress(tick)
+        except Exception:  # the ranking host never stops the lane's one feed
+            self.ranking_ingress_errors += 1
 
     def _observe_failure(self) -> None:
         if self._tap is not None:

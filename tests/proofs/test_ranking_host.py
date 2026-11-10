@@ -17,7 +17,7 @@ from nautilus_trader.model import (
     TradeId,
     TradeTick,
 )
-from test_alpaca_feed import _EQUITY, _FakeStream, _factory_for, _trade
+from test_alpaca_feed import _EQUITY, _factory_for, _FakeStream, _trade
 from test_ranking import NS, SCOPE, START, baseline, registry
 
 from sextant.paper.alpaca_feed import AlpacaTickFeed
@@ -47,7 +47,7 @@ def tick(at: int, price: str = "0.50", name: str = "PENNY") -> TradeTick:
     )
 
 
-def make_host(tmp_path: Path, *, heartbeat=None, archive: bool = False):
+def make_host(tmp_path: Path, *, heartbeat=None):
     now = [START]
     mono = itertools.count(1_000_000_000_000, 1_000_000)
     host = RankingHost(
@@ -65,7 +65,6 @@ def make_host(tmp_path: Path, *, heartbeat=None, archive: bool = False):
         heartbeat=heartbeat,
         clock=lambda: now[0],
         monotonic_ns=lambda: next(mono),
-        archive=archive,
     )
     host.set_coverage(Coverage(CoverageState.READY, True, 3, 3, 0, 0, 0))
     for name in UNIVERSE:
@@ -196,17 +195,15 @@ def test_the_interval_file_holds_both_interval_series(tmp_path: Path) -> None:
     warm(host, now)
     drive(host, now, START + 362 * NS, "0.56", "PENNY")
     host.close()
-    lines = [
-        json.loads(line) for line in (tmp_path / INTERVALS_NAME).read_text().splitlines()
-    ]
+    lines = [json.loads(line) for line in (tmp_path / INTERVALS_NAME).read_text().splitlines()]
     generations = [row for row in lines if row["kind"] == "generation"]
     heartbeats = [row for row in lines if row["kind"] == "heartbeat"]
     assert len(generations) >= 2 and len(heartbeats) >= 2
     assert [row["sequence"] for row in generations] == list(range(len(generations)))
     published = [row["publication_ns"] for row in generations]
     beat_times = [row["heartbeat_at"] for row in heartbeats]
-    assert all(b > a for a, b in zip(published, published[1:], strict=False))
-    assert all(b > a for a, b in zip(beat_times, beat_times[1:], strict=False))
+    assert all(b > a for a, b in itertools.pairwise(published))
+    assert all(b > a for a, b in itertools.pairwise(beat_times))
     assert all(row["generation_ns"] == row["publication_ns"] for row in generations)
     assert all(row["heartbeat_at"] == row["generation_ns"] for row in heartbeats)
     assert {row["producer_epoch"] for row in lines} == {"fixture-host-1"}
@@ -267,9 +264,7 @@ def test_a_feed_without_ranking_ingress_delivers_identically() -> None:
     asyncio.run(plain_stream.trade_handler(_trade()))
     wired_ticks: list[TradeTick] = []
     forwarded: list[TradeTick] = []
-    wired_feed, wired_stream = _feed(
-        on_trade=wired_ticks.append, ranking_ingress=forwarded.append
-    )
+    wired_feed, wired_stream = _feed(on_trade=wired_ticks.append, ranking_ingress=forwarded.append)
     wired_feed.start()
     assert wired_stream.trade_handler is not None
     asyncio.run(wired_stream.trade_handler(_trade()))
