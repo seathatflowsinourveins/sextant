@@ -105,12 +105,6 @@ class Listing:
     etf: bool
 
 
-class BarSource(Protocol):
-    def minute_bars(
-        self, symbols: Sequence[str], *, start: datetime, end: datetime
-    ) -> tuple[Bar, ...]: ...
-
-
 def parse_directory(text: str) -> tuple[Listing, ...]:
     """Parse a NASDAQ Trader directory file into its listing rows."""
     lines = [line for line in text.splitlines() if line.strip()]
