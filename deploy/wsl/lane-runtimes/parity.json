@@ -29,11 +29,12 @@
     "dsh": {
       "profiles": ["acp", "headless"],
       "quality": {
-        "source": "docs/manifest.md rows dsh-goalloop-agentteams@6b4b1fad8cd61f98e6eedbb4f12ed10b5dc93f17 and apcamargo/dsh-review@4997159b99322f7551b33d72678e7a14c5282bbf; the gate carries the full quality set, the host carries the P10 picks",
+        "source": "docs/manifest.md rows dsh-goalloop-agentteams@6b4b1fad8cd61f98e6eedbb4f12ed10b5dc93f17 and apcamargo/dsh-review@4997159b99322f7551b33d72678e7a14c5282bbf; the gate carries the full quality set, the host carries the P10 picks; the Third-party plugins row dsh-test-autofix@2246371b2869db52c0f9a77098777d66dbdbad32 goes to the host dsh-tui profile alone, never the gate",
         "profiles": ["dsh-tui", "acp", "headless"],
         "plugins": [
           {"package": "dsh-goalloop-agentteams", "spec": "github:samirliu/dsh-goalloop-agentteams#6b4b1fad8cd61f98e6eedbb4f12ed10b5dc93f17"},
-          {"package": "sextant-dsh-review-cmd", "spec": "config/dsh/review-cmd"}
+          {"package": "sextant-dsh-review-cmd", "spec": "config/dsh/review-cmd"},
+          {"package": "dsh-test-autofix", "spec": "github:1250589385/dsh-test-autofix#2246371b2869db52c0f9a77098777d66dbdbad32", "profiles": ["dsh-tui"]}
         ]
       },
       "mcp_bundle": "config/dsh/mcp",

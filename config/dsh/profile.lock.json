@@ -31,7 +31,8 @@
       "dsh-goalloop-agentteams",
       "sextant-dsh-hard-lines",
       "sextant-dsh-quality",
-      "sextant-dsh-research"
+      "sextant-dsh-research",
+      "dsh-test-autofix"
     ],
     "dependencies": [
       {
@@ -117,6 +118,10 @@
       {
         "package": "dsh-reference-checker",
         "spec": "1.1.1"
+      },
+      {
+        "package": "dsh-test-autofix",
+        "spec": "github:1250589385/dsh-test-autofix#2246371b2869db52c0f9a77098777d66dbdbad32"
       },
       {
         "package": "sextant-dsh-hard-lines",
