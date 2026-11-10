@@ -2,8 +2,32 @@
 // Framework: danger/danger-js@14.1.0. Rules below only read the PR's own body and file list.
 const { danger, fail, schedule } = require("danger");
 
-const pr = danger.github.pr;
-const body = pr.body ?? "";
+// `danger local` runs this file without PR metadata; `just pr` passes the body through
+// LOCAL_PR_BODY_FILE and the check reads the manifest from the commit it would push.
+const local = !danger.github;
+const pr = local ? { user: { login: "local" } } : danger.github.pr;
+const body = local ? localBody() : (pr.body ?? "");
+function localBody() {
+  const path = process.env.LOCAL_PR_BODY_FILE;
+  if (!path) {
+    fail("PR body: LOCAL_PR_BODY_FILE is not set; run `bash scripts/pr-check.sh <body.md>` or `just pr`.");
+    return "";
+  }
+  try {
+    return require("fs").readFileSync(path, "utf8");
+  } catch (error) {
+    fail(`PR body: LOCAL_PR_BODY_FILE ${path} cannot be read: ${error.message}`);
+    return "";
+  }
+}
+function localManifest() {
+  try {
+    return require("child_process").execSync("git show HEAD:docs/manifest.md", { encoding: "utf8" });
+  } catch (error) {
+    fail(`Manifest row: git show HEAD:docs/manifest.md failed: ${error.message}`);
+    return "";
+  }
+}
 const section = (name) => {
   const match = body.match(new RegExp(`^## ${name}\\s*$([\\s\\S]*?)(?=^## |(?![\\s\\S]))`, "m"));
   return (match?.[1] ?? "").replace(/<!--[\s\S]*?-->/g, "").trim();
@@ -30,7 +54,9 @@ if (pr.user.login !== "dependabot[bot]") {
 
   const named = [...section("Manifest row").matchAll(/"([^"]+)"/g)].map((match) => match[1]);
   schedule(async () => {
-    const manifest = await danger.github.utils.fileContents("docs/manifest.md");
+    const manifest = local
+      ? localManifest()
+      : await danger.github.utils.fileContents("docs/manifest.md");
     const rows = manifest.split("\n").filter((row) => !row.startsWith("| Practice or pick |"));
     if (!named.some((name) => rows.some((row) => row.startsWith(`| ${name} |`)))) {
       fail('Manifest row: name a row of docs/manifest.md in "double quotes". This PR may add it.');
