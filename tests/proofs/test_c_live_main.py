@@ -52,6 +52,7 @@ from sextant.paper.c_live_main import (
     main,
 )
 from sextant.paper.config import PaperAccount
+from sextant.paper.feed_tap import FeedTap
 from sextant.paper.sessions import Session
 from sextant.ranking.baseline import (
     BaselineSample,
@@ -1815,3 +1816,71 @@ def test_a_ledger_failure_keeps_the_receipt_and_exits_non_zero(
     assert written["commands"]
     assert "trial ledger refused" in capsys.readouterr().err
     assert not (live_env / "reports/research/trials.parquet").exists()
+
+
+def test_the_feed_tap_is_off_by_default_and_writes_no_sidecar(live_env: Path) -> None:
+    feeds: list[FakeFeed] = []
+
+    assert invoke(live_env, FakeTradingClient(), Clock(), Monotonic(), feed_log=feeds) == 0
+
+    assert feeds and feeds[0].tap is None
+    assert feeds[0].tap_symbols == ()
+    assert not list((live_env / "reports/paper-c").glob("*/feed-tap.jsonl"))
+
+
+def test_the_feed_tap_reads_the_ranked_universe_and_shares_the_receipt_directory(
+    live_env: Path,
+) -> None:
+    universe = live_env / "universe.json"
+    universe.write_text(json.dumps({"rows": [{"symbol": "OMH"}, {"symbol": "EXTRA"}]}))
+    feeds: list[FakeFeed] = []
+    client = FakeTradingClient()
+
+    code = invoke(
+        live_env,
+        client,
+        Clock(),
+        Monotonic(),
+        feed_tap=True,
+        feed_tap_universe=universe,
+        replays=[lambda feed: None],
+        feed_log=feeds,
+    )
+
+    assert code == 0
+    assert feeds and isinstance(feeds[0].tap, FeedTap)
+    assert feeds[0].tap_symbols == ("EXTRA",)
+    assert client.submitted == []
+    sidecars = list((live_env / "reports/paper-c").glob("*/feed-tap.jsonl"))
+    assert len(sidecars) == 1
+    assert (sidecars[0].parent / "session.json").exists()
+
+
+def test_a_missing_feed_tap_universe_is_refused_before_the_broker(live_env: Path) -> None:
+    client = FakeTradingClient()
+    feeds: list[FakeFeed] = []
+
+    with pytest.raises(SystemExit, match="feed tap universe unavailable"):
+        invoke(
+            live_env,
+            client,
+            Clock(),
+            Monotonic(),
+            feed_tap=True,
+            feed_tap_universe=live_env / "missing.json",
+            feed_log=feeds,
+        )
+
+    assert client.calls == []
+    assert feeds == []
+
+
+def test_a_feed_tap_universe_requires_the_feed_tap(live_env: Path) -> None:
+    with pytest.raises(SystemExit, match="requires --feed-tap"):
+        invoke(
+            live_env,
+            FakeTradingClient(),
+            Clock(),
+            Monotonic(),
+            feed_tap_universe=live_env / "universe.json",
+        )
