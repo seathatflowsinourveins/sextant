@@ -41,7 +41,6 @@ def _package(name: str, version: str) -> None:
 def _server(name: str) -> dict[str, Any]:
     settings = _json(".claude/settings.json")
     assert settings["enableAllProjectMcpServers"] is True
-    assert "hooks" not in settings
     return _json(".mcp.json")["mcpServers"][name]
 
 
@@ -54,14 +53,22 @@ def _hashes(root: Path, expected: dict[str, str]) -> None:
     assert actual == expected
 
 
-def test_superpowers_is_a_version_pinned_native_plugin_without_project_hooks() -> None:
+def test_superpowers_is_a_version_pinned_native_plugin() -> None:
     _plugin(
         "superpowers@superpowers-dev",
         "obra/superpowers",
         "v7.0.2",
         "22f0b463e7a5e579904dd6211a520321035526f7",
     )
-    assert "hooks" not in _json(".claude/settings.json")
+    hooks = _json(".claude/settings.json").get("hooks", {})
+    commands = [
+        hook["command"]
+        for entries in hooks.values()
+        for entry in entries
+        for hook in entry["hooks"]
+    ]
+    assert commands
+    assert all("scripts/compact_context.py" in command for command in commands)
     assert not (ROOT / ".claude/hooks").exists()
 
 

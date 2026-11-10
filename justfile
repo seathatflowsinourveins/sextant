@@ -15,6 +15,7 @@ ci: sync lint test secrets
 session-start:
     python3 scripts/dsh_profile_doctor.py
     python3 scripts/ecosystem_index.py --check
+    python3 -I scripts/compact_context.py --check
 
 lint:
     uv run --frozen ruff check .
