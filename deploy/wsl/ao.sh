@@ -52,12 +52,80 @@ daemon() {
   AO_PORT=$port AO_TELEMETRY_REMOTE=off exec ao daemon
 }
 
-# AO works in its own clone, so its worktrees never hold a branch an Orca worktree has checked out.
+# This repository's owner/name, so two clone URLs for it compare equal.
+repository_slug() {
+  local url=${1%.git}
+  url=${url#*github.com/}
+  url=${url#*github.com:}
+  printf '%s\n' "$url"
+}
+
+# A checkout that names this repository, as the runtime doctor judges it.
+names_this_repository() {
+  local origin
+  [[ -d "$1" ]] || return 1
+  origin=$(git -C "$1" remote get-url origin 2> /dev/null) || return 1
+  [[ "$(repository_slug "$origin")" == "$(repository_slug "$repo_url")" ]]
+}
+
+# AO works in its own clone, so its worktrees never hold a branch an Orca worktree has checked out. An
+# existing clone of this repository is reused; the canonical name is used when free; otherwise the clone
+# gets a fresh time-suffixed name, so a stale directory is never written over.
+ao_clone() {
+  local candidate
+  for candidate in "$HOME/.ao/repos/sextant-next" "$HOME"/.ao/repos/sextant-next-*; do
+    if names_this_repository "$candidate"; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  candidate="$HOME/.ao/repos/sextant-next"
+  [[ ! -e "$candidate" ]] || candidate="$candidate-$(date -u +%Y%m%dT%H%M%SZ)"
+  mkdir -p "$HOME/.ao/repos"
+  git clone -q "$repo_url" "$candidate"
+  printf '%s\n' "$candidate"
+}
+
+# A record or clone that names another repository is recreated through AO's own commands, and a record
+# that names a checkout outside AO's own clones is moved into one: AO's worktrees must never hold a
+# branch an Orca worktree has checked out, and this script's git settings belong to AO's clone alone.
+# The old clone is never removed here: it is reported for the owner, who alone can say nothing still
+# uses it. AO's project config (worker, model and the rest) is lead-owned, so the recreation carries it
+# across rather than resetting it to the worker this script registers, except the worker effort: the
+# doctor compares that with the tracked policy's Claude effort, so the recreation always writes the
+# policy's value and never carries the record's old one.
 project() {
-  [[ -d "$clone/.git" ]] || git clone -q "$repo_url" "$clone"
+  local record old saved exists=0 recreate=0 effort
+  if record=$(ao project get "$project" --json 2> /dev/null); then
+    exists=1
+  else
+    record=""
+  fi
+  old=$(jq -r '.project.path // empty' <<< "${record:-{}}" 2> /dev/null || true)
+  saved=$(jq -c '.project.config // empty' <<< "${record:-{}}" 2> /dev/null || true)
+  effort=$(jq -r '.claude.effort // empty' "$here/lane-runtimes/model-policy.json") || effort=""
+  if [[ -z "$effort" ]]; then
+    echo "model-policy.json names no Claude effort for AO's worker" >&2
+    return 1
+  fi
+  if [[ -n "$old" ]] && [[ "$old" == "$HOME/.ao/repos/"* ]] && names_this_repository "$old"; then
+    clone=$old
+  else
+    clone=$(ao_clone)
+    if [[ -n "$old" ]]; then
+      recreate=1
+      echo "AO's old project path is $old; it does not name this repository and is left for the owner's cleanup."
+    fi
+  fi
   credential
-  if ! ao project get "$project" > /dev/null 2>&1; then
-    ao project add --path "$clone" --id "$project" --name "Sextant (AO fix-CI/review)" --worker-agent codex
+  if ((exists)); then
+    ((recreate == 0)) && return 0
+    ao project rm "$project" --yes > /dev/null
+  fi
+  ao project add --path "$clone" --id "$project" --name "Sextant (AO fix-CI/review)" --worker-agent codex
+  if [[ -n "$saved" ]]; then
+    saved=$(jq -c --arg effort "$effort" '.agentConfig.effort = $effort' <<< "$saved")
+    ao project set-config "$project" --config-json "$saved" > /dev/null
   fi
 }
 

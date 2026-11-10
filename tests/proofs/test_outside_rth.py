@@ -14,7 +14,8 @@ from decimal import Decimal
 import pytest
 
 from sextant.exits.policy import ExitParams
-from sextant.paper.outside_rth import OutsideRthError, OutsideRthTrail
+from sextant.paper.b_feed import QuoteObservation
+from sextant.paper.outside_rth import OutsideRthError, OutsideRthTrail, rebuild_trigger
 
 D = Decimal
 SEC = 1_000_000_000
@@ -177,3 +178,30 @@ def test_release_price_refuses_before_a_persistent_breach() -> None:
     assert not state.breached
     with pytest.raises(OutsideRthError, match="breach"):
         state.release_price(T0)
+
+
+def test_rebuild_trigger_replays_the_tape_in_order_and_keeps_the_high_mark() -> None:
+    observations = [
+        QuoteObservation("AAPL", D("38.70"), D("38.71"), None, T0 + 2 * SEC),
+        QuoteObservation("AAPL", D("36.99"), D("37.00"), None, T0 + SEC),
+    ]
+
+    rebuilt = rebuild_trigger(observations, trail_fraction=D("0.025"), params=ExitParams.starts())
+
+    # 2.5% below the after-hours 38.70 bid is 37.73; the later 36.99 quote cannot lower it.
+    assert rebuilt == D("37.73")
+
+
+def test_rebuild_trigger_is_none_without_observations() -> None:
+    assert rebuild_trigger([], trail_fraction=D("0.025"), params=ExitParams.starts()) is None
+
+
+def test_raising_the_trigger_keeps_the_breach_run() -> None:
+    # F5: two prints already counted against 99.45; a higher adoption must not forget them.
+    state = trail()
+    state.adopt(D("99.45"), T0)
+    assert state.observe_trade(D("99.40"), T0) is False
+    assert state.observe_trade(D("99.40"), T0 + SEC // 2) is False
+    state.adopt(D("99.60"), T0 + SEC // 2)
+    assert state.trigger == D("99.60")
+    assert state.observe_trade(D("99.40"), T0 + SEC) is True

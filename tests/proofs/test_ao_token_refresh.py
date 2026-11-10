@@ -47,4 +47,5 @@ def test_aos_clone_resets_the_global_helper_and_asks_the_minting_gh(tmp_path: Pa
 def test_project_sets_the_helper_before_aos_first_session() -> None:
     script = (WSL / "ao.sh").read_text()
     project = script[script.index("project() {") :]
-    assert project.index("credential") < project.index("ao project get")
+    assert project.index("credential") < project.index("ao project rm")
+    assert project.index("credential") < project.index("ao project add")
