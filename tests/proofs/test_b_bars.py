@@ -182,10 +182,14 @@ def test_main_builds_the_tape_with_the_bars_row(tmp_path, monkeypatch):
     monkeypatch.setattr(entry, "BHistoricalTape", Recorder)
     patch_stream(monkeypatch)
     config = write_config(tmp_path, "b-slot2.json")
-    parameters = ROOT / "lanes/paper/b-parameters.json"
+    rows = json.loads((ROOT / "lanes/paper/b-parameters.json").read_text())
+    for row in rows:  # distinct values, so a swapped or missing bars row fails (review item 5)
+        row["value"] = "500" if row["name"] == "tape_max_bars" else row["value"]
+    parameters = tmp_path / "b-parameters.json"
+    parameters.write_text(json.dumps(rows))
     argv = ["--config", str(config), "--parameters", str(parameters)]
     assert entry.main(argv, client_factory=lambda **_: MainClient(), on_page=lambda _: None) == 0
-    assert built == [(10_000, 10_000)]
+    assert built == [(10_000, 500)]
 
 
 def test_the_bars_page_size_has_one_uncalibrated_registry_row_with_its_source():
@@ -194,3 +198,61 @@ def test_the_bars_page_size_has_one_uncalibrated_registry_row_with_its_source():
     assert row["value"] == "10000" and row["calibration_state"] == "UNCALIBRATED"
     assert "UNCALIBRATED" in row["source"] and "rest.py" in row["source"]
     assert load_b_parameters(path).tape_max_bars == Decimal("10000")
+
+
+# --- The lead's review of part 1 (LEAD-REVIEW-bw1-1ec614b) ------------------------------------
+
+
+def tape(rows, token=None, max_bars=10_000) -> BHistoricalTape:
+    return BHistoricalTape(page(rows, token), 10_000, max_bars)
+
+
+@pytest.mark.parametrize(
+    "times",
+    [
+        [
+            "2026-11-09T15:05:00Z",
+            "2026-11-09T15:05:00Z",
+        ],  # a repeated bar (probe: ATR 0.10, not 1.74)
+        ["2026-11-09T15:00:00Z", "2026-11-09T15:05:00Z"],  # newest first is broken
+        ["2026-11-09T15:07:00Z"],  # off the 5-minute grid
+        ["2026-11-06T15:05:00Z"],  # another day, outside the requested window
+        ["2026-11-09T14:25:00Z"],  # before the 09:30 open
+        ["2026-11-09T15:15:00Z"],  # after the 10:12 fetch
+        [1762700700],  # a number, which pydantic reads as 1970
+    ],
+)
+def test_a_duplicate_out_of_order_off_grid_or_out_of_window_bar_time_refuses_the_page(times):
+    rows = {"AAPL": [raw_bar(t=t) for t in times]}
+    with pytest.raises(TapeShapeError):
+        tape(rows).bar_page(["AAPL"], 5, RTH_NOW)
+
+
+@pytest.mark.parametrize("rows", [None, 0, "", {}])
+def test_a_null_or_non_list_row_set_refuses_as_quote_page_does_and_rows_are_bounded(rows):
+    with pytest.raises(TapeShapeError):
+        tape({"AAPL": rows}).bar_page(["AAPL"], 5, RTH_NOW)
+    times = ["2026-11-09T15:05:00Z", "2026-11-09T15:00:00Z", "2026-11-09T14:55:00Z"]
+    with pytest.raises(TapeShapeError):  # three rows against a two-row page
+        tape({"AAPL": [raw_bar(t=t) for t in times]}, max_bars=2).bar_page(["AAPL"], 5, RTH_NOW)
+
+
+def test_outside_rth_is_its_own_signal_and_an_empty_set_returns_before_any_check():
+    from sextant.paper.b_feed import BarsOutsideRth
+
+    pre = int(datetime(2026, 11, 9, 9, 0, tzinfo=ET).timestamp()) * SEC
+    with pytest.raises(BarsOutsideRth) as refused:
+        tape({}).bar_page(["AAPL"], 5, pre)
+    assert not isinstance(refused.value, ValueError)  # never mistaken for a refused page
+    assert BHistoricalTape(page({}), 10_000).bar_page([], 5, pre)[:2] == ({}, None)
+
+
+def test_the_page_returns_the_instant_it_was_fetched_at():
+    rows, token, fetched_ns = tape({"AAPL": [raw_bar()]}).bar_page(["AAPL"], 5, RTH_NOW)
+    assert (len(rows["AAPL"]), token, fetched_ns) == (1, None, RTH_NOW)
+
+
+def test_the_tape_refuses_a_bars_bound_below_one():
+    for bound in (0, -1):
+        with pytest.raises(ValueError):
+            BHistoricalTape(page({}), 10_000, bound)
