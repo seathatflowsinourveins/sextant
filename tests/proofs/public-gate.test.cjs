@@ -47,12 +47,15 @@ test('ambiguous, malformed and conflicting markers fail closed', () => {
 
 function fixture() {
   const head = 'a'.repeat(40);
+  const base = 'd'.repeat(40);
   const statuses = [], outputs = {}, failures = [], reviews = [];
-  const pr = {number: 7, state: 'open', head: {sha: head}, base: {ref: 'gate', repo: {full_name: 'owner/project'}}};
+  const pr = {number: 7, state: 'open', head: {sha: head}, base: {ref: 'gate', sha: base, repo: {full_name: 'owner/project'}}};
   const github = {rest: {
     pulls: {get: async () => ({data: pr}), listReviews: 'reviews',
       createReview: async args => reviews.push(args)},
     repos: {get: async () => ({data: {full_name: 'owner/project', default_branch: 'gate'}}),
+      getCommit: async ({ref}) => ({data: {sha: ref, parents: [{sha: 'e'.repeat(40)}],
+        commit: {tree: {sha: 'f'.repeat(40)}}}}),
       createCommitStatus: async status => statuses.push(status)},
   }, paginate: async () => []};
   const context = {repo: {owner: 'owner', repo: 'project'}, serverUrl: 'https://github.com', runId: 12,
@@ -233,4 +236,91 @@ test('review attempt repeats do not count as another reviewed commit', async () 
   assert.equal(await gate.blockingPriority(f.github, f.context, 7, f.head), 1);
   f.github.paginate = async () => [review('b'.repeat(40)), review('c'.repeat(40))];
   assert.equal(await gate.blockingPriority(f.github, f.context, 7, f.head), 0);
+});
+
+// #208 (ffb2f9a -> a896245 -> ca98e85) and #201 (39a8349 -> 74c9e59 -> 8457400)
+// were updated by GitHub's "Update a pull request branch" endpoint, which merges
+// HEAD from the base branch into the pull request branch (read 2026-11-09).
+// The merge's parents and tree identify it: two parents, the previous head then
+// the base tip, and a tree different from the previous head's.
+function witness() {
+  const sha = {
+    ffb2f9a: 'ffb2f9afd6ccc39f69b24a7c11b9bf0acaf68cbd',
+    a896245: 'a8962450e32d67232fa6412094a690c95182f4d8',
+    ca98e85: 'ca98e85040be737bd04611cae28f4d4fcd3371bf',
+    eb5236b: 'eb5236b853297839034c2854130c932019a7c473',
+    d364e47b: 'd364e47bd209776f8e89c86dbda8204f8d70b3e7',
+    c39a8349: '39a8349bfb1fa06dc49db2b7f29b221b46d3086a',
+    p39a8349: '9abd6daa15758b47d7f285a06d96bf6d315048af',
+    f7314de: 'f7314de7e2cd904db65974a0de940a804a5fb2e0',
+    c74c9e59: '74c9e59c06a681751d89f262e9a037248f04e3e4',
+    d8457400: '845740082da78ddb9d7e9489a6fa074441ff2921',
+    later: '9'.repeat(40),
+  };
+  const trees = {
+    ffb2f9a: '6e9af1765e1f09ea9ab480170668f53bf35509cd',
+    a896245: '6d0f62e4489eb708b65304c1ed47a91a7673b91f',
+    ca98e85: '1aebd089ad23ab816fd3c974cdbea52d7a3efa3c',
+    c39a8349: '8dba23d1c3162de80d0f9d5c66509dd9e7b2c479',
+    c74c9e59: '21c862cbceca4a9f298fc7db0fbeb834840815d6',
+    d8457400: '2be8d441f9a0339fbe1ae6bf26b2998fa20cb8a0',
+    later: '7'.repeat(40),
+  };
+  const commits = {};
+  const add = (name, parents) => { commits[sha[name]] = {data: {sha: sha[name],
+    parents: parents.map(parent => ({sha: sha[parent]})), commit: {tree: {sha: trees[name]}}}}; };
+  add('ffb2f9a', ['d364e47b']);
+  add('a896245', ['ffb2f9a']);
+  add('ca98e85', ['a896245', 'eb5236b']);
+  add('c39a8349', ['p39a8349']);
+  add('c74c9e59', ['c39a8349', 'f7314de']);
+  add('d8457400', ['c74c9e59', 'eb5236b']);
+  add('later', ['d8457400']);
+  const reviews = names => names.map(name => ({user: {login: 'github-actions[bot]'},
+    body: `Review of ${sha[name]}`}));
+  const install = (f, head) => {
+    f.pr.head.sha = sha[head];
+    f.pr.base.sha = sha.eb5236b;
+    f.github.rest.repos.getCommit = async ({ref}) => {
+      assert.ok(commits[ref], `unexpected commit read: ${ref}`);
+      return commits[ref];
+    };
+  };
+  return {sha, install, reviews};
+}
+
+test('the reviewed-head count takes only heads the author changed (#208, #201)', async () => {
+  const {sha, install, reviews} = witness();
+  const at208 = fixture();
+  install(at208, 'ca98e85');
+  at208.github.paginate = async () => reviews(['ffb2f9a', 'a896245', 'ca98e85']);
+  assert.equal(await gate.reviewedHeadCount(at208.github, at208.context, 7, sha.ca98e85), 2);
+
+  const at201 = fixture();
+  install(at201, 'd8457400');
+  at201.github.paginate = async () => reviews(['c39a8349', 'c74c9e59', 'd8457400']);
+  assert.equal(await gate.reviewedHeadCount(at201.github, at201.context, 7, sha.d8457400), 2);
+
+  const later = fixture();
+  install(later, 'later');
+  later.github.paginate = async () => reviews(['c39a8349', 'c74c9e59', 'd8457400']);
+  assert.equal(await gate.reviewedHeadCount(later.github, later.context, 7, sha.later), 3);
+});
+
+test('a base-branch update merge keeps the P0/P1 bar for the next author head (#208, #201)', async () => {
+  const {sha, install, reviews} = witness();
+  const at208 = fixture();
+  install(at208, 'ca98e85');
+  at208.github.paginate = async () => reviews(['ffb2f9a', 'a896245', 'ca98e85']);
+  assert.equal(await gate.blockingPriority(at208.github, at208.context, 7, sha.ca98e85), 1);
+
+  const at201 = fixture();
+  install(at201, 'd8457400');
+  at201.github.paginate = async () => reviews(['c39a8349', 'c74c9e59', 'd8457400']);
+  assert.equal(await gate.blockingPriority(at201.github, at201.context, 7, sha.d8457400), 1);
+
+  const later = fixture();
+  install(later, 'later');
+  later.github.paginate = async () => reviews(['c39a8349', 'c74c9e59', 'd8457400']);
+  assert.equal(await gate.blockingPriority(later.github, later.context, 7, sha.later), 0);
 });

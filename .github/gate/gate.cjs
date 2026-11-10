@@ -126,12 +126,36 @@ async function prompt({ github, context, core }, number, head, engine) {
   if (engine === 'dsh') core.setOutput('text', text);
 }
 
-async function blockingPriority(github, context, number, head) {
+// "Update a pull request branch" merges the base branch into the previous head
+// (GitHub REST pulls#update-a-pull-request-branch, read 2026-11-09). That merge is
+// not an author change: its parents are the previous head and the current base
+// tip, and its tree is the merge result rather than the previous head's tree.
+async function isBaseBranchUpdate(github, context, pr, sha, reviewed) {
+  const { data: commit } = await github.rest.repos.getCommit({ ...context.repo, ref: sha });
+  if (commit.parents?.length !== 2) return false;
+  const [previous, base] = commit.parents;
+  if (base.sha !== pr.base.sha || !reviewed.has(previous.sha)) return false;
+  const { data: prior } = await github.rest.repos.getCommit({ ...context.repo, ref: previous.sha });
+  return commit.commit.tree.sha !== prior.commit.tree.sha;
+}
+
+// The reviewed-head count takes only heads the author changed, including the
+// head under review. A base-branch update merge adds an attempt, not a review,
+// so it never advances a PR toward its third-head P0-only threshold.
+async function reviewedHeadCount(github, context, number, head) {
+  const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: Number(number) });
   const reviews = await github.paginate(github.rest.pulls.listReviews, { ...context.repo, pull_number: Number(number), per_page: 100 });
-  const heads = new Set(reviews.filter(review => review.user?.login === 'github-actions[bot]')
-    .flatMap(review => [...(review.body || '').matchAll(/Review of ([0-9a-f]{40})/g)].map(match => match[1]))
-    .filter(sha => sha !== head));
-  return heads.size >= 2 ? 0 : 1;
+  const reviewed = new Set(reviews.filter(review => review.user?.login === 'github-actions[bot]')
+    .flatMap(review => [...(review.body || '').matchAll(/Review of ([0-9a-f]{40})/g)].map(match => match[1])));
+  let count = 0;
+  for (const sha of new Set([...reviewed, head])) {
+    if (!(await isBaseBranchUpdate(github, context, pr, sha, reviewed))) count += 1;
+  }
+  return count;
+}
+
+async function blockingPriority(github, context, number, head) {
+  return (await reviewedHeadCount(github, context, number, head)) >= 3 ? 0 : 1;
 }
 
 // The reviewer's schema: "patch is incorrect" is a verdict about the patch, so it
@@ -235,5 +259,5 @@ async function finish({ github, context, core }, number, head, results, quality,
   if (!passed) core.setFailed('Required review did not pass');
 }
 
-module.exports = { marker, route, current, prepare, sourceResult, prompt, blockingPriority, qualityPassed,
-  qualityResult, dshResult, followupIssue, finish };
+module.exports = { marker, route, current, prepare, sourceResult, prompt, blockingPriority, reviewedHeadCount,
+  qualityPassed, qualityResult, dshResult, followupIssue, finish };
