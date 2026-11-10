@@ -34,6 +34,7 @@ from sextant.execution.pacer import ActionKind
 from sextant.paper.b_feed import BHistoricalTape, bound_transport
 from sextant.paper.b_protector import BParameters, Protector
 from sextant.paper.b_protector_main import PacedHistoricalDataClient, PacedTradingClient
+from sextant.paper.sessions import session_start_ns
 
 
 def parameters(**updates):
@@ -326,6 +327,13 @@ class WallClock:
     ],
 )
 def test_g1_a_progressing_response_can_outlive_the_entire_start_deadline(monkeypatch, realtime):
+    if realtime:
+        # A Python signal handler runs "at the next bytecode instruction", never inside the
+        # low-level handler (docs.python.org/3/library/signal.html, read 2026-11-10), so the
+        # XNYS calendar's ~0.19 s first-use construction could not be interrupted if it
+        # landed inside the 0.05 s window. Warm what the constructor uses before this case's
+        # clock starts; the deadline, window and assertions stay untouched.
+        session_start_ns(POST_NS)
     clock, waits = (WallClock() if realtime else [0.0]), []
     timeout_s = Decimal("0.03") if realtime else Decimal("3.05")
     deadline_s = Decimal("0.05") if realtime else Decimal("10")
