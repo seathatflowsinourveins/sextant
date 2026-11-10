@@ -43,6 +43,7 @@ from sextant.paper.b_protector import (
     load_b_parameters,
 )
 from sextant.paper.config import PaperAccount, PaperBudget, load_budget
+from sextant.paper.decision_record import DecisionLog
 from sextant.paper.sessions import Session
 from sextant.risk.controls import Controls
 
@@ -240,6 +241,12 @@ def main(
         default=None,
         help="account writer lease directory (default: <config dir>/locks)",
     )
+    parser.add_argument(
+        "--decisions",
+        type=Path,
+        default=None,
+        help="append-only exit-decision JSONL (default: <config dir>/state/b-decisions.jsonl)",
+    )
     args = parser.parse_args(argv)
 
     account = load_account_config(args.config)
@@ -248,6 +255,12 @@ def main(
     lease_root = args.lease_root or args.config.parent / "locks"
     lease = WriterLease(AccountScope(account.broker, account.account_id), lease_root, "b-protector")
     lease.acquire()
+    decisions = DecisionLog(
+        args.decisions or args.config.parent / "state" / "b-decisions.jsonl",
+        on_page=lambda reason, symbol, detail: on_page(
+            Page(reason=reason, symbol=symbol, detail=detail)
+        ),
+    )
     try:
         api_key = os.environ.get(KEY_NAMES[0])
         secret_key = os.environ.get(KEY_NAMES[1])
@@ -294,6 +307,7 @@ def main(
             data_client=data_client,
             history=history,
             start_client=start_client,
+            decisions=decisions,
         )
         _check_expected_account(client, on_page)
         previous = signal.signal(signal.SIGTERM, _sigterm_handler(stream))
@@ -302,7 +316,10 @@ def main(
         finally:
             signal.signal(signal.SIGTERM, previous)
     finally:
-        lease.close()
+        try:
+            decisions.close()
+        finally:
+            lease.close()
     return 0
 
 

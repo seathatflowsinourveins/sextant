@@ -9,3 +9,11 @@
 # official loader disabled metadata: deepseek-harness@66491b05, apps/cli/README.md:40-48.
 - id: sextant-review
   disabled: true
+# The analyze pass can exceed spill-policy's maxInlineTokens (12,500, ~50,000 chars) and
+# then the model receives ordered head/tail plus a path to the complete result. Point the
+# documented spill-local `root` at the action's known output directory so the model's
+# documented read retrieval is deterministic. Source: deepseek-harness@66491b05,
+# packages/spill/spill-local/README.md:32,50 and packages/spill/spill-policy/README.md:47-54.
+- id: spill-local
+  config:
+    root: !!js process.env.DSH_GITHUB_CI_OUTPUT_DIR + '/spill'
