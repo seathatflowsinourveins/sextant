@@ -49,3 +49,13 @@ def test_a_missing_reserve_still_never_blocks_protection():
         ActionKind.REDUCE, lambda mark: (mark(), sends.append("protection")), open_positions=1
     )
     assert sends == ["protection"]
+
+
+def test_a_twenty_slot_lane_is_refused_at_the_current_burst():
+    with pytest.raises(ValueError, match="entry-reserve-exceeds-burst"):
+        Controls.from_rows(control_rows(reserve_per_open_position=2), fixture=True, slots=20)
+
+
+def test_a_five_slot_lane_loads_at_the_current_burst():
+    controls = Controls.from_rows(control_rows(reserve_per_open_position=2), fixture=True, slots=5)
+    assert controls.burst == 18
