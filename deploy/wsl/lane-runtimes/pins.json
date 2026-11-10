@@ -99,6 +99,7 @@
     "msp_schema_fingerprint": "sha256:eae467ab60cb9a5d5af4de616830f065e59375c987fd59269c8cc33ed2a1137f",
     "release_age": "Meta's manifest carries no date; the owner's Windows copy of this version dates from 2026-10-12, so it is past the 14-day rule (lead ruling, 2026-11-08)",
     "orca_agent": "muse",
-    "orca_launch": "stablyai/orca@v1.4.251 a162e08b29b2883b02d8a0dfcc99e26c80b2cfe7:src/shared/agent-launch/catalog/tui-agent-config.ts:294-299, muse --trust-workspace"
+    "orca_launch": "stablyai/orca@v1.4.251 a162e08b29b2883b02d8a0dfcc99e26c80b2cfe7:src/shared/agent-launch/catalog/tui-agent-config.ts:294-299, muse --trust-workspace",
+    "shelf_plugin": {"commit": "22f0b463e7a5e579904dd6211a520321035526f7", "lock": ".claude/shelf.lock.json", "read": "2026-11-10"}
   }
 }

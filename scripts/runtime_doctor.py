@@ -973,9 +973,46 @@ def check_muse(host: Host) -> dict[str, list[Finding]]:
     ):
         if needle not in launcher:
             _fail(out, "muse", "guard", f"installed muse-launch.sh lacks {needle}")
-    spec = _parity(host).SPEC["runtimes"]["muse"]
-    if "#256" not in str(spec.get("shelf_and_mcp", "")):
-        _fail(out, "muse", "parity", "the tracked Muse shelf/MCP deferral is not recorded")
+    parity = _parity(host)
+    listed = _json_command(host, ["muse", "plugins", "list", "--json"])
+    plugins = listed.get("plugins") if isinstance(listed, dict) else None
+    capabilities = {}
+    for row in plugins if isinstance(plugins, list) else []:
+        if isinstance(row, dict) and row.get("active") is True and row.get("valid") is True:
+            plugin = row.get("plugin")
+            if isinstance(plugin, dict) and isinstance(plugin.get("id"), str):
+                capabilities[plugin["id"]] = plugin.get("capabilities")
+    superpowers = set(parity.SPEC["shelf"]["superpowers@superpowers-dev"]["skills"])
+    for plugin, kind, expected in (
+        ("superpowers", "skills", superpowers),
+        ("sextant-mcp", "mcp_servers", set(parity.SPEC["mcp"])),
+    ):
+        bundle = capabilities.get(plugin)
+        items = bundle.get(kind) if isinstance(bundle, dict) else None
+        names = (
+            {
+                item["id"]
+                for item in items
+                if isinstance(item, dict) and isinstance(item.get("id"), str)
+            }
+            if isinstance(items, list)
+            else set()
+        )
+        if names != expected:
+            _fail(out, "muse", "parity", f"Muse plugin {plugin} lacks its pinned {kind} inventory")
+    listed = _json_command(host, ["muse", "skills", "list", "--source", "user", "--json"])
+    items = listed.get("skills") if isinstance(listed, dict) else None
+    names = (
+        {
+            item["name"]
+            for item in items
+            if isinstance(item, dict) and isinstance(item.get("name"), str)
+        }
+        if isinstance(items, list)
+        else set()
+    )
+    if not set(_shelf(host)) - superpowers <= names:
+        _fail(out, "muse", "parity", "Muse is missing the pinned user skills")
     _check_repository_path(host, "muse", out)
     return out
 
