@@ -70,7 +70,6 @@ _ROUND_LOT_SHARES = 100
 # receipt lag under 1 s and handler service max under 50 ms.  Criteria, not tunables.
 _MAX_RECEIPT_LAG_NS = 1_000_000_000
 _MAX_SERVICE_NS = 50_000_000
-_GUARD_INTERVAL_S = 0.25
 
 
 class Instrument(Protocol):
@@ -211,7 +210,7 @@ class AlpacaTickFeed:
             stream.subscribe_trades(self._handle_trade, *symbols)
             stream.subscribe_quotes(self._handle_quote, *symbols)
             if self._tap is not None:
-                self._tap.clear_last()
+                self._tap.clear_guard()
                 if self._tap_symbols:
                     stream.subscribe_trades(self._handle_tap_trade, *self._tap_symbols)
                     stream.subscribe_quotes(self._handle_tap_quote, *self._tap_symbols)
@@ -229,6 +228,8 @@ class AlpacaTickFeed:
         finally:
             # run() has returned, so no handler is mid-flight: finalize on this thread.
             self._stopped.set()
+            if self._tap is not None:
+                self._tap.wake_guard()
             if self._guard_thread is not None:
                 self._guard_thread.join(1.0)
             if started_here and self._tap is not None:
@@ -357,23 +358,26 @@ class AlpacaTickFeed:
         tap = self._tap
         if tap is None:
             return
-        while not self._stopped.wait(_GUARD_INTERVAL_S):
-            if (record := tap.last_record) is None:
-                continue
-            lag, service = record["lag_ns"]["p999"], record["service_ns"]["max"]
-            if (lag is not None and lag >= _MAX_RECEIPT_LAG_NS) or (
-                service is not None and service >= _MAX_SERVICE_NS
-            ):
-                self._drop_extras(record)
-                return
+        while not self._stopped.is_set():
+            for record in tap.guard_records(self._stopped):
+                lag, service = record["lag_ns"]["p999"], record["service_ns"]["max"]
+                if (lag is not None and lag >= _MAX_RECEIPT_LAG_NS) or (
+                    service is not None and service >= _MAX_SERVICE_NS
+                ):
+                    self._drop_extras(record)
+                    return
 
     def _drop_extras(self, record: dict[str, Any]) -> None:
         if self._guard_stopped:
             return
         self._guard_stopped = True
+        if self._tap is not None:
+            self._tap.aborted = True
         for channel in ("trades", "quotes"):
-            with contextlib.suppress(Exception):
+            try:
                 getattr(self._stream, f"unsubscribe_{channel}")(*self._tap_symbols)
+            except Exception:
+                self._forget_handlers(channel)
         lag, service = record["lag_ns"]["p999"], record["service_ns"]["max"]
         lag_text = "unknown" if lag is None else f"{lag / 1_000_000:.1f} ms"
         service_text = "unknown" if service is None else f"{service / 1_000_000:.1f} ms"
@@ -383,6 +387,13 @@ class AlpacaTickFeed:
             f"{len(self._tap_symbols)} measurement subscriptions; C's own symbols untouched"
         )
         print(message, file=sys.stderr, flush=True)
+
+    def _forget_handlers(self, channel: str) -> None:
+        handlers = getattr(self._stream, "_handlers", None)
+        by_symbol = handlers.get(channel) if isinstance(handlers, dict) else None
+        if isinstance(by_symbol, dict):
+            for symbol in self._tap_symbols:
+                by_symbol.pop(symbol, None)
 
     def _trade_tick(self, trade: Trade, ts_init: int) -> TradeTick:
         instrument = self._instrument_for(trade.symbol)

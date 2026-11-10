@@ -1493,7 +1493,7 @@ def main(
                 "secret_key": secret_key,
                 "feed": feed_name,
             }
-            if session_tap is not None and feed_name == "sip":
+            if session_tap is not None and feed_name == "sip" and not session_tap.aborted:
                 own_symbols = {bare_symbol(key) for key in instruments}
                 feed_kwargs["tap"] = session_tap
                 feed_kwargs["tap_symbols"] = tuple(

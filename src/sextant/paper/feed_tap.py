@@ -86,6 +86,9 @@ class FeedTap:
         self._flows: dict[str, list[int | None]] = {}
         self._pending: deque[dict[str, Any]] = deque()
         self._last: dict[str, Any] | None = None
+        self._guard_records: deque[dict[str, Any]] = deque()
+        self._guard_cond = threading.Condition()
+        self.aborted = False
         self._started = self._closed = False
         self._file: Any = None
         self._thread: threading.Thread | None = None
@@ -121,7 +124,7 @@ class FeedTap:
             time.sleep(0.001)
         now = self._time_ns() // _NS_PER_S
         for second in sorted(self._seconds):
-            self._detach(second, partial=second >= now)
+            self._retire(second, partial=second >= now)
         self._closed = True
         if self._thread is not None:
             self._thread.join(_QUIESCE_S)
@@ -139,6 +142,21 @@ class FeedTap:
         return self._last
 
     def clear_last(self) -> None:
+        self._last = None
+
+    def guard_records(self, stop: threading.Event) -> list[dict[str, Any]]:
+        with self._guard_cond:
+            while not self._guard_records and not stop.is_set():
+                self._guard_cond.wait()
+            return [self._guard_records.popleft() for _ in range(len(self._guard_records))]
+
+    def wake_guard(self) -> None:
+        with self._guard_cond:
+            self._guard_cond.notify_all()
+
+    def clear_guard(self) -> None:
+        with self._guard_cond:
+            self._guard_records.clear()
         self._last = None
 
     def trade_entry(self, symbol: str, ts_event_ns: int | None) -> FeedTapToken | None:
@@ -185,7 +203,7 @@ class FeedTap:
             now = now_ns // _NS_PER_S
             for second in sorted(self._seconds):
                 if force or second < now:
-                    self._detach(second, partial=force and second >= now)
+                    self._retire(second, partial=force and second >= now)
         return self._drain()
 
     def _enter(self, kind: str, symbol: str, ts_event_ns: int | None) -> FeedTapToken | None:
@@ -194,9 +212,9 @@ class FeedTap:
         entry_ns, perf_ns = self._time_ns(), self._perf_ns()
         second = entry_ns // _NS_PER_S
         for old in sorted(s for s in list(self._seconds) if s < second):
-            self._detach(old, partial=False)
+            self._retire(old, partial=False)
         if len(self._seconds) >= _LIVE:
-            self._detach(min(self._seconds, default=-1), partial=False)
+            self._retire(min(self._seconds, default=-1), partial=False)
         bucket = self._seconds.setdefault(second, _second(second))
         bucket[kind + "s"] += 1
         bucket["symbols"].add(symbol)
@@ -219,21 +237,30 @@ class FeedTap:
             return
         second = self._time_ns() // _NS_PER_S
         for old in sorted(s for s in list(self._seconds) if s < second):
-            self._detach(old, partial=False)
+            self._retire(old, partial=False)
         if len(self._seconds) >= _LIVE:
-            self._detach(min(self._seconds, default=-1), partial=False)
+            self._retire(min(self._seconds, default=-1), partial=False)
         bucket = self._seconds.setdefault(second, _second(second))
         bucket["extra_" + kind + "s"] += 1
 
-    def _detach(self, second: int, *, partial: bool) -> None:
+    def _detach(self, second: int, *, partial: bool) -> dict[str, Any] | None:
         bucket = self._seconds.pop(second, None)
         if bucket is None:
-            return
+            return None
         bucket["partial"] = partial
         if len(self._pending) >= self._max_pending:
             self.dropped_buckets += 1
         else:
             self._pending.append(bucket)
+        return bucket
+
+    def _retire(self, second: int, *, partial: bool) -> None:
+        bucket = self._detach(second, partial=partial)
+        if bucket is None or not (bucket["trades"] or bucket["quotes"]):
+            return
+        with self._guard_cond:
+            self._guard_records.append(self._record(bucket))
+            self._guard_cond.notify_all()
 
     def _drain(self) -> list[dict[str, Any]]:
         return [self._record(self._pending.popleft()) for _ in range(len(self._pending))]
@@ -273,7 +300,7 @@ class FeedTap:
             return
         now = now_ns // _NS_PER_S
         for second in sorted(s for s in list(self._seconds) if s < now - 1):
-            self._detach(second, partial=False)
+            self._retire(second, partial=False)
 
     def _run(self) -> None:
         while not self._closed or self._pending:
