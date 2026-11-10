@@ -25,7 +25,7 @@ import re
 import signal
 import threading
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import ROUND_FLOOR, Decimal, InvalidOperation
@@ -50,10 +50,18 @@ from sextant.paper.b_feed import (
     BMarketDataFeed,
     FeedBatch,
     LatestDataClient,
+    QuoteObservation,
     feed_for,
     timestamp_ns,
 )
-from sextant.paper.b_width import MAX_TRAIL_FRACTION
+from sextant.paper.b_width import (
+    MAX_TRAIL_FRACTION,
+    BarRow,
+    MarketView,
+    completed_atr,
+    trail_fraction,
+    view_from_quote,
+)
 from sextant.paper.config import PaperAccount
 from sextant.paper.decision_record import (
     Book,
@@ -163,11 +171,30 @@ class Page:
     detail: str = ""
 
 
+def _out_of_order(previous: int | None, at: int) -> bool:
+    """A quote older than the newest one already accepted for its symbol is not observed."""
+
+    return previous is not None and at < previous
+
+
 @dataclass(frozen=True)
 class _PendingRelease:
     """One broken trail waiting for its terminal cancellation before the LIMIT goes out."""
 
     trail_order_id: str
+
+
+@dataclass(frozen=True)
+class _WidthReads:
+    """One refresh's two reads, taken off the loop's thread and applied on it (bw2 P1)."""
+
+    symbols: tuple[str, ...]
+    now_ns: int
+    rows: Mapping[str, Sequence[BarRow]] | None
+    fetched_ns: int
+    bars_detail: str
+    quotes: Sequence[QuoteObservation] | None
+    quote_detail: str
 
 
 @dataclass
@@ -204,6 +231,12 @@ class BParameters:
     trail_atr_bar_minutes: Decimal | None = None
     trail_atr_multiple: Decimal | None = None
 
+    @property
+    def width_on(self) -> bool:
+        """The per-symbol width runs only with all four of its rows (D-30)."""
+
+        return all(getattr(self, name) is not None for name in WIDTH_NAMES)
+
     def __post_init__(self) -> None:
         fraction = _decimal(self.native_trail_fraction, TRAIL_PERCENT_NAME)
         interval = _decimal(self.reconcile_interval_s, RECONCILE_INTERVAL_NAME)
@@ -233,6 +266,15 @@ class BParameters:
         minimum = self.alpaca_min_trail_fraction
         if minimum is not None and _decimal(minimum, "alpaca_min_trail_fraction") > fraction:
             raise ValueError("alpaca_min_trail_fraction must not exceed native_trail_fraction")
+        for name in WIDTH_NAMES:
+            value = getattr(self, name)
+            if value is not None:
+                object.__setattr__(self, name, _decimal(value, name))
+        minutes = self.trail_atr_bar_minutes
+        if minutes is not None and minutes > 59:
+            raise ValueError(
+                "trail_atr_bar_minutes must be at most 59 (the bars API's minute frames)"
+            )
 
 
 def _decimal(value: object, field: str) -> Decimal:
@@ -314,6 +356,17 @@ class HistoricalTape(Protocol):
         feed: str,
         page_token: str | None = None,
     ) -> tuple[Sequence[QuoteLike], str | None]: ...
+
+
+class HistoricalBars(Protocol):
+    """One batched page of the held symbols' bars; alpaca-py at run (b_feed.bar_page)."""
+
+    def bar_page(
+        self, symbols: Sequence[str], bar_minutes: int, now_ns: int
+    ) -> tuple[Mapping[str, Sequence[BarRow]], str | None, int]: ...
+
+
+LatestQuotes = Callable[[Sequence[str], str], Sequence[QuoteObservation]]
 
 
 @dataclass(frozen=True)
@@ -419,6 +472,8 @@ class Protector:
         start_client: TradingClientLike | None = None,
         monotonic: Callable[[], float] = time.monotonic,
         decisions: DecisionLog | None = None,
+        bars: HistoricalBars | None = None,
+        quotes: LatestQuotes | None = None,
     ) -> None:
         if account.lane != B_LANE:
             raise ProtectorRefusal("B's protector runs only on the slot-2 B paper lane")
@@ -435,6 +490,7 @@ class Protector:
         self.states: list[str] = []
         self._feed = feed
         self._last_quote_ns: dict[str, int] = {}
+        self._width_quote_ns: dict[str, int] = {}
         self._last_poll_ns: int | None = None
         self._feed_silent: set[str] = set()
         self._age_flagged: dict[str, int] = {}
@@ -461,6 +517,13 @@ class Protector:
         self._pending_decision: dict[str, _PendingDecision] = {}
         self._trigger_source: dict[str, TriggerSource] = {}
         self._trigger_high: dict[str, HighWater] = {}
+        self._bars = bars
+        self._quotes = quotes
+        self.data_requests = 0  # the width's market-data requests, never wire order actions
+        self._width: dict[str, Decimal] = {}
+        self._width_paged: set[str] = set()
+        self._width_seen: set[str] = set()
+        self._width_bucket: int | None = None
 
     def page(self, reason: str, symbol: str | None = None, detail: str = "") -> None:
         page = Page(reason=reason, symbol=symbol, detail=detail)
@@ -805,6 +868,123 @@ class Protector:
 
         return tuple(sorted(self._last_position))
 
+    def trail_width(self, symbol: str) -> Decimal:
+        """The symbol's last computed width; the native cap where none was ever computed."""
+
+        return self._width.get(symbol, self._parameters.native_trail_fraction)
+
+    def refresh_widths_when_due(self) -> bool:
+        """Read and apply the widths when due, on the caller's thread (the start read, tests)."""
+
+        due = self.width_reads_due()
+        if due is not None:
+            self.apply_widths(self.read_widths(*due))
+        return due is not None
+
+    def width_reads_due(self) -> tuple[tuple[str, ...], int] | None:
+        """Once per completed bar interval, and once for a newly held symbol: bars and quote.
+
+        Each refresh is one batched bars request and one batched latest-quote request for all
+        held symbols together (LEAD-1021 item 6 and addendum 1), so 2 x 60 / bar minutes
+        requests an hour, plus one pair when the owner adds a symbol mid-interval.
+        """
+
+        p = self._parameters
+        if not p.width_on or p.trail_atr_bar_minutes is None:
+            return None
+        now_ns = self._now_ns()
+        symbols = self.held_symbols()
+        if not symbols or session_at(now_ns) is not Session.RTH:  # bars are RTH only (bw1 D)
+            return None
+        bucket = now_ns // int(p.trail_atr_bar_minutes * 60 * NS_PER_SECOND)
+        if bucket == self._width_bucket and set(symbols) <= self._width_seen:
+            return None
+        self._width_bucket = bucket
+        self._width_seen.update(symbols)
+        return symbols, now_ns
+
+    def read_widths(self, symbols: tuple[str, ...], now_ns: int) -> _WidthReads:
+        """The bars and the quote request only, market data off the account pacer (LEAD-1445);
+        no protector state but their count, so it may run off the loop."""
+
+        assert self._parameters.trail_atr_bar_minutes is not None
+        minutes = int(self._parameters.trail_atr_bar_minutes)
+        rows: Mapping[str, Sequence[BarRow]] | None = None
+        fetched_ns, bars_detail = now_ns, "no bars source; width kept"
+        if self._bars is not None:
+            self.data_requests += 1
+            try:
+                rows, token, fetched_ns = self._bars.bar_page(symbols, minutes, now_ns)
+                if token is not None:  # a partial history gives no width (bw1 C)
+                    rows, bars_detail = None, "bars page partial; width kept"
+            except Exception as exc:
+                bars_detail = f"bars request failed: {type(exc).__name__}; width kept"
+        quotes: Sequence[QuoteObservation] | None = None
+        quote_detail = "no quote source; width kept"
+        if self._quotes is not None:
+            self.data_requests += 1
+            try:
+                quotes = self._quotes(symbols, feed_for(session_at(now_ns)) or "sip")
+                quote_detail = "no valid quote this interval; width kept"
+            except Exception as exc:
+                quote_detail = f"quote request failed: {type(exc).__name__}; width kept"
+        return _WidthReads(symbols, now_ns, rows, fetched_ns, bars_detail, quotes, quote_detail)
+
+    def apply_widths(self, reads: _WidthReads) -> None:
+        """Recompute each width from completed bars and one valid quote; else keep the last."""
+
+        p = self._parameters
+        assert p.trail_atr_period is not None and p.trail_atr_bar_minutes is not None
+        assert p.alpaca_min_trail_fraction is not None and p.trail_atr_multiple is not None
+        symbols, now_ns, rows, bars_detail = (
+            reads.symbols,
+            reads.now_ns,
+            reads.rows,
+            reads.bars_detail,
+        )
+        minutes, quote_detail = int(p.trail_atr_bar_minutes), reads.quote_detail
+        views: dict[str, MarketView] = {}
+        session_start = session_start_ns(now_ns)
+        for seen in reads.quotes or ():
+            taken = (self._last_quote_ns, self._width_quote_ns)
+            newest = max(seen_ns.get(seen.symbol, -1) for seen_ns in taken)
+            # on_quote's own prior-segment and out-of-order rules
+            if seen.ts_ns >= session_start and not _out_of_order(newest, seen.ts_ns):
+                views[seen.symbol] = view_from_quote(seen.bid, seen.ask)
+                self._width_quote_ns[seen.symbol] = seen.ts_ns
+        for symbol in symbols:
+            atr = None
+            if rows is not None:
+                period = int(p.trail_atr_period)
+                atr = completed_atr(rows.get(symbol, ()), period, minutes, now_ns, reads.fetched_ns)
+            if atr is None:
+                detail = (
+                    bars_detail
+                    if rows is None
+                    else (f"fewer than {p.trail_atr_period} completed bars; width kept")
+                )
+                self._width_unavailable(symbol, "dynamic_width_bars_unavailable", detail)
+                continue
+            fraction = trail_fraction(
+                native=p.native_trail_fraction,
+                minimum=p.alpaca_min_trail_fraction,
+                multiple=p.trail_atr_multiple,
+                atr=atr,
+                view=views.get(symbol),
+            )
+            if fraction is None:
+                self._width_unavailable(symbol, "dynamic_width_quote_unavailable", quote_detail)
+                continue
+            self._width[symbol] = fraction
+            self._width_paged.discard(symbol)
+
+    def _width_unavailable(self, symbol: str, reason: str, detail: str) -> None:
+        """Page once per symbol per episode; an episode ends at the next computed width."""
+
+        if symbol not in self._width_paged:
+            self._width_paged.add(symbol)
+            self.page(reason, symbol, detail)
+
     def note_poll(self, ts_ns: int | None = None) -> None:
         """Record one successful poll; liveness is measured from this receipt, not a quote."""
 
@@ -920,7 +1100,7 @@ class Protector:
         if bid is None or ask is None or bid <= 0 or ask <= 0 or bid > ask:
             return None
         previous = self._last_quote_ns.get(symbol)
-        if previous is not None and at < previous:
+        if _out_of_order(previous, at):
             return None
         self._last_quote_ns[symbol] = at if previous is None else max(previous, at)
         state = self._outside_state(symbol)
@@ -1546,6 +1726,9 @@ class Protector:
             s: source for s, source in self._trigger_source.items() if s in held
         }
         self._trigger_high = {s: high for s, high in self._trigger_high.items() if s in held}
+        self._width = {s: width for s, width in self._width.items() if s in held}
+        self._width_paged &= held
+        self._width_seen &= held
         if announce:
             self._announce_states(now_ns)
         return positions
@@ -1842,6 +2025,8 @@ class ProtectorStream(TradingStream):
         history: HistoricalTape | None = None,
         start_client: TradingClientLike | None = None,
         decisions: DecisionLog | None = None,
+        bars: HistoricalBars | None = None,
+        width_quotes: LatestQuotes | None = None,
     ) -> None:
         if url_override is None:
             super().__init__(api_key=api_key, secret_key=secret_key, paper=paper)
@@ -1859,6 +2044,7 @@ class ProtectorStream(TradingStream):
         self._feed_failure: str | None = None
         self._feed_label = "none"
         self._poll_task: asyncio.Task[FeedBatch] | None = None
+        self._width_task: asyncio.Task[_WidthReads] | None = None
         self.protector = Protector(
             client,
             account,
@@ -1870,6 +2056,8 @@ class ProtectorStream(TradingStream):
             history=history,
             start_client=start_client,
             decisions=decisions,
+            bars=bars,
+            quotes=width_quotes,
         )
         self.subscribe_trade_updates(self._on_trade_update)
 
@@ -1943,6 +2131,31 @@ class ProtectorStream(TradingStream):
             asyncio.to_thread(self._market_data.poll, symbols, feed)
         )
 
+    def _refresh_widths(self) -> None:
+        """The width's two reads run on a worker thread, as the poll does, never beside one (P1)."""
+
+        if self._poll_task is not None or self._width_task is not None:
+            return
+        due = self.protector.width_reads_due()
+        if due is not None:
+            read = asyncio.to_thread(self.protector.read_widths, *due)
+            self._width_task = asyncio.create_task(read)
+
+    def _drain_widths(self) -> None:
+        """Apply finished width reads on the loop's thread, where every order write runs."""
+
+        task = self._width_task
+        if task is not None and task.done():
+            self._width_task = None
+            if task.cancelled() or task.exception() is not None:  # the last width stays (1021)
+                for symbol in self.protector.held_symbols():
+                    detail = "width read did not finish; width kept"
+                    self.protector._width_unavailable(
+                        symbol, "dynamic_width_bars_unavailable", detail
+                    )
+                return
+            self.protector.apply_widths(task.result())
+
     async def _on_trade_update(self, update: TradeUpdate) -> None:
         try:
             self.protector.handle(update)
@@ -1970,6 +2183,8 @@ class ProtectorStream(TradingStream):
             await asyncio.sleep(self.SCHEDULE_TICK_S)
             try:
                 self._drain_poll()
+                self._drain_widths()
+                self._refresh_widths()
                 self._poll_feed()
             except Exception as exc:
                 self.protector.page("feed_failed", None, type(exc).__name__)
