@@ -97,7 +97,7 @@ def test_ao_is_pinned_and_claims_only_a_handed_off_pr(tmp_path: Path) -> None:
     assert "port=3301" in script and "AO_TELEMETRY_REMOTE=off" in script
     # Phase 2's active identity is sextant-next; AO's project id stays `sextant`.
     assert 'clone="$HOME/.ao/repos/sextant-next"' in script
-    assert "repo_url=https://github.com/seathatflowsinourveins/sextant-next" in script
+    assert "repo_url=https://github.com/seathatflowsinourveins/sextant\n" in script
     assert "project=sextant" in script
     assert "\nao *args:\n" in (ROOT / "justfile").read_text()
     assert PIN in (ROOT / "docs" / "manifest.md").read_text()
