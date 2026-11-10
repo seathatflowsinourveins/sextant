@@ -9,7 +9,9 @@ generation's ``known_at`` (``src/sextant/ranking/publisher.py:279`` sets
 complete generation and ages out with it (``reader.py:70-73`` checks both
 stored clocks). Injected clock and sink only: no stream, socket or thread
 starts here, and an invalid heartbeat is never sent (``reader.py:60`` would
-clear the reader's stored heartbeat).
+clear the reader's stored heartbeat). A sink exception is counted in
+``sink_failures`` and treated as not sent, so a committed publication still
+returns its generation.
 """
 
 from collections.abc import Callable
@@ -31,6 +33,7 @@ class HeartbeatEmitter:
     ) -> None:
         self._registry, self._clock, self._sink = registry, clock, sink
         self._last_at: int | None = None
+        self.sink_failures = 0  # sink exceptions counted as not sent, never raised
 
     def emit(self, generation: RankingGeneration | None) -> bool:
         if not isinstance(generation, RankingGeneration) or not _eligible(generation):
@@ -44,7 +47,12 @@ class HeartbeatEmitter:
             or (self._last_at is not None and at <= self._last_at)
         ):
             return False
-        if not self._sink(at=at, received_ns=received_ns):
+        try:
+            sent = self._sink(at=at, received_ns=received_ns)
+        except Exception:  # containment: a broken optional sink never fails a publication
+            self.sink_failures += 1
+            return False
+        if not sent:
             return False
         self._last_at = at
         return True

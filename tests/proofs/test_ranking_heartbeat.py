@@ -301,6 +301,13 @@ def test_entry_ages_refuse_anything_but_three_positive_integer_rows(
         entry_ages(bad)
 
 
+@pytest.mark.parametrize("source", [123, None, b"fixture"])
+def test_entry_ages_refuse_a_non_string_source(source: Any) -> None:
+    rows = entry_rows()
+    with pytest.raises(ValueError, match="registry source and last change required"):
+        entry_ages((replace(rows[0], source=source), rows[1], rows[2]))
+
+
 def test_entry_ages_are_required_keyword_only_positive_integers() -> None:
     params = inspect.signature(RankingConsumer).parameters
     for name in ENTRY_NAMES:
@@ -452,6 +459,29 @@ def test_the_heartbeat_hook_runs_after_both_publications() -> None:
     assert calls == [(AT, AT)]
     assert pub.published_at == AT
     assert pub.sequence == 1
+
+
+def test_a_raising_sink_never_fails_a_committed_publication() -> None:
+    """Follow-up #371: a raising sink is counted as not sent, never raised."""
+    bus = RecordingBus()
+    calls: list[tuple[int, int]] = []
+
+    def sink(*, at: int, received_ns: int) -> bool:
+        calls.append((at, received_ns))
+        raise RuntimeError("heartbeat sink failed")
+
+    emitter = HeartbeatEmitter(registry=registry(), clock=lambda: AT, sink=sink)
+    pub = build(cast(MessageBus, bus), heartbeat=emitter)
+    warm(pub)
+    generation = pub.publish(now=AT)
+    full_topic = ranking_data_type("sip").topic
+    top_topic = ranking_data_type("sip", "top").topic
+    assert generation is not None
+    assert bus.events == [full_topic, top_topic]
+    assert calls == [(AT, AT)]
+    assert pub.published_at == AT
+    assert pub.sequence == 1
+    assert emitter.sink_failures == 1
 
 
 @pytest.mark.parametrize(("fail_at", "events"), [(1, []), (2, [ranking_data_type("sip").topic])])

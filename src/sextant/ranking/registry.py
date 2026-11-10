@@ -45,6 +45,13 @@ class RegistryRow:
     last_change: date
 
 
+def _require_source(row: RegistryRow) -> None:
+    """A row's source is non-empty text and its last change a date, never coerced."""
+    source: object = row.source
+    if not isinstance(source, str) or not source.strip() or type(row.last_change) is not date:
+        raise ValueError("registry source and last change required")
+
+
 @dataclass(frozen=True, slots=True)
 class Registry:
     rows: tuple[RegistryRow, ...]
@@ -60,8 +67,7 @@ class Registry:
                 raise TypeError(f"{row.name} must be {kind.__name__}, never float or bool")
             if not Decimal(row.value).is_finite() or row.value <= 0 or row.unit != unit:
                 raise ValueError(f"invalid registry value/unit: {row.name}")
-            if not row.source.strip() or type(row.last_change) is not date:
-                raise ValueError("registry source and last change required")
+            _require_source(row)
             if row.calibration_state != "UNCALIBRATED":
                 raise ValueError("this carry has no calibration evidence")
         ordered = tuple(sorted(self.rows, key=lambda r: r.name))
@@ -99,8 +105,7 @@ def entry_ages(rows: tuple[RegistryRow, ...]) -> EntryAges:
             raise TypeError(f"{row.name} must be {kind.__name__}, never float or bool")
         if not Decimal(row.value).is_finite() or row.value <= 0 or row.unit != unit:
             raise ValueError(f"invalid registry value/unit: {row.name}")
-        if not row.source.strip() or type(row.last_change) is not date:
-            raise ValueError("registry source and last change required")
+        _require_source(row)
         if row.calibration_state != "UNCALIBRATED":
             raise ValueError("this carry has no calibration evidence")
         ages[row.name] = int(row.value)
