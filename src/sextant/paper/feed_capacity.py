@@ -1,20 +1,23 @@
 """Read-only capacity analyzer for the feed-tap sidecar: the pre-registered gate, with numbers.
 
 The tap (``sextant.paper.feed_tap``) writes one JSON line per wall-clock second while the C
-lane's single SIP socket runs. This module reads that file and nothing else: it opens no
-socket, calls no broker, writes no file and prints no price or symbol name. Section 5 of the
-entry-ages screen fixed the six criteria and the overload rule before the open; this module
-applies them unchanged: a 1 s p99.9 receipt-lag bound with p99 inside the ruled
-``entry_input_max_age_s``, a 50 ms handler-service and sub-1 utilization bound, no monotone
-lag rise over 09:30-09:35 and the first RTH hour, a per-symbol maximum gap inside the entry
-bound while the symbol trades, zero feed failures, and the publication criterion reported
-NOT-APPLICABLE until the ranking publisher runs in-process.
+lane's single SIP socket runs: per-second trade and quote counts, distinct symbols, the
+wall-clock receipt lag (count, p99, p99.9 and exact max), handler service time (sum and max),
+feed failures, and per symbol the last ``ts_event`` and the longest inter-arrival gap. This
+module reads that file and nothing else: it opens no socket, calls no broker, writes no file
+and prints no price or symbol name. Section 5 of the entry-ages screen fixed the six criteria
+and the overload rule before the open; this module applies them unchanged: a 1 s p99.9
+receipt-lag bound with p99 inside the ruled ``entry_input_max_age_s``, a 50 ms handler-service
+and sub-1 utilization bound, no monotone lag rise over 09:30-09:35 and the first RTH hour, a
+per-symbol maximum gap inside the entry bound, zero feed failures and reconnects, and the
+publication criterion reported NOT-APPLICABLE until the ranking publisher runs in-process.
 
 The trend tests use the Mann-Kendall S statistic with the tie-corrected variance (Mann 1945;
 Kendall 1975), one-sided at alpha 0.05, computed with the standard library only because the
 repo pins no statistics dependency beyond it. The overload rule is any failed criterion, a
 rising 180 s window anywhere in the measurement, or three consecutive seconds whose entry lag
-exceeds the entry bound after a stall.
+exceeds the entry bound after a stall. Missing measurements fail closed: a field the tap could
+not observe yields UNKNOWN, never a pass.
 
 Usage::
 
@@ -70,40 +73,37 @@ class Second:
     second: int
     trades: int
     quotes: int
-    messages: int
     symbols_seen: int
-    rate_mps: float
-    lag_entry_p50_ns: int | None
-    lag_entry_p99_ns: int | None
-    lag_entry_p999_ns: int | None
-    lag_entry_max_ns: int | None
-    lag_entry_count: int
-    lag_entry_hist_ms: Mapping[int, int]
-    service_max_ns: int
-    service_p99_ns: int | None
-    utilization: float
+    lag_p99_ns: int | None
+    lag_p999_ns: int | None
+    lag_max_ns: int | None
+    lag_count: int
+    service_sum_ns: int
+    service_max_ns: int | None
     failures: int
-    dropped_quotes: int
     partial: bool
+
+    @property
+    def messages(self) -> int:
+        return self.trades + self.quotes
 
 
 @dataclass(frozen=True, slots=True)
 class SymbolFlow:
-    """One symbol's whole-run totals from the sidecar's final line."""
+    """One symbol's whole-run freshness from the sidecar's final line."""
 
-    trades: int
-    quotes: int
-    messages: int
-    max_gap_ns: int
+    last_ts_event_ns: int | None
+    max_gap_ns: int | None
 
 
 @dataclass(frozen=True, slots=True)
 class Sidecar:
-    """A parsed tap sidecar: seconds in time order, per-symbol totals, torn-line count."""
+    """A parsed tap sidecar: seconds in time order, per-symbol freshness, torn-line count."""
 
     seconds: tuple[Second, ...]
     symbols: Mapping[str, SymbolFlow]
     malformed_lines: int = 0
+    reconnects: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,40 +161,25 @@ def _opt_int(value: Any) -> int | None:
     return value if isinstance(value, int) else None
 
 
-def _float(value: Any, default: float = 0.0) -> float:
-    return float(value) if isinstance(value, (int, float)) else default
-
-
 def _mapping(value: Any) -> Mapping[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
 def _parse_second(record: Mapping[str, Any]) -> Second:
-    entry = _mapping(record.get("lag_entry_ns"))
+    lag = _mapping(record.get("lag_ns"))
     service = _mapping(record.get("service_ns"))
-    hist = {
-        int(key): count
-        for key, count in _mapping(entry.get("hist_ms")).items()
-        if isinstance(count, int) and count > 0
-    }
     return Second(
         second=int(record["second"]),
         trades=_int(record.get("trades")),
         quotes=_int(record.get("quotes")),
-        messages=_int(record.get("messages")),
         symbols_seen=_int(record.get("symbols_seen")),
-        rate_mps=_float(record.get("rate_mps")),
-        lag_entry_p50_ns=_opt_int(entry.get("p50")),
-        lag_entry_p99_ns=_opt_int(entry.get("p99")),
-        lag_entry_p999_ns=_opt_int(entry.get("p999")),
-        lag_entry_max_ns=_opt_int(entry.get("max")),
-        lag_entry_count=_int(entry.get("count")),
-        lag_entry_hist_ms=hist,
-        service_max_ns=_int(service.get("max")),
-        service_p99_ns=_opt_int(service.get("p99")),
-        utilization=_float(record.get("utilization")),
+        lag_p99_ns=_opt_int(lag.get("p99")),
+        lag_p999_ns=_opt_int(lag.get("p999")),
+        lag_max_ns=_opt_int(lag.get("max")),
+        lag_count=_int(lag.get("count")),
+        service_sum_ns=_int(service.get("sum")),
+        service_max_ns=_opt_int(service.get("max")),
         failures=_int(record.get("failures")),
-        dropped_quotes=_int(record.get("dropped_quotes")),
         partial=bool(record.get("partial", False)),
     )
 
@@ -203,14 +188,9 @@ def _parse_symbols(record: Mapping[str, Any]) -> dict[str, SymbolFlow]:
     symbols: dict[str, SymbolFlow] = {}
     for name, flow in _mapping(record.get("symbols")).items():
         data = _mapping(flow)
-        # A sidecar that predates the per-kind counters still has to fail closed: it can
-        # only be known to have traded if it carried messages.
-        trades = _int(data.get("trades")) if "trades" in data else _int(data.get("messages"))
         symbols[str(name)] = SymbolFlow(
-            trades=trades,
-            quotes=_int(data.get("quotes")),
-            messages=_int(data.get("messages")),
-            max_gap_ns=_int(data.get("max_gap_ns")),
+            last_ts_event_ns=_opt_int(data.get("last_ts_event_ns")),
+            max_gap_ns=_opt_int(data.get("max_gap_ns")),
         )
     return symbols
 
@@ -219,6 +199,7 @@ def load(path: str | Path) -> Sidecar:
     """Read a tap sidecar; a torn final line is skipped and counted, never fatal."""
     seconds: dict[int, Second] = {}
     symbols: dict[str, SymbolFlow] = {}
+    reconnects: int | None = None
     malformed = 0
     with Path(path).open(encoding="utf-8") as handle:
         for line in handle:
@@ -243,6 +224,7 @@ def load(path: str | Path) -> Sidecar:
                         seconds[second.second] = second
                 elif record.get("kind") == "symbols":
                     symbols = _parse_symbols(record)
+                    reconnects = _opt_int(record.get("reconnects"))
                 else:
                     malformed += 1
             except (KeyError, TypeError, ValueError):
@@ -251,29 +233,13 @@ def load(path: str | Path) -> Sidecar:
         seconds=tuple(seconds[second] for second in sorted(seconds)),
         symbols=symbols,
         malformed_lines=malformed,
+        reconnects=reconnects,
     )
 
 
-def _pooled_hist(seconds: Sequence[Second]) -> dict[int, int]:
-    pooled: dict[int, int] = {}
-    for second in seconds:
-        for key, count in second.lag_entry_hist_ms.items():
-            pooled[key] = pooled.get(key, 0) + count
-    return pooled
-
-
-def _percentile_upper_ms(hist: Mapping[int, int], quantile: float) -> int | None:
-    """Nearest-rank percentile of a 1 ms histogram, reported at the bin's upper edge."""
-    total = sum(hist.values())
-    if total <= 0:
-        return None
-    rank = max(1, math.ceil(quantile * total - 1e-9))
-    seen = 0
-    for key in sorted(hist):
-        seen += hist[key]
-        if seen >= rank:
-            return key + 1
-    return max(hist) + 1
+def _measured(seconds: Sequence[Second]) -> list[Second]:
+    """Closed seconds that actually carried traffic; a partial second is a fragment."""
+    return [second for second in seconds if not second.partial and second.messages > 0]
 
 
 def _open_second(seconds: Sequence[Second]) -> int | None:
@@ -319,8 +285,8 @@ def _trend(seconds: Sequence[Second], start: int, end: int) -> tuple[str, str]:
     window = [
         value
         for second in seconds
-        if start <= second.second < end
-        for value in (second.lag_entry_p50_ns,)
+        if start <= second.second < end and not second.partial
+        for value in (second.lag_p99_ns,)
         if value is not None
     ]
     if len(window) < _MIN_TREND_SAMPLES:
@@ -331,32 +297,55 @@ def _trend(seconds: Sequence[Second], start: int, end: int) -> tuple[str, str]:
 
 
 def _check_receipt_lag(seconds: Sequence[Second], bound_ns: int) -> Check:
-    hist = _pooled_hist(seconds)
-    p99 = _percentile_upper_ms(hist, 0.99)
-    p999 = _percentile_upper_ms(hist, 0.999)
-    if p99 is None or p999 is None:
-        return Check(1, "receipt-lag", _UNDECIDED, "no receipt-lag histogram in the sidecar")
-    inside = p999 < _MAX_RECEIPT_LAG_NS / _NS_PER_MS and p99 < bound_ns / _NS_PER_MS
+    measured = _measured(seconds)
+    if not measured:
+        return Check(1, "receipt-lag", _UNDECIDED, "no closed second with traffic")
+    unmeasured = [
+        second
+        for second in measured
+        if second.lag_count == 0 or second.lag_p99_ns is None or second.lag_p999_ns is None
+    ]
+    if unmeasured:
+        return Check(
+            1,
+            "receipt-lag",
+            _UNDECIDED,
+            f"{len(unmeasured)} of {len(measured)} measured seconds carry no receipt lag; "
+            "the tap must be running",
+        )
+    p99 = max(second.lag_p99_ns or 0 for second in measured)
+    p999 = max(second.lag_p999_ns or 0 for second in measured)
+    inside = p999 < _MAX_RECEIPT_LAG_NS and p99 < bound_ns
     verdict = _OK if inside else _BAD
     detail = (
-        f"p99 {p99:.1f} ms and p99.9 {p999:.1f} ms over {sum(hist.values())} messages "
-        f"(bounds {_MAX_RECEIPT_LAG_NS / _NS_PER_S:.1f} s and {bound_ns / _NS_PER_S:.1f} s)"
+        f"worst per-second p99 {p99 / _NS_PER_MS:.1f} ms and p99.9 {p999 / _NS_PER_MS:.1f} ms "
+        f"over {len(measured)} measured seconds "
+        f"(bounds {_MAX_RECEIPT_LAG_NS / _NS_PER_S:.1f} s tail and "
+        f"{bound_ns / _NS_PER_S:.1f} s entry)"
     )
     return Check(1, "receipt-lag", verdict, detail)
 
 
 def _check_service(seconds: Sequence[Second]) -> Check:
-    if not seconds:
-        return Check(2, "handler-service", _UNDECIDED, "no closed second in the sidecar")
-    worst_service = max(second.service_max_ns for second in seconds)
-    worst_utilization = max(second.utilization for second in seconds)
-    worst_p99 = max((second.service_p99_ns or 0) for second in seconds)
+    measured = _measured(seconds)
+    if not measured:
+        return Check(2, "handler-service", _UNDECIDED, "no closed second with traffic")
+    unmeasured = [second for second in measured if second.service_max_ns is None]
+    if unmeasured:
+        return Check(
+            2,
+            "handler-service",
+            _UNDECIDED,
+            f"{len(unmeasured)} of {len(measured)} measured seconds carry no service sample",
+        )
+    worst_service = max(second.service_max_ns or 0 for second in measured)
+    worst_utilization = max(second.service_sum_ns / _NS_PER_S for second in measured)
     verdict = (
         _OK if worst_service < _MAX_SERVICE_NS and worst_utilization < _MAX_UTILIZATION else _BAD
     )
     detail = (
-        f"max {worst_service / _NS_PER_MS:.1f} ms, p99 {worst_p99 / _NS_PER_MS:.1f} ms, "
-        f"utilization {worst_utilization:.2f}, headroom {1.0 - worst_utilization:.2f} "
+        f"max {worst_service / _NS_PER_MS:.1f} ms, utilization {worst_utilization:.2f}, "
+        f"headroom {1.0 - worst_utilization:.2f} over {len(measured)} measured seconds "
         f"(bounds {_MAX_SERVICE_NS / _NS_PER_MS:.1f} ms and {_MAX_UTILIZATION:.2f})"
     )
     return Check(2, "handler-service", verdict, detail)
@@ -381,14 +370,19 @@ def _check_trend(seconds: Sequence[Second], open_s: int | None) -> Check:
 def _check_symbol_gap(symbols: Mapping[str, SymbolFlow], bound_ns: int) -> Check:
     if not symbols:
         return Check(4, "symbol-gap", _UNDECIDED, "no per-symbol line in the sidecar")
-    traded = [flow for flow in symbols.values() if flow.trades > 0]
-    if not traded:
-        return Check(4, "symbol-gap", _UNDECIDED, "no symbol traded in the sidecar")
-    over = [flow for flow in traded if flow.max_gap_ns > bound_ns]
-    worst = max(flow.max_gap_ns for flow in traded)
+    evidence = [flow for flow in symbols.values() if flow.max_gap_ns is not None]
+    if not evidence:
+        return Check(
+            4,
+            "symbol-gap",
+            _UNDECIDED,
+            "no symbol carried two messages, so no gap is measurable",
+        )
+    over = [flow for flow in evidence if (flow.max_gap_ns or 0) > bound_ns]
+    worst = max(flow.max_gap_ns or 0 for flow in evidence)
     verdict = _BAD if over else _OK
     detail = (
-        f"{len(traded)}/{len(symbols)} symbols traded, {len(over)} over "
+        f"{len(evidence)}/{len(symbols)} symbols carried a measurable gap, {len(over)} over "
         f"{bound_ns / _NS_PER_S:.1f} s, worst {worst / _NS_PER_S:.1f} s"
     )
     return Check(4, "symbol-gap", verdict, detail)
@@ -398,7 +392,9 @@ def _largest_silent_span(seconds: Sequence[Second], open_s: int | None) -> int |
     if open_s is None:
         return None
     first_hour = [
-        second.second for second in seconds if open_s <= second.second < open_s + _FIRST_HOUR_S
+        second.second
+        for second in seconds
+        if open_s <= second.second < open_s + _FIRST_HOUR_S and not second.partial
     ]
     if len(first_hour) < 2:
         return None
@@ -407,7 +403,9 @@ def _largest_silent_span(seconds: Sequence[Second], open_s: int | None) -> int |
     )
 
 
-def _check_feed_health(seconds: Sequence[Second], open_s: int | None, bound_ns: int) -> Check:
+def _check_feed_health(
+    seconds: Sequence[Second], open_s: int | None, bound_ns: int, reconnects: int | None
+) -> Check:
     failures = sum(second.failures for second in seconds)
     silent = _largest_silent_span(seconds, open_s)
     if failures:
@@ -416,6 +414,13 @@ def _check_feed_health(seconds: Sequence[Second], open_s: int | None, bound_ns: 
             "feed-health",
             _BAD,
             f"{failures} feed.failure event(s); any stream or handler error is an overload",
+        )
+    if reconnects is not None and reconnects > 0:
+        return Check(
+            5,
+            "feed-health",
+            _BAD,
+            f"{reconnects} stream reconnect(s); a reconnect is an overload",
         )
     if silent is not None and silent * _NS_PER_S > bound_ns:
         return Check(
@@ -426,11 +431,19 @@ def _check_feed_health(seconds: Sequence[Second], open_s: int | None, bound_ns: 
             "reconnect is invisible to the tap, so the stream log must decide",
         )
     silence = "none" if silent is None else f"{silent} s"
+    if reconnects is None:
+        return Check(
+            5,
+            "feed-health",
+            _UNDECIDED,
+            f"0 feed.failure events and largest first-hour silence {silence}; reconnects are "
+            "not observable from handlers, so the stream log must decide",
+        )
     return Check(
         5,
         "feed-health",
         _OK,
-        f"0 feed.failure events; largest first-hour silence {silence}",
+        f"0 feed.failure events, 0 reconnects; largest first-hour silence {silence}",
     )
 
 
@@ -446,14 +459,14 @@ def _check_publication() -> Check:
 def _sustained_rise(seconds: Sequence[Second], open_s: int | None) -> tuple[bool, str | None]:
     if open_s is None or not seconds:
         return False, None
-    end = seconds[-1].second
+    end = max(second.second for second in seconds)
     start = open_s
     while start + _TREND_WINDOW_S <= end + 1:
         window = [
             value
             for second in seconds
-            if start <= second.second < start + _TREND_WINDOW_S
-            for value in (second.lag_entry_p50_ns,)
+            if start <= second.second < start + _TREND_WINDOW_S and not second.partial
+            for value in (second.lag_p99_ns,)
             if value is not None
         ]
         if len(window) >= _MIN_SUSTAINED_SAMPLES:
@@ -471,7 +484,9 @@ def _stale_burst(seconds: Sequence[Second], bound_ns: int) -> str | None:
     burst = 0
     previous: int | None = None
     for second in seconds:
-        stale = second.lag_entry_p50_ns is not None and second.lag_entry_p50_ns > bound_ns
+        stale = (
+            not second.partial and second.lag_p99_ns is not None and second.lag_p99_ns > bound_ns
+        )
         if stale and previous is not None and second.second == previous + 1:
             burst += 1
         elif stale:
@@ -488,14 +503,15 @@ def _stale_burst(seconds: Sequence[Second], bound_ns: int) -> str | None:
 
 
 def _capacity(seconds: Sequence[Second]) -> tuple[float, float]:
-    if not seconds:
+    closed = [second for second in seconds if not second.partial]
+    if not closed:
         return 0.0, 0.0
-    peak = max(second.rate_mps for second in seconds)
-    messages = {second.second: second.messages for second in seconds}
+    peak = float(max(second.messages for second in closed))
+    traffic = {second.second: second.messages for second in closed}
     sustained = 0.0
-    for second in seconds:
+    for second in closed:
         total = sum(
-            messages.get(anchor, 0)
+            traffic.get(anchor, 0)
             for anchor in range(second.second, second.second + _CAPACITY_WINDOW_S)
         )
         sustained = max(sustained, total / _CAPACITY_WINDOW_S)
@@ -513,7 +529,7 @@ def evaluate(sidecar: Sidecar, *, entry_input_max_age_s: float) -> GateReport:
         _check_service(sidecar.seconds),
         _check_trend(sidecar.seconds, open_s),
         _check_symbol_gap(sidecar.symbols, bound_ns),
-        _check_feed_health(sidecar.seconds, open_s, bound_ns),
+        _check_feed_health(sidecar.seconds, open_s, bound_ns, sidecar.reconnects),
         _check_publication(),
     )
     reasons = [
