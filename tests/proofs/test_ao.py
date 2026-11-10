@@ -51,6 +51,62 @@ HANDED_OFF = {
 }
 
 
+# `project` recreates AO's record and clone through AO's own commands; these stand-ins keep AO's
+# project state in a file and answer git from the fixture, so no daemon and no real repo is touched.
+FAKE_AO_PROJECT = """#!/usr/bin/env bash
+printf 'ao %s\\n' "$*" >> "$FAKE_LOG"
+case "$1 $2" in
+  "project get")
+    [[ -s "$FAKE_AO_STATE" ]] || exit 1
+    cat "$FAKE_AO_STATE"
+    ;;
+  "project rm")
+    : > "$FAKE_AO_STATE"
+    ;;
+  "project add")
+    path= prev=
+    for arg in "$@"; do
+      [[ "$prev" == --path ]] && path=$arg
+      prev=$arg
+    done
+    jq -n --arg path "$path" \
+      '{status: "ok", project: {id: "sextant", path: $path, config: {worker: {agent: "codex"}}}}' \
+      > "$FAKE_AO_STATE"
+    ;;
+  "project set-config")
+    prev= config=
+    for arg in "$@"; do
+      [[ "$prev" == --config-json ]] && config=$arg
+      prev=$arg
+    done
+    jq --argjson config "$config" '.project.config = $config' "$FAKE_AO_STATE" \
+      > "$FAKE_AO_STATE.next"
+    mv "$FAKE_AO_STATE.next" "$FAKE_AO_STATE"
+    ;;
+esac
+"""
+
+FAKE_GIT = """#!/usr/bin/env bash
+printf 'git %s\\n' "$*" >> "$FAKE_LOG"
+if [[ "$1" == clone ]]; then
+  last=
+  for arg in "$@"; do last=$arg; done
+  mkdir -p "$last/.git"
+  exit 0
+fi
+if [[ "$1" == -C ]]; then
+  if [[ "$3 $4 $5" == "remote get-url origin" ]]; then
+    case "$2" in
+      *"/.ao/repos/sextant" | *"/.ao/repos/sextant/") echo "$FAKE_ARCHIVE_URL" ;;
+      *) echo "$FAKE_REPO_URL" ;;
+    esac
+  fi
+  exit 0
+fi
+exit 1
+"""
+
+
 def _run(
     tmp: Path,
     *args: str,
@@ -222,3 +278,169 @@ def test_fixture_ignores_shell_startup(tmp_path: Path, monkeypatch) -> None:
     run, calls = _run(tmp_path, "claim", "57")
     assert run.returncode == 0, run.stderr
     assert any(call.startswith("spawn ") for call in calls)
+
+
+POLICY = json.loads((ROOT / "deploy" / "wsl" / "lane-runtimes" / "model-policy.json").read_text())
+POLICY_EFFORT = POLICY["claude"]["effort"]
+PROJECT_CONFIG = {
+    "agentConfig": {
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "permissions": "by-pass-permissions",
+    },
+    "worker": {"agent": "claude-code", "agentConfig": {}},
+    "orchestrator": {"agentConfig": {}},
+    "trackerIntake": {"enabled": False},
+}
+ARCHIVE = "https://github.com/seathatflowsinourveins/sextant-archive"
+
+
+def _carried(config: dict) -> dict:
+    """The record's config as recreated: every key, but the policy's worker effort."""
+    carried = json.loads(json.dumps(config))
+    carried["agentConfig"]["effort"] = POLICY_EFFORT
+    return carried
+
+
+def _project(tmp_path: Path, path: Path, config: dict | None = PROJECT_CONFIG):
+    """One `ao.sh project` run over a record at `path`, with offline ao and git."""
+    home = tmp_path / "home"
+    home.mkdir(exist_ok=True)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    for name, body in (("ao", FAKE_AO_PROJECT), ("git", FAKE_GIT)):
+        (bin_dir / name).write_text(body)
+        (bin_dir / name).chmod(0o755)
+    state = tmp_path / "ao-project.json"
+    record = {"status": "ok", "project": {"id": "sextant", "path": str(path), "config": config}}
+    state.write_text(json.dumps(record))
+    env = {
+        "HOME": str(home),
+        "PATH": f"{bin_dir}:{os.defpath}",
+        "FAKE_LOG": str(tmp_path / "calls"),
+        "FAKE_AO_STATE": str(state),
+        "FAKE_REPO_URL": REPO,
+        "FAKE_ARCHIVE_URL": ARCHIVE,
+    }
+    env.pop("BASH_ENV", None)
+    run = subprocess.run(["bash", str(AO), "project"], env=env, capture_output=True, text=True)
+    calls = (tmp_path / "calls").read_text().splitlines()
+    return run, calls, home, state, env
+
+
+def test_project_recreates_the_record_and_the_clone_that_name_another_repository(
+    tmp_path: Path,
+) -> None:
+    stale = tmp_path / "home" / ".ao" / "repos" / "sextant"
+    stale.mkdir(parents=True)
+    run, calls, home, state, env = _project(tmp_path, stale)
+    assert run.returncode == 0, run.stderr
+    clone = home / ".ao" / "repos" / "sextant-next"
+    # The record and its clone are recreated in this repository, and the old clone is left alone.
+    assert calls[0] == "ao project get sextant --json"
+    assert f"git clone -q {REPO} {clone}" in calls
+    assert f"git clone -q {REPO} {stale}" not in calls
+    helper = "git -C {} config --local --add credential.https://github.com.helper !"
+    assert any(call.startswith(helper.format(clone)) for call in calls), calls
+    registered = (
+        f"ao project add --path {clone} --id sextant --name Sextant (AO fix-CI/review) "
+        "--worker-agent codex"
+    )
+    saved = json.dumps(_carried(PROJECT_CONFIG), separators=(",", ":"))
+    restored = f"ao project set-config sextant --config-json {saved}"
+    assert registered in calls and restored in calls
+
+    def first(prefix: str) -> int:
+        return next(index for index, call in enumerate(calls) if call.startswith(prefix))
+
+    assert (
+        first(f"git -C {clone} config")
+        < calls.index("ao project rm sextant --yes")
+        < calls.index(registered)
+        < calls.index(restored)
+    )
+    # The lead-set worker, model and every other key survive; the effort is the policy's, not the
+    # record's old value, because the doctor compares it with the tracked policy.
+    assert json.loads(state.read_text())["project"]["config"] == _carried(PROJECT_CONFIG)
+    assert str(stale) in run.stdout and "not name" in run.stdout
+    assert str(clone) not in run.stdout
+    assert stale.is_dir(), "the script never removes the old clone itself"
+
+    (tmp_path / "calls").unlink()
+    again = subprocess.run(["bash", str(AO), "project"], env=env, capture_output=True, text=True)
+    assert again.returncode == 0, again.stderr
+    calls = (tmp_path / "calls").read_text().splitlines()
+    assert calls[0] == "ao project get sextant --json"
+    assert not [
+        call
+        for call in calls
+        if call.startswith(
+            ("git clone", "ao project rm", "ao project add", "ao project set-config")
+        )
+    ], calls
+    assert str(stale) not in again.stdout, "the stale clone is reported once, not on every run"
+
+
+def test_project_recreation_replaces_the_old_worker_effort_with_the_policys(
+    tmp_path: Path,
+) -> None:
+    seeded = PROJECT_CONFIG["agentConfig"]["effort"]
+    assert seeded != POLICY_EFFORT, "the fixture seeds an old effort"
+    stale = tmp_path / "home" / ".ao" / "repos" / "sextant"
+    stale.mkdir(parents=True)
+    run, calls, _, state, _ = _project(tmp_path, stale)
+    assert run.returncode == 0, run.stderr
+    restored = json.loads(state.read_text())["project"]["config"]
+    assert restored["agentConfig"]["effort"] == POLICY_EFFORT
+    written = next(
+        call for call in calls if call.startswith("ao project set-config sextant --config-json ")
+    )
+    payload = json.loads(written.split("--config-json ", 1)[1])
+    assert payload["agentConfig"]["effort"] == POLICY_EFFORT
+
+
+def test_project_recreation_creates_the_worker_effort_when_the_record_has_none(
+    tmp_path: Path,
+) -> None:
+    config = {
+        "agentConfig": {"model": "claude-opus-5-5"},
+        "worker": {"agent": "claude-code", "agentConfig": {}},
+    }
+    stale = tmp_path / "home" / ".ao" / "repos" / "sextant"
+    stale.mkdir(parents=True)
+    run, _, _, state, _ = _project(tmp_path, stale, config)
+    assert run.returncode == 0, run.stderr
+    restored = json.loads(state.read_text())["project"]["config"]
+    assert restored["agentConfig"]["effort"] == POLICY_EFFORT
+    assert restored["agentConfig"]["model"] == "claude-opus-5-5"
+    assert restored["worker"] == {"agent": "claude-code", "agentConfig": {}}
+
+
+def test_project_recreation_carries_every_other_lead_set_key(tmp_path: Path) -> None:
+    stale = tmp_path / "home" / ".ao" / "repos" / "sextant"
+    stale.mkdir(parents=True)
+    run, _, _, state, _ = _project(tmp_path, stale)
+    assert run.returncode == 0, run.stderr
+    restored = json.loads(state.read_text())["project"]["config"]
+    assert restored == _carried(PROJECT_CONFIG)
+    assert restored["agentConfig"]["permissions"] == "by-pass-permissions"
+    assert restored["orchestrator"] == {"agentConfig": {}}
+    assert restored["trackerIntake"] == {"enabled": False}
+
+
+def test_project_moves_a_record_that_points_outside_aos_clones_into_one(tmp_path: Path) -> None:
+    outside = tmp_path / "home" / "work"
+    outside.mkdir(parents=True)
+    run, calls, home, _, _ = _project(tmp_path, outside)
+    assert run.returncode == 0, run.stderr
+    clone = home / ".ao" / "repos" / "sextant-next"
+    # A checkout that names this repository but is not AO's own clone is reported, not written to.
+    assert str(outside) in run.stdout and "left for the owner" in run.stdout
+    assert not any(call.startswith(f"git -C {outside}") for call in calls)
+    assert f"git clone -q {REPO} {clone}" in calls
+    registered = (
+        f"ao project add --path {clone} --id sextant --name Sextant (AO fix-CI/review) "
+        "--worker-agent codex"
+    )
+    assert calls.index("ao project rm sextant --yes") < calls.index(registered)
+    assert outside.is_dir()

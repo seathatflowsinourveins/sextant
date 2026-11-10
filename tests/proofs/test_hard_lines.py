@@ -771,8 +771,13 @@ def test_the_installer_writes_each_user_layer_and_keeps_what_is_there(tmp_path: 
     home = tmp_path / "home"
     settings = home / ".gemini" / "antigravity-cli" / "settings.json"
     settings.parent.mkdir(parents=True)
+    kept = tmp_path / "worktree"
+    kept.mkdir()
+    file_entry = tmp_path / "notes.md"
+    file_entry.write_text("x")
+    gone = "/srv/another-checkout"
     owner = {
-        "trustedWorkspaces": ["/w"],
+        "trustedWorkspaces": [str(kept), gone, str(file_entry)],
         "permissions": {"deny": ["command(sudo)"], "allow": ["command(ls)"]},
     }
     settings.write_text(json.dumps(owner))
@@ -786,11 +791,14 @@ def test_the_installer_writes_each_user_layer_and_keeps_what_is_there(tmp_path: 
         "default.rules holds Codex's approvals"
     )
 
+    # The prune drops only the trusted path that no longer exists, prints it, and keeps every other
+    # entry and key, so the doctor's antigravity.repository rule can pass on this file.
+    assert f"removed Antigravity trusted workspace: {gone}" in run.stdout.splitlines()
+    assert str(kept) not in run.stdout and str(file_entry) not in run.stdout
     merged = json.loads(settings.read_text())
     ours = json.loads((KIT / "antigravity.json").read_text())["permissions"]["deny"]
-    assert merged["trustedWorkspaces"] == ["/w"] and merged["permissions"]["allow"] == [
-        "command(ls)"
-    ]
+    assert merged["trustedWorkspaces"] == [str(kept), str(file_entry)]
+    assert merged["permissions"]["allow"] == ["command(ls)"]
     assert merged["permissions"]["deny"] == ["command(sudo)", *ours]
     assert stat.S_IMODE(settings.stat().st_mode) == 0o600
 
@@ -811,6 +819,7 @@ def test_the_installer_writes_each_user_layer_and_keeps_what_is_there(tmp_path: 
     before = (copy.read_bytes(), settings.read_bytes())
     again, _ = _install(tmp_path, home)
     assert again.returncode == 0 and (copy.read_bytes(), settings.read_bytes()) == before
+    assert gone not in again.stdout, "a second run has nothing left to prune"
 
 
 def test_the_installer_publishes_the_rules_into_the_lane_codex_home(tmp_path: Path) -> None:

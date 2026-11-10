@@ -875,7 +875,28 @@ def check_antigravity(host: Host) -> dict[str, list[Finding]]:
 
     trusted = settings.get("trustedWorkspaces") if isinstance(settings, dict) else None
     if isinstance(trusted, list):
-        foreign = [value for value in trusted if not _current_repository(host, value)]
+        # A trusted path may be this checkout or a separate clone of this repository (the trading
+        # lead's own working copy, AO's clone). One that no longer exists is what the hard-lines
+        # installer's prune removes; one that exists but is not this repository stays a finding.
+        missing: list[object] = []
+        foreign: list[object] = []
+        for value in trusted:
+            path = Path(value).expanduser() if isinstance(value, str) and value else None
+            if path is not None and not path.is_absolute():
+                path = host.repo / path
+            if path is not None and not path.exists():
+                missing.append(value)
+            elif not _current_repository(host, value, allow_clone=True):
+                foreign.append(value)
+        if missing:
+            _fail(
+                out,
+                "antigravity",
+                "repository",
+                f"{len(missing)} Antigravity trusted workspace(s) no longer exist, so the "
+                f"installer's prune removes them: "
+                f"{', '.join(map(str, missing[:3]))}{'...' if len(missing) > 3 else ''}",
+            )
         if foreign:
             _fail(
                 out,
