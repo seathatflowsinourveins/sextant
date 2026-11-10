@@ -168,6 +168,74 @@ def _unwrap(value: Any) -> Any:
     return value
 
 
+_WRITE_KEYS = frozenset({"watchlist_id", "symbols"})
+_ENVELOPE_KEYS = {
+    frozenset({"success"}): "success",
+    frozenset({"data", "success"}): "data,success",
+    frozenset({"watchlist"}): "watchlist",
+    frozenset({"watchlist", "note"}): "watchlist,note",
+    frozenset({"watchlists"}): "watchlists",
+    frozenset({"partial", "watchlists"}): "partial,watchlists",
+    frozenset({"result"}): "result",
+}
+_UNPARSED = object()
+
+
+def _type_word(value: Any) -> str:
+    if isinstance(value, dict):
+        return "object"
+    if isinstance(value, list):
+        return "array"
+    return _JSON_TYPES.get(type(value), "unknown")
+
+
+def _array_item(items: list[Any]) -> str:
+    kinds = {_type_word(item) for item in items}
+    if not kinds:
+        return ""
+    return kinds.pop() if len(kinds) == 1 else "mixed"
+
+
+def _write_shape(value: Any, carrier: str) -> str:
+    """Fixed name for a write result: known keys and JSON types, no value or count.
+
+    ``carrier`` is the pinned SDK's result field that carried the value
+    (``structured_content`` or ``content``); unknown keys collapse to ``extra``
+    or ``unknown`` so an owner list name never reaches the stop tail.
+    """
+    if isinstance(value, dict):
+        keys = frozenset(value)
+        present = [key for key in ("watchlist_id", "symbols") if key in keys]
+        if not keys:
+            name = ""
+        elif present:
+            name = ",".join(present) + (",extra" if keys - _WRITE_KEYS else "")
+        else:
+            name = _ENVELOPE_KEYS.get(keys, "unknown")
+        fields = []
+        for key in present:
+            if isinstance(value[key], list):
+                fields.append(f"{key}:array[{_array_item(value[key])}]")
+            else:
+                fields.append(f"{key}:{_type_word(value[key])}")
+        shape = f"object{{{name}}}"
+        if fields:
+            shape += f"[{'|'.join(fields)}]"
+        return f"{carrier}:{shape}"
+    return f"{carrier}:{_type_word(value)}"
+
+
+def _documented_write(value: Any) -> bool:
+    """Exactly the measured write envelope; anything wider is still ambiguous."""
+    return (
+        isinstance(value, dict)
+        and set(value) == _WRITE_KEYS
+        and isinstance(value["watchlist_id"], str)
+        and isinstance(value["symbols"], list)
+        and all(isinstance(symbol, str) for symbol in value["symbols"])
+    )
+
+
 class OfficialTools:
     """Exact display allowlist, discovered schemas, serial pacing and safe errors."""
 
@@ -248,7 +316,10 @@ class OfficialTools:
             self.fresh(inputs)
         self.last_call = time.monotonic()
 
-    async def call(self, name: str, arguments: dict[str, Any], *, inputs=None) -> Any:
+    async def call_raw(
+        self, name: str, arguments: dict[str, Any], *, inputs=None
+    ) -> tuple[Any, str]:
+        """Transport and parse, plus the fixed shape class of what came back."""
         self.validate(name, arguments)
         async with self.lock:
             await self._pace(inputs)
@@ -278,14 +349,21 @@ class OfficialTools:
                 detail=f"tool {self.wire[name]}; {_error_word(result)}",
             )
         value = result.structured_content
-        if value is None:
-            texts = [part.text for part in result.content if part.type == "text"]
-            try:
-                if len(texts) != 1:
-                    raise ValueError
-                value = json.loads(texts[0], parse_float=Decimal)
-            except ValueError:
-                raise SyncError(UNKNOWN_RESULT_ENVELOPE, stage="tool call") from None
+        if value is not None:
+            return value, _write_shape(value, "structured_content")
+        texts = [part.text for part in result.content if part.type == "text"]
+        if len(texts) != 1:
+            return _UNPARSED, "content:multiple" if texts else "content:empty"
+        try:
+            value = json.loads(texts[0], parse_float=Decimal)
+        except ValueError:
+            return _UNPARSED, "content:unparsed"
+        return value, _write_shape(value, "content")
+
+    async def call(self, name: str, arguments: dict[str, Any], *, inputs=None) -> Any:
+        value, shape = await self.call_raw(name, arguments, inputs=inputs)
+        if value is _UNPARSED:
+            raise SyncError(UNKNOWN_RESULT_ENVELOPE, stage="tool call", detail=shape)
         return _unwrap(value)
 
 
@@ -413,34 +491,39 @@ async def sync_research(
     if not apply:
         return result
     for operation in operations:
+        if operation["tool"] != "create_watchlist":
+            response, shape = await tools.call_raw(
+                operation["tool"], operation["arguments"], inputs=inputs
+            )
+            if not _documented_write(response):
+                raise SyncError(
+                    AMBIGUOUS_MUTATION,
+                    stage="apply",
+                    detail=shape,
+                )
+            continue
         response = await tools.call(operation["tool"], operation["arguments"], inputs=inputs)
-        if operation["tool"] != "create_watchlist" and response != {"success": True}:
+        # Validate creation identity before any later mutation. Re-inventory
+        # also detects duplicate names and aliases before final readback.
+        row = response
+        if isinstance(row, dict) and "watchlist" in row and set(row) <= {"watchlist", "note"}:
+            row = _unwrap(row["watchlist"])
+        if (
+            not isinstance(row, dict)
+            or row.get("name") != operation["arguments"]["name"]
+            or row.get("read_only") not in (None, False)
+            or not isinstance(row.get("symbols"), list)
+            or any(not isinstance(symbol, str) for symbol in row["symbols"])
+        ):
             raise SyncError(
-                AMBIGUOUS_MUTATION,
+                UNKNOWN_CREATE_RESULT,
                 stage="apply",
             )
-        if operation["tool"] == "create_watchlist":
-            # Validate creation identity before any later mutation. Re-inventory
-            # also detects duplicate names and aliases before final readback.
-            row = response
-            if isinstance(row, dict) and "watchlist" in row and set(row) <= {"watchlist", "note"}:
-                row = _unwrap(row["watchlist"])
-            if (
-                not isinstance(row, dict)
-                or row.get("name") != operation["arguments"]["name"]
-                or row.get("read_only") not in (None, False)
-                or not isinstance(row.get("symbols"), list)
-                or any(not isinstance(symbol, str) for symbol in row["symbols"])
-            ):
-                raise SyncError(
-                    UNKNOWN_CREATE_RESULT,
-                    stage="apply",
-                )
-            if _id(row) in {item[0] for item in current.values()}:
-                raise SyncError(
-                    CREATE_ALIAS,
-                    stage="apply",
-                )
+        if _id(row) in {item[0] for item in current.values()}:
+            raise SyncError(
+                CREATE_ALIAS,
+                stage="apply",
+            )
     if any(op["tool"] == "create_watchlist" for op in operations):
         current = await _inventory(tools)
     rejected_all = set()
@@ -452,13 +535,13 @@ async def sync_research(
         desired = inputs.memberships[name]
         rejected, extras = desired - stored, stored - desired
         if extras:
-            response = await tools.call(
+            response, shape = await tools.call_raw(
                 "remove_from_watchlist",
                 {"watchlist_id": key, "symbols": sorted(extras)},
                 inputs=inputs,
             )
-            if response != {"success": True}:
-                raise SyncError(AMBIGUOUS_REMOVAL, stage="apply")
+            if not _documented_write(response):
+                raise SyncError(AMBIGUOUS_REMOVAL, stage="apply", detail=shape)
             stored = await _membership(tools, name, key)
         result["readback"][name] = {
             "stored": sorted(stored),

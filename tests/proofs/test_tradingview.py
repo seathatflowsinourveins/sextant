@@ -8,6 +8,7 @@ import hashlib
 import importlib
 import json
 import socket
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -95,6 +96,7 @@ class Peer:
         self.ambiguous = False
         self.malformed = False
         self.bad_create = False
+        self.write_response: dict[str, Any] | None = None
 
         @self.server.tool(name="mcp-watchlist-list-watchlists")
         def list_watchlists() -> dict[str, Any]:
@@ -131,9 +133,14 @@ class Peer:
             )
             self.lists[watchlist_id]["symbols"].extend(sorted(set(symbols) - self.reject))
             self.lists[watchlist_id]["symbols"].extend(sorted(self.extras))
-            return (
-                {"unknown": "a write may have succeeded"} if self.ambiguous else {"success": True}
-            )
+            if self.write_response is not None:
+                return copy.deepcopy(self.write_response)
+            if self.ambiguous:
+                return {"unknown": "a write may have succeeded"}
+            return {
+                "watchlist_id": watchlist_id,
+                "symbols": copy.deepcopy(self.lists[watchlist_id]["symbols"]),
+            }
 
         @self.server.tool(name="mcp-watchlist-remove-from-watchlist")
         def remove_from_watchlist(watchlist_id: str, symbols: list[str]) -> dict[str, Any]:
@@ -144,7 +151,14 @@ class Peer:
                 self.lists[watchlist_id]["symbols"] = [
                     value for value in self.lists[watchlist_id]["symbols"] if value not in symbols
                 ]
-            return {"success": True}
+            if self.write_response is not None:
+                return copy.deepcopy(self.write_response)
+            if self.ambiguous:
+                return {"unknown": "a write may have succeeded"}
+            return {
+                "watchlist_id": watchlist_id,
+                "symbols": copy.deepcopy(self.lists[watchlist_id]["symbols"]),
+            }
 
 
 def run_sync(path: Path, peer: Peer, *, apply=True, clock=None):
@@ -188,6 +202,127 @@ def test_membership_sync_preserves_survivor_order_and_owner_lists(tmp_path: Path
         "get_watchlist",
         "get_watchlist",
     ]
+
+
+def test_watchlist_writes_accept_the_measured_shape(tmp_path: Path):
+    peer = Peer()
+    result = run_sync(unit(tmp_path), peer)
+    assert result["applied"] is True
+    names = [name for name, _ in peer.calls]
+    assert names.count("add_to_watchlist") == 2
+    assert names.count("remove_from_watchlist") == 1
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        {"success": True},
+        {"watchlist_id": "1", "symbols": ["NASDAQ:AAPL"], "note": "ok"},
+        {"watchlist_id": 1, "symbols": ["NASDAQ:AAPL"]},
+        {"watchlist_id": "1", "symbols": "NASDAQ:AAPL"},
+        {"watchlist_id": "1"},
+        {"removed": ["NASDAQ:MSFT"]},
+        {"watchlist_id": "1", "symbols": ["NASDAQ:AAPL"], "SECRET-key": "SECRET-7f3a"},
+    ],
+    ids=[
+        "success-only",
+        "documented-plus-extra",
+        "non-string-id",
+        "non-list-symbols",
+        "documented-subset",
+        "unrelated-object",
+        "secret-bearing-extra",
+    ],
+)
+def test_write_shapes_wider_than_the_measured_shape_still_stop(tmp_path: Path, response):
+    _, sync = api()
+    peer = Peer()
+    peer.write_response = response
+    with pytest.raises(sync.SyncError) as error:
+        run_sync(unit(tmp_path), peer)
+    assert str(error.value) == sync.AMBIGUOUS_MUTATION
+    assert error.value.stage == "apply"
+    assert error.value.detail.startswith(("structured_content:", "content:"))
+    assert "SECRET" not in error.value.detail
+    assert "NASDAQ:AAPL" not in error.value.detail
+    assert [name for name, _ in peer.calls].count("add_to_watchlist") == 1
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        (
+            {"watchlist_id": "1", "symbols": ["NASDAQ:AAPL"]},
+            "structured_content:object{watchlist_id,symbols}"
+            "[watchlist_id:string|symbols:array[string]]",
+        ),
+        (
+            {"watchlist_id": 1, "symbols": []},
+            "structured_content:object{watchlist_id,symbols}[watchlist_id:number|symbols:array[]]",
+        ),
+        (
+            {"watchlist_id": "1", "symbols": ["A", 2]},
+            "structured_content:object{watchlist_id,symbols}"
+            "[watchlist_id:string|symbols:array[mixed]]",
+        ),
+        (
+            {"watchlist_id": "1", "symbols": "A"},
+            "structured_content:object{watchlist_id,symbols}[watchlist_id:string|symbols:string]",
+        ),
+        (
+            {"watchlist_id": "1", "symbols": ["A"], "note": "x"},
+            "structured_content:object{watchlist_id,symbols,extra}"
+            "[watchlist_id:string|symbols:array[string]]",
+        ),
+        (
+            {"watchlist_id": "1"},
+            "structured_content:object{watchlist_id}[watchlist_id:string]",
+        ),
+        (
+            {"symbols": ["A"]},
+            "structured_content:object{symbols}[symbols:array[string]]",
+        ),
+        ({"success": True}, "structured_content:object{success}"),
+        ({"data": {}, "success": True}, "structured_content:object{data,success}"),
+        ({"watchlist": {}, "note": "x"}, "structured_content:object{watchlist,note}"),
+        ({"partial": True, "watchlists": []}, "structured_content:object{partial,watchlists}"),
+        ({"watchlists": []}, "structured_content:object{watchlists}"),
+        ({"result": {}}, "structured_content:object{result}"),
+        ({"removed": ["A"]}, "structured_content:object{unknown}"),
+        ({}, "structured_content:object{}"),
+        ([], "structured_content:array"),
+        ("A", "structured_content:string"),
+        (7, "structured_content:number"),
+        (True, "structured_content:boolean"),
+        (None, "structured_content:null"),
+    ],
+)
+def test_write_shape_names_only_a_fixed_class(value, expected):
+    _, sync = api()
+    assert sync._write_shape(value, "structured_content") == expected
+
+
+def test_unparsed_write_content_names_only_its_class():
+    _, sync = api()
+    from mcp.types import CallToolResult, TextContent
+
+    class Session:
+        async def call_tool(self, *args, **kwargs):
+            return CallToolResult(content=[TextContent(type="text", text="SECRET-9f is not JSON")])
+
+    client = SimpleNamespace(session=Session())
+
+    async def run():
+        tools = sync.OfficialTools(client, interval=0)
+        tools.schemas["add_to_watchlist"] = {"type": "object"}
+        tools.wire["add_to_watchlist"] = "mcp-watchlist-add-to-watchlist"
+        return await tools.call_raw(
+            "add_to_watchlist", {"watchlist_id": "1", "symbols": ["NASDAQ:AAPL"]}
+        )
+
+    _, shape = asyncio.run(run())
+    assert shape == "content:unparsed"
+    assert "SECRET" not in shape
 
 
 @pytest.mark.parametrize(
@@ -1232,6 +1367,41 @@ def test_cli_withholds_a_message_outside_the_fixed_sync_literals(
     assert "TradingView session stopped" not in output.out
     assert "SECRET-7f3a" not in output.out
     assert output.err == ""
+
+
+def test_cli_names_only_the_shape_class_for_an_unaccepted_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+):
+    inputs, sync = api()
+    cli = importlib.import_module("sextant.tradingview.__main__")
+    peer = Peer()
+    peer.write_response = {
+        "watchlist_id": "SECRET-77",
+        "symbols": ["NASDAQ:SECRET-AAPL"],
+        "TOKEN-9": "SECRET-BODY",
+    }
+    data = inputs.ResearchInputs(
+        memberships={"NS movers": frozenset({"NASDAQ:AAPL"}), "NS focus": frozenset()},
+        expires_at=datetime.now(UTC) + timedelta(hours=1),
+        unmapped=frozenset(),
+        generation={},
+    )
+    monkeypatch.setattr(cli, "read_research_inputs", lambda *args, **kwargs: data)
+    monkeypatch.setattr(cli, "OfficialTools", lambda client: sync.OfficialTools(client, interval=0))
+
+    @asynccontextmanager
+    async def session(*args, **kwargs):
+        async with Client(peer.server) as client:
+            yield client
+
+    monkeypatch.setattr(cli, "official_client", session)
+    assert cli.main(["--research-dir", str(tmp_path), "--authorize", "--apply"]) == 2
+    output = capsys.readouterr().out
+    assert "Ambiguous watchlist mutation" in output
+    assert "object{watchlist_id,symbols,extra}" in output
+    assert "SECRET" not in output
+    assert "NASDAQ" not in output
+    assert [name for name, _ in peer.calls].count("add_to_watchlist") == 1
 
 
 def test_envelope_refusals_name_only_the_json_shape():

@@ -86,9 +86,17 @@ def main(argv: list[str] | None = None) -> int:
 
         async def run():
             async with official_client(args.authorize) as client:
-                return await sync_research(OfficialTools(client), inputs, apply=args.apply)
+                # SDK task groups wrap an error escaping the transport's __aexit__,
+                # which would hide a fixed diagnostic behind the generic stop.
+                try:
+                    return await sync_research(OfficialTools(client), inputs, apply=args.apply)
+                except SyncError as error:
+                    return error
 
-        print(json.dumps(asyncio.run(run()), ensure_ascii=False))
+        outcome = asyncio.run(run())
+        if isinstance(outcome, SyncError):
+            raise outcome
+        print(json.dumps(outcome, ensure_ascii=False))
         return 0
     except InputError:
         print("Research input unavailable; no session opened and lists unchanged.")
