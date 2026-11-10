@@ -37,7 +37,6 @@ _TEST_API_CREDENTIAL = "test-credential"
 
 
 def tick(at: int, price: str = "0.50", name: str = "PENNY") -> TradeTick:
-    # 100 shares per print reaches the fixture dvol gate, as in the consumer proof.
     return TradeTick(
         InstrumentId.from_str(name + ".NASDAQ"),
         Price.from_str(price),
@@ -94,7 +93,6 @@ def warm(host: RankingHost, now: list[int], names: tuple[str, ...] = UNIVERSE) -
 
 
 def wired(tmp_path: Path):
-    """A host whose heartbeat seam feeds its own consumer, as the PR 3 emitter will."""
     beats: list[RankingGeneration] = []
     holder: dict[str, RankingHost] = {}
 
@@ -210,7 +208,6 @@ def test_the_interval_file_holds_both_interval_series(tmp_path: Path) -> None:
     assert [row["sequence"] for row in generations] == list(range(len(generations)))
     published = [row["publication_ns"] for row in generations]
     beat_times = [row["heartbeat_at"] for row in heartbeats]
-    # DEGRADED vetoes are unthrottled, so generations are only non-decreasing.
     assert all(b >= a for a, b in itertools.pairwise(published))
     assert all(b > a for a, b in itertools.pairwise(beat_times))
     assert all(row["generation_ns"] == row["publication_ns"] for row in generations)
@@ -353,7 +350,7 @@ def test_a_wrong_thread_call_refuses_and_the_host_survives(tmp_path: Path) -> No
 
 @pytest.mark.parametrize("returned", [None, 0, "", False, True])
 def test_heartbeat_delivered_only_for_a_real_delivery(tmp_path: Path, returned) -> None:
-    state = tmp_path / ("real" if returned is True else f"fake-{type(returned).__name__}")
+    state = tmp_path / repr(returned)
     host, now = make_host(state, heartbeat=lambda _gen: returned)
     warm(host, now)
     host.close()
@@ -365,7 +362,7 @@ def test_heartbeat_delivered_only_for_a_real_delivery(tmp_path: Path, returned) 
 def test_every_degraded_generation_pages_the_alarm(tmp_path: Path) -> None:
     pages: list[tuple[str, str | None]] = []
     host, now = make_host(tmp_path, alarm=lambda reason, symbol: pages.append((reason, symbol)))
-    warm(host, now, names=("PENNY", "ADR"))  # LARGE never trades: always DEGRADED
+    warm(host, now, names=("PENNY", "ADR"))
     host.close()
     generations = _interval_generations(tmp_path)
     assert pages.count(("generation_degraded", None)) == len(generations) >= 2

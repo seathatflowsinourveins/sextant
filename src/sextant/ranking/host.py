@@ -24,12 +24,9 @@ This module starts no timer and manufactures no heartbeat (``reader.py:3``).
 From its first run the host also appends one JSON line per published
 generation and per heartbeat call under the caller-supplied session state
 directory (outside git). The record only observes the two interval series;
-it computes and registers no threshold, age or default. The state directory
-is reserved by its producer epoch at construction, so a second host on one
-directory refuses; every call is bound to the constructing thread and
-refuses from any other, because the bus aborts across threads; and a
-DEGRADED veto publication is never throttled, so a known-bad input reaches
-the consumer at once and pages the alarm on every such generation.
+it computes and registers no threshold, age or default. The directory is
+reserved by its epoch, calls refuse from any thread but the constructing
+one (the bus aborts across threads), and a DEGRADED veto is never throttled.
 """
 
 from __future__ import annotations
