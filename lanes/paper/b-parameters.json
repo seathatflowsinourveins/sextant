@@ -64,6 +64,38 @@
     "last_change": "2026-11-10"
   },
   {
+    "name": "alpaca_min_trail_fraction",
+    "unit": "lower bound on each symbol's dynamic trail fraction (trail_percent / 100)",
+    "value": "0.001",
+    "source": "docs/handbook/lessons.jsonl:52 (2026-10-29 paper trade: very tight trails floored at 0.1%, paper fills at trail_percent 0.12, 0.21 and 0.10): observed on paper, not documented; no broker page states a trail_percent minimum or precision (read 2026-11-10), so this bound is ours, not a broker rule; the percent sent is rounded up (wider) to two decimals, also ours; lead ruling LEAD-1021 items 1-2; UNCALIBRATED",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-10"
+  },
+  {
+    "name": "trail_atr_period",
+    "unit": "completed bars in Nautilus Wilder AverageTrueRange(period)",
+    "value": "22",
+    "source": "docs/adr/0005-exit-engine.md:28,71 (ATR22 on 5m bars; northstar-lanes@00203275944a:docs/adr/0006-exit-engine.md:125,298-332) and nautechsystems/nautilus_trader@d53849b216e20f2c122ca01b4dd0da377638b186 nautilus_trader/indicators/volatility.pyx (Wilder 1978); UNCALIBRATED",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-10"
+  },
+  {
+    "name": "trail_atr_bar_minutes",
+    "unit": "minutes per completed bar feeding Wilder AverageTrueRange",
+    "value": "5",
+    "source": "docs/adr/0005-exit-engine.md:28,71 (ATR22(5m)) and docs/adr/0025-gain-protection-and-fast-exit.md:28 (1/5-minute ATR14/22 grid); UNCALIBRATED",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-10"
+  },
+  {
+    "name": "trail_atr_multiple",
+    "unit": "multiple of Wilder ATR divided by basis price",
+    "value": "3",
+    "source": "docs/adr/0005-exit-engine.md:71 (small_distance_atr_multiple UNCALIBRATED start 3) and nautechsystems/nautilus_trader@d53849b216e20f2c122ca01b4dd0da377638b186 nautilus_trader/examples/strategies/ema_cross_trailing_stop.py (trailing_atr_multiple); UNCALIBRATED",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-10"
+  },
+  {
     "name": "tape_max_bars",
     "unit": "bars per batched bars page, all held symbols together (Alpaca's limit counts every symbol)",
     "value": "10000",
