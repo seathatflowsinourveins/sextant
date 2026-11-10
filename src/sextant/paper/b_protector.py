@@ -227,6 +227,12 @@ class BParameters:
             value = getattr(self, name)
             if value is not None and _decimal(value, name) <= 0:
                 raise ValueError(f"{name} must be positive")
+            whole = name in (TAPE_BARS_NAME, "trail_atr_period", "trail_atr_bar_minutes")
+            if whole and value is not None and _decimal(value, name) % 1:
+                raise ValueError(f"{name} must be a whole number")
+        minimum = self.alpaca_min_trail_fraction
+        if minimum is not None and _decimal(minimum, "alpaca_min_trail_fraction") > fraction:
+            raise ValueError("alpaca_min_trail_fraction must not exceed native_trail_fraction")
 
 
 def _decimal(value: object, field: str) -> Decimal:

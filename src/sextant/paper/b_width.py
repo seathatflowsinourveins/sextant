@@ -42,7 +42,7 @@ def view_from_quote(bid: Decimal, ask: Decimal) -> MarketView:
     """The quote's bid and spread, with the tick the outside-hours calculator uses."""
 
     _decimals(bid, ask)
-    if not (bid.is_finite() and ask.is_finite()) or bid <= 0 or ask < bid:
+    if bid <= 0 or ask < bid:
         raise ValueError("the width takes a finite, positive and uncrossed quote")
     tick = SUB_DOLLAR_INCREMENT if bid < 1 else CENT
     return MarketView(bid=bid, spread=ask - bid, one_tick=tick)
@@ -51,6 +51,8 @@ def view_from_quote(bid: Decimal, ask: Decimal) -> MarketView:
 def _decimals(*values: object) -> None:
     if not all(isinstance(value, Decimal) for value in values):
         raise TypeError("the width takes Decimal inputs only")
+    if not all(value.is_finite() for value in values):  # type: ignore[attr-defined]
+        raise ValueError("the width takes finite inputs only")
 
 
 class _Price:
@@ -67,18 +69,18 @@ class _Bar:
 
 
 def completed_atr(
-    rows: Iterable[BarRow], period: int, bar_minutes: int, now_ns: int
+    rows: Iterable[BarRow], period: int, bar_minutes: int, now_ns: int, fetched_ns: int
 ) -> Decimal | None:
-    """Wilder ATR over this RTH session's bars closed by ``now_ns`` (LEAD-1021 item 6); None
-    outside RTH, before ``period`` bars, or unless the newest closed bar is the bar of the
-    interval that has just closed. A symbol with no trade in that interval has no bar for it,
-    so it gets no new width and keeps its last one."""
+    """Wilder ATR over this RTH session's bars that had closed when the page was fetched
+    (LEAD-1021 item 6); None outside RTH, before ``period`` bars, or unless the newest closed
+    bar is the bar of the interval that has just closed at ``now_ns``. A symbol with no trade
+    in that interval has no bar for it, so it gets no new width and keeps its last one."""
 
     if session_at(now_ns) is not Session.RTH:
         return None
     open_ns, span_ns = session_start_ns(now_ns), bar_minutes * MINUTE_NS
     done = sorted(
-        (row for row in rows if row.ts_ns >= open_ns and row.ts_ns + span_ns <= now_ns),
+        (row for row in rows if open_ns <= row.ts_ns <= min(now_ns, fetched_ns) - span_ns),
         key=lambda item: item.ts_ns,
     )
     if not done or done[-1].ts_ns != now_ns - now_ns % span_ns - span_ns:
@@ -100,13 +102,15 @@ def trail_fraction(
     """The bounded per-symbol width, or None when the ATR or a valid quote is missing."""
 
     _decimals(native, minimum, multiple)
-    if not 0 < native <= MAX_TRAIL_FRACTION or minimum <= 0:
-        raise ValueError("the width needs 0 < native <= MAX_TRAIL_FRACTION and minimum > 0")
+    if not 0 < minimum <= native <= MAX_TRAIL_FRACTION or multiple <= 0:
+        raise ValueError(
+            "the width needs 0 < minimum <= native <= MAX_TRAIL_FRACTION, multiple > 0"
+        )
     if atr is None or view is None:
         return None
     _decimals(atr, view.bid, view.spread, view.one_tick)
-    if view.bid <= 0:
-        raise TypeError("the width takes a Decimal ATR and a positive Decimal basis")
+    if atr < 0 or view.bid <= 0 or view.spread < 0 or view.one_tick <= 0:
+        raise ValueError("the width takes a non-negative ATR and spread, a positive bid and tick")
     noise = noise_floor(view.one_tick, view.spread) / view.bid
     return min(native, max(minimum, noise, multiple * atr / view.bid))
 
@@ -115,6 +119,6 @@ def trail_percent(fraction: Decimal) -> Decimal:
     """The broker's trail_percent: rounded UP (wider) to two decimals, our formatting choice."""
 
     _decimals(fraction)
-    if not fraction.is_finite() or fraction <= 0:
+    if fraction <= 0:
         raise ValueError("trail_percent takes a finite, positive fraction")
     return (fraction * 100).quantize(PERCENT_STEP, rounding=ROUND_CEILING)
