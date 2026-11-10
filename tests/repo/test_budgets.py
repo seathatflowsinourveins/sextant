@@ -49,7 +49,13 @@ def test_src_stays_under_budget() -> None:
     # shows its native replacements, a weekly report from maintained tools proposes deletions,
     # and a later raise must cite that report. One-off study code stays on tagged research
     # branches. The owner: "it can be grow but with sota sustainable consolidation".
-    assert sum(_lines(path) for path in (ROOT / "src").rglob("*.py")) < 28000
+    # Ratcheted to 27,000 on 2026-11-10 under the owner's direction D-14 (the code stays lean)
+    # and the lead's ratchet ruling: the measured tree is 25,825 lines, and the roughly 1,175
+    # lines above it are the room for #208's display work, the C paper wiring tracks (the
+    # managed exit stack, re-entry and rotation, the live-ranking consumer, the baseline recipe
+    # wiring) and B's durable decision record, never more. After each later consolidation the
+    # cap follows the measured size down the same way.
+    assert sum(_lines(path) for path in (ROOT / "src").rglob("*.py")) < 27000
 
 
 def test_design_stays_short() -> None:
