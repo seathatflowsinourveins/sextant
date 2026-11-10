@@ -1,0 +1,834 @@
+{
+  "acceptance": {
+    "asof_bars_match_issuer": {
+      "adjustment": "raw",
+      "comparison": "Decimal at $0.01 (Reg NMS Rule 612)",
+      "feed": "sip",
+      "rows": [
+        {
+          "alpaca_sha256": "d0f12dcb58688eedf6c36d1537850a4acd7fba3574cf7f52ac7b971b226d0db7",
+          "day": "2021-12-01",
+          "master_dataset_ticker": "METV",
+          "master_security_id": "sharadar:635599",
+          "match_at_cent": true,
+          "received_at": "2026-11-06T18:33:47.929433+00:00",
+          "requested_at": "2026-11-06T18:33:47.625235+00:00",
+          "sharadar_sha256": "be566f6c801ee56ddee1ca40c8e005d7b3c2d5362d23c803994313f5345fc60a",
+          "symbol": "META"
+        },
+        {
+          "alpaca_sha256": "f092eb0b015ffb3127a48e7e20354d5a5bff4edc500874d327ad25b7e4722258",
+          "day": "2021-12-01",
+          "master_dataset_ticker": "META",
+          "master_security_id": "sharadar:194817",
+          "match_at_cent": true,
+          "received_at": "2026-11-06T18:33:48.053759+00:00",
+          "requested_at": "2026-11-06T18:33:47.929940+00:00",
+          "sharadar_sha256": "2aa37dc573f1c7a5b60cc3d4fe91159a01a2c8976a86ef0fd7e12e45582b2275",
+          "symbol": "FB"
+        },
+        {
+          "alpaca_sha256": "8f9274ff266ca5aefb17e7cc401b99508efb80dd59b3fde636f15bb7f98c376a",
+          "day": "2022-06-01",
+          "master_dataset_ticker": "BBBYQ",
+          "master_security_id": "sharadar:197799",
+          "match_at_cent": true,
+          "received_at": "2026-11-06T18:33:48.142600+00:00",
+          "requested_at": "2026-11-06T18:33:48.054172+00:00",
+          "sharadar_sha256": "7fb38cbe3a5c2df54a9cd910e64bb7396b3f19b0c53f90f1f5c9861412a8e8f2",
+          "symbol": "BBBY"
+        },
+        {
+          "alpaca_sha256": "67948be945eed9cba9a6bd2b8b994af51ab37143a4c4d1c4bd52e83484a48a0f",
+          "day": "2025-10-01",
+          "master_dataset_ticker": "NXH",
+          "master_security_id": "sharadar:195902",
+          "match_at_cent": true,
+          "received_at": "2026-11-06T18:33:48.227100+00:00",
+          "requested_at": "2026-11-06T18:33:48.143035+00:00",
+          "sharadar_sha256": "e37f4f2e699f3d8a7debfb2888f10383be743360e039b95f82f71a8808d10c33",
+          "symbol": "BBBY"
+        }
+      ],
+      "status": "PASS",
+      "values": "outside git: ~/sextant-data/pit-42/run-3/acceptance.json"
+    },
+    "float_history": {
+      "reason": "#107: no float-named field in the seven observed Sharadar schemas; shares outstanding is not public float",
+      "status": "UNVERIFIED"
+    },
+    "independent_delisted_sample": {
+      "covered": 27,
+      "criterion": "issuer CIK = Sharadar TICKERS.secfilings CIK; terminal interval ends on an explicit exit action on or before filing + 10 days (17 CFR 240.12d2-2(d)(1)); amended on #42 before any check",
+      "n": 40,
+      "pass_at_least": 38,
+      "registration": "2026-11-06-delisted-sample-registration.json",
+      "registration_sha256": "ba970d724edbae06f086d134e834c32cc8fecd3297e108756d302d0d6bfebd3a",
+      "rows": [
+        {
+          "accession": "0000876661-18-001017",
+          "covered": false,
+          "dataset_ticker": null,
+          "exit_date": null,
+          "exit_reason": null,
+          "filed": "2018-09-20",
+          "issuer_cik": "1302343",
+          "lag_days": null,
+          "reason": "EDR1: tickerchange_target_mismatch",
+          "security_id": null
+        },
+        {
+          "accession": "0000876661-25-000707",
+          "covered": true,
+          "dataset_ticker": "KLG",
+          "exit_date": "2025-09-25",
+          "exit_reason": "acquisitioncash",
+          "filed": "2025-09-26",
+          "issuer_cik": "0001959348",
+          "lag_days": 1,
+          "reason": null,
+          "security_id": "sharadar:640519"
+        },
+        {
+          "accession": "0000876661-22-000442",
+          "covered": true,
+          "dataset_ticker": "JCO",
+          "exit_date": "2022-05-25",
+          "exit_reason": "delisted",
+          "filed": "2022-05-26",
+          "issuer_cik": "0001686142",
+          "lag_days": 1,
+          "reason": null,
+          "security_id": "sharadar:117211"
+        },
+        {
+          "accession": "0001354457-19-000628",
+          "covered": true,
+          "dataset_ticker": "DNBF",
+          "exit_date": "2019-11-29",
+          "exit_reason": "acquisitionstock",
+          "filed": "2019-12-02",
+          "issuer_cik": "0000713671",
+          "lag_days": 3,
+          "reason": null,
+          "security_id": "sharadar:198887"
+        },
+        {
+          "accession": "0000876661-18-001260",
+          "covered": false,
+          "dataset_ticker": null,
+          "exit_date": null,
+          "exit_reason": null,
+          "filed": "2018-11-27",
+          "issuer_cik": "1647932",
+          "lag_days": null,
+          "reason": "no Sharadar CIK match",
+          "security_id": null
+        },
+        {
+          "accession": "0000876661-20-000114",
+          "covered": true,
+          "dataset_ticker": "NTX",
+          "exit_date": "2020-02-14",
+          "exit_reason": "delisted",
+          "filed": "2020-02-18",
+          "issuer_cik": "0000878201",
+          "lag_days": 4,
+          "reason": null,
+          "security_id": "sharadar:119105"
+        },
+        {
+          "accession": "0000876661-18-000660",
+          "covered": false,
+          "dataset_ticker": null,
+          "exit_date": null,
+          "exit_reason": null,
+          "filed": "2018-06-06",
+          "issuer_cik": "54507",
+          "lag_days": null,
+          "reason": "WR1: tickerchange_target_mismatch",
+          "security_id": null
+        },
+        {
+          "accession": "0001354457-20-000833",
+          "covered": true,
+          "dataset_ticker": "HDS",
+          "exit_date": "2020-12-23",
+          "exit_reason": "acquisitioncash",
+          "filed": "2020-12-28",
+          "issuer_cik": "0001573097",
+          "lag_days": 5,
+          "reason": null,
+          "security_id": "sharadar:191519"
+        },
+        {
+          "accession": "0001354457-18-000523",
+          "covered": true,
+          "dataset_ticker": "KERX",
+          "exit_date": "2018-12-12",
+          "exit_reason": "acquisitionstock",
+          "filed": "2018-12-12",
+          "issuer_cik": "0001114220",
+          "lag_days": 0,
+          "reason": null,
+          "security_id": "sharadar:196033"
+        },
+        {
+          "accession": "0000876661-24-001088",
+          "covered": true,
+          "dataset_ticker": "KSM",
+          "exit_date": "2024-11-13",
+          "exit_reason": "delisted",
+          "filed": "2024-11-20",
+          "issuer_cik": "0000846596",
+          "lag_days": 7,
+          "reason": null,
+          "security_id": "sharadar:119119"
+        },
+        {
+          "accession": "0001354457-20-000714",
+          "covered": false,
+          "dataset_ticker": null,
+          "exit_date": null,
+          "exit_reason": null,
+          "filed": "2020-11-18",
+          "issuer_cik": "0001330436",
+          "lag_days": null,
+          "reason": "no Sharadar CIK match",
+          "security_id": null
+        },
+        {
+          "accession": "0000876661-25-000523",
+          "covered": true,
+          "dataset_ticker": "HES",
+          "exit_date": "2025-07-18",
+          "exit_reason": "acquisitionstock",
+          "filed": "2025-07-18",
+          "issuer_cik": "0000004447",
+          "lag_days": 0,
+          "reason": null,
+          "security_id": "sharadar:199976"
+        },
+        {
+          "accession": "0001354457-19-000499",
+          "covered": true,
+          "dataset_ticker": "AABA",
+          "exit_date": "2019-10-02",
+          "exit_reason": "delisted",
+          "filed": "2019-10-07",
+          "issuer_cik": "0001011006",
+          "lag_days": 5,
+          "reason": null,
+          "security_id": "sharadar:197094"
+        },
+        {
+          "accession": "0000876661-21-000139",
+          "covered": true,
+          "dataset_ticker": "OSB",
+          "exit_date": "2021-01-29",
+          "exit_reason": "acquisitionstock",
+          "filed": "2021-02-01",
+          "issuer_cik": "0000877365",
+          "lag_days": 3,
+          "reason": null,
+          "security_id": "sharadar:123662"
+        },
+        {
+          "accession": "0001354457-25-000938",
+          "covered": true,
+          "dataset_ticker": "BASE",
+          "exit_date": "2025-09-23",
+          "exit_reason": "acquisitioncash",
+          "filed": "2025-09-24",
+          "issuer_cik": "0001845022",
+          "lag_days": 1,
+          "reason": null,
+          "security_id": "sharadar:635820"
+        },
+        {
+          "accession": "0000876661-23-000214",
+          "covered": true,
+          "dataset_ticker": "IVH",
+          "exit_date": "2023-03-10",
+          "exit_reason": "delisted",
+          "filed": "2023-03-13",
+          "issuer_cik": "0001568292",
+          "lag_days": 3,
+          "reason": null,
+          "security_id": "sharadar:118828"
+        },
+        {
+          "accession": "0000876661-17-000263",
+          "covered": true,
+          "dataset_ticker": "EXAR",
+          "exit_date": "2017-05-11",
+          "exit_reason": "acquisitioncash",
+          "filed": "2017-05-12",
+          "issuer_cik": "753568",
+          "lag_days": 1,
+          "reason": null,
+          "security_id": "sharadar:198641"
+        },
+        {
+          "accession": "0001354457-21-000191",
+          "covered": false,
+          "dataset_ticker": null,
+          "exit_date": null,
+          "exit_reason": null,
+          "filed": "2021-02-09",
+          "issuer_cik": "0000909724",
+          "lag_days": null,
+          "reason": "TLF: no explicit exit by filing + 10 days",
+          "security_id": null
+        },
+        {
+          "accession": "0000876661-17-000022",
+          "covered": false,
+          "dataset_ticker": null,
+          "exit_date": null,
+          "exit_reason": null,
+          "filed": "2017-01-11",
+          "issuer_cik": "1597503",
+          "lag_days": null,
+          "reason": "no Sharadar CIK match",
+          "security_id": null
+        },
+        {
+          "accession": "0001143313-23-000139",
+          "covered": true,
+          "dataset_ticker": "ESTE",
+          "exit_date": "2023-10-31",
+          "exit_reason": "acquisitionstock",
+          "filed": "2023-11-01",
+          "issuer_cik": "0000010254",
+          "lag_days": 1,
+          "reason": null,
+          "security_id": "sharadar:199912"
+        },
+        {
+          "accession": "0001354457-18-000345",
+          "covered": true,
+          "dataset_ticker": "JMBA",
+          "exit_date": "2018-09-12",
+          "exit_reason": "acquisitioncash",
+          "filed": "2018-09-13",
+          "issuer_cik": "0001316898",
+          "lag_days": 1,
+          "reason": null,
+          "security_id": "sharadar:194912"
+        },
+        {
+          "accession": "0001354457-18-000186",
+          "covered": false,
+          "dataset_ticker": null,
+          "exit_date": null,
+          "exit_reason": null,
+          "filed": "2018-06-06",
+          "issuer_cik": "0000749038",
+          "lag_days": null,
+          "reason": "CCUR: no explicit exit by filing + 10 days",
+          "security_id": null
+        },
+        {
+          "accession": "0001354457-23-000961",
+          "covered": true,
+          "dataset_ticker": "HHRS",
+          "exit_date": "2023-12-20",
+          "exit_reason": "acquisitioncash",
+          "filed": "2023-12-21",
+          "issuer_cik": "0001946425",
+          "lag_days": 1,
+          "reason": null,
+          "security_id": "sharadar:635961"
+        },
+        {
+          "accession": "0001354457-19-000222",
+          "covered": true,
+          "dataset_ticker": "HBK",
+          "exit_date": "2019-04-30",
+          "exit_reason": "acquisitioncash",
+          "filed": "2019-04-30",
+          "issuer_cik": "0001551739",
+          "lag_days": 0,
+          "reason": null,
+          "security_id": "sharadar:191872"
+        },
+        {
+          "accession": "0001354457-25-000811",
+          "covered": true,
+          "dataset_ticker": "IGMS",
+          "exit_date": "2025-08-13",
+          "exit_reason": "acquisitioncash",
+          "filed": "2025-08-14",
+          "issuer_cik": "0001496323",
+          "lag_days": 1,
+          "reason": null,
+          "security_id": "sharadar:110543"
+        },
+        {
+          "accession": "0001354457-19-000046",
+          "covered": false,
+          "dataset_ticker": null,
+          "exit_date": null,
+          "exit_reason": null,
+          "filed": "2019-02-01",
+          "issuer_cik": "0000819926",
+          "lag_days": null,
+          "reason": "SEII: no explicit exit by filing + 10 days",
+          "security_id": null
+        },
+        {
+          "accession": "0001143313-24-000020",
+          "covered": false,
+          "dataset_ticker": null,
+          "exit_date": null,
+          "exit_reason": null,
+          "filed": "2024-02-12",
+          "issuer_cik": "0001830795",
+          "lag_days": null,
+          "reason": "no Sharadar CIK match",
+          "security_id": null
+        },
+        {
+          "accession": "0000876661-18-000661",
+          "covered": true,
+          "dataset_ticker": "GXP",
+          "exit_date": "2018-06-04",
+          "exit_reason": "acquisitionstock",
+          "filed": "2018-06-06",
+          "issuer_cik": "1143068",
+          "lag_days": 2,
+          "reason": null,
+          "security_id": "sharadar:195786"
+        },
+        {
+          "accession": "0001354457-16-000524",
+          "covered": true,
+          "dataset_ticker": "CYNA",
+          "exit_date": "2016-10-20",
+          "exit_reason": "acquisitioncash",
+          "filed": "2016-10-21",
+          "issuer_cik": "0001532079",
+          "lag_days": 1,
+          "reason": null,
+          "security_id": "sharadar:157090"
+        },
+        {
+          "accession": "0001354457-17-000029",
+          "covered": true,
+          "dataset_ticker": "IQNT",
+          "exit_date": "2017-02-09",
+          "exit_reason": "acquisitioncash",
+          "filed": "2017-02-10",
+          "issuer_cik": "0001292653",
+          "lag_days": 1,
+          "reason": null,
+          "security_id": "sharadar:195109"
+        },
+        {
+          "accession": "0001354457-17-000178",
+          "covered": false,
+          "dataset_ticker": null,
+          "exit_date": null,
+          "exit_reason": null,
+          "filed": "2017-09-12",
+          "issuer_cik": "0000817366",
+          "lag_days": null,
+          "reason": "VCAI: ended_before_actions_coverage; WOOF1: tickerchange_target_mismatch",
+          "security_id": null
+        },
+        {
+          "accession": "0001354457-23-000819",
+          "covered": true,
+          "dataset_ticker": "ICPT",
+          "exit_date": "2023-11-07",
+          "exit_reason": "acquisitioncash",
+          "filed": "2023-11-08",
+          "issuer_cik": "0001270073",
+          "lag_days": 1,
+          "reason": null,
+          "security_id": "sharadar:195295"
+        },
+        {
+          "accession": "0000876661-17-000093",
+          "covered": true,
+          "dataset_ticker": "CLC",
+          "exit_date": "2017-02-27",
+          "exit_reason": "acquisitioncash",
+          "filed": "2017-02-28",
+          "issuer_cik": "20740",
+          "lag_days": 1,
+          "reason": null,
+          "security_id": "sharadar:199842"
+        },
+        {
+          "accession": "0001354457-19-000315",
+          "covered": true,
+          "dataset_ticker": "QTNA",
+          "exit_date": "2019-06-18",
+          "exit_reason": "acquisitioncash",
+          "filed": "2019-06-19",
+          "issuer_cik": "0001370702",
+          "lag_days": 1,
+          "reason": null,
+          "security_id": "sharadar:124360"
+        },
+        {
+          "accession": "0001354457-18-000014",
+          "covered": false,
+          "dataset_ticker": null,
+          "exit_date": null,
+          "exit_reason": null,
+          "filed": "2018-01-25",
+          "issuer_cik": "0000719274",
+          "lag_days": null,
+          "reason": "GIGAQ: no explicit exit by filing + 10 days",
+          "security_id": null
+        },
+        {
+          "accession": "0001143313-23-000078",
+          "covered": false,
+          "dataset_ticker": null,
+          "exit_date": null,
+          "exit_reason": null,
+          "filed": "2023-10-03",
+          "issuer_cik": "0001910950",
+          "lag_days": null,
+          "reason": "no Sharadar CIK match",
+          "security_id": null
+        },
+        {
+          "accession": "0000876661-21-000729",
+          "covered": false,
+          "dataset_ticker": null,
+          "exit_date": null,
+          "exit_reason": null,
+          "filed": "2021-05-17",
+          "issuer_cik": "0001419242",
+          "lag_days": null,
+          "reason": "AT2: tickerchange_target_mismatch",
+          "security_id": null
+        },
+        {
+          "accession": "0000876661-19-000821",
+          "covered": true,
+          "dataset_ticker": "BKS",
+          "exit_date": "2019-08-06",
+          "exit_reason": "acquisitioncash",
+          "filed": "2019-08-07",
+          "issuer_cik": "0000890491",
+          "lag_days": 1,
+          "reason": null,
+          "security_id": "sharadar:197748"
+        },
+        {
+          "accession": "0001354457-25-001073",
+          "covered": true,
+          "dataset_ticker": "ETNB",
+          "exit_date": "2025-10-30",
+          "exit_reason": "acquisitioncash",
+          "filed": "2025-10-30",
+          "issuer_cik": "0001785173",
+          "lag_days": 0,
+          "reason": null,
+          "security_id": "sharadar:110394"
+        },
+        {
+          "accession": "0000876661-25-000479",
+          "covered": true,
+          "dataset_ticker": "AGS",
+          "exit_date": "2025-06-30",
+          "exit_reason": "acquisitioncash",
+          "filed": "2025-07-01",
+          "issuer_cik": "0001593548",
+          "lag_days": 1,
+          "reason": null,
+          "security_id": "sharadar:120660"
+        }
+      ],
+      "status": "FAIL"
+    },
+    "recycled_ticker": {
+      "adr_three_bbby_issuers": "UNVERIFIED; the source measures 2 (lead, #42; ADR-0013 amendment)",
+      "bbby_issuer_count": 2,
+      "bbby_security_ids": [
+        "sharadar:195902",
+        "sharadar:197799"
+      ],
+      "each_lookup_resolves_one_member": true,
+      "lookups": [
+        {
+          "dataset_tickers": [
+            "METV"
+          ],
+          "day": "2021-12-01",
+          "security_ids": [
+            "sharadar:635599"
+          ],
+          "symbol": "META"
+        },
+        {
+          "dataset_tickers": [
+            "META"
+          ],
+          "day": "2021-12-01",
+          "security_ids": [
+            "sharadar:194817"
+          ],
+          "symbol": "FB"
+        },
+        {
+          "dataset_tickers": [
+            "BBBYQ"
+          ],
+          "day": "2022-06-01",
+          "security_ids": [
+            "sharadar:197799"
+          ],
+          "symbol": "BBBY"
+        },
+        {
+          "dataset_tickers": [
+            "NXH"
+          ],
+          "day": "2025-10-01",
+          "security_ids": [
+            "sharadar:195902"
+          ],
+          "symbol": "BBBY"
+        }
+      ],
+      "meta_fb_2021_12_01_distinct": true
+    },
+    "replacement_backtest": {
+      "status": "NOT_RUN"
+    },
+    "ten_exits": {
+      "covered": 10,
+      "names": {
+        "ATVI": {
+          "covered": true,
+          "exit_date": "2023-10-12",
+          "exit_reason": "delisted",
+          "exit_symbol": "ATVI",
+          "probe_asof": "2023-06-15",
+          "probe_asof_inside_interval": true,
+          "security_id": "sharadar:198850"
+        },
+        "BBBY": {
+          "covered": true,
+          "exit_date": "2023-05-02",
+          "exit_reason": "bankruptcyliquidation",
+          "exit_symbol": "BBBY",
+          "probe_asof": "2023-02-15",
+          "probe_asof_inside_interval": true,
+          "security_id": "sharadar:197799"
+        },
+        "CELG": {
+          "covered": true,
+          "exit_date": "2019-11-20",
+          "exit_reason": "acquisitioncash",
+          "exit_symbol": "CELG",
+          "probe_asof": "2019-06-15",
+          "probe_asof_inside_interval": true,
+          "security_id": "sharadar:198310"
+        },
+        "FRC": {
+          "covered": true,
+          "exit_date": "2023-05-03",
+          "exit_reason": "delisted",
+          "exit_symbol": "FRCB",
+          "probe_asof": "2023-02-15",
+          "probe_asof_inside_interval": true,
+          "security_id": "sharadar:119256"
+        },
+        "LK": {
+          "covered": true,
+          "exit_date": "2020-06-26",
+          "exit_reason": "regulatorydelisting",
+          "exit_symbol": "LK",
+          "probe_asof": "2020-03-15",
+          "probe_asof_inside_interval": true,
+          "security_id": "sharadar:110799"
+        },
+        "LNKD": {
+          "covered": true,
+          "exit_date": "2016-12-07",
+          "exit_reason": "acquisitioncash",
+          "exit_symbol": "LNKD",
+          "probe_asof": "2016-06-15",
+          "probe_asof_inside_interval": false,
+          "security_id": "sharadar:195290"
+        },
+        "SIVB": {
+          "covered": true,
+          "exit_date": "2023-03-28",
+          "exit_reason": "bankruptcyliquidation",
+          "exit_symbol": "SIVBQ",
+          "probe_asof": "2023-02-15",
+          "probe_asof_inside_interval": true,
+          "security_id": "sharadar:198834"
+        },
+        "TWTR": {
+          "covered": true,
+          "exit_date": "2022-10-27",
+          "exit_reason": "acquisitioncash",
+          "exit_symbol": "TWTR",
+          "probe_asof": "2022-06-15",
+          "probe_asof_inside_interval": true,
+          "security_id": "sharadar:187959"
+        },
+        "XLNX": {
+          "covered": true,
+          "exit_date": "2022-02-11",
+          "exit_reason": "acquisitionstock",
+          "exit_symbol": "XLNX",
+          "probe_asof": "2021-06-15",
+          "probe_asof_inside_interval": true,
+          "security_id": "sharadar:198693"
+        },
+        "YHOO": {
+          "covered": true,
+          "exit_date": "2017-06-16",
+          "exit_reason": "delisted",
+          "exit_symbol": "YHOO",
+          "probe_asof": "2017-01-15",
+          "probe_asof_inside_interval": true,
+          "security_id": "sharadar:113491"
+        }
+      },
+      "status": "PASS"
+    }
+  },
+  "acceptance_json_sha256": "dbef19b7d15dea1dc6240e023e64ec14ff69fb6db2360d4fe6289f269168bc47",
+  "capture": {
+    "actions_coverage_start": "2016-09-30",
+    "actions_received_at": "2026-11-06T16:59:19.528937+00:00",
+    "actions_sha256": "dc64b897aa1988913c98468d96dc9e614af39762e0c2be901191593e464c14ba",
+    "capture_asof": "2026-11-06T16:58:52+00:00",
+    "capture_sha256": "cd158d7932f58190b2ffddf2f380d0c2bbd235b5aad3789e079b08afc1ea7de3",
+    "tickers_received_at": "2026-11-06T16:59:18.537350+00:00",
+    "tickers_sha256": "7d5e3452e3b29339b915db966a9990cc453bbb5940266643b5c317c9ae1d46f2"
+  },
+  "carried_from": "seathatflowsinourveins/northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:src/northstar_trading/data/sharadar.py",
+  "coverage": {
+    "actions_coverage_start": "2016-09-30",
+    "boundary_evidence_counts": {
+      "end": {
+        "explicit_action": 9399,
+        "open_status": 15104,
+        "tickers_field": 0
+      },
+      "start": {
+        "explicit_action": 14859,
+        "pre_coverage_listing": 9644
+      }
+    },
+    "dated_interval_count": 24503,
+    "evidence_class_counts": {
+      "explicit_action": 14859,
+      "pre_coverage_listing": 9644,
+      "tickers_field": 0
+    },
+    "excluded_security_count": 11460,
+    "exclusion_counts": {
+      "discontinuous_exchange_chain": 83,
+      "discontinuous_tickerchange_chain": 60,
+      "ended_before_actions_coverage": 10273,
+      "exchange_history_mismatch": 6,
+      "tickerchange_target_mismatch": 383,
+      "unproven_ticker_reuse": 129,
+      "unsupported_instrument_type": 526
+    },
+    "included_security_count": 19619,
+    "input_security_count": 31079,
+    "instrument_type_counts": {
+      "common": {
+        "dated_interval_count": 14614,
+        "excluded_security_count": 9532,
+        "included_security_count": 10259,
+        "input_security_count": 19791,
+        "outside_window_security_count": 0
+      },
+      "etf": {
+        "dated_interval_count": 7569,
+        "excluded_security_count": 672,
+        "included_security_count": 7242,
+        "input_security_count": 7914,
+        "outside_window_security_count": 0
+      },
+      "etn": {
+        "dated_interval_count": 374,
+        "excluded_security_count": 132,
+        "included_security_count": 299,
+        "input_security_count": 431,
+        "outside_window_security_count": 0
+      },
+      "fund": {
+        "dated_interval_count": 646,
+        "excluded_security_count": 465,
+        "included_security_count": 628,
+        "input_security_count": 1093,
+        "outside_window_security_count": 0
+      },
+      "preferred": {
+        "dated_interval_count": 1300,
+        "excluded_security_count": 133,
+        "included_security_count": 1191,
+        "input_security_count": 1324,
+        "outside_window_security_count": 0
+      },
+      "unsupported": {
+        "dated_interval_count": 0,
+        "excluded_security_count": 526,
+        "included_security_count": 0,
+        "input_security_count": 526,
+        "outside_window_security_count": 0
+      }
+    },
+    "membership_policy": "layered-v1",
+    "outside_window_security_count": 0,
+    "scope": "SEP+SFP",
+    "security_scope": "stocks/SEP and funds/SFP; supported common, preferred, etf, etn, fund categories",
+    "table_counts": {
+      "SEP": {
+        "dated_interval_count": 15842,
+        "excluded_security_count": 9655,
+        "included_security_count": 11378,
+        "input_security_count": 21033,
+        "outside_window_security_count": 0
+      },
+      "SFP": {
+        "dated_interval_count": 8661,
+        "excluded_security_count": 1805,
+        "included_security_count": 8241,
+        "input_security_count": 10046,
+        "outside_window_security_count": 0
+      }
+    },
+    "unsupported_category_counts": {
+      "ETD": 497,
+      "IDX": 5,
+      "UNIT": 24
+    }
+  },
+  "historical_known_at": null,
+  "implementation_source_sha256": {
+    "src/sextant/data/sharadar_master.py": "8f43ec834dc09288445e92c7082f13adb864f12ad763989829dc725e7e39a1c1",
+    "src/sextant/data/universe.py": "9b61b4ad262c4f245b3d4de5410ff4329d1d79ee93b4ed7ffdbb9000d42f0dc7",
+    "src/sextant/research/delisted_sample.py": "6a802753237477e295dd0de11620f8ec51c49f3301bc4b6767926a362f8af8be",
+    "src/sextant/research/pit_acceptance.py": "066ef58b6a7c3e2d1a1f380b2de87f7820ce81e1c7a54ed12804e7c05a452181"
+  },
+  "issue": 42,
+  "members_manifest_rows": 24503,
+  "members_manifest_sha256": "e8394fb26f58ea19c0125de4af0ced5cb235d6a23bbb015a168d76adc32389da",
+  "pit_verified": false,
+  "probe_sha256": "3f759c293bc33f697355fdd621abb3866043c8c5a80fb8927154da82eab3ca89",
+  "schema_version": 2,
+  "scope": "SEP+SFP",
+  "survivor_only": true,
+  "window": [
+    "2016-01-01",
+    "2026-11-05"
+  ]
+}
