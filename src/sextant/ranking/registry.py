@@ -11,6 +11,17 @@ from datetime import date
 from decimal import Decimal
 from typing import TypedDict
 
+
+@dataclass(frozen=True, slots=True)
+class RegistryRow:
+    name: str
+    unit: str
+    value: Decimal | int
+    source: str
+    calibration_state: str
+    last_change: date
+
+
 ROWS = {
     "mover_min_move": (Decimal, "fraction"),
     "mover_min_trades_accel": (Decimal, "ratio"),
@@ -35,14 +46,19 @@ ENTRY_ROWS = {
 }
 
 
-@dataclass(frozen=True, slots=True)
-class RegistryRow:
-    name: str
-    unit: str
-    value: Decimal | int
-    source: str
-    calibration_state: str
-    last_change: date
+# The gate is an entry setting outside the generation registry and its hash.
+RANK_GATE_ENABLED = RegistryRow(
+    name="rank_gate_enabled",
+    unit="boolean",
+    value=False,
+    source=(
+        "LEAD-1759 item (b), 2026-11-10: default OFF; Release Toggles "
+        "(https://martinfowler.com/articles/feature-toggles.html#ReleaseToggles), read 2026-11-10; "
+        "enabled policy follows ADR-0003:24,42 and ADR-0024:33-34"
+    ),
+    calibration_state="UNCALIBRATED",
+    last_change=date(2026, 11, 10),
+)
 
 
 def _require_source(row: RegistryRow) -> None:
