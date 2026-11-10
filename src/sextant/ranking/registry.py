@@ -9,6 +9,7 @@ import json
 from dataclasses import asdict, dataclass, field
 from datetime import date
 from decimal import Decimal
+from typing import TypedDict
 
 ROWS = {
     "mover_min_move": (Decimal, "fraction"),
@@ -25,6 +26,14 @@ ROWS = {
     "top_n": (int, "symbols"),
 }
 
+# Trading/entry deployment only (ADR-0003 amendment): kept out of ROWS so the
+# display registry and its params_hash stay untouched. No values live here.
+ENTRY_ROWS = {
+    "entry_heartbeat_max_age_s": (int, "seconds"),
+    "entry_generation_max_age_s": (int, "seconds"),
+    "entry_input_max_age_s": (int, "seconds"),
+}
+
 
 @dataclass(frozen=True, slots=True)
 class RegistryRow:
@@ -34,6 +43,13 @@ class RegistryRow:
     source: str
     calibration_state: str
     last_change: date
+
+
+def _require_source(row: RegistryRow) -> None:
+    """A row's source is non-empty text and its last change a date, never coerced."""
+    source: object = row.source
+    if not isinstance(source, str) or not source.strip() or type(row.last_change) is not date:
+        raise ValueError("registry source and last change required")
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,8 +67,7 @@ class Registry:
                 raise TypeError(f"{row.name} must be {kind.__name__}, never float or bool")
             if not Decimal(row.value).is_finite() or row.value <= 0 or row.unit != unit:
                 raise ValueError(f"invalid registry value/unit: {row.name}")
-            if not row.source.strip() or type(row.last_change) is not date:
-                raise ValueError("registry source and last change required")
+            _require_source(row)
             if row.calibration_state != "UNCALIBRATED":
                 raise ValueError("this carry has no calibration evidence")
         ordered = tuple(sorted(self.rows, key=lambda r: r.name))
@@ -70,3 +85,32 @@ class Registry:
 
     def seconds(self, name: str) -> int:
         return int(getattr(self, name)) * 1_000_000_000
+
+
+class EntryAges(TypedDict):
+    entry_heartbeat_max_age_s: int
+    entry_generation_max_age_s: int
+    entry_input_max_age_s: int
+
+
+def entry_ages(rows: tuple[RegistryRow, ...]) -> EntryAges:
+    """Validated ``RankingConsumer`` entry ages (``consumer.py:44-46``) from rows."""
+    names = {row.name for row in rows}
+    if len(names) != len(rows) or names != ENTRY_ROWS.keys():
+        raise ValueError("missing, duplicate or unknown entry registry rows")
+    ages: dict[str, int] = {}
+    for row in rows:
+        kind, unit = ENTRY_ROWS[row.name]
+        if type(row.value) is not kind:
+            raise TypeError(f"{row.name} must be {kind.__name__}, never float or bool")
+        if not Decimal(row.value).is_finite() or row.value <= 0 or row.unit != unit:
+            raise ValueError(f"invalid registry value/unit: {row.name}")
+        _require_source(row)
+        if row.calibration_state != "UNCALIBRATED":
+            raise ValueError("this carry has no calibration evidence")
+        ages[row.name] = int(row.value)
+    return {
+        "entry_heartbeat_max_age_s": ages["entry_heartbeat_max_age_s"],
+        "entry_generation_max_age_s": ages["entry_generation_max_age_s"],
+        "entry_input_max_age_s": ages["entry_input_max_age_s"],
+    }
