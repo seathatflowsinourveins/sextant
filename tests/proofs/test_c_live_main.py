@@ -30,7 +30,14 @@ from nautilus_trader.model import (
     TradeTick,
 )
 
-from sextant.execution.custody import AccountScope, WriterLease
+from sextant.execution.custody import (
+    AccountScope,
+    AccountSnapshot,
+    Custody,
+    OrderFact,
+    PositionAuthority,
+    WriterLease,
+)
 from sextant.paper.c_live_main import _equity_ladder, main
 from sextant.ranking.baseline import BaselineSample, BaselineTable, dump_baseline
 from sextant.validation.trials import TrialLog, snapshot_hash
@@ -48,6 +55,9 @@ SUFFIX = "CU3B"
 API_KEY = "test-api-key-3"
 SECRET = "test-secret-3"  # noqa: S105
 IID = InstrumentId.from_str("OMH.ALPACA")
+DDD_IID = InstrumentId.from_str("DDD.ALPACA")
+PRE_OPEN_CLOCK = PRE_SWITCH_CLOCK + 20 * SEC
+RTH_AFTER_OPEN = START + 10 * SEC
 ET = ZoneInfo("America/New_York")
 D = Decimal
 
@@ -75,14 +85,20 @@ def write_baseline(
     feed: str = "sip",
     provenance: str = "fixture explicit complete curve; linear within minute",
     name: str = "baseline.json",
+    symbols: tuple[str, ...] = ("OMH",),
 ) -> Path:
+    samples = tuple(
+        sample
+        for symbol in symbols
+        for sample in (
+            BaselineSample(symbol, segment, "2026-11-06", 0, D(0), D(0)),
+            BaselineSample(symbol, segment, "2026-11-06", 600, D(600), D(60)),
+        )
+    )
     table = BaselineTable(
-        samples=(
-            BaselineSample("OMH", segment, "2026-11-06", 0, D(0), D(0)),
-            BaselineSample("OMH", segment, "2026-11-06", 600, D(600), D(60)),
-        ),
+        samples=samples,
         provenance=provenance,
-        known_at=START - SEC,
+        known_at=START - 8 * HOUR,
         feed=feed,
     )
     path = tmp_path / name
@@ -94,6 +110,7 @@ def write_baseline_dir(
     tmp_path: Path,
     *,
     segments: tuple[str, ...] = ("OVERNIGHT", "PRE", "RTH", "POST"),
+    symbols: tuple[str, ...] = ("OMH",),
 ) -> Path:
     directory = tmp_path / "baselines"
     directory.mkdir()
@@ -104,6 +121,7 @@ def write_baseline_dir(
             feed="boats" if segment == "OVERNIGHT" else "sip",
             provenance=f"{segment.lower()} baseline",
             name=f"{segment.lower()}.json",
+            symbols=symbols,
         )
     return directory
 
@@ -178,6 +196,10 @@ class FakeTradingClient:
 
     def get_asset(self, symbol_or_asset_id: object) -> Any:
         self.calls.append("get_asset")
+        wanted = getattr(symbol_or_asset_id, "value", symbol_or_asset_id)
+        for row in self.assets:
+            if getattr(row, "symbol", None) == str(wanted):
+                return row
         return SimpleNamespace(
             price_increment=0.01,
             tradable=self.tradable,
@@ -280,6 +302,11 @@ def asset(symbol: str, *, overnight_tradable: bool = True) -> Any:
 def daily_bars(close: str, volume: str) -> list[Any]:
     return [
         SimpleNamespace(
+            timestamp=datetime(2026, 11, 5, 10, 0, tzinfo=ET),
+            close=D("0.98"),
+            volume=D("100"),
+        ),
+        SimpleNamespace(
             timestamp=datetime(2026, 11, 6, 10, 0, tzinfo=ET),
             close=D("1.00"),
             volume=D("100"),
@@ -292,23 +319,32 @@ def daily_bars(close: str, volume: str) -> list[Any]:
     ]
 
 
-def trade(seconds: int, price: str, size: int = 100, *, base: int = START) -> TradeTick:
+def trade(
+    seconds: int, price: str, size: int = 100, *, base: int = START, iid: InstrumentId = IID
+) -> TradeTick:
     ts = base + seconds * SEC
     return TradeTick(
-        IID,
+        iid,
         Price.from_str(price),
         Quantity.from_int(size),
         AggressorSide.NO_AGGRESSOR,
-        TradeId(f"OMH-{ts}"),
+        TradeId(f"{iid}-{ts}"),
         ts,
         ts,
     )
 
 
-def quote(seconds: int, bid: str, ask: str, *, base: int = START) -> QuoteTick:
+def quote(
+    seconds: int,
+    bid: str,
+    ask: str,
+    *,
+    base: int = START,
+    iid: InstrumentId = IID,
+) -> QuoteTick:
     ts = base + seconds * SEC
     return QuoteTick(
-        IID,
+        iid,
         Price.from_str(bid),
         Price.from_str(ask),
         Quantity.from_int(100),
@@ -318,7 +354,7 @@ def quote(seconds: int, bid: str, ask: str, *, base: int = START) -> QuoteTick:
     )
 
 
-def replay(feed: FakeFeed, *, base: int = START) -> None:
+def replay(feed: FakeFeed, *, base: int = START, iid: InstrumentId = IID) -> None:
     """The C session's warm-up, flag, first leg and ask quote, with the live clock."""
 
     for seconds, price, size in (
@@ -330,16 +366,45 @@ def replay(feed: FakeFeed, *, base: int = START) -> None:
         (32, "1.0400", 500),
     ):
         feed.clock.value = base + seconds * SEC
-        feed.on_trade(trade(seconds, price, size, base=base))
+        feed.on_trade(trade(seconds, price, size, base=base, iid=iid))
     feed.clock.value = base + 32 * SEC
-    feed.on_quote(quote(32, "1.0400", "1.0600", base=base))
+    feed.on_quote(quote(32, "1.0400", "1.0600", base=base, iid=iid))
     feed.clock.value = base + 33 * SEC
-    feed.on_trade(trade(33, "1.0500", 500, base=base))
+    feed.on_trade(trade(33, "1.0500", 500, base=base, iid=iid))
     for seconds in range(34, 39):
         feed.clock.value = base + seconds * SEC
-        feed.on_trade(trade(seconds, "1.0200", 100, base=base))
+        feed.on_trade(trade(seconds, "1.0200", 100, base=base, iid=iid))
     feed.clock.value = base + 38 * SEC
-    feed.on_quote(quote(38, "1.0200", "1.0300", base=base))
+    feed.on_quote(quote(38, "1.0200", "1.0300", base=base, iid=iid))
+
+
+def replay_pair(feed: FakeFeed, iids: tuple[InstrumentId, ...], *, base: int = START) -> None:
+    """The same surge driven for two symbols without moving the other's clock."""
+
+    for seconds, price, size in (
+        (0, "1.0000", 100),
+        (25, "1.0100", 100),
+        (26, "1.0100", 100),
+        (30, "1.0000", 100),
+        (31, "1.0300", 500),
+        (32, "1.0400", 500),
+    ):
+        feed.clock.value = base + seconds * SEC
+        for iid in iids:
+            feed.on_trade(trade(seconds, price, size, base=base, iid=iid))
+    feed.clock.value = base + 32 * SEC
+    for iid in iids:
+        feed.on_quote(quote(32, "1.0400", "1.0600", base=base, iid=iid))
+    feed.clock.value = base + 33 * SEC
+    for iid in iids:
+        feed.on_trade(trade(33, "1.0500", 500, base=base, iid=iid))
+    for seconds in range(34, 39):
+        feed.clock.value = base + seconds * SEC
+        for iid in iids:
+            feed.on_trade(trade(seconds, "1.0200", 100, base=base, iid=iid))
+    feed.clock.value = base + 38 * SEC
+    for iid in iids:
+        feed.on_quote(quote(38, "1.0200", "1.0300", base=base, iid=iid))
 
 
 def noop_replay(feed: FakeFeed) -> None:
@@ -364,6 +429,33 @@ def post_replay(feed: FakeFeed) -> None:
     replay(feed, base=POST_CLOCK)
     feed.clock.value = POST_CLOCK + 40 * SEC
     feed.on_trade(trade(40, "1.1000", 500, base=POST_CLOCK))
+
+
+def post_fill_then_overnight_replay(feed: FakeFeed) -> None:
+    """Fill OMH in POST, then cross the 20:00 boundary."""
+
+    replay(feed, base=POST_CLOCK)
+    feed.clock.value = OVERNIGHT_CLOCK
+
+
+def post_pair_then_overnight_replay(feed: FakeFeed) -> None:
+    """Fill two names in POST, then cross the 20:00 boundary."""
+
+    replay_pair(feed, (IID, DDD_IID), base=POST_CLOCK)
+    feed.clock.value = OVERNIGHT_CLOCK
+
+
+def pre_fill_then_rth_replay(feed: FakeFeed) -> None:
+    """Fill OMH in PRE, then cross the 09:30 boundary."""
+
+    replay(feed, base=PRE_OPEN_CLOCK)
+    feed.clock.value = RTH_AFTER_OPEN
+
+
+def rth_after_open_replay(feed: FakeFeed) -> None:
+    """Drive the same surge again after the PRE/RTH boundary."""
+
+    replay(feed, base=RTH_AFTER_OPEN)
 
 
 class FakeFeed:
@@ -886,13 +978,32 @@ def test_the_universe_ranking_arms_the_slot_pool_and_drives_the_session(
 
     assert code == 0
     assert len(feed_log) == 1
-    assert set(feed_log[0].instruments) == {"DDD.ALPACA", "OMH.ALPACA"}
+    assert set(feed_log[0].instruments) == {
+        "OMH.ALPACA",
+        "DDD.ALPACA",
+        "CCC.ALPACA",
+        "BBB.ALPACA",
+        "AAA.ALPACA",
+    }
     assert data.calls
     written = receipt(live_env)
-    assert written["symbols"] == ["OMH.ALPACA", "DDD.ALPACA"]
+    assert written["symbols"] == [
+        "OMH.ALPACA",
+        "DDD.ALPACA",
+        "CCC.ALPACA",
+        "BBB.ALPACA",
+        "AAA.ALPACA",
+    ]
     assert written["arming"][0]["eligible"] == 5
     assert written["arming"][0]["slots"] == 2
-    assert written["arming"][0]["armed"] == ["OMH.ALPACA", "DDD.ALPACA"]
+    assert written["arming"][0]["max_armed_symbols"] == 5
+    assert written["arming"][0]["armed"] == [
+        "OMH.ALPACA",
+        "DDD.ALPACA",
+        "CCC.ALPACA",
+        "BBB.ALPACA",
+        "AAA.ALPACA",
+    ]
     assert written["commands"]
     assert client.submitted
 
@@ -924,12 +1035,190 @@ def test_a_universe_run_rearms_at_each_segment_boundary(live_env: Path) -> None:
     assert code == 0
     assert len(feed_log) == 2
     assert [set(feed.instruments) for feed in feed_log] == [
-        {"OMH.ALPACA", "DDD.ALPACA"},
-        {"OMH.ALPACA", "DDD.ALPACA"},
+        {"OMH.ALPACA", "DDD.ALPACA", "CCC.ALPACA", "BBB.ALPACA", "AAA.ALPACA"},
+        {"OMH.ALPACA", "DDD.ALPACA", "CCC.ALPACA", "BBB.ALPACA", "AAA.ALPACA"},
     ]
     written = receipt(live_env)
     assert [arming["segment"] for arming in written["arming"]] == ["RTH", "POST"]
     assert written["final_segment"] == "POST"
+
+
+def test_c_arms_five_names_in_score_order_not_candidate_count_or_symbol_order(
+    live_env: Path,
+) -> None:
+    ranks = {
+        "AAA": daily_bars("1.02", "300"),
+        "BBB": daily_bars("1.04", "300"),
+        "CCC": daily_bars("1.06", "300"),
+        "DDD": daily_bars("1.08", "300"),
+        "YYY": daily_bars("1.10", "300"),
+        "ZZZ": daily_bars("1.12", "300"),
+        "OMH": daily_bars("1.14", "500"),
+    }
+    client = FakeTradingClient(assets=tuple(asset(symbol) for symbol in ranks))
+
+    code = invoke(
+        live_env,
+        client,
+        Clock(),
+        Monotonic(),
+        universe=True,
+        data=FakeDataClient(ranks),
+    )
+
+    assert code == 0
+    written = receipt(live_env)
+    assert written["symbols"] == [
+        "OMH.ALPACA",
+        "ZZZ.ALPACA",
+        "YYY.ALPACA",
+        "DDD.ALPACA",
+        "CCC.ALPACA",
+    ]
+    assert written["arming"][0]["eligible"] == 7
+    assert written["arming"][0]["max_armed_symbols"] == 5
+    assert written["arming"][0]["slots"] == 2
+
+
+def test_a_held_name_that_is_not_overnight_eligible_stays_charged_but_held_back(
+    live_env: Path,
+) -> None:
+    ranks = {
+        "OMH": daily_bars("1.10", "500"),
+        "DDD": daily_bars("1.08", "300"),
+        "CCC": daily_bars("1.06", "300"),
+        "BBB": daily_bars("1.04", "300"),
+        "AAA": daily_bars("1.02", "300"),
+    }
+    client = FakeTradingClient(
+        assets=(
+            asset("OMH", overnight_tradable=False),
+            asset("DDD"),
+            asset("CCC"),
+            asset("BBB"),
+            asset("AAA"),
+        )
+    )
+    feed_log: list[FakeFeed] = []
+
+    code = invoke(
+        live_env,
+        client,
+        Clock(POST_CLOCK),
+        Monotonic(),
+        universe=True,
+        data=FakeDataClient(ranks),
+        baseline_dir=write_baseline_dir(live_env),
+        replays=[post_fill_then_overnight_replay, noop_replay],
+        feed_log=feed_log,
+    )
+
+    assert code == 0
+    assert [feed.feed for feed in feed_log] == ["sip", "boats"]
+    written = receipt(live_env)
+    assert written["final_segment"] == "OVERNIGHT"
+    overnight = written["arming"][1]
+    assert overnight["custody_open"] == 1
+    assert overnight["held_back"] == ["OMH.ALPACA"]
+    assert "OMH.ALPACA" not in overnight["armed"]
+
+
+def test_every_filled_name_stays_in_custody_across_a_segment_boundary(
+    live_env: Path,
+) -> None:
+    ranks = {
+        "OMH": daily_bars("1.10", "500"),
+        "DDD": daily_bars("1.08", "300"),
+        "CCC": daily_bars("1.06", "300"),
+        "BBB": daily_bars("1.04", "300"),
+        "AAA": daily_bars("1.02", "300"),
+    }
+    client = FakeTradingClient(assets=tuple(asset(symbol) for symbol in ranks))
+    feed_log: list[FakeFeed] = []
+
+    code = invoke(
+        live_env,
+        client,
+        Clock(POST_CLOCK),
+        Monotonic(),
+        universe=True,
+        data=FakeDataClient(ranks),
+        baseline_dir=write_baseline_dir(live_env, symbols=tuple(ranks)),
+        replays=[post_pair_then_overnight_replay, noop_replay],
+        feed_log=feed_log,
+    )
+
+    assert code == 0
+    assert [feed.feed for feed in feed_log] == ["sip", "boats"]
+    written = receipt(live_env)
+    assert written["final_segment"] == "OVERNIGHT"
+    assert written["arming"][1]["custody_open"] == 2
+    assert {"OMH.ALPACA", "DDD.ALPACA"} <= set(written["arming"][1]["armed"])
+
+
+def test_a_held_name_is_not_bought_again_in_a_later_segment(live_env: Path) -> None:
+    ranks = {
+        "OMH": daily_bars("1.10", "500"),
+        "DDD": daily_bars("1.08", "300"),
+        "CCC": daily_bars("1.06", "300"),
+        "BBB": daily_bars("1.04", "300"),
+        "AAA": daily_bars("1.02", "300"),
+    }
+    client = FakeTradingClient(assets=tuple(asset(symbol) for symbol in ranks))
+
+    code = invoke(
+        live_env,
+        client,
+        Clock(PRE_OPEN_CLOCK),
+        Monotonic(),
+        universe=True,
+        data=FakeDataClient(ranks),
+        baseline_dir=write_baseline_dir(live_env, segments=("PRE", "RTH")),
+        replays=[pre_fill_then_rth_replay, rth_after_open_replay],
+    )
+
+    assert code == 0
+    buys = [
+        order
+        for order in client.submitted
+        if isinstance(order, LimitOrderRequest)
+        and order.side is OrderSide.BUY
+        and order.symbol == "OMH"
+    ]
+    assert len(buys) == 1
+
+
+def test_c_retains_held_and_working_symbols_instead_of_only_the_position_count(
+    tmp_path: Path,
+) -> None:
+    from sextant.paper.c_live_main import _retained_symbols
+
+    scope = AccountScope("alpaca", "fixture")
+    book = Custody(scope, tmp_path / "custody.json", create=True)
+    snapshot = AccountSnapshot(
+        scope,
+        1,
+        {"HELD.ALPACA": D(1), "FLAT.ALPACA": D(0)},
+        {"HELD.ALPACA": PositionAuthority(D(1), "fixture")},
+        (
+            OrderFact("working", "WORKING.ALPACA", "BUY", D(1), D(0), "NEW", "working"),
+            OrderFact("held", "HELD.ALPACA", "SELL", D(1), D(0), "NEW", "held"),
+            OrderFact("done", "DONE.ALPACA", "BUY", D(1), D(1), "FILLED", "done"),
+        ),
+        True,
+        1,
+        "fixture",
+    )
+    assert book.observe(snapshot, now=1)
+    assert _retained_symbols(book) == frozenset({"HELD.ALPACA", "WORKING.ALPACA"})
+
+
+def test_c_refuses_a_missing_symbol_snapshot_explicitly(tmp_path: Path) -> None:
+    from sextant.paper.c_live_main import LiveRefusal, _retained_symbols
+
+    book = Custody(AccountScope("alpaca", "fixture"), tmp_path / "custody.json", create=True)
+    with pytest.raises(LiveRefusal, match="custody symbols unavailable"):
+        _retained_symbols(book)
 
 
 def test_an_empty_universe_refuses_without_arming(live_env: Path) -> None:

@@ -47,18 +47,19 @@ test('ambiguous, malformed and conflicting markers fail closed', () => {
 
 function fixture() {
   const head = 'a'.repeat(40);
-  const statuses = [], outputs = {}, failures = [];
+  const statuses = [], outputs = {}, failures = [], reviews = [];
   const pr = {number: 7, state: 'open', head: {sha: head}, base: {ref: 'gate', repo: {full_name: 'owner/project'}}};
   const diff = 'diff --git a/example.txt b/example.txt\n+snapshot\n';
   const github = {rest: {
-    pulls: {get: async params => ({data: params?.mediaType?.format === 'diff' ? diff : pr}), listReviews: 'reviews'},
+    pulls: {get: async params => ({data: params?.mediaType?.format === 'diff' ? diff : pr}),
+      listReviews: 'reviews', createReview: async args => reviews.push(args)},
     repos: {get: async () => ({data: {full_name: 'owner/project', default_branch: 'gate'}}),
       createCommitStatus: async status => statuses.push(status)},
   }, paginate: async () => []};
   const context = {repo: {owner: 'owner', repo: 'project'}, serverUrl: 'https://github.com', runId: 12,
     payload: {workflow_run: {conclusion: 'success'}}};
   const core = {setOutput: (name, value) => {outputs[name] = value;}, setFailed: value => failures.push(value)};
-  return {github, context, core, head, pr, statuses, outputs, failures};
+  return {github, context, core, head, pr, statuses, outputs, failures, reviews};
 }
 
 async function promptText(engine) {
@@ -113,6 +114,76 @@ test('third-head mapping leaves P1 and lower nonblocking but keeps P0 blocking',
   assert.equal(gate.qualityPassed(report(1), 0), true);
   assert.equal(gate.qualityPassed(report(0), 0), false);
   assert.equal(gate.qualityPassed(report(2)), true);
+});
+
+// #205's Codex final message, verbatim: the action succeeded, but the review did not run.
+const HOLLOW_205 = '{"findings": [], "overall_correctness": "patch is incorrect", ' +
+  '"overall_explanation": "Review of 2f023a0653baba6801a2ea9ffcf559a9bd10c208 could not be completed: ' +
+  'GitHub CLI authentication is unavailable and api.github.com does not resolve. Required context and ' +
+  'upstream sources could not be verified; this reports a review failure, not a demonstrated patch defect.", ' +
+  '"overall_confidence_score": 0.03}';
+
+test('a review that did not run fails closed on its empty findings (#205 fixture)', async () => {
+  const f = fixture();
+  await gate.qualityResult(f, 7, f.head, HOLLOW_205, 'codex');
+  assert.equal(f.outputs.passed, 'false');
+  assert.equal(f.reviews.length, 0);
+  assert.equal(f.failures.length, 1);
+  assert.match(f.failures[0], /did not run/i);
+  assert.match(f.failures[0], /reports no findings/i);
+  assert.match(f.failures[0], /network or authentication fault/);
+});
+
+test('a hollow verdict with other wording also fails closed on its empty findings', async () => {
+  const f = fixture();
+  const text = JSON.stringify({findings: [], overall_correctness: 'patch is incorrect',
+    overall_explanation: 'I was unable to review the diff; required context was unavailable.'});
+  await gate.qualityResult(f, 7, f.head, text, 'codex');
+  assert.equal(f.outputs.passed, 'false');
+  assert.equal(f.reviews.length, 0);
+  assert.equal(f.failures.length, 1);
+  assert.match(f.failures[0], /did not run/i);
+  assert.match(f.failures[0], /reports no findings/i);
+});
+
+test('a real verdict that describes an incomplete patch evaluates normally', async () => {
+  const report = {
+    findings: [{title: '[P1] Migration omits the new table', body: 'file:1, input, wrong output', priority: 1}],
+    overall_correctness: 'patch is incorrect',
+    overall_explanation: 'The migration could not be completed because the new table is missing; the review found one P1.',
+  };
+  assert.equal(gate.qualityPassed(report, 0), true);
+  const f = fixture();
+  await gate.qualityResult(f, 7, f.head, JSON.stringify(report), 'codex');
+  assert.equal(f.reviews.length, 1);
+  assert.equal(f.outputs.passed, 'false');
+  assert.deepEqual(f.failures, ['The other-family quality review requires changes']);
+});
+
+test('missing and unreadable verdicts fail closed with named reasons', async () => {
+  for (const [text, reason] of [
+    ['', /verdict is missing/i],
+    ['not json', /verdict is unreadable/i],
+    ['{"findings": [], "overall_correctness": "unknown", "overall_explanation": "x"}', /verdict is unreadable/i],
+  ]) {
+    const f = fixture();
+    await gate.qualityResult(f, 7, f.head, text, 'codex');
+    assert.equal(f.outputs.passed, 'false');
+    assert.equal(f.reviews.length, 0);
+    assert.equal(f.failures.length, 1);
+    assert.match(f.failures[0], reason);
+  }
+});
+
+test('a valid structured verdict still posts one review and passes', async () => {
+  const f = fixture();
+  const text = JSON.stringify({findings: [], overall_correctness: 'patch is correct',
+    overall_explanation: 'No blocking findings.'});
+  await gate.qualityResult(f, 7, f.head, text, 'codex');
+  assert.equal(f.failures.length, 0);
+  assert.equal(f.outputs.passed, 'true');
+  assert.equal(f.reviews.length, 1);
+  assert.match(f.reviews[0].body, new RegExp(`^Review of ${f.head}`));
 });
 
 test('the API-only guard refuses execution and publishing for another head or PR', async () => {

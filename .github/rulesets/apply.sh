@@ -3,7 +3,7 @@
 # Source: docs.github.com/en/rest/repos/rules, read 2026-11-05.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
-repo=seathatflowsinourveins/sextant-next
+repo=seathatflowsinourveins/sextant
 # Phase 1 applies the default-branch and ledger recipes; live belongs to its later promotion.
 for file in .github/rulesets/main.json .github/rulesets/ledger.json; do
   name=$(jq -r .name "$file")

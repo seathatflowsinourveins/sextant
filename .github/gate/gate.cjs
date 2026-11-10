@@ -146,13 +146,41 @@ async function blockingPriority(github, context, number, head) {
   return heads.size >= 2 ? 0 : 1;
 }
 
+// The reviewer's schema: "patch is incorrect" is a verdict about the patch, so it
+// needs at least one finding. An incorrect verdict with no findings is an
+// incomplete review, whatever its prose says
+// (openai/codex@086ccc833bc9cf01024ad2dd6af7dbd421b6bf9a rubric.md:60-86).
+const NETWORK_OR_AUTH_FAULT = /GitHub CLI authentication is unavailable|api\.github\.com does not resolve/i;
+
+function didNotRun(report) {
+  const fault = NETWORK_OR_AUTH_FAULT.test(report.overall_explanation)
+    ? ' The reviewer also reported a network or authentication fault.' : '';
+  return `Review did not run: the verdict says the patch is incorrect but reports no findings.${fault}`;
+}
+
+function parseVerdict(text) {
+  if (typeof text !== 'string' || !text.trim()) {
+    throw Error('Review verdict is missing: the review job produced no structured output');
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw Error('Review verdict is unreadable: the review output is not valid JSON');
+  }
+}
+
 function qualityPassed(text, threshold = 1) {
-  const report = typeof text === 'string' ? JSON.parse(text) : text;
+  const report = typeof text === 'string' ? parseVerdict(text) : text;
   if (!report || !Array.isArray(report.findings) || !['patch is correct', 'patch is incorrect'].includes(report.overall_correctness) ||
       typeof report.overall_explanation !== 'string' || !report.findings.every(finding =>
         typeof finding.title === 'string' && typeof finding.body === 'string' &&
         (finding.priority === null || Number.isInteger(finding.priority) && finding.priority >= 0 && finding.priority <= 3))) {
-    throw Error('Missing or invalid structured review');
+    throw Error('Review verdict is unreadable: missing or invalid structured review fields');
+  }
+  // A review that describes an incomplete patch is not a pass; a review that did
+  // not run is unknown, never a pass. The schema decides, not the prose.
+  if (report.overall_correctness === 'patch is incorrect' && report.findings.length === 0) {
+    throw Error(didNotRun(report));
   }
   const blocks = report.findings.some(finding => (Number.isInteger(finding.priority) && finding.priority <= threshold) ||
     (threshold ? /^\[P[01]\]/ : /^\[P0\]/).test(finding.title));
@@ -162,8 +190,16 @@ function qualityPassed(text, threshold = 1) {
 async function qualityResult({ github, context, core }, number, head, text, family) {
   await current(github, context, number, head);
   const threshold = await blockingPriority(github, context, number, head);
-  const passed = qualityPassed(text, threshold);
-  const report = JSON.parse(text);
+  let report, passed;
+  try {
+    report = typeof text === 'string' ? parseVerdict(text) : text;
+    passed = qualityPassed(report, threshold);
+  } catch (error) {
+    // Do not post an unreadable or incomplete output as a review: it is not a review.
+    core.setOutput('passed', 'false');
+    core.setFailed(error.message);
+    return;
+  }
   core.setOutput('followups', JSON.stringify(report.findings.filter(finding => finding.priority === null || finding.priority > threshold)
     .map(finding => `${family}: ${finding.title}\n${finding.body}`)));
   await github.rest.pulls.createReview({ ...context.repo, pull_number: Number(number), commit_id: head, event: 'COMMENT',

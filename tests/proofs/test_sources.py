@@ -132,6 +132,17 @@ def test_every_owner_on_its_own_path_passes_the_gate() -> None:
             assert _failures(_cite(owner), (_sample(rule["paths"]),)) == [], (surface, owner)
 
 
+def test_ao_owner_on_its_claim_path_passes_the_gate() -> None:
+    sources = "OrchestratorInc/agent-orchestrator@v0.14.10 033d597032e448a0ea16c298350e36b099f74106"
+    assert _failures(sources, ("deploy/wsl/ao.sh",)) == []
+
+
+def test_an_ao_fork_on_the_claim_path_fails_the_gate() -> None:
+    sources = "example/agent-orchestrator@v0.14.10 033d597032e448a0ea16c298350e36b099f74106"
+    found = _failures(sources, ("deploy/wsl/ao.sh",))
+    assert any("harness" in failure and "authority" in failure.lower() for failure in found)
+
+
 def test_a_pinned_blob_url_cites_its_owner() -> None:
     sources = (
         f"https://github.com/nautechsystems/nautilus_trader/blob/{SHA}/engine.py, read 2026-11-09"

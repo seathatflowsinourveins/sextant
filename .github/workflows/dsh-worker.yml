@@ -175,7 +175,7 @@ jobs:
           app-id: ${{ vars.SEXTANT_APP_ID }}
           private-key: ${{ secrets.SEXTANT_APP_PRIVATE_KEY }}
           owner: seathatflowsinourveins
-          repositories: sextant-next
+          repositories: sextant
           permission-contents: write
           permission-pull-requests: write
 
