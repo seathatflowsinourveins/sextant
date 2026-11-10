@@ -13,6 +13,9 @@ refuses, so ``feed="boats"`` polls REST ``get_stock_trades``/``get_stock_quotes`
 registry's ``feed_poll_interval_s`` (``lanes/paper/b-parameters.json``, 1 s, UNCALIBRATED),
 the shared REST polling cadence, not a B-scoped strategy parameter.
 
+An optional read-only ``FeedTap`` counts handler entries and writes one JSON line
+per wall-clock second; with no tap nothing here changes.
+
 The feed only converts market data. It places no order, reads no key from the
 environment or a file (the injected factories receive the pair), and adds no
 reconnect or retry policy: the runner owns the feed's lifecycle. rc8's
@@ -47,6 +50,8 @@ from nautilus_trader.model import (
     TradeId,
     TradeTick,
 )
+
+from sextant.paper.feed_tap import FeedTap
 
 __all__ = ["AlpacaTickFeed"]
 
@@ -123,11 +128,14 @@ class AlpacaTickFeed:
         overlap_s: float = 5.0,
         data_client_factory: Callable[..., Any] | None = None,
         clock: Callable[[], float] = time.time,
+        tap: FeedTap | None = None,
     ) -> None:
         if not api_key or not secret_key:
             raise ValueError("Alpaca key and secret are required")
         if feed not in (_SIP, _BOATS):
             raise ValueError(f"paper arming uses SIP, or BOATS overnight; {feed!r} is refused")
+        if tap is not None and feed == _BOATS:
+            raise ValueError("the read-only feed tap measures the SIP socket, not BOATS polls")
         if not 0 < poll_interval_s < 2 * overlap_s:
             raise ValueError("poll_interval_s must be positive and inside the 2 * overlap_s window")
 
@@ -158,6 +166,7 @@ class AlpacaTickFeed:
         self._stopped = threading.Event()
         self._seen: dict[tuple[object, ...], int] = {}
         self._horizon_ns = 0
+        self._tap = tap
         self.failure: Exception | None = None
 
     def start(self) -> None:
@@ -168,17 +177,24 @@ class AlpacaTickFeed:
             self._poll_until_stopped()
             return
 
-        stream = self._stream_factory(self._api_key, self._secret_key, feed=DataFeed.SIP)
-        self._stream = stream
-        symbols = tuple(sorted(self._instruments))
-        stream.subscribe_trades(self._handle_trade, *symbols)
-        stream.subscribe_quotes(self._handle_quote, *symbols)
+        if self._tap is not None:
+            self._tap.start()
         try:
+            stream = self._stream_factory(self._api_key, self._secret_key, feed=DataFeed.SIP)
+            self._stream = stream
+            symbols = tuple(sorted(self._instruments))
+            stream.subscribe_trades(self._handle_trade, *symbols)
+            stream.subscribe_quotes(self._handle_quote, *symbols)
             stream.run()
         except Exception as exc:
+            self._observe_failure()
             if self.failure is None:
                 self.failure = exc
             raise
+        finally:
+            # run() has returned, so no handler is mid-flight: finalize on this thread.
+            if self._tap is not None:
+                self._tap.stop()
 
     def stop(self) -> None:
         """Wake the BOATS poll loop, or delegate alpaca-py's cross-thread stream stop."""
@@ -254,24 +270,36 @@ class AlpacaTickFeed:
     async def _handle_trade(self, trade: Trade | dict[str, Any]) -> None:
         if self.failure is not None:
             return
+        tap, token = self._tap, None
         try:
             if not isinstance(trade, Trade):
                 raise TypeError("StockDataStream must run with raw_data=False")
+            if tap is not None:
+                token = tap.trade_entry(trade.symbol, _timestamp_ns(trade.timestamp))
             self._on_trade(self._trade_tick(trade, time.time_ns()))
         except Exception as exc:
             await self._fail(exc)
+        finally:
+            if tap is not None and token is not None:
+                tap.finish(token)
 
     async def _handle_quote(self, quote: Quote | dict[str, Any]) -> None:
         if self.failure is not None:
             return
+        tap, token = self._tap, None
         try:
             if not isinstance(quote, Quote):
                 raise TypeError("StockDataStream must run with raw_data=False")
+            if tap is not None:
+                token = tap.quote_entry(quote.symbol, _timestamp_ns(quote.timestamp))
             tick = self._quote_tick(quote, time.time_ns())
             if tick is not None:
                 self._on_quote(tick)
         except Exception as exc:
             await self._fail(exc)
+        finally:
+            if tap is not None and token is not None:
+                tap.finish(token)
 
     def _trade_tick(self, trade: Trade, ts_init: int) -> TradeTick:
         instrument = self._instrument_for(trade.symbol)
@@ -330,8 +358,13 @@ class AlpacaTickFeed:
             value = f"{ts_ns}-{trade.price}-{trade.size}"
         return TradeId(value[:_TRADE_ID_MAX])
 
+    def _observe_failure(self) -> None:
+        if self._tap is not None:
+            self._tap.observe_failure()
+
     async def _fail(self, exc: Exception) -> None:
         """Record the first failure and ask alpaca-py to stop from its own loop."""
+        self._observe_failure()
         if self.failure is None:
             self.failure = exc
         stream = self._stream

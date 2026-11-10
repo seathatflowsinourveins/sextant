@@ -1239,10 +1239,13 @@ def check_ao(host: Host) -> dict[str, list[Finding]]:
     elif pin_commit and pin_commit.group(1)[:12] not in result.text:
         _fail(out, "ao", "version", "AO reports a commit other than the tracked pin")
 
+    # The daemon reports one of ready, stopped, stale, unhealthy or not_ready, and only
+    # ready is healthy: OrchestratorInc/agent-orchestrator@033d597032e448a0ea16c298350e36b099f74106
+    # backend/internal/cli/status.go:23-30, read 2026-11-10.
     status = _json_command(host, ["ao", "status", "--json"])
     state = status.get("state") if isinstance(status, dict) else None
-    if state != "running":
-        _fail(out, "ao", "parity", f"AO daemon is {state or 'unknown'}, not running")
+    if state != "ready":
+        _fail(out, "ao", "parity", f"AO daemon is {state or 'unknown'}, not ready")
     doctor = _json_command(host, ["ao", "doctor", "--json"])
     if isinstance(doctor, dict) and doctor.get("failures"):
         _fail(out, "ao", "parity", f"AO doctor reports {doctor.get('failures')} failure(s)")
