@@ -296,3 +296,14 @@ def test_key_policy_and_failure_paths_execute_against_the_actual_adapter() -> No
         timeout=30,
     )
     assert done.returncode == 0, done.stdout + done.stderr
+
+
+def test_the_review_spill_root_is_the_gates_known_output_dir() -> None:
+    overlay = (ROOT / ".github/gate/headless-services.cordis.yml").read_text()
+    assert "- id: spill-local" in overlay
+    assert "root: !!js process.env.DSH_GITHUB_CI_OUTPUT_DIR + '/spill'" in overlay
+    action = (ROOT / ".github/actions/dsh-github/action.yml").read_text()
+    assert "DSH_GITHUB_CI_OUTPUT_DIR: ${{ inputs.output-dir }}" in action
+    bundle = (ROOT / ".github/gate/bundles/api-only/index.mjs").read_text()
+    assert "DSH_GITHUB_CI_OUTPUT_DIR" in bundle
+    assert "spillReads = new Set(['read', 'grep'])" in bundle

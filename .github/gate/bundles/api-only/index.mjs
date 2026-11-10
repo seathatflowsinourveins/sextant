@@ -2,11 +2,31 @@
 // deepseek-harness@66491b05, packages/core/tools/README.md:92 and src/contracts.ts:391.
 // Tool names/arguments: PerryLink/dsh-github@2fc0009c, src/ci/tool.ts:42-67 and src/tools.ts.
 // Repository-bearing PR reference: src/ci/tool.ts:123-126 and src/state.ts parsePrRef.
+// Spill root and read/grep retrieval: deepseek-harness@66491b05,
+// packages/spill/spill-local/README.md:32,50 and packages/spill/spill-policy/README.md:47-54.
+import { resolve, sep } from 'node:path';
 export const name = 'sextant-gate-api-only';
 export const inject = ['tools'];
 const reads = new Set(['gh_file', 'gh_repo', 'gh_review', 'gh_search']);
+const spillReads = new Set(['read', 'grep']);
+function spillRoot(env) {
+  const output = env.DSH_GITHUB_CI_OUTPUT_DIR;
+  return typeof output === 'string' && output !== '' ? resolve(output, 'spill') : '';
+}
+function withinSpillRoot(execution, root) {
+  if (root === '') return false;
+  const args = execution.arguments || {};
+  const requested = typeof args.file_path === 'string' ? args.file_path : args.path;
+  if (typeof requested !== 'string' || requested === '') return false;
+  const target = resolve(requested);
+  return target === root || target.startsWith(root + sep);
+}
 export function refusal(execution, env = process.env) {
   if (reads.has(execution.name)) return undefined;
+  if (spillReads.has(execution.name)) {
+    return withinSpillRoot(execution, spillRoot(env)) ? undefined :
+      'The PR gate reads only the analysis pass spill file under its configured output root; PR code is never executed.';
+  }
   if (execution.name !== 'ci_run') return 'The PR gate permits GitHub API reads and ci_run only; PR code is never executed.';
   const args = execution.arguments || {};
   const target = `${env.DSH_GATE_REPO}#${env.DSH_GATE_PR}`;
