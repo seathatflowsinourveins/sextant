@@ -60,6 +60,7 @@ from sextant.paper.b_width import (
     MarketView,
     completed_atr,
     trail_fraction,
+    trail_percent,
     view_from_quote,
 )
 from sextant.paper.config import PaperAccount
@@ -487,6 +488,7 @@ class Protector:
         self._start_client = client if start_client is None else start_client
         self._monotonic = monotonic
         self.pages: list[Page] = []
+        self.page_sink_failures = 0  # fallback pages whose sink raised (Codex max P1 rule)
         self.states: list[str] = []
         self._feed = feed
         self._last_quote_ns: dict[str, int] = {}
@@ -522,6 +524,7 @@ class Protector:
         self.data_requests = 0  # the width's market-data requests, never wire order actions
         self._width: dict[str, Decimal] = {}
         self._width_paged: set[str] = set()
+        self._native_paged: set[str] = set()  # armed at native with no width stored
         self._width_seen: set[str] = set()
         self._width_bucket: int | None = None
 
@@ -799,9 +802,13 @@ class Protector:
             f"feed={_safe_symbol(self._feed)} poll_age={self._poll_age(now_ns)} "
             f"quote_age={self._quote_age(symbol, now_ns)}"
         )
+        width, width_src = self._width_in_force(symbol)
+        line += f" width={width} width_src={width_src}"
         if note is not None:
             line += f" tape={note}"
         key = (
+            width,
+            width_src,
             session.value,
             _state_number(position),
             _state_number(protected),
@@ -977,6 +984,7 @@ class Protector:
                 continue
             self._width[symbol] = fraction
             self._width_paged.discard(symbol)
+            self._native_paged.discard(symbol)
 
     def _width_unavailable(self, symbol: str, reason: str, detail: str) -> None:
         """Page once per symbol per episode; an episode ends at the next computed width."""
@@ -1730,6 +1738,7 @@ class Protector:
         self._trigger_high = {s: high for s, high in self._trigger_high.items() if s in held}
         self._width = {s: width for s, width in self._width.items() if s in held}
         self._width_paged &= held
+        self._native_paged &= held
         self._width_seen &= held
         if announce:
             self._announce_states(now_ns)
@@ -1936,6 +1945,24 @@ class Protector:
             return "terminal", f"the broker order with the retained identity is {status}"
         return "open", f"the broker still lists the retained order as {status}"
 
+    def _width_in_force(self, symbol: str) -> tuple[Decimal, str]:
+        """The percent a new trail arms at, rounded up (b_width.trail_percent), and its source."""
+
+        if symbol in self._width:
+            return trail_percent(self._width[symbol]), "computed"
+        return trail_percent(self._parameters.native_trail_fraction), "native"
+
+    def _arm_percent(self, symbol: str) -> tuple[float, bool]:
+        """A new trail's percent, and whether native opens a page episode; never moves a
+        working trail."""
+
+        if symbol in self._width:
+            return float(trail_percent(self._width[symbol])), False  # the boundary float
+        fallback = self._parameters.width_on and symbol not in self._native_paged
+        if fallback:
+            self._native_paged.add(symbol)
+        return float(self._parameters.native_trail_fraction * 100), fallback
+
     def _submit_trail(self, symbol: str, whole: int) -> None:
         client_order_id = self._unresolved.get(symbol)
         if client_order_id is None:
@@ -1944,12 +1971,13 @@ class Protector:
                 f"{self._account.house_prefix}trail-{_safe_symbol(symbol)}-"
                 f"{self._now_ns()}-{self._sequence}"
             )[:MAX_CLIENT_ORDER_ID]
+        percent, fallback = self._arm_percent(symbol)
         request = TrailingStopOrderRequest(
             symbol=symbol,
             qty=whole,
             side=OrderSide.SELL,
             time_in_force=TimeInForce.GTC,
-            trail_percent=float(self._parameters.native_trail_fraction * 100),
+            trail_percent=percent,
             client_order_id=client_order_id,
         )
         try:
@@ -1961,6 +1989,12 @@ class Protector:
             self._unresolved[symbol] = client_order_id
             self.page("trail_submit_failed", symbol, type(exc).__name__)
             return
+        finally:  # after the submit; a failing page sink is counted, never raised (P1 rule)
+            if fallback:
+                try:
+                    self.page("dynamic_width_native_fallback", symbol, "no width stored; native")
+                except Exception:
+                    self.page_sink_failures += 1
         self._unresolved.pop(symbol, None)
         if isinstance(submitted, Order):
             self._remember(submitted)
