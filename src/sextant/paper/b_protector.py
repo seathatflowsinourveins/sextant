@@ -220,7 +220,6 @@ class TapeRead:
 
 def tape_windows(start_ns: int, end_ns: int) -> tuple[tuple[int, int, str], ...]:
     """Split a span at the 04:00/20:00 ET boundaries: SIP 04:00-20:00, BOATS 20:00-04:00."""
-
     if end_ns <= start_ns:
         return ()
     windows: list[tuple[int, int, str]] = []
@@ -268,7 +267,6 @@ def read_tape(
     house_prefix: str,
 ) -> TapeRead:
     """The broker record's adoption mark plus every feed window since, rebuilt off the loop."""
-
     try:
         orders = list(
             client.get_orders(
@@ -381,7 +379,6 @@ def _safe_symbol(symbol: str) -> str:
 
 def _state_number(value: object | None) -> str:
     """A broker value as one bare line field; logging never raises on a bad value."""
-
     if value is None:
         return "none"
     try:
@@ -764,12 +761,10 @@ class Protector:
 
     def apply_tape(self, result: TapeRead, now_ns: int, *, late: bool = False) -> None:
         """Record one tape read; only the running high may move, and never down.
-
         A read is complete only for the windows it actually covered: a result drained
         after the session's feed changed cannot make the new segment ``ok``. A late
         result (one that outlived its budget) may raise the trigger and nothing else.
         """
-
         if late:
             self._raise_tape_level(result, now_ns)
             return
@@ -811,7 +806,6 @@ class Protector:
 
     def _rebuilt_trigger(self, symbol: str, now_ns: int) -> Decimal | None:
         """The rebuilt high-water mark; the off-loop stream reads on a cadence, tests inline."""
-
         if self._history is None:
             return None
         if self._tape_off_loop:
@@ -835,7 +829,6 @@ class Protector:
 
     def tape_candidates(self, now_ns: int) -> list[tuple[str, Decimal]]:
         """Held symbols whose tape still needs a complete read for this segment."""
-
         if self._history is None:
             return []
         if session_at(now_ns) not in (Session.PRE, Session.POST, Session.OVERNIGHT):
@@ -1031,7 +1024,6 @@ class Protector:
 
     def reconcile_when_due(self) -> bool:
         """Reconcile on B's cadence, and once when the session changes.
-
         A trade update reconciles only because the owner or the broker acted; the cadence is
         what notices a trail the broker lost while nothing happened. A session change is its
         own trigger so the native trail's stop is adopted at the boundary, before the new
@@ -1050,7 +1042,6 @@ class Protector:
 
     def reconcile(self, *, announce: bool = True) -> dict[str, Position]:
         """Match the broker's open orders and positions, then protect the whole net shares.
-
         Every unreserved whole long share is covered by exactly one house trail of the full
         net quantity; a change in that quantity re-arms it during regular market hours.
         ``announce=False`` lets a startup reconcile precede the first market-data poll, so the
@@ -1431,7 +1422,6 @@ class ProtectorStream(TradingStream):
 
     async def _await_startup_poll(self) -> None:
         """Wait only the silence bound for the first poll; a stalled poll must not hide it."""
-
         task = self._poll_task
         if task is None:
             return
@@ -1444,7 +1434,6 @@ class ProtectorStream(TradingStream):
 
     def _drain_poll(self) -> None:
         """Apply a completed poll and record its success; a stalled poll keeps the old receipt."""
-
         task = self._poll_task
         if task is None or not task.done():
             return
@@ -1471,7 +1460,6 @@ class ProtectorStream(TradingStream):
 
     def _poll_feed(self, *, force: bool = False) -> None:
         """Start one background REST poll; the watch keeps running while it is in flight."""
-
         if self._market_data is None:
             return
         now_ns = self._now_ns()
@@ -1495,7 +1483,6 @@ class ProtectorStream(TradingStream):
 
     def _poll_tape(self, *, force: bool = False) -> None:
         """Start one off-loop tape read for the first symbol that still needs it."""
-
         if self._history is None or self._tape_task is not None:
             return
         now_ns = self._now_ns()
@@ -1523,7 +1510,6 @@ class ProtectorStream(TradingStream):
 
     def _drain_tape(self) -> None:
         """Apply a landed tape result, or page once when it outlives its time budget."""
-
         task = self._tape_task
         if task is None:
             return
@@ -1563,7 +1549,6 @@ class ProtectorStream(TradingStream):
 
     def _late_tape(self, task: asyncio.Future[TapeRead], symbol: str) -> None:
         """A result after its timeout may raise the trigger and nothing else."""
-
         if task.cancelled():
             return
         try:

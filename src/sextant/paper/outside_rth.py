@@ -98,7 +98,6 @@ class OutsideRthTrail:
 
     def adopt(self, trigger: Decimal | None, ts_ns: int) -> None:
         """Seed the trigger from the resting native trail's stop price and restart the run."""
-
         if self._released:
             raise OutsideRthError("cannot adopt a trigger while a release is outstanding")
         if trigger is not None and trigger <= 0:

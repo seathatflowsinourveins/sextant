@@ -68,7 +68,6 @@ class LatestDataClient(Protocol):
 
 def feed_for(session: Session) -> str | None:
     """The data feed for a session; None when the native trail owns protection."""
-
     if session in (Session.PRE, Session.POST):
         return "sip"
     if session is Session.OVERNIGHT:
@@ -94,7 +93,6 @@ def _price(value: object) -> Decimal | None:
 
 class BMarketDataFeed:
     """Poll alpaca-py for the latest quote and trade of the held symbols only.
-
     Every successful poll returns the standing latest quote, even when its vendor timestamp has
     not changed: the quote is still the market's last bid, and its age is separate from whether
     the poller is alive. A latest print is returned only once, so repeating it cannot count twice
