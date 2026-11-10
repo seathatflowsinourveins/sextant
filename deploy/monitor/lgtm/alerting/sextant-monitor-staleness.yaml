@@ -1,0 +1,71 @@
+# Sources (read 2026-11-10): Grafana v13.2 file provisioning and alerting
+# provisioning API (Prometheus A range 600/0); grafana/grafana@v13.2.4 af4a33e...
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: sextant-monitor
+    folder: Sextant
+    interval: 60s
+    rules:
+      - uid: sextant-monitor-evidence-stale
+        title: MonitorEvidenceStale
+        condition: C
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 600
+              to: 0
+            model:
+              expr: absent(sextant_monitor_last_success_timestamp_seconds) or (time() - sextant_monitor_last_success_timestamp_seconds > 900) or on() vector(0)
+              instant: true
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params: []
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params: []
+                  reducer:
+                    params: []
+                    type: last
+                  type: query
+              expression: A
+              reducer: last
+              type: reduce
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 0
+                    type: gt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - C
+                  reducer:
+                    params: []
+                    type: last
+                  type: threshold
+              expression: B
+              type: threshold
+        noDataState: Alerting
+        execErrState: Alerting
+        for: 60s
+        annotations:
+          runbook: deploy/monitor/lgtm/alerting/README.md
+        labels:
+          severity: info
+          delivery: informational
+          action: proposal-only
+          threshold_ref: monitor_staleness_seconds_max
+          threshold_value: "900"
+          source_series: sextant_monitor_last_success_timestamp_seconds
+          producer_status: produced

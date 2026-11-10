@@ -82,13 +82,6 @@
       "last_change": "2026-11-09"
     },
     {
-      "series": "sextant_monitor_last_success_timestamp_seconds",
-      "status": "PRODUCED",
-      "producer": "scripts/monitor_github.py::metrics_from_records",
-      "source": "L5 collector heartbeat; ADR-0018; read 2026-11-09",
-      "last_change": "2026-11-09"
-    },
-    {
       "series": "sextant_gh_aw_rebuild_factor",
       "status": "PRODUCED",
       "producer": "scripts/monitor_github.py::run_metrics",

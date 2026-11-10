@@ -22,6 +22,7 @@ services:
       - sextant-lgtm-data:/data
       - ./otelcol-config.yaml:/otel-lgtm/otelcol-config.yaml:ro
       - ./run-grafana.sh:/otel-lgtm/run-grafana.sh:ro
+      - ./alerting:/otel-lgtm/grafana/conf/provisioning/alerting:ro
     environment:
       # grafana/grafana@v13.2.4 af4a33e3786594ad72f72d97e6744010330c2977:
       # docs/sources/setup-grafana/configure-grafana/_index.md (the
