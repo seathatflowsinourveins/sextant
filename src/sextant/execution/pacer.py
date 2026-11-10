@@ -66,6 +66,7 @@ class Queued:
     exiting_positions: int = field(compare=False)
     position_counts: Callable[[], tuple[int, int]] | None = field(compare=False)
     refuse: Callable[[str], None] | None = field(compare=False, default=None)
+    snapshot_reads: int = field(compare=False, default=0)
 
 
 class AccountPacer:
@@ -75,6 +76,7 @@ class AccountPacer:
             controls["request_budget"], controls.ns("window_s"), controls.burst
         )
         self.queue: list[Queued] = []
+        self.entry_charges: dict[str, bool] = {}
         self.sequence = itertools.count()
         self.wire_requests = 0
         self.wire_actions: Counter[ActionKind] = Counter()
@@ -92,6 +94,7 @@ class AccountPacer:
         exiting_positions: int = 0,
         position_counts: Callable[[], tuple[int, int]] | None = None,
         refuse: Callable[[str], None] | None = None,
+        snapshot_reads: int = 0,
     ):
         item = Queued(
             int(kind),
@@ -102,6 +105,7 @@ class AccountPacer:
             exiting_positions,
             position_counts,
             refuse,
+            snapshot_reads,
         )
         if item.kind == ActionKind.SUBMIT:
             reserve = self._entry_reserve(item)
@@ -126,11 +130,17 @@ class AccountPacer:
             if item.position_counts
             else (item.open_positions, item.exiting_positions)
         )
-        if any(type(count) is not int or count < 0 for count in (opened, exiting)):
+        if any(
+            type(count) is not int or count < 0 for count in (opened, exiting, item.snapshot_reads)
+        ):
             return None
         if per_open is None or (exiting and per_exit is None):
             return None
-        return per_open * (opened + 1) + (per_exit or 0) * exiting
+        return (
+            per_open * (opened + 1)
+            + (per_exit or 0) * exiting
+            + item.snapshot_reads * (opened + exiting + 1)
+        )
 
     def drain(self):
         while self.queue:

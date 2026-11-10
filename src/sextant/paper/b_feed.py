@@ -9,7 +9,8 @@ boundary, so proofs pass a fake client and never open a socket.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
@@ -219,6 +220,34 @@ class BoundedAdapter(HTTPAdapter):
         return super().send(request, stream, self._timeout_s, verify, cert, proxies)
 
 
+def no_retries(client: Any, protective: object = None) -> Any:
+    if client is protective or not hasattr(client, "_retry"):
+        raise TypeError("entry retry control is unavailable or shared with protection")
+    client._retry = 0
+    return client
+
+
+@contextmanager
+def entry_wire(client: Any, before_wire: Callable[[], None]) -> Iterator[None]:
+    """Use requests' dispatch boundary, after SDK request preparation, then restore it."""
+    session: Any = getattr(client, "_session", None)
+    dispatch: Any = getattr(session, "send", None)
+    if dispatch is None:
+        before_wire()
+        yield
+        return
+
+    def send(*args: Any, **kwargs: Any) -> Any:
+        before_wire()
+        return dispatch(*args, **kwargs)
+
+    session.send = send
+    try:
+        yield
+    finally:
+        session.send = dispatch
+
+
 def bound_transport(client: object, timeout_s: Decimal) -> None:
     """Give an alpaca-py REST client a transport timeout and no internal retries.
 
@@ -228,9 +257,9 @@ def bound_transport(client: object, timeout_s: Decimal) -> None:
     """
 
     session = getattr(client, "_session", None)
-    if session is None or not hasattr(client, "_retry"):
+    if session is None:
         raise TypeError("the historical client exposes no requests session to bound")
-    client._retry = 0  # type: ignore[attr-defined]
+    no_retries(client)
     adapter = BoundedAdapter(float(timeout_s))
     session.mount("https://", adapter)
     session.mount("http://", adapter)
