@@ -22,7 +22,7 @@
 
 ## Review Focus
 
-- A file that does not carry all four segments' schema and all requested symbols stops the whole publish, not a partial write.
+- A file that does not carry all four segments' schema and all requested symbols stops the whole publish, not a partial write; a zero-filled or sparse set leaves the active files byte-identical and exits non-zero.
 - The manifest's sha256s describe the bytes that actually landed (hashing the staged file, then the same bytes are moved).
 - The `--universe` mode uses the K2 scanner's own artifact, records which source it used, and never re-ranks.
 - A missing slice must be visible (refused or `baseline_missing`) and must not consume a slot.
@@ -76,7 +76,7 @@
 - `build(client: BarsClient, symbols: Sequence[str], *, as_of: date, known_at: int, prior_sessions: int = 20) -> dict[str, BaselineTable]` — overnight from `fetch_overnight_baseline`, PRE/RTH/POST from `fetch_baseline(feed="sip")`
 - `verify(tables: Mapping[str, BaselineTable], symbols: Sequence[str]) -> None` — every segment present, exactly one segment per table, feed `boats` for OVERNIGHT and `sip` otherwise, sample symbols exactly the requested set; raises `ValueError` naming the defect
 - `render(tables) -> dict[str, str]` — filename -> `dump_baseline` text plus newline, `load_baseline` round-trip checked, identity preserved
-- `publish(out: Path, tables, *, command, as_of, symbols, sessions, known_at, prior_sessions, source, universe) -> dict[str, Any]` — verify, stage, hash, move data files, write `manifest.json` last
+- `publish(out: Path, tables, *, command, as_of, symbols, sessions, known_at, prior_sessions, source, universe) -> dict[str, Any]` — verify and survey; refuse a flagged set before touching the target; stage as a time-suffixed sibling, rename each file into the target under a temporary name, write `manifest.json` last
 - `run(client, symbols, out, *, command, as_of, known_at, prior_sessions=20, source="symbols", universe=None) -> dict[str, Any]`
 - `resolve_universe(path: Path) -> tuple[str, ...]` — reads `rows[*].symbol` from a `python -m sextant.paper.c_universe --out` artifact, order preserved, duplicates removed
 - `main(argv=None, *, client_factory=None, now_ns=time.time_ns) -> int` — `--out` required; mutually exclusive required `--symbols` or `--universe`; `--as-of` default the current segment's session date; `--prior-sessions` default 20; known_at = now

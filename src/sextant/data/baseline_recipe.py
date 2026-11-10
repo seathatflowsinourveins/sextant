@@ -2,11 +2,12 @@
 
 A single run fetches the overnight table from the boats feed and the daytime
 table from sip through the reviewed fetchers in :mod:`sextant.data.baseline_bars`,
-splits them into one segment per file, verifies that every file carries the
-baseline schema and all requested symbols, and publishes the four files before a
-``manifest.json`` that records the command, ``as_of``, symbol list, window, feeds
-and each file's sha256. The manifest is written last: a reader treats it as the
-commit record and checks the digests before using the files.
+splits them into one segment per file, and verifies that every file carries the
+baseline schema and all requested symbols. Only a clean set replaces the active
+files, and the four files land before a ``manifest.json`` that records the
+command, ``as_of``, symbol list, window, feeds and each file's sha256. The
+manifest is written last: a reader treats it as the commit record and checks the
+digests before using the files.
 
 ``--universe`` takes the K2 ranked universe artifact written by
 ``python -m sextant.paper.c_universe --out PATH``; this recipe never re-ranks.
@@ -14,9 +15,9 @@ Only :func:`main` reads the environment or builds a client.
 
 Symbols are bare vendor tickers: a venue-qualified instrument ID such as
 ``AAPL.ALPACA`` is refused before any request. A segment that is zero across
-its whole window, or thinner than the schema floor, is named under
-``zero_filled`` or ``sparse`` in the manifest and the run exits non-zero
-instead of publishing an unremarkable zero-filled baseline.
+its whole window, or thinner than the schema floor, refuses the whole build
+before the active set is touched: the flags go to stderr, the exit is non-zero,
+and the previous baseline files stay byte-identical.
 
 Upstream: alpacahq/alpaca-py@v0.44.0 ``alpaca/data/requests.py:StockBarsRequest``
 and ``alpaca/data/client.py:get_stock_bars``, called as ``baseline_bars`` does.
@@ -25,9 +26,8 @@ and ``alpaca/data/client.py:get_stock_bars``, called as ``baseline_bars`` does.
 import argparse
 import hashlib
 import json
-import shutil
+import os
 import sys
-import tempfile
 import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import date
@@ -41,7 +41,13 @@ from sextant.data.baseline_bars import (
     fetch_overnight_baseline,
     prior_xnys_sessions,
 )
-from sextant.ranking.baseline import BaselineTable, dump_baseline, load_baseline, segment_start
+from sextant.ranking.baseline import (
+    BaselineSample,
+    BaselineTable,
+    dump_baseline,
+    load_baseline,
+    segment_start,
+)
 
 RECIPE_SEGMENTS = ("OVERNIGHT", "PRE", "RTH", "POST")
 SEGMENT_FILES = {
@@ -53,6 +59,14 @@ SEGMENT_FILES = {
 FEEDS = {"OVERNIGHT": "boats", "PRE": "sip", "RTH": "sip", "POST": "sip"}
 MANIFEST_NAME = "manifest.json"
 MIN_SAMPLES_PER_SESSION = 2  # the schema's start and end sample for one session
+
+
+class BaselineFlagged(ValueError):
+    """A build whose outputs are not fit to replace the active baseline set."""
+
+    def __init__(self, flags: Mapping[str, Mapping[str, Sequence[str]]]) -> None:
+        self.flags = {key: dict(value) for key, value in flags.items() if value}
+        super().__init__(f"baseline flags {json.dumps(self.flags, sort_keys=True)}")
 
 
 def _symbols(symbols: Iterable[str]) -> tuple[str, ...]:
@@ -147,10 +161,13 @@ def survey(
     flags: dict[str, dict[str, list[str]]] = {"zero_filled": {}, "sparse": {}}
     for name in RECIPE_SEGMENTS:
         table = tables[name]
+        by_symbol: dict[str, list[BaselineSample]] = {}
+        for sample in table.samples:
+            by_symbol.setdefault(sample.symbol, []).append(sample)
         zero: list[str] = []
         sparse: list[str] = []
         for symbol in symbols:
-            samples = [sample for sample in table.samples if sample.symbol == symbol]
+            samples = by_symbol.get(symbol, [])
             present = {sample.session for sample in samples}
             if len(samples) < MIN_SAMPLES_PER_SESSION * len(expected):
                 sparse.append(symbol)
@@ -180,7 +197,16 @@ def publish(
     source: str,
     universe: Mapping[str, str] | None,
 ) -> dict[str, Any]:
-    """Verify, then publish the four files and the manifest into ``out``."""
+    """Publish the four files and the manifest only when every check passes.
+
+    A flagged or failed build writes nothing: it raises before ``out`` is
+    created or changed, so the active set stays byte-identical. A clean build
+    stages the files as a fresh time-suffixed sibling of ``out``, then writes
+    each file under a temporary name inside ``out`` and renames it into place,
+    with the manifest last. A crash between those renames leaves a mix that the
+    old manifest does not cover, so a reader that checks the manifest refuses
+    the set instead of using a partial one.
+    """
     names = _symbols(symbols)
     if not sessions:
         raise ValueError("at least one prior session is required")
@@ -203,8 +229,13 @@ def publish(
         "sparse": flags["sparse"],
         "files": {},
     }
-    out.mkdir(parents=True, exist_ok=True)
-    staging = Path(tempfile.mkdtemp(prefix=".baseline-", dir=out))
+    if any(flags.values()):
+        raise BaselineFlagged(flags)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    token = str(time.time_ns())
+    staging = out.parent / f".{out.name}.staging-{token}"
+    staging.mkdir()
+    target_tmps: list[Path] = []
     try:
         for name in RECIPE_SEGMENTS:
             filename = SEGMENT_FILES[name]
@@ -217,15 +248,34 @@ def publish(
                 "samples": len(tables[name].samples),
                 "symbols": sorted({sample.symbol for sample in tables[name].samples}),
             }
-            staged.replace(out / filename)
-        staged_manifest = staging / MANIFEST_NAME
-        staged_manifest.write_text(
-            json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-        )
-        staged_manifest.replace(out / MANIFEST_NAME)
+        manifest_text = json.dumps(manifest, indent=2, sort_keys=True) + "\n"
+        out.mkdir(parents=True, exist_ok=True)
+        for name in RECIPE_SEGMENTS:
+            filename = SEGMENT_FILES[name]
+            temporary = out / f".{filename}.{token}.tmp"
+            target_tmps.append(temporary)
+            temporary.write_bytes((staging / filename).read_bytes())
+            os.replace(temporary, out / filename)
+        temporary = out / f".{MANIFEST_NAME}.{token}.tmp"
+        target_tmps.append(temporary)
+        temporary.write_text(manifest_text, encoding="utf-8")
+        os.replace(temporary, out / MANIFEST_NAME)
     finally:
-        shutil.rmtree(staging, ignore_errors=True)
+        for temporary in target_tmps:
+            if temporary.is_file():
+                temporary.unlink()
+        _discard(staging)
     return manifest
+
+
+def _discard(staging: Path) -> None:
+    """Remove only the files this run wrote into its own staging directory."""
+    for filename in (*SEGMENT_FILES.values(), MANIFEST_NAME):
+        path = staging / filename
+        if path.parent == staging and path.is_file():
+            path.unlink()
+    if staging.is_dir():
+        staging.rmdir()
 
 
 def run(
@@ -258,9 +308,10 @@ def run(
     )
 
 
-def resolve_universe(path: Path) -> tuple[str, ...]:
-    """The symbols the K2 scanner ranked, in the artifact's order; never re-ranked."""
-    payload = json.loads(path.read_text(encoding="utf-8"))
+def load_universe(path: Path) -> tuple[tuple[str, ...], dict[str, str]]:
+    """The K2 symbols and their digest, both from one read of the artifact."""
+    raw = path.read_bytes()
+    payload = json.loads(raw)
     rows = payload.get("rows") if isinstance(payload, Mapping) else None
     if not isinstance(rows, list) or not rows:
         raise ValueError(f"the K2 universe artifact at {path} carries no rows")
@@ -269,7 +320,30 @@ def resolve_universe(path: Path) -> tuple[str, ...]:
         if not isinstance(row, Mapping) or not isinstance(row.get("symbol"), str):
             raise ValueError("the K2 universe artifact rows must name a symbol")
         symbols.append(row["symbol"])
-    return _symbols(symbols)
+    return _symbols(symbols), {"path": str(path), "sha256": hashlib.sha256(raw).hexdigest()}
+
+
+def resolve_universe(path: Path) -> tuple[str, ...]:
+    """The symbols the K2 scanner ranked, in the artifact's order; never re-ranked."""
+    return load_universe(path)[0]
+
+
+def verified_baseline_text(path: Path) -> str:
+    """The file's text, after proving the manifest commits to exactly these bytes.
+
+    The runner's loader calls this instead of ``path.read_text`` so a file that
+    a crash left outside the manifest's commit record is refused, not used.
+    """
+    raw = path.read_bytes()
+    try:
+        manifest = json.loads((path.parent / MANIFEST_NAME).read_text(encoding="utf-8"))
+        expected = manifest["files"][path.name]["sha256"]
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise ValueError(f"{path.name} has no manifest commit in {path.parent}: {exc}") from exc
+    digest = hashlib.sha256(raw).hexdigest()
+    if digest != expected:
+        raise ValueError(f"{path.name} does not match its manifest commit: {digest} != {expected}")
+    return raw.decode("utf-8")
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -338,36 +412,32 @@ def main(
         symbols = _symbols(part for value in args.symbols for part in value.split(","))
         source, universe = "symbols", None
     elif args.universe is not None:
-        symbols = resolve_universe(args.universe)
+        symbols, universe = load_universe(args.universe)
         source = "k2_universe"
-        universe = {
-            "path": str(args.universe),
-            "sha256": hashlib.sha256(args.universe.read_bytes()).hexdigest(),
-        }
     else:
         parser.error("one of --symbols or --universe is required")
     as_of = args.as_of if args.as_of is not None else segment_start(moment)[1]
     factory = client_factory if client_factory is not None else _default_client
-    manifest = run(
-        factory(),
-        symbols,
-        args.out,
-        command=command,
-        as_of=as_of,
-        known_at=moment,
-        prior_sessions=args.prior_sessions,
-        source=source,
-        universe=universe,
-    )
-    print(f"wrote {len(manifest['files'])} baselines and {args.out / MANIFEST_NAME}", flush=True)
-    flags = {key: manifest[key] for key in ("zero_filled", "sparse") if manifest[key]}
-    if flags:
+    try:
+        manifest = run(
+            factory(),
+            symbols,
+            args.out,
+            command=command,
+            as_of=as_of,
+            known_at=moment,
+            prior_sessions=args.prior_sessions,
+            source=source,
+            universe=universe,
+        )
+    except BaselineFlagged as flagged:
         print(
-            f"warning: baseline flags {json.dumps(flags, sort_keys=True)}",
+            f"warning: baseline flags {json.dumps(flagged.flags, sort_keys=True)}",
             file=sys.stderr,
             flush=True,
         )
         return 1
+    print(f"wrote {len(manifest['files'])} baselines and {args.out / MANIFEST_NAME}", flush=True)
     return 0
 
 

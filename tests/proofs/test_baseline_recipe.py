@@ -319,6 +319,28 @@ def test_main_reads_the_k2_universe_artifact_and_records_its_source(tmp_path) ->
     ]
 
 
+def test_the_universe_artifact_is_read_once_and_hashed_from_those_bytes(
+    tmp_path, monkeypatch
+) -> None:
+    artifact = tmp_path / "universe.json"
+    artifact.write_text(json.dumps({"rows": [{"symbol": "MF"}, {"symbol": "AAPL"}]}))
+    expected = hashlib.sha256(artifact.read_bytes()).hexdigest()
+    reads: list[Path] = []
+    original = Path.read_bytes
+
+    def counting(path: Path) -> bytes:
+        reads.append(path)
+        return original(path)
+
+    monkeypatch.setattr(Path, "read_bytes", counting)
+
+    symbols, record = recipe.load_universe(artifact)
+
+    assert symbols == ("MF", "AAPL")
+    assert reads == [artifact]
+    assert record == {"path": str(artifact), "sha256": expected}
+
+
 def test_main_defaults_as_of_to_the_current_segments_session_date(tmp_path) -> None:
     out = tmp_path / "baselines"
 
@@ -382,37 +404,60 @@ def test_a_venue_qualified_symbol_is_refused_before_the_vendor_call() -> None:
     assert client.requests == []
 
 
-def test_an_empty_vendor_window_is_flagged_and_exits_nonzero(tmp_path) -> None:
+def test_an_empty_refresh_leaves_the_active_set_untouched_and_exits_nonzero(
+    tmp_path, capsys
+) -> None:
     out = tmp_path / "baselines"
+    arguments = [
+        "--out",
+        str(out),
+        "--symbols",
+        "AAPL",
+        "--as-of",
+        "2026-11-09",
+        "--prior-sessions",
+        "2",
+    ]
+    assert main(arguments, client_factory=FakeBars, now_ns=lambda: KNOWN_AT) == 0
+    before = {path.name: path.read_bytes() for path in out.iterdir()}
 
-    code = main(
-        [
-            "--out",
-            str(out),
-            "--symbols",
-            "AAPL",
-            "--as-of",
-            "2026-11-09",
-            "--prior-sessions",
-            "2",
-        ],
-        client_factory=lambda: FakeBars(empty=True),
-        now_ns=lambda: KNOWN_AT,
-    )
+    code = main(arguments, client_factory=lambda: FakeBars(empty=True), now_ns=lambda: KNOWN_AT)
 
     assert code == 1
-    manifest = json.loads((out / "manifest.json").read_text())
-    assert manifest["zero_filled"] == {
-        "OVERNIGHT": ["AAPL"],
-        "PRE": ["AAPL"],
-        "RTH": ["AAPL"],
-        "POST": ["AAPL"],
-    }
-    assert manifest["sparse"] == {}
-    overnight = json.loads((out / "overnight.json").read_text())
-    assert {
-        (sample["dollar_volume"], sample["trade_count"]) for sample in overnight["samples"]
-    } == {("0", "0")}
+    assert {path.name: path.read_bytes() for path in out.iterdir()} == before
+    assert not [path for path in out.parent.iterdir() if path.name.startswith(f".{out.name}")]
+    warning = capsys.readouterr().err
+    assert "warning: baseline flags" in warning
+    assert '"zero_filled"' in warning
+
+
+def test_verified_text_proves_the_manifest_commits_to_the_bytes(tmp_path) -> None:
+    out = tmp_path / "baselines"
+    run(
+        FakeBars(),
+        SYMBOLS,
+        out,
+        command=[*COMMAND, "--out", str(out)],
+        as_of=AS_OF,
+        known_at=KNOWN_AT,
+        prior_sessions=2,
+    )
+    path = out / "overnight.json"
+    text = path.read_text()
+
+    assert recipe.verified_baseline_text(path) == text
+
+    path.write_text(text.replace('"feed":"boats"', '"feed":"sip"'))
+    with pytest.raises(ValueError, match="manifest commit"):
+        recipe.verified_baseline_text(path)
+
+
+def test_verified_text_refuses_a_file_without_a_manifest(tmp_path) -> None:
+    path = tmp_path / "overnight.json"
+    path.write_text("{}")
+
+    with pytest.raises(ValueError, match="manifest commit"):
+        recipe.verified_baseline_text(path)
 
 
 def test_a_table_missing_a_session_is_flagged_sparse() -> None:
