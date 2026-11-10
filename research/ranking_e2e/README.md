@@ -179,6 +179,10 @@ witnesses fail there):
    the symbols its recording declared; three unrecorded sessions no longer
    pad a two-session sample with zeros, so a positive median is not erased.
    Witness: `test_uncovered_prior_sessions_do_not_supply_zero_baselines`.
+2. **Cross-segment keep-alive**: the first membership timestamp is recorded
+   once for the whole session, so a name admitted in PRE keeps it when RTH
+   replays and persistence at an RTH onset is counted. Witness:
+   `test_keep_alive_keeps_the_first_admission_across_pre_and_rth`.
 
 The round-2 P2 and P3 findings not subsumed here, and the hosted review's
 P2s, are in the follow-up issue #199, including the seal items'
@@ -214,7 +218,7 @@ task under its own frozen, costed protocol (K3.7).
 
 ## Tests
 
-`tests/proofs/test_ranking_e2e.py` has 32 tests: protocol hashes and the
+`tests/proofs/test_ranking_e2e.py` has 33 tests: protocol hashes and the
 K3 presence gate, cohort labels/validation/hashing, mean/median curves,
 the fixed gap window, the CUSUM recurrence, keep-alive retention and
 quota order, percentiles, signed latency and recall at onset, the false

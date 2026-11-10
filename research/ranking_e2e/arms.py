@@ -192,7 +192,10 @@ class KeepAlive:
     qualified now, or dropped.  Quotas win: fresh admits fill first, then the
     retained take the free slots in K2's own strict total order on their last
     computable rows (descending score, then descending ``trades_accel``, then
-    symbol; ``engine.rank_movers``).  ``reset`` is the 20:00 ET boundary; the
+    symbol; ``engine.rank_movers``).  The first generation a name is a member
+    is recorded once for the whole session: a name admitted in PRE keeps that
+    admission time when RTH replays, so persistence at an RTH onset is not
+    lost to the segment boundary.  ``reset`` is the 20:00 ET boundary; the
     replay ends at 11:35, so it is not reached in this session.
     """
 
@@ -202,6 +205,7 @@ class KeepAlive:
         self.top_n = top_n
         self._members: set[str] = set()
         self._last: dict[str, tuple[bool, tuple[Decimal, Decimal, str]]] = {}
+        self._first_member: dict[str, int] = {}
         self.retained: frozenset[str] = frozenset()
 
     def update[R: RankedRow](
@@ -228,8 +232,19 @@ class KeepAlive:
         self._members = fresh | self.retained
         return set(self._members)
 
+    def note_admission(self, members: Iterable[str], at_ns: int) -> None:
+        """Record the first generation a name is a member; later ones keep it."""
+        for symbol in members:
+            self._first_member.setdefault(symbol, at_ns)
+
+    @property
+    def first_member(self) -> dict[str, int]:
+        """First membership timestamp per symbol, across every segment replayed."""
+        return dict(self._first_member)
+
     def reset(self) -> None:
         """The 20:00 ET reset against the new close (ADR-0024)."""
         self._members.clear()
         self._last.clear()
+        self._first_member.clear()
         self.retained = frozenset()

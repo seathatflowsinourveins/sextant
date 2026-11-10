@@ -1066,3 +1066,97 @@ def test_uncovered_prior_sessions_do_not_supply_zero_baselines(
     assert omh["mean_baseline_sessions"] == 2
     assert result.arms["k2"]["baseline_available_at_onset"]["available"] == 1
     assert "baseline_zero_dollar_volume" not in omh["k2_unknown_reasons"]
+
+
+CROSS_DAY = "2026-11-09"
+CROSS_PRIOR = ("2026-11-04", "2026-11-05", "2026-11-06")
+
+
+def _cross_tree(tmp_path: Path) -> Path:
+    """KEEP is admitted in PRE, then crosses +5% only in an RTH bar.
+
+    Its first above-threshold close is the 09:30 bar, so the onset is 09:31 in
+    RTH, after PRE's last generation; membership began at its PRE rise.  CTRL
+    is a flat control.
+    """
+    root = tmp_path / "cross"
+    flat = [(4, m, "10.00", "10.00", 1000) for m in range(11)]
+    prior = {"KEEP": flat, "CTRL": list(flat)}
+    for day in CROSS_PRIOR:
+        _write_day(root, day, prior)
+    closes = ("10.12", "10.15", "10.18", "10.21", "10.24", "10.27", "10.30", "10.33")
+    _write_day(
+        root,
+        CROSS_DAY,
+        {
+            "KEEP": [(4, m, close, close, 3000) for m, close in enumerate(closes)]
+            + [(9, 30, "10.40", "10.60", 3000)],
+            "CTRL": [(4, m, "10.00", "10.00", 1000) for m in range(10)],
+        },
+    )
+    return root
+
+
+def _cross_cohort(tmp_path: Path) -> Path:
+    path = tmp_path / "cross-cohort.json"
+
+    def candidate(symbol: str, move: str) -> dict[str, str]:
+        return {
+            "symbol": symbol,
+            "move": move,
+            "premarket_dollar_volume": "1000000",
+            "full_dollar_volume": "1000000",
+            "prior_close": "10.00",
+            "prior_close_source": "official_prior_daily_close",
+        }
+
+    path.write_text(
+        json.dumps(
+            {
+                "schema": "ranking-e2e.cohort/1",
+                "session": CROSS_DAY,
+                "prior_sessions": list(CROSS_PRIOR),
+                "labels": {
+                    "survivor_only": True,
+                    "pit_verified": False,
+                    "inference_eligible": False,
+                },
+                "candidates": [candidate("KEEP", "0.06"), candidate("CTRL", "0.00")],
+                "truth": ["KEEP"],
+                "controls": ["CTRL"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+@pytest.fixture(scope="module")
+def cross_run(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, runner.SessionResult]:
+    tmp_path = tmp_path_factory.mktemp("cross")
+    result = _run(
+        tmp_path,
+        _cross_tree(tmp_path),
+        _cross_cohort(tmp_path),
+        out="cross-out",
+        registry=_fixture_registry(tmp_path),
+    )
+    return tmp_path / "cross-out", result
+
+
+def test_keep_alive_keeps_the_first_admission_across_pre_and_rth(
+    cross_run: tuple[Path, runner.SessionResult],
+) -> None:  # WITNESS (P1 cross-segment keep-alive admission)
+    _, result = cross_run
+    keep_row = result.rows["KEEP"]
+    assert keep_row["onset_segment"] == "RTH"
+    assert keep_row["onset_ts"] == _ns(CROSS_DAY, 9, 31)
+    assert keep_row["keepalive_member_at_onset"] is True
+    # Membership began during PRE; RTH's first generation must not overwrite
+    # the admission timestamp with the onset itself.
+    assert keep_row["keepalive_first"] < keep_row["onset_ts"]
+    keep = result.arms["keepalive"]
+    assert keep["persistence_denominator"] == 1
+    assert keep["persistence_at_onset"] == 1
+    assert keep["persistence_rate"] == "1"
+    assert keep["entered_at_onset_excluded"] == 0
