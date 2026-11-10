@@ -8,9 +8,12 @@ the pacer, custody, guard, writer lease, receipt and trial row all run.
 from __future__ import annotations
 
 import json
+import os
 import re
+import subprocess
+import sys
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
@@ -31,6 +34,8 @@ from nautilus_trader.model import (
     TradeTick,
 )
 
+import sextant.paper.c_live_main as c_live_main_module
+from sextant.execution.alpaca import OrderCommand
 from sextant.execution.custody import (
     AccountScope,
     AccountSnapshot,
@@ -39,8 +44,21 @@ from sextant.execution.custody import (
     PositionAuthority,
     WriterLease,
 )
-from sextant.paper.c_live_main import _equity_ladder, main
-from sextant.ranking.baseline import BaselineSample, BaselineTable, dump_baseline
+from sextant.paper.c_live_main import (
+    _arm_universe,
+    _equity_ladder,
+    _house_cid,
+    _request_for,
+    main,
+)
+from sextant.paper.config import PaperAccount
+from sextant.paper.sessions import Session
+from sextant.ranking.baseline import (
+    BaselineSample,
+    BaselineTable,
+    dump_baseline,
+    segment_start,
+)
 from sextant.validation.trials import TrialLog, snapshot_hash
 
 NS = 1_000_000_000
@@ -532,6 +550,7 @@ def invoke(
     universe: bool = False,
     data: Any = None,
     symbols: str = "OMH.ALPACA",
+    state: Path | None = None,
 ) -> int:
     calls = {"index": 0}
 
@@ -560,7 +579,7 @@ def invoke(
         argv += ["--baseline-dir", str(baseline_dir)]
     else:
         argv += ["--baseline", str(write_baseline(tmp_path))]
-    argv += ["--state", str(tmp_path / "state"), "--seconds", "1"]
+    argv += ["--state", str(state if state is not None else tmp_path / "state"), "--seconds", "1"]
     if dry_run:
         argv.append("--dry-run")
     return main(
@@ -580,6 +599,12 @@ def live_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     monkeypatch.setenv("ALPACA_PAPER_3_API_KEY", API_KEY)
     monkeypatch.setenv("ALPACA_PAPER_3_SECRET_KEY", SECRET)
     monkeypatch.setenv("C_EXPECTED_ACCOUNT_SUFFIX", SUFFIX)
+    monkeypatch.setattr(
+        c_live_main_module,
+        "DEFAULT_LEASE_ROOT",
+        tmp_path / "locks",
+        raising=False,
+    )
     monkeypatch.chdir(tmp_path)
     return tmp_path
 
@@ -588,6 +613,27 @@ def receipt(tmp_path: Path) -> dict[str, Any]:
     paths = list((tmp_path / "reports/paper-c").glob("*/session.json"))
     assert len(paths) == 1
     return json.loads(paths[0].read_text())
+
+
+def arm(
+    client: FakeTradingClient,
+    data: FakeDataClient,
+    *,
+    retained: frozenset[str] = frozenset(),
+    mover_armed: frozenset[str] = frozenset(),
+    max_armed_symbols: int = 5,
+) -> tuple[Any, str | None]:
+    segment = segment_start(POST_CLOCK)[0]
+    assert segment is not None
+    return _arm_universe(
+        client=client,  # type: ignore[arg-type]
+        data=data,  # type: ignore[arg-type]
+        segment=segment,
+        max_armed_symbols=max_armed_symbols,
+        retained=retained,
+        mover_armed=mover_armed,
+        now=datetime.fromtimestamp(POST_CLOCK / NS, tz=UTC),
+    )
 
 
 def test_a_missing_asset_price_increment_falls_back_to_the_n4_ladder() -> None:
@@ -631,8 +677,8 @@ def test_an_open_order_refuses_before_any_order(live_env: Path) -> None:
 
 
 def test_a_second_writer_cannot_acquire_the_lease(live_env: Path) -> None:
-    root = live_env / "state" / "writer.lock"
-    lease = WriterLease(AccountScope("ALPACA", ACCOUNT), root, "other-writer")
+    root = live_env / "locks"
+    lease = WriterLease(AccountScope("ALPACA", "C001"), root, "other-writer")
     lease.acquire()
     client = FakeTradingClient()
     try:
@@ -641,7 +687,65 @@ def test_a_second_writer_cannot_acquire_the_lease(live_env: Path) -> None:
     finally:
         lease.close()
     assert refusal.value.code != 0
+    assert "account already has a writer" in str(refusal.value.code)
     assert client.submitted == []
+
+
+def test_the_account_lease_is_one_fixed_file_not_the_state_directory(live_env: Path) -> None:
+    assert invoke(live_env, FakeTradingClient(), Clock(), Monotonic()) == 0
+
+    locks = list((live_env / "locks").glob("*.lock"))
+    assert len(locks) == 1
+    assert re.fullmatch(r"[0-9a-f]{64}\.lock", locks[0].name)
+    assert ACCOUNT not in locks[0].name
+    assert "C001" not in locks[0].name
+    assert not (live_env / "state" / "writer.lock").exists()
+    assert not (live_env / "state" / "locks").exists()
+
+
+LEASE_HOLDER = """
+import sys
+import time
+from pathlib import Path
+
+from sextant.execution.custody import AccountScope, WriterLease
+
+lease = WriterLease(AccountScope("ALPACA", "C001"), Path(sys.argv[1]), "other-runner")
+lease.acquire()
+print("held", flush=True)
+time.sleep(30)
+"""
+
+
+def test_two_starts_on_one_account_cannot_both_write(live_env: Path, tmp_path: Path) -> None:
+    environment = dict(os.environ)
+    environment["PYTHONPATH"] = str(Path(__file__).resolve().parents[2] / "src")
+    holder = subprocess.Popen(
+        [sys.executable, "-c", LEASE_HOLDER, str(live_env / "locks")],
+        cwd=tmp_path,
+        env=environment,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert holder.stdout is not None
+        assert holder.stdout.readline().strip() == "held"
+        second_client = FakeTradingClient()
+        with pytest.raises(SystemExit) as refusal:
+            invoke(
+                live_env,
+                second_client,
+                Clock(),
+                Monotonic(),
+                state=live_env / "state-b",
+            )
+        assert refusal.value.code != 0
+        assert "account already has a writer" in str(refusal.value.code)
+        assert second_client.submitted == []
+    finally:
+        holder.terminate()
+        holder.wait(10)
 
 
 def test_dry_run_prints_the_command_and_sends_nothing(live_env: Path) -> None:
@@ -1354,6 +1458,252 @@ def test_universe_and_symbols_are_mutually_exclusive(tmp_path: Path) -> None:
             ]
         )
     assert refused.value.code == 2
+
+
+@pytest.mark.parametrize("raise_on", [1, 2])
+def test_a_custody_refusal_still_writes_a_receipt_and_a_fail_row(
+    live_env: Path, monkeypatch: pytest.MonkeyPatch, raise_on: int
+) -> None:
+    ranks = {
+        "OMH": daily_bars("1.10", "500"),
+        "DDD": daily_bars("1.08", "300"),
+        "CCC": daily_bars("1.06", "300"),
+        "BBB": daily_bars("1.04", "300"),
+        "AAA": daily_bars("1.02", "300"),
+    }
+    client = FakeTradingClient(assets=tuple(asset(symbol) for symbol in ranks))
+    calls = {"count": 0}
+    real = c_live_main_module._retained_symbols
+
+    def refuses(book: Custody) -> frozenset[str]:
+        calls["count"] += 1
+        if calls["count"] == raise_on:
+            raise c_live_main_module.LiveRefusal("custody symbols unavailable for C arming")
+        return real(book)
+
+    monkeypatch.setattr(c_live_main_module, "_retained_symbols", refuses)
+
+    code = invoke(
+        live_env,
+        client,
+        Clock(POST_CLOCK),
+        Monotonic(),
+        universe=True,
+        data=FakeDataClient(ranks),
+        baseline_dir=write_baseline_dir(live_env, symbols=tuple(ranks)),
+        replays=[noop_replay],
+    )
+
+    assert code == 1
+    assert client.submitted == []
+    written = receipt(live_env)
+    assert written["final_segment"] == "POST"
+    assert "custody symbols unavailable for C arming" in " ".join(written["errors"])
+    if raise_on == 1:
+        assert written["symbols"] == []
+        assert written["arming"][0]["custody_open"] is None
+        assert written["arming"][0]["armed"] == []
+    else:
+        assert written["symbols"]
+        assert written["arming"][0]["custody_open"] == 0
+    rows = TrialLog(live_env / "trials.parquet").records
+    assert [row["state"] for row in rows] == ["FAIL"]
+    assert "custody symbols unavailable" in rows[0]["error"]
+
+
+@pytest.mark.parametrize("mode", ["failed", "empty"])
+def test_a_failed_or_empty_boundary_ranking_keeps_the_held_name(live_env: Path, mode: str) -> None:
+    ranks = {
+        "OMH": daily_bars("1.10", "500"),
+        "DDD": daily_bars("1.08", "300"),
+        "CCC": daily_bars("1.06", "300"),
+        "BBB": daily_bars("1.04", "300"),
+        "AAA": daily_bars("1.02", "300"),
+    }
+    data = FakeDataClient(ranks)
+    client = FakeTradingClient(assets=tuple(asset(symbol) for symbol in ranks))
+
+    def break_the_ranking(feed: FakeFeed) -> None:
+        post_fill_then_overnight_replay(feed)
+        if mode == "failed":
+            data.fail = True
+        else:
+            data.bars_by_symbol.clear()
+
+    code = invoke(
+        live_env,
+        client,
+        Clock(POST_CLOCK),
+        Monotonic(),
+        universe=True,
+        data=data,
+        baseline_dir=write_baseline_dir(live_env, symbols=tuple(ranks)),
+        replays=[break_the_ranking, noop_replay],
+    )
+
+    assert code == 1
+    written = receipt(live_env)
+    assert written["final_segment"] == "OVERNIGHT"
+    overnight = written["arming"][1]
+    assert overnight["custody_open"] == 1
+    assert overnight["armed"] == ["OMH.ALPACA"]
+    assert written["symbols"] == ["OMH.ALPACA"]
+    expected = (
+        "universe ranking failed"
+        if mode == "failed"
+        else "no eligible symbols for the OVERNIGHT session"
+    )
+    assert expected in " ".join(written["errors"])
+    rows = TrialLog(live_env / "trials.parquet").records
+    assert [row["state"] for row in rows] == ["FAIL"]
+
+
+@pytest.mark.parametrize("mode", ["failed", "empty"])
+def test_a_failed_or_empty_ranking_arms_the_retained_names(
+    mode: str,
+) -> None:
+    data = FakeDataClient({"M0": daily_bars("1.10", "500")})
+    if mode == "failed":
+        data.fail = True
+    else:
+        data.bars_by_symbol.clear()
+    retained = frozenset({"OMH.ALPACA", "DDD.ALPACA"})
+    client = FakeTradingClient(
+        assets=(asset("M0"), asset("OMH"), asset("DDD")),
+    )
+
+    arming, failure = arm(
+        client,
+        data,
+        retained=retained,
+        mover_armed=frozenset({"DDD.ALPACA"}),
+    )
+
+    assert failure is not None
+    assert arming.custody_open == 2
+    assert arming.armed == ("DDD.ALPACA", "OMH.ALPACA")
+    assert arming.mover_armed == frozenset({"DDD.ALPACA"})
+
+
+def test_the_retained_names_join_the_arming_in_sorted_order() -> None:
+    retained = frozenset(f"Z{index}.ALPACA" for index in range(8))
+
+    arming, failure = arm(
+        FakeTradingClient(assets=(asset("M0"),)),
+        FakeDataClient({"M0": daily_bars("1.10", "500")}),
+        retained=retained,
+    )
+
+    assert failure is None
+    assert arming.armed == tuple(sorted(retained))
+    assert len(arming.armed) == 8
+
+
+def test_the_mover_arm_is_the_allocators_own_membership() -> None:
+    ranks = {f"M{index}": daily_bars("1.10", "500") for index in range(5)}
+    assets = tuple(asset(symbol) for symbol in ("OLD", *ranks))
+
+    arming, failure = arm(
+        FakeTradingClient(assets=assets),
+        FakeDataClient(ranks),
+        retained=frozenset({"OLD.ALPACA"}),
+    )
+
+    assert failure is None
+    assert arming.armed == (
+        "M0.ALPACA",
+        "M1.ALPACA",
+        "M2.ALPACA",
+        "M3.ALPACA",
+        "OLD.ALPACA",
+    )
+    assert arming.mover_armed == frozenset({"M0.ALPACA", "M1.ALPACA", "M2.ALPACA", "M3.ALPACA"})
+
+
+def test_the_receipt_records_the_allocators_mover_membership(live_env: Path) -> None:
+    ranks = {f"M{index}": daily_bars("1.10", "500") for index in range(5)}
+    client = FakeTradingClient(assets=tuple(asset(symbol) for symbol in ranks))
+
+    assert (
+        invoke(
+            live_env,
+            client,
+            Clock(),
+            Monotonic(),
+            universe=True,
+            data=FakeDataClient(ranks),
+            baseline_dir=write_baseline_dir(live_env, symbols=tuple(ranks)),
+        )
+        == 0
+    )
+
+    written = receipt(live_env)
+    assert written["arming"][0]["mover_armed"] == sorted(f"M{index}.ALPACA" for index in range(5))
+
+
+def test_a_dotted_ticker_maps_to_its_bare_symbol_in_the_request() -> None:
+    command = OrderCommand(
+        client_order_id="",
+        instrument="BRK.B.ALPACA",
+        side="BUY",
+        quantity=D(1),
+        order_type="LIMIT",
+        time_in_force="DAY",
+        limit_price=D("1.00"),
+        trail_price=None,
+    )
+
+    request = _request_for(command, "cid", extended_hours=False)
+
+    assert isinstance(request, LimitOrderRequest)
+    assert request.symbol == "BRK.B"
+
+
+def test_a_dotted_ticker_maps_to_its_bare_symbol_in_the_house_cid() -> None:
+    command = OrderCommand(
+        client_order_id="",
+        instrument="BRK.B.ALPACA",
+        side="BUY",
+        quantity=D(1),
+        order_type="LIMIT",
+        time_in_force="DAY",
+        limit_price=D("1.00"),
+        trail_price=None,
+    )
+
+    account = PaperAccount(
+        lane="alpaca-paper-c",
+        account_id="C001",
+        client_id="c-live-proof",
+        namespace="C001",
+        sessions=(Session.RTH,),
+    )
+
+    cid = _house_cid(account, command)
+
+    assert cid == "C001-BRK.B-buy-limit-1"
+
+
+def test_a_universe_run_can_arm_and_order_a_dotted_ticker(live_env: Path) -> None:
+    brk = InstrumentId.from_str("BRK.B.ALPACA")
+    ranks = {"BRK.B": daily_bars("1.10", "500")}
+    client = FakeTradingClient(assets=(asset("BRK.B"),))
+
+    code = invoke(
+        live_env,
+        client,
+        Clock(),
+        Monotonic(),
+        universe=True,
+        data=FakeDataClient(ranks),
+        baseline_dir=write_baseline_dir(live_env, symbols=("BRK.B",)),
+        replays=[lambda feed: replay(feed, iid=brk)],
+    )
+
+    assert code == 0
+    assert client.submitted
+    assert {order.symbol for order in client.submitted} == {"BRK.B"}
+    assert receipt(live_env)["symbols"] == ["BRK.B.ALPACA"]
 
 
 def test_a_completed_session_appends_one_full_identity_row(live_env: Path) -> None:
