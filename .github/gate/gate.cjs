@@ -134,15 +134,16 @@ async function blockingPriority(github, context, number, head) {
   return heads.size >= 2 ? 0 : 1;
 }
 
-const INCOMPLETE_REVIEW = /could not be completed/i;
-// The #205 job declared its own network and authentication fault in the explanation.
+// The reviewer's schema: "patch is incorrect" is a verdict about the patch, so it
+// needs at least one finding. An incorrect verdict with no findings is an
+// incomplete review, whatever its prose says
+// (openai/codex@086ccc833bc9cf01024ad2dd6af7dbd421b6bf9a rubric.md:60-86).
 const NETWORK_OR_AUTH_FAULT = /GitHub CLI authentication is unavailable|api\.github\.com does not resolve/i;
 
-function incompleteReview(explanation) {
-  const cause = explanation.split(INCOMPLETE_REVIEW).slice(1).join('could not be completed')
-    .replace(/^[\s:;,.-]+/, '').trim();
-  const kind = NETWORK_OR_AUTH_FAULT.test(explanation) ? 'network or authentication fault' : 'cause reported by the reviewer';
-  return `Review could not be completed (${kind}): ${cause || 'the reviewer reported no cause'}`;
+function didNotRun(report) {
+  const fault = NETWORK_OR_AUTH_FAULT.test(report.overall_explanation)
+    ? ' The reviewer also reported a network or authentication fault.' : '';
+  return `Review did not run: the verdict says the patch is incorrect but reports no findings.${fault}`;
 }
 
 function parseVerdict(text) {
@@ -164,8 +165,11 @@ function qualityPassed(text, threshold = 1) {
         (finding.priority === null || Number.isInteger(finding.priority) && finding.priority >= 0 && finding.priority <= 3))) {
     throw Error('Review verdict is unreadable: missing or invalid structured review fields');
   }
-  // A review that says it did not run is unknown, never a pass; name its own cause.
-  if (INCOMPLETE_REVIEW.test(report.overall_explanation)) throw Error(incompleteReview(report.overall_explanation));
+  // A review that describes an incomplete patch is not a pass; a review that did
+  // not run is unknown, never a pass. The schema decides, not the prose.
+  if (report.overall_correctness === 'patch is incorrect' && report.findings.length === 0) {
+    throw Error(didNotRun(report));
+  }
   const blocks = report.findings.some(finding => (Number.isInteger(finding.priority) && finding.priority <= threshold) ||
     (threshold ? /^\[P[01]\]/ : /^\[P0\]/).test(finding.title));
   return !blocks;

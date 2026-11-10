@@ -107,15 +107,41 @@ const HOLLOW_205 = '{"findings": [], "overall_correctness": "patch is incorrect"
   'upstream sources could not be verified; this reports a review failure, not a demonstrated patch defect.", ' +
   '"overall_confidence_score": 0.03}';
 
-test('a review that could not run fails closed with its network cause (#205 fixture)', async () => {
+test('a review that did not run fails closed on its empty findings (#205 fixture)', async () => {
   const f = fixture();
   await gate.qualityResult(f, 7, f.head, HOLLOW_205, 'codex');
   assert.equal(f.outputs.passed, 'false');
   assert.equal(f.reviews.length, 0);
   assert.equal(f.failures.length, 1);
-  assert.match(f.failures[0], /^Review could not be completed/);
+  assert.match(f.failures[0], /did not run/i);
+  assert.match(f.failures[0], /reports no findings/i);
   assert.match(f.failures[0], /network or authentication fault/);
-  assert.match(f.failures[0], /GitHub CLI authentication is unavailable/);
+});
+
+test('a hollow verdict with other wording also fails closed on its empty findings', async () => {
+  const f = fixture();
+  const text = JSON.stringify({findings: [], overall_correctness: 'patch is incorrect',
+    overall_explanation: 'I was unable to review the diff; required context was unavailable.'});
+  await gate.qualityResult(f, 7, f.head, text, 'codex');
+  assert.equal(f.outputs.passed, 'false');
+  assert.equal(f.reviews.length, 0);
+  assert.equal(f.failures.length, 1);
+  assert.match(f.failures[0], /did not run/i);
+  assert.match(f.failures[0], /reports no findings/i);
+});
+
+test('a real verdict that describes an incomplete patch evaluates normally', async () => {
+  const report = {
+    findings: [{title: '[P1] Migration omits the new table', body: 'file:1, input, wrong output', priority: 1}],
+    overall_correctness: 'patch is incorrect',
+    overall_explanation: 'The migration could not be completed because the new table is missing; the review found one P1.',
+  };
+  assert.equal(gate.qualityPassed(report, 0), true);
+  const f = fixture();
+  await gate.qualityResult(f, 7, f.head, JSON.stringify(report), 'codex');
+  assert.equal(f.reviews.length, 1);
+  assert.equal(f.outputs.passed, 'false');
+  assert.deepEqual(f.failures, ['The other-family quality review requires changes']);
 });
 
 test('missing and unreadable verdicts fail closed with named reasons', async () => {
