@@ -1002,6 +1002,11 @@ def main(
             "C live main refused: the broker account number does not match the expected "
             "C paper account"
         )
+    if account_number != account.account_id:
+        raise SystemExit(
+            "C live main refused: the broker account number does not match the configured "
+            "C paper account"
+        )
     if raw_client.get_all_positions():
         raise SystemExit("C live main refused: account C already has a position")
     open_orders = raw_client.get_orders(GetOrdersRequest(status=QueryOrderStatus.OPEN))

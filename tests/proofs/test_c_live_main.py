@@ -81,13 +81,15 @@ ET = ZoneInfo("America/New_York")
 D = Decimal
 
 
-def write_config(tmp_path: Path, *, lane: str = "alpaca-paper-c") -> Path:
+def write_config(
+    tmp_path: Path, *, lane: str = "alpaca-paper-c", account_id: str = ACCOUNT
+) -> Path:
     path = tmp_path / "account.json"
     path.write_text(
         json.dumps(
             {
                 "lane": lane,
-                "account_id": "C001",
+                "account_id": account_id,
                 "client_id": "c-live-proof",
                 "namespace": "C001",
                 "sessions": ["rth"],
@@ -551,6 +553,7 @@ def invoke(
     data: Any = None,
     symbols: str = "OMH.ALPACA",
     state: Path | None = None,
+    config: Path | None = None,
 ) -> int:
     calls = {"index": 0}
 
@@ -569,7 +572,7 @@ def invoke(
 
     argv = [
         "--config",
-        str(write_config(tmp_path)),
+        str(config if config is not None else write_config(tmp_path)),
     ]
     if universe:
         argv.append("--universe")
@@ -678,7 +681,7 @@ def test_an_open_order_refuses_before_any_order(live_env: Path) -> None:
 
 def test_a_second_writer_cannot_acquire_the_lease(live_env: Path) -> None:
     root = live_env / "locks"
-    lease = WriterLease(AccountScope("ALPACA", "C001"), root, "other-writer")
+    lease = WriterLease(AccountScope("ALPACA", ACCOUNT), root, "other-writer")
     lease.acquire()
     client = FakeTradingClient()
     try:
@@ -703,14 +706,14 @@ def test_the_account_lease_is_one_fixed_file_not_the_state_directory(live_env: P
     assert not (live_env / "state" / "locks").exists()
 
 
-LEASE_HOLDER = """
+LEASE_HOLDER = f"""
 import sys
 import time
 from pathlib import Path
 
 from sextant.execution.custody import AccountScope, WriterLease
 
-lease = WriterLease(AccountScope("ALPACA", "C001"), Path(sys.argv[1]), "other-runner")
+lease = WriterLease(AccountScope("ALPACA", "{ACCOUNT}"), Path(sys.argv[1]), "other-runner")
 lease.acquire()
 print("held", flush=True)
 time.sleep(30)
@@ -743,6 +746,57 @@ def test_two_starts_on_one_account_cannot_both_write(live_env: Path, tmp_path: P
         assert refusal.value.code != 0
         assert "account already has a writer" in str(refusal.value.code)
         assert second_client.submitted == []
+    finally:
+        holder.terminate()
+        holder.wait(10)
+
+
+def test_a_mismatched_account_id_refuses_before_any_lock(live_env: Path) -> None:
+    client = FakeTradingClient()
+    config = write_config(live_env, account_id="C002")
+
+    with pytest.raises(SystemExit) as refusal:
+        invoke(live_env, client, Clock(), Monotonic(), config=config)
+
+    assert refusal.value.code != 0
+    assert "does not match the configured C paper account" in str(refusal.value.code)
+    assert ACCOUNT not in str(refusal.value.code)
+    assert "C002" not in str(refusal.value.code)
+    assert not (live_env / "locks").exists()
+    assert client.submitted == []
+
+
+def test_a_mismatched_config_cannot_take_the_authenticated_writer_lease(
+    live_env: Path, tmp_path: Path
+) -> None:
+    environment = dict(os.environ)
+    environment["PYTHONPATH"] = str(Path(__file__).resolve().parents[2] / "src")
+    holder = subprocess.Popen(
+        [sys.executable, "-c", LEASE_HOLDER, str(live_env / "locks")],
+        cwd=tmp_path,
+        env=environment,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert holder.stdout is not None
+        assert holder.stdout.readline().strip() == "held"
+        client = FakeTradingClient()
+        config = write_config(live_env, account_id="C002")
+        with pytest.raises(SystemExit) as refusal:
+            invoke(
+                live_env,
+                client,
+                Clock(),
+                Monotonic(),
+                state=live_env / "state-b",
+                config=config,
+            )
+        assert refusal.value.code != 0
+        assert "does not match the configured C paper account" in str(refusal.value.code)
+        assert len(list((live_env / "locks").glob("*.lock"))) == 1
+        assert client.submitted == []
     finally:
         holder.terminate()
         holder.wait(10)
