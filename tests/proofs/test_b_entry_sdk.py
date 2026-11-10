@@ -62,7 +62,7 @@ def test_missing_retry_attribute_refuses_entry_construction_without_breaking_pro
 
 
 def test_same_client_cannot_disable_the_protective_clients_retries():
-    primary, _entry, pacer = clients()
+    primary, _entry, _pacer = clients()
     original = primary._retry
     with pytest.raises(TypeError):
         no_retries(primary, primary)
