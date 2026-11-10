@@ -99,6 +99,6 @@ slice:
     uv run --frozen python -m sextant.backtest.thin_slice
 # Push a branch and open its PR; pass false as the third argument to leave auto-merge off.
 pr title body_file automerge="true":
-    git push -u origin HEAD
+    bash scripts/pr-check.sh "{{body_file}}" && git push -u origin HEAD
     gh pr create --title "{{title}}" --body-file "{{body_file}}"
     if [[ "{{automerge}}" == true ]]; then gh pr merge --auto --squash; fi

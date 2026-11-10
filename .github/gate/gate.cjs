@@ -123,8 +123,10 @@ async function prompt({ github, context, core }, number, head, engine) {
       '. Read the returned diff. Then call ci_run with task publish and the same qualified pr reference, ' +
       'a review body starting with Review of ' + head + ', and your findings. ' +
       `Use severity error only when the Report section permits blocking AND the finding is P0${threshold ? '/P1' : ''}; otherwise use warning or lower. Findings need file, line (or null), rule, severity and message. ` +
-      'Publish even if there are no findings. Use only the GitHub review tools. Do not execute commands. ' +
-      'If the diff is truncated, report an error finding and require changes; do not approve unseen changes.';
+      'Publish even if there are no findings. Use only the GitHub review tools and the spill-file read below. Do not execute commands. ' +
+      'If the analyze result says the diff was truncated, report an error finding and require changes. ' +
+      'If it omits bytes and names a file with the complete formatted result, read that spill file in full with the read tool (offset and limit; continue at the next offset) before deciding. ' +
+      'If the complete analysis pass cannot be read, report an error finding and require changes; do not approve unseen changes.';
   } else {
     const response = await github.rest.pulls.get({ ...context.repo, pull_number: pr.number,
       mediaType: { format: 'diff' } });
