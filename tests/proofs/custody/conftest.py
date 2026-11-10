@@ -51,8 +51,11 @@ def control_rows(**changes):
     return rows
 
 
-def controls(**changes):
-    return Controls.from_rows(control_rows(**changes), fixture=True)
+def controls(*, slots=None, **changes):
+    rows = control_rows(**changes)
+    if slots is None:
+        return Controls.from_rows(rows, fixture=True)
+    return Controls.from_rows(rows, fixture=True, slots=slots)
 
 
 def order(

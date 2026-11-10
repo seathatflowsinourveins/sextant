@@ -1,12 +1,18 @@
 """Offline Alpaca wire/reducer cases, not a live client or native claim stand-in."""
 
+from dataclasses import replace
 from decimal import Decimal as D
 
 import pytest
 
 from sextant.execution.alpaca import AlpacaBridge, FillFact, OrderCommand, Outcome
-from sextant.execution.custody import CustodyError, WriterLease
-from sextant.execution.pacer import AccountPacer, ActionKind
+from sextant.execution.custody import (
+    AccountSnapshot,
+    CustodyError,
+    PositionAuthority,
+    WriterLease,
+)
+from sextant.execution.pacer import AccountPacer, ActionKind, PacerRefused
 
 from .conftest import IID, SCOPE, SEC, controls, custody, order, snapshot
 
@@ -394,5 +400,79 @@ def test_unavailable_entry_reserve_refuses_before_registering_a_phantom_order(tm
             b.submit(command(side="BUY"))
         assert book.registrations == {}
         assert sent == []
+    finally:
+        lease.close()
+
+
+def _flat_snapshot(count: int, *, epoch: int = 1):
+    positions = {IID: D("100")} | {f"S{index}.ALPACA": D("100") for index in range(count - 1)}
+    authority = {
+        iid: PositionAuthority(quantity, "TEST supplied prior custody; no native claim proof")
+        for iid, quantity in positions.items()
+    }
+    return AccountSnapshot(
+        SCOPE,
+        epoch,
+        positions,
+        authority,
+        (),
+        True,
+        SEC,
+        "TEST complete account observation",
+    )
+
+
+def test_refused_entry_releases_custody_and_reaches_its_caller(tmp_path):
+    b, book, lease, *_rest, sent = bridge(tmp_path, reserve=2)
+    try:
+        book.observe(_flat_snapshot(8), now=SEC)
+        with pytest.raises(PacerRefused, match="entry-reserve-exceeds-burst"):
+            b.submit(command(cid="refused-entry", side="BUY"))
+        assert book.registrations["refused-entry"].get("unsent") == ("entry-reserve-exceeds-burst")
+        assert book.submission_ready(IID)
+        assert sent == []
+    finally:
+        lease.close()
+
+
+def test_stale_reserve_refusal_releases_a_locally_reported_unsent_entry(tmp_path):
+    adapter, book, lease, clock, _session, _allowed, sent = bridge(tmp_path, reserve=2)
+    try:
+        assert book.observe(_flat_snapshot(7), now=SEC)
+        for _unused in range(18):
+            adapter.pacer.request(ActionKind.QUERY, lambda before_wire: before_wire())
+        adapter.submit(command(cid="stale-entry", side="BUY"))
+        assert len(adapter.pacer.queue) == 1
+        assert adapter.records["stale-entry"]["sends"] == 0
+        assert book.registrations["stale-entry"]["lineage"] == []
+        observation = replace(_flat_snapshot(8, epoch=2), orders=adapter.facts())
+        assert book.observe(observation, now=SEC)
+        assert not book.frozen
+        assert observation.orders[0].status == "SUBMITTING"
+        assert observation.orders[0].venue_order_id is None
+        clock[0] += 10 * SEC
+        adapter.pacer.drain()
+        assert adapter.pacer.queue == []
+        assert sent == []
+        assert book.registrations["stale-entry"]["unsent"] == "entry-reserve-exceeds-burst"
+        assert book.submission_ready(IID)
+    finally:
+        lease.close()
+
+
+def test_cancel_unsent_after_a_local_pending_observation_does_not_crash(tmp_path):
+    adapter, book, lease, _clock, _session, _allowed, sent = bridge(tmp_path, reserve=2)
+    try:
+        for _unused in range(18):
+            adapter.pacer.request(ActionKind.QUERY, lambda before_wire: before_wire())
+        adapter.submit(command(cid="cancel-entry", side="BUY"))
+        assert len(adapter.pacer.queue) == 1
+        assert adapter.records["cancel-entry"]["sends"] == 0
+        assert book.observe(snapshot(*adapter.facts(), epoch=2), now=SEC)
+        assert not book.frozen
+        adapter.cancel("cancel-entry")
+        assert sent == []
+        assert book.registrations["cancel-entry"]["unsent"] == "refused before the wire"
+        assert book.submission_ready(IID)
     finally:
         lease.close()

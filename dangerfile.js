@@ -96,6 +96,7 @@ const AUTHORITY = {
       "ccch1mneyyy/dsh-tui",
       "anthropics/claude-code",
       "stablyai/orca",
+      "orchestratorinc/agent-orchestrator",
       "danger/danger-js",
     ],
   },

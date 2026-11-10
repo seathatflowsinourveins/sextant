@@ -119,6 +119,15 @@ def test_a_released_order_that_is_later_reported_freezes_the_symbol(tmp_path):
         book.release_unsent("house-exit", reason="TEST")
 
 
+def test_local_unsent_release_still_refuses_a_linked_order(tmp_path):
+    book = custody(tmp_path)
+    book.observe(snapshot(), now=SEC)
+    book.register("sent-exit", IID, "SELL", D("100"), source="TEST")
+    book.link("sent-exit", "venue-1")
+    with pytest.raises(CustodyError, match="unresolved"):
+        book.release_local_unsent("sent-exit", reason="TEST")
+
+
 def test_a_local_close_report_agrees_with_a_release_and_anything_else_freezes(tmp_path):
     """A node-local refusal may be reported terminal, unfilled and venue-less (rc7 DENIED)."""
     book = custody(tmp_path)

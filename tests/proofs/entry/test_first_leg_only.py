@@ -27,7 +27,7 @@ def first_leg_params():
     return EntryParameters.from_rows(first_leg_rows(), fixture=True, first_leg_only=True)
 
 
-def test_the_mode_loads_only_its_nine_rows_and_the_full_mode_still_refuses():
+def test_the_mode_loads_first_leg_and_capacity_rows_and_the_full_mode_still_refuses():
     params = first_leg_params()
     assert (
         params.first_leg_only and set(params.values) == FIRST_LEG and len(NAMES - FIRST_LEG) == 18
@@ -45,14 +45,23 @@ def test_the_mode_refuses_any_missing_first_leg_row(missing):
         EntryParameters.from_rows(first_leg_rows(missing), fixture=True, first_leg_only=True)
 
 
-def test_the_production_registry_loads_its_nine_reviewed_rows_in_the_mode():
-    # Round 11 carries the lead's nine REVIEWED rows; the other 18 stay UNAVAILABLE, so the
-    # full mode still refuses the registry and the mode still reads only N1's nine.
+def test_the_production_registry_loads_reviewed_first_leg_and_capacity_rows_in_the_mode():
     params = EntryParameters.from_rows(registry_rows(), first_leg_only=True)
     assert params.first_leg_only and set(params.values) == FIRST_LEG
     assert params.values["first_leg_window_s"] == 120
+    assert params.values["max_armed_symbols"] == 5
     with pytest.raises(ValueError, match="unavailable or unreviewed authority"):
         EntryParameters.from_rows(registry_rows())
+
+
+@pytest.mark.parametrize("value", [None, 0, -1, True, "5", "5.5"])
+def test_the_mode_refuses_an_unavailable_or_noninteger_arming_capacity(value):
+    rows = registry_rows()
+    for row in rows:
+        if row["name"] == "max_armed_symbols":
+            row["value"] = value
+    with pytest.raises(ValueError, match="max_armed_symbols"):
+        EntryParameters.from_rows(rows, first_leg_only=True)
 
 
 def test_reclaim_cannot_fire_and_nothing_reads_extension_or_flow(instrument, tmp_path):

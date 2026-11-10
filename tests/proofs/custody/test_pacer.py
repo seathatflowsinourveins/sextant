@@ -4,7 +4,7 @@ from decimal import Decimal as D
 
 import pytest
 
-from sextant.execution.pacer import AccountPacer, ActionKind
+from sextant.execution.pacer import AccountPacer, ActionKind, PacerRefused
 
 from .conftest import SEC, controls
 
@@ -48,7 +48,10 @@ def test_no_rolling_window_exceeds_budget_and_each_list_member_costs_one():
 
 def test_pacer_rechecks_admission_after_wait_and_counts_only_wire_hook():
     clock, allowed = [0], [True]
-    p = AccountPacer(controls(request_budget=10, broker_limit=20), lambda: clock[0])
+    p = AccountPacer(
+        controls(request_budget=10, broker_limit=20, reserve_per_open_position=0),
+        lambda: clock[0],
+    )
     sent = []
     p.request(ActionKind.QUERY, lambda mark: None)  # Work that sends nothing.
     p.request(
@@ -125,3 +128,73 @@ def test_queued_entry_rechecks_current_position_protection_reserve():
     assert sent == []
     p.request(ActionKind.REDUCE, lambda mark: (mark(), sent.append("protection")))
     assert sent == ["protection"]
+
+
+def test_five_entries_admit_at_the_180_18_registry_with_five_slots():
+    clock, sent = [0], []
+    p = AccountPacer(controls(slots=5, reserve_per_open_position=2), lambda: clock[0])
+    for opened in range(5):
+        p.request(
+            ActionKind.SUBMIT,
+            lambda mark, label=opened: (mark(), sent.append(label)),
+            open_positions=opened,
+        )
+    assert sent == [0, 1, 2, 3, 4]
+    assert p.wire_requests == 5
+
+
+def test_ninth_entry_at_eight_open_is_refused_and_a_tenth_is_not_blocked():
+    clock, sent = [0], []
+    p = AccountPacer(controls(slots=5, reserve_per_open_position=2), lambda: clock[0])
+    with pytest.raises(PacerRefused) as refused:
+        p.request(
+            ActionKind.SUBMIT,
+            lambda mark: (mark(), sent.append("ninth")),
+            open_positions=8,
+        )
+    assert refused.value.reason == "entry-reserve-exceeds-burst"
+    p.request(
+        ActionKind.SUBMIT,
+        lambda mark: (mark(), sent.append("tenth")),
+        open_positions=7,
+    )
+    assert sent == ["tenth"]
+
+
+def test_twentieth_entry_admits_at_180_41_and_a_60s_window_stays_at_or_under_180():
+    clock, sends = [0], []
+    p = AccountPacer(
+        controls(slots=20, reserve_per_open_position=2, burst_fraction="0.2278"),
+        lambda: clock[0],
+    )
+    p.request(
+        ActionKind.SUBMIT,
+        lambda mark: (mark(), sends.append(clock[0])),
+        open_positions=19,
+    )
+    assert len(sends) == 1
+    for _ in range(200):
+        clock[0] += SEC // 2
+        p.request(ActionKind.QUERY, lambda mark: (mark(), sends.append(clock[0])))
+    assert max(sum(at <= t < at + 60 * SEC for t in sends) for at in sends) <= 180
+    assert p.wire_requests == len(sends)
+
+
+def test_stale_entry_refused_at_drain_notifies_the_registration_owner():
+    clock = [SEC]
+    p = AccountPacer(controls(reserve_per_open_position=2), lambda: clock[0])
+    refused, counts = [], [7]
+    for _ in range(18):
+        p.request(ActionKind.QUERY, lambda mark: mark())
+    p.request(
+        ActionKind.SUBMIT,
+        lambda mark: mark(),
+        position_counts=lambda: (counts[0], 0),
+        refuse=refused.append,
+    )
+    assert p.queue and p.queue[0].kind == ActionKind.SUBMIT
+    counts[0] = 8
+    clock[0] += 10 * SEC
+    p.drain()
+    assert refused == ["entry-reserve-exceeds-burst"]
+    assert p.queue == []

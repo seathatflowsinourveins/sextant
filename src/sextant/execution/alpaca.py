@@ -391,15 +391,28 @@ class AlpacaBridge:
                 raise CustodyError("transport returned without its actual-send hook")
             self.apply(outbound, outcome)
 
+        cid = request.client_order_id
+
+        def refuse(reason: str) -> None:
+            if cid is not None:
+                self._unsent(cid, reason)
+
         self.pacer.request(
-            request.kind, send, admission=allowed, position_counts=self._position_counts
+            request.kind,
+            send,
+            admission=allowed,
+            position_counts=self._position_counts,
+            refuse=refuse,
         )
 
-    def _unsent(self, cid: str):
+    def _unsent(self, cid: str, reason: str = "refused before the wire"):
         r = self.records[cid]
         if r["sends"] == 0:
             r["status"] = "REJECTED"
             self._bump(cid)
+            row = self.custody.registrations.get(cid)
+            if row is not None and not row.get("unsent"):
+                self.custody.release_local_unsent(cid, reason=reason)
 
     def cancel(self, cid: str):
         r = self._owned(cid)

@@ -5,7 +5,8 @@ of the full net quantity, re-arms it on every change, and never cancels, replace
 an owner order. Outside regular market hours the native trail rests but does not trigger, so
 the protector adopts or emulates its trigger from quotes through NautilusTrader's own
 calculator and, after a persistent run of eligible trades, cancels the trail and releases one
-marketable extended-hours LIMIT (``docs/design.md`` X4; Alpaca orders page read 2026-11-09).
+marketable extended-hours LIMIT (``docs/design.md``:31 and
+``docs/adr/0005-exit-engine.md`` X4; Alpaca orders page read 2026-11-09).
 
 The trade-update stream is event-driven, so the protector also reconciles on a fixed cadence
 and once when the regular session opens: a resting trail the broker lost, or a position that
@@ -38,10 +39,10 @@ from alpaca.trading.stream import TradingStream
 
 from sextant.execution.pacer import PacerRefused
 from sextant.exits.policy import ExitParams
-from sextant.paper.b_feed import BMarketDataFeed, LatestDataClient, feed_for
+from sextant.paper.b_feed import BMarketDataFeed, FeedBatch, LatestDataClient, feed_for
 from sextant.paper.config import PaperAccount
 from sextant.paper.outside_rth import OutsideRthError, OutsideRthTrail
-from sextant.paper.sessions import Session, session_at
+from sextant.paper.sessions import Session, session_at, session_start_ns
 
 B_LANE = "alpaca-paper-b"
 TRAIL_PERCENT_NAME = "native_trail_fraction"
@@ -235,8 +236,10 @@ class Protector:
         self.pages: list[Page] = []
         self.states: list[str] = []
         self._feed = feed
-        self._last_quote_ns: int | None = None
+        self._last_quote_ns: dict[str, int] = {}
+        self._last_poll_ns: int | None = None
         self._feed_silent: set[str] = set()
+        self._age_flagged: dict[str, int] = {}
         self._announced: dict[str, tuple[object, ...]] = {}
         self._cancelling: set[str] = set()
         self._unresolved: dict[str, str] = {}
@@ -251,6 +254,7 @@ class Protector:
         self._sequence = 0
         opened_ns = self._now_ns()
         self._feed_started_ns: int | None = opened_ns if feed != "none" else None
+        self._segment_start_ns = session_start_ns(opened_ns)
         self._last_reconcile_ns = opened_ns
         self._last_session = session_at(opened_ns)
 
@@ -276,25 +280,42 @@ class Protector:
         state = self._outside.get(symbol)
         return None if state is None else state.trigger
 
-    def _age(self, now_ns: int) -> str:
-        """The age of the newest market-data quote, or none when no feed is wired."""
+    def _poll_age(self, now_ns: int) -> str:
+        """How long ago the poller last succeeded, or none before its first success."""
 
-        if self._last_quote_ns is None:
+        if self._last_poll_ns is None:
             return "none"
-        elapsed_ns = max(0, now_ns - self._last_quote_ns)
+        elapsed_ns = max(0, now_ns - self._last_poll_ns)
         return f"{Decimal(elapsed_ns) / NS_PER_SECOND:.1f}s"
 
-    def _armed(self, session: Session, now_ns: int) -> bool:
-        """True only while the reference that can actually protect the shares is live."""
+    def _quote_age(self, symbol: str, now_ns: int) -> str:
+        """How old the newest quote for this symbol is, or none when it has not seen one."""
+
+        quote_ns = self._last_quote_ns.get(symbol)
+        if quote_ns is None:
+            return "none"
+        elapsed_ns = max(0, now_ns - quote_ns)
+        return f"{Decimal(elapsed_ns) / NS_PER_SECOND:.1f}s"
+
+    def _poll_fresh(self, now_ns: int) -> bool:
+        if self._feed == "none" or self._last_poll_ns is None:
+            return False
+        bound_ns = int(self._parameters.feed_silence_s * NS_PER_SECOND)
+        return now_ns - self._last_poll_ns <= bound_ns
+
+    def _priceable(self, session: Session, symbol: str, now_ns: int) -> bool:
+        """True while a reference that can actually protect this symbol's shares is live.
+
+        Outside regular hours the poller is the liveness signal; its standing quote for this
+        symbol is the reference. This one predicate governs the state line, the watchdog and
+        the release price, so the line never claims protection the release would refuse.
+        """
 
         if session is Session.RTH:
             return True
         if session not in (Session.PRE, Session.POST, Session.OVERNIGHT):
             return False
-        if self._feed == "none" or self._last_quote_ns is None:
-            return False
-        bound_ns = int(self._parameters.feed_silence_s * NS_PER_SECOND)
-        return now_ns - self._last_quote_ns <= bound_ns
+        return self._poll_fresh(now_ns) and symbol in self._last_quote_ns
 
     def _state_snapshot(self, symbol: str, now_ns: int) -> tuple[str, tuple[object, ...]]:
         """Render the one-line custody and protection state, with its change key."""
@@ -310,7 +331,7 @@ class Protector:
         trail = trails[0] if trails else None
         resting = trail or limit
         session = session_at(now_ns)
-        armed = self._armed(session, now_ns)
+        armed = self._priceable(session, symbol, now_ns)
         protected = sum((_leaves(order) for order in trails), Decimal(0)) if armed else Decimal(0)
         trigger: object | None = None
         basis: str | None = None
@@ -328,7 +349,8 @@ class Protector:
             f"state mode={session.value} symbol={_safe_symbol(symbol)} "
             f"position={_state_number(position)} protected={_state_number(protected)} "
             f"trigger={_state_number(trigger)} on={basis or 'none'} order={order_id} "
-            f"feed={_safe_symbol(self._feed)} age={self._age(now_ns)}"
+            f"feed={_safe_symbol(self._feed)} poll_age={self._poll_age(now_ns)} "
+            f"quote_age={self._quote_age(symbol, now_ns)}"
         )
         key = (
             session.value,
@@ -367,59 +389,121 @@ class Protector:
             self._announce_symbol(symbol, now_ns)
 
     def set_feed(self, feed: str) -> None:
-        """Switch the session's feed; a new feed starts a fresh observation window."""
+        """Switch the session's feed; a new observation window starts at the session boundary."""
 
+        at = self._now_ns()
+        segment_start_ns = session_start_ns(at)
         if feed == self._feed:
+            if segment_start_ns == self._segment_start_ns:
+                return
+            self._segment_start_ns = segment_start_ns
+            self._last_quote_ns.clear()
+            self._feed_silent.clear()
+            self._age_flagged.clear()
+            for state in self._outside.values():
+                state.reset_run()
             return
         self._feed = feed
-        self._last_quote_ns = None
+        self._segment_start_ns = segment_start_ns
+        self._last_quote_ns.clear()
+        self._last_poll_ns = None
         self._feed_silent.clear()
-        self._feed_started_ns = self._now_ns() if feed != "none" else None
+        self._age_flagged.clear()
+        self._feed_started_ns = at if feed != "none" else None
+        for state in self._outside.values():
+            state.reset_run()
 
     def held_symbols(self) -> tuple[str, ...]:
         """The symbols the broker currently reports as held."""
 
         return tuple(sorted(self._last_position))
 
+    def note_poll(self, ts_ns: int | None = None) -> None:
+        """Record one successful poll; liveness is measured from this receipt, not a quote."""
+
+        at = self._now_ns() if ts_ns is None else ts_ns
+        self._last_poll_ns = at if self._last_poll_ns is None else max(self._last_poll_ns, at)
+
     def watch(self, now_ns: int | None = None) -> None:
-        """Page once when a held outside-RTH position has no fresh quote, then announce."""
+        """Page when the poller stops, then announce the state and any standing-quote age."""
 
         at = self._now_ns() if now_ns is None else now_ns
         session = session_at(at)
         if session in (Session.PRE, Session.POST, Session.OVERNIGHT):
             self._watch_feed(session, at)
+            self._announce_standing_ages(at)
         else:
             self._feed_silent.clear()
+            self._age_flagged.clear()
         self._announce_states(at)
 
     def _watch_feed(self, session: Session, now_ns: int) -> None:
-        if self._armed(session, now_ns):
-            self._feed_silent.clear()
+        held = set(self._last_position)
+        self._feed_silent &= held
+        if self._poll_fresh(now_ns):
+            for symbol in sorted(held):
+                if symbol in self._last_quote_ns:
+                    self._feed_silent.discard(symbol)
+                    continue
+                if symbol in self._feed_silent:
+                    continue
+                self._feed_silent.add(symbol)
+                self.page(
+                    "outside_rth_feed_silent",
+                    symbol,
+                    "polls succeed but no quote for this symbol; protection unarmed",
+                )
             return
         bound_ns = int(self._parameters.feed_silence_s * NS_PER_SECOND)
-        for symbol in sorted(self._last_position):
+        for symbol in sorted(held):
             if symbol in self._feed_silent:
                 continue
             if self._feed == "none":
                 detail = "no market-data feed; outside-RTH protection unarmed"
-            elif self._last_quote_ns is None:
+            elif self._last_poll_ns is None:
                 started = self._feed_started_ns
                 if started is None or now_ns - started <= bound_ns:
                     continue
                 detail = (
-                    f"no quote since feed {_safe_symbol(self._feed)} opened, "
+                    f"no successful poll since feed {_safe_symbol(self._feed)} opened, "
                     f"bound {self._parameters.feed_silence_s}s; protection unarmed"
                 )
             else:
-                age_ns = max(0, now_ns - self._last_quote_ns)
+                age_ns = max(0, now_ns - self._last_poll_ns)
                 if age_ns <= bound_ns:
                     continue
                 detail = (
-                    f"newest quote {Decimal(age_ns) / NS_PER_SECOND:.1f}s old, "
+                    f"last successful poll {Decimal(age_ns) / NS_PER_SECOND:.1f}s ago, "
                     f"bound {self._parameters.feed_silence_s}s; protection unarmed"
                 )
             self._feed_silent.add(symbol)
             self.page("outside_rth_feed_silent", symbol, detail)
+
+    def _announce_standing_ages(self, now_ns: int) -> None:
+        """Emit one line when a still-armed quote crosses the silence bound.
+
+        This is observability, not a second arm/disarm rule: the poller's success keeps the
+        shares protected, and the line makes the older quote visible instead of calling it a
+        silent feed.
+        """
+
+        if not self._poll_fresh(now_ns):
+            return
+        bound_ns = int(self._parameters.feed_silence_s * NS_PER_SECOND)
+        for symbol in sorted(self._last_position):
+            quote_ns = self._last_quote_ns.get(symbol)
+            if quote_ns is None:
+                continue
+            age_ns = max(0, now_ns - quote_ns)
+            if age_ns <= bound_ns:
+                self._age_flagged.pop(symbol, None)
+                continue
+            if self._age_flagged.get(symbol) == quote_ns:
+                continue
+            line, key = self._state_snapshot(symbol, now_ns)
+            self._emit_state(line)
+            self._announced[symbol] = key
+            self._age_flagged[symbol] = quote_ns
 
     def on_quote(
         self,
@@ -437,25 +521,38 @@ class Protector:
         """
 
         at = self._now_ns() if ts_ns is None else ts_ns
-        if session_at(at) not in (Session.PRE, Session.POST, Session.OVERNIGHT):
+        session = session_at(at)
+        if session not in (Session.PRE, Session.POST, Session.OVERNIGHT):
+            return None
+        if session is not self._last_session:
+            # Adopt the resting native stop before the first observation of a new session can
+            # seed an emulated trigger below it.
+            self.reconcile()
+        if at < self._segment_start_ns:
             return None
         if bid is None or ask is None or bid <= 0 or ask <= 0 or bid > ask:
             return None
-        if self._last_quote_ns is not None and at < self._last_quote_ns:
+        previous = self._last_quote_ns.get(symbol)
+        if previous is not None and at < previous:
             return None
-        self._last_quote_ns = at if self._last_quote_ns is None else max(self._last_quote_ns, at)
+        self._last_quote_ns[symbol] = at if previous is None else max(previous, at)
         return self._outside_state(symbol).observe_quote(bid=bid, ask=ask, last=last, ts_ns=at)
 
     def on_trade(self, symbol: str, price: Decimal, ts_ns: int | None = None) -> bool:
         """Feed one outside-RTH trade; true when it completes a persistent breach."""
 
         at = self._now_ns() if ts_ns is None else ts_ns
-        if session_at(at) not in (Session.PRE, Session.POST, Session.OVERNIGHT):
+        session = session_at(at)
+        if session not in (Session.PRE, Session.POST, Session.OVERNIGHT):
+            return False
+        if session is not self._last_session:
+            self.reconcile()
+        if at < self._segment_start_ns:
             return False
         state = self._outside.get(symbol)
         if state is None or not state.observe_trade(price, at):
             return False
-        self._begin_outside_release(symbol, at)
+        self._begin_outside_release(symbol)
         return True
 
     def _outside_state(self, symbol: str) -> OutsideRthTrail:
@@ -469,10 +566,10 @@ class Protector:
         return state
 
     def _adopt_outside(self, symbol: str, order: Order) -> None:
-        """Take the resting native trail's stop price as the emulated trigger once."""
+        """Keep the higher of the resting native stop and any existing emulated trigger."""
 
         state = self._outside_state(symbol)
-        if state.has_trigger:
+        if state.released or state.pending:
             return
         stop_price = getattr(order, "stop_price", None)
         if stop_price is None:
@@ -482,9 +579,12 @@ class Protector:
                 "the resting native trail has no stop price to emulate",
             )
             return
-        state.adopt(_decimal(str(stop_price), "order.stop_price"), self._now_ns())
+        stop = _decimal(str(stop_price), "order.stop_price")
+        if state.trigger is not None and state.trigger >= stop:
+            return
+        state.adopt(stop, self._now_ns())
 
-    def _begin_outside_release(self, symbol: str, ts_ns: int) -> None:
+    def _begin_outside_release(self, symbol: str) -> None:
         """Cancel the trail and release one LIMIT after its terminal cancellation."""
 
         state = self._outside.get(symbol)
@@ -498,8 +598,10 @@ class Protector:
                 "the breach has no single resting native trail to cancel",
             )
             return
+        now_ns = self._now_ns()
+        fresh = self._priceable(session_at(now_ns), symbol, now_ns)
         try:
-            state.release_price(ts_ns)
+            state.release_price(now_ns, fresh=fresh)
         except OutsideRthError as exc:
             self.page("outside_rth_release_unpriced", symbol, str(exc))
             return
@@ -513,17 +615,18 @@ class Protector:
         if not self._cancel(trails[0], "outside_rth_breach"):
             return
         self._pending_release[symbol] = _PendingRelease(trail_order_id=str(trails[0].id))
-        state.begin_release(ts_ns)
-        self._announce_symbol(symbol, ts_ns)
+        state.begin_release(now_ns)
+        self._announce_symbol(symbol, now_ns)
 
-    def _complete_outside_release(self, symbol: str, ts_ns: int) -> None:
+    def _complete_outside_release(self, symbol: str) -> None:
         """Reprice and re-quantify from a fresh snapshot, then submit the one LIMIT."""
 
         state = self._outside.get(symbol)
         if state is None:
             self._released_symbols.discard(symbol)
             return
-        if session_at(ts_ns) is Session.CLOSED:
+        now_ns = self._now_ns()
+        if session_at(now_ns) is Session.CLOSED:
             state.rearm()
             self._released_symbols.discard(symbol)
             self.page("market_closed", symbol, "B writes only in an open session")
@@ -533,8 +636,10 @@ class Protector:
             state.rearm()
             self._released_symbols.discard(symbol)
             return
+        now_ns = self._now_ns()
+        fresh = self._priceable(session_at(now_ns), symbol, now_ns)
         try:
-            price = state.release_price(ts_ns)
+            price = state.release_price(now_ns, fresh=fresh)
         except OutsideRthError as exc:
             state.rearm()
             self._released_symbols.discard(symbol)
@@ -602,19 +707,20 @@ class Protector:
         self.reconcile()
 
     def reconcile_when_due(self) -> bool:
-        """Reconcile on B's cadence, and once when the regular session opens.
+        """Reconcile on B's cadence, and once when the session changes.
 
         A trade update reconciles only because the owner or the broker acted; the cadence is
-        what notices a trail the broker lost while nothing happened. The open is its own
-        trigger so a position that rested unprotected through the close is re-armed at once,
-        without waiting for the interval. Returns whether a reconcile ran.
+        what notices a trail the broker lost while nothing happened. A session change is its
+        own trigger so the native trail's stop is adopted at the boundary, before the new
+        session's first quote can seed an emulated trigger below it. Returns whether a
+        reconcile ran.
         """
 
         now = self._now_ns()
         session = session_at(now)
-        opened = session is Session.RTH and self._last_session is not Session.RTH
+        changed = session is not self._last_session
         interval_ns = int(self._parameters.reconcile_interval_s * NS_PER_SECOND)
-        if not opened and now - self._last_reconcile_ns < interval_ns:
+        if not changed and now - self._last_reconcile_ns < interval_ns:
             return False
         self.reconcile()
         return True
@@ -739,7 +845,7 @@ class Protector:
                 self._pending_release.pop(symbol, None)
                 if event == "canceled":
                     self._released_symbols.add(symbol)
-                    self._complete_outside_release(symbol, self._now_ns())
+                    self._complete_outside_release(symbol)
                 else:
                     state = self._outside.get(symbol)
                     if state is not None:
@@ -960,6 +1066,8 @@ class ProtectorStream(TradingStream):
         self._market_data = BMarketDataFeed(data_client) if data_client is not None else None
         self._last_feed_poll_ns = 0
         self._feed_failure: str | None = None
+        self._feed_label = "none"
+        self._poll_task: asyncio.Task[FeedBatch] | None = None
         self.protector = Protector(
             client,
             account,
@@ -977,8 +1085,48 @@ class ProtectorStream(TradingStream):
         self._feed_failure = detail
         self.protector.page("feed_failed", None, detail)
 
-    async def _poll_feed(self, *, force: bool = False) -> None:
-        """Set the session's feed and poll the latest quote/trade for the held symbols only."""
+    async def _await_startup_poll(self) -> None:
+        """Wait only the silence bound for the first poll; a stalled poll must not hide it."""
+
+        task = self._poll_task
+        if task is None:
+            return
+        bound_s = float(self._parameters.feed_silence_s)
+        done, _ = await asyncio.wait({task}, timeout=bound_s)
+        if not done:
+            self._page_feed_failure(f"{self._feed_label}: TimeoutError")
+            return
+        self._drain_poll()
+
+    def _drain_poll(self) -> None:
+        """Apply a completed poll and record its success; a stalled poll keeps the old receipt."""
+
+        task = self._poll_task
+        if task is None or not task.done():
+            return
+        self._poll_task = None
+        try:
+            batch = task.result()
+        except asyncio.CancelledError:
+            return
+        except Exception as exc:
+            self._page_feed_failure(f"{self._feed_label}: {type(exc).__name__}")
+            return
+        self._feed_failure = None
+        self.protector.note_poll(self._now_ns())
+        for quote in batch.quotes:
+            self.protector.on_quote(
+                quote.symbol,
+                bid=quote.bid,
+                ask=quote.ask,
+                last=quote.last,
+                ts_ns=quote.ts_ns,
+            )
+        for trade in batch.trades:
+            self.protector.on_trade(trade.symbol, trade.price, trade.ts_ns)
+
+    def _poll_feed(self, *, force: bool = False) -> None:
+        """Start one background REST poll; the watch keeps running while it is in flight."""
 
         if self._market_data is None:
             return
@@ -990,26 +1138,16 @@ class ProtectorStream(TradingStream):
         symbols = self.protector.held_symbols()
         if not symbols:
             return
+        if self._poll_task is not None:
+            return
         interval_ns = int(self._parameters.feed_poll_interval_s * 1_000_000_000)
         if not force and now_ns - self._last_feed_poll_ns < interval_ns:
             return
         self._last_feed_poll_ns = now_ns
-        try:
-            batch = await asyncio.to_thread(self._market_data.poll, symbols, feed)
-        except Exception as exc:
-            self._page_feed_failure(f"{feed}: {type(exc).__name__}")
-            return
-        self._feed_failure = None
-        for quote in batch.quotes:
-            self.protector.on_quote(
-                quote.symbol,
-                bid=quote.bid,
-                ask=quote.ask,
-                last=quote.last,
-                ts_ns=quote.ts_ns,
-            )
-        for trade in batch.trades:
-            self.protector.on_trade(trade.symbol, trade.price, trade.ts_ns)
+        self._feed_label = feed
+        self._poll_task = asyncio.create_task(
+            asyncio.to_thread(self._market_data.poll, symbols, feed)
+        )
 
     async def _on_trade_update(self, update: TradeUpdate) -> None:
         try:
@@ -1024,7 +1162,8 @@ class ProtectorStream(TradingStream):
         except Exception as exc:
             self.protector.page("reconcile_failed", None, type(exc).__name__)
         try:
-            await self._poll_feed(force=True)
+            self._poll_feed(force=True)
+            await self._await_startup_poll()
         except Exception as exc:
             self.protector.page("feed_failed", None, type(exc).__name__)
         try:
@@ -1036,7 +1175,8 @@ class ProtectorStream(TradingStream):
         while True:
             await asyncio.sleep(self.SCHEDULE_TICK_S)
             try:
-                await self._poll_feed()
+                self._drain_poll()
+                self._poll_feed()
             except Exception as exc:
                 self.protector.page("feed_failed", None, type(exc).__name__)
             try:

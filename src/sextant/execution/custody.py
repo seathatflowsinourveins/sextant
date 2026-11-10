@@ -10,7 +10,7 @@ import hashlib
 import json
 import os
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal
 from pathlib import Path
 from types import MappingProxyType
@@ -412,6 +412,35 @@ class Custody:
         if not row.get("unsent"):
             row["unsent"] = reason
             self._save()
+
+    def release_local_unsent(self, cid: str, *, reason: str) -> None:
+        """Close a zero-send refusal whose own pending fact custody already observed.
+
+        The bridge's local fact is the only report for a never-sent submit. Its zero-send
+        rejection is terminal on this node, so rewrite the still-pending venue-less, zero-fill
+        fact to the local-close shape before release_unsent's reported-order safeguard. A
+        linked or broker-reported order still refuses; a sent order is never released.
+        """
+        row = self.registrations.get(cid)
+        if not self.loaded or row is None or type(reason) is not str or not reason:
+            raise CustodyError("a loaded house registration and a reason string are required")
+        if row["lineage"]:
+            raise CustodyError("a linked or reported order was sent; it stays unresolved")
+        snapshot = self.snapshot
+        if snapshot is not None:
+            orders = []
+            rewritten = False
+            for order in snapshot.orders:
+                if order.client_order_id != cid or local_close(order):
+                    orders.append(order)
+                    continue
+                if order.venue_order_id is not None or order.filled != 0 or order.terminal:
+                    raise CustodyError("a linked or reported order was sent; it stays unresolved")
+                orders.append(replace(order, status="REJECTED"))
+                rewritten = True
+            if rewritten:
+                self.snapshot = replace(snapshot, orders=tuple(orders))
+        self.release_unsent(cid, reason=reason)
 
     def _order(self, cid: str) -> OrderFact | None:
         if self.snapshot is None:

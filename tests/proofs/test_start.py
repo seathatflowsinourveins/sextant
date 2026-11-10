@@ -1,5 +1,6 @@
 """The clean start: loaded from GitHub, at the pins this repo already holds."""
 
+import json
 import os
 import re
 import subprocess
@@ -32,7 +33,7 @@ esac
 
 def test_the_distro_loads_this_repo_from_github() -> None:
     assert USER_DATA.startswith("#cloud-config\n")
-    assert "gh repo clone seathatflowsinourveins/sextant-next" in USER_DATA
+    assert 'gh repo clone seathatflowsinourveins/sextant "$HOME/sextant"' in USER_DATA
     assert "deploy/wsl/setup.sh" in USER_DATA
     assert "sha256sum -c -" in USER_DATA
     assert "timezone: America/New_York" in USER_DATA
@@ -70,7 +71,6 @@ def test_setup_reads_every_pin_from_the_repo() -> None:
         r"^FROM ghcr\.io/astral-sh/uv:[0-9.]+@",
         r"^ARG NODE_VERSION=\S+",
         r"^ARG JUST_VERSION=\S+",
-        r"^RUN claude install \S+",
     ):
         assert re.search(pattern, dockerfile, re.MULTILINE), pattern
     # Three-part versions only, so an address such as the loopback one is not a pin.
@@ -78,6 +78,73 @@ def test_setup_reads_every_pin_from_the_repo() -> None:
         assert not VERSION.search(script.read_text()), (
             f"{script.name}: pins live in the repo's own files"
         )
+
+
+# A stand-in for curl: it records its arguments and serves an installer that records its target.
+FAKE_CURL = r"""#!/usr/bin/env bash
+printf 'curl %s\n' "$*" >> "$FAKE_LOG"
+cat <<'INSTALLER'
+printf 'installer %s\n' "${1-}" >> "$FAKE_LOG"
+INSTALLER
+"""
+
+
+def test_setup_installs_the_hosts_claude_code_on_its_latest_channel(tmp_path: Path) -> None:
+    """ADR-0030's 2026-11-09 amendment: "The native installer accepts either a specific version
+    number or a release channel (`latest` or `stable`). The channel you choose at install time
+    becomes your default for auto-updates" (code.claude.com/docs/en/setup, read 2026-11-09). The
+    host takes `latest`; the devcontainer image keeps its own pin."""
+    lines = [line for line in SETUP.read_text().splitlines() if "claude.ai/install.sh" in line]
+    assert len(lines) == 1, "setup runs Claude Code's installer once"
+    (tmp_path / "bin").mkdir()
+    (tmp_path / "bin" / "curl").write_text(FAKE_CURL)
+    (tmp_path / "bin" / "curl").chmod(0o755)
+    log = tmp_path / "log"
+    env = {**os.environ, "PATH": f"{tmp_path / 'bin'}:{os.environ['PATH']}", "FAKE_LOG": str(log)}
+    done = subprocess.run(["bash", "-c", lines[0]], env=env, capture_output=True, text=True)
+    assert done.returncode == 0, done.stderr
+    want = ["curl -fsSL https://claude.ai/install.sh", "installer latest"]
+    assert log.read_text().splitlines() == want
+    dockerfile = (ROOT / ".devcontainer" / "Dockerfile").read_text()
+    assert re.search(r"^RUN claude install \d+\.\d+\.\d+$", dockerfile, re.MULTILINE)
+
+
+def _no_prompts(home: Path) -> dict:
+    """Run setup.sh's own `no_prompts` on one settings home and return the settings it leaves."""
+    function = re.search(r"^no_prompts\(\) \{\n.*?^\}\n", SETUP.read_text(), re.M | re.S)
+    assert function, "setup.sh defines no_prompts"
+    done = subprocess.run(
+        ["bash", "-c", f'{function[0]}no_prompts "$1"', "no_prompts", str(home)],
+        capture_output=True, text=True, check=False,
+    )  # fmt: skip
+    assert done.returncode == 0, done.stderr
+    return json.loads((home / "settings.json").read_text())
+
+
+def test_setup_lets_claude_code_update_itself_on_latest(tmp_path: Path) -> None:
+    """ADR-0030's 2026-11-09 amendment: Claude Code updates itself in the background on its
+    latest channel (code.claude.com/docs/en/setup, read 2026-11-09), so a new model runs at the
+    next launch. Setup names the channel and removes the updater switch an earlier run wrote."""
+    fresh = _no_prompts(tmp_path / "fresh")
+    assert fresh == {
+        "permissions": {"defaultMode": "bypassPermissions"},
+        "skipDangerousModePermissionPrompt": True,
+        "autoUpdatesChannel": "latest",
+    }
+    removed = re.findall(r"del\(\.env\.(\w+)\)", SETUP.read_text())
+    assert len(removed) == 1, "setup removes exactly one environment switch"
+    home = tmp_path / "earlier"
+    home.mkdir()
+    earlier = {"env": {removed[0]: "1", "KEEP": "1"}, "autoUpdatesChannel": "stable"}
+    (home / "settings.json").write_text(json.dumps({**earlier, "permissions": {"allow": ["Read"]}}))
+    again = _no_prompts(home)
+    assert again["env"] == {"KEEP": "1"} and again["autoUpdatesChannel"] == "latest"
+    assert again["permissions"] == {"allow": ["Read"], "defaultMode": "bypassPermissions"}
+    # Every settings home setup provisions: the user's own and each Orca-managed Claude profile.
+    setup = SETUP.read_text()
+    assert 'no_prompts "$HOME/.claude"' in setup
+    assert 'for profile in "$HOME"/.config/orca/claude-profiles/*/home; do' in setup
+    assert '[ -d "$profile" ] && no_prompts "$profile"' in setup
 
 
 def test_orca_runs_as_its_own_service_at_the_pin() -> None:

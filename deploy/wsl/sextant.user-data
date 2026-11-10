@@ -37,7 +37,7 @@ write_files:
         || gh auth login --hostname github.com --git-protocol https --web --scopes workflow,user \
         || return 1
       gh auth setup-git || return 1
-      [ -d "$HOME/sextant/.git" ] || gh repo clone seathatflowsinourveins/sextant-next "$HOME/sextant" || return 1
+      [ -d "$HOME/sextant/.git" ] || gh repo clone seathatflowsinourveins/sextant "$HOME/sextant" || return 1
       git -C "$HOME/sextant" pull --ff-only || return 1
       bash "$HOME/sextant/deploy/wsl/setup.sh" || return 1
       touch "$HOME/.sextant-ready"
