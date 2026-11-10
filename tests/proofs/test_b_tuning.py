@@ -157,9 +157,13 @@ def test_the_search_never_evaluates_a_holdout_session(tmp_path: Path) -> None:
         holdout_days=holdout,
         log_path=tmp_path / "trials.parquet",
     )
-    assert result.decision == "PROPOSED"
-    assert calls[:-1] and all(call == train for call in calls[:-1])
-    assert calls[-1] == holdout
+    assert result.decision == "NOT_ADMISSIBLE"
+    assert result.holdout == "MISSING"
+    assert calls and all(call == train for call in calls)
+    assert not any(
+        json.loads(record["config"])["arm_id"].endswith(":holdout")
+        for record in tuning.TrialLog(tmp_path / "trials.parquet").records
+    )
 
 
 def test_a_duplicated_holdout_date_is_rejected_before_any_trial(tmp_path: Path) -> None:
@@ -184,20 +188,31 @@ def test_a_duplicated_holdout_date_is_rejected_before_any_trial(tmp_path: Path) 
     assert not (tmp_path / "trials.parquet").exists()
 
 
-def test_a_supported_series_proposes_but_never_adopts(tmp_path: Path) -> None:
+def test_a_supported_series_is_stamped_not_admissible_and_never_adopts(tmp_path: Path) -> None:
     sessions = _sessions()
     holdout = sessions[-13:]
+    train = sessions[:-13]
     log_path = tmp_path / "trials.parquet"
     report_path = tmp_path / "proposals.json"
+
+    def evaluate(params, days):
+        assert all(day in train for day in days), "holdout evaluated"
+        return _evaluate(sessions)(params, days)
+
     result = tuning.run_study(
         _spec(),
-        _evaluate(sessions),
+        evaluate,
         sessions=sessions,
         holdout_days=holdout,
         log_path=log_path,
     )
-    assert result.decision == "PROPOSED"
-    assert result.holdout == "PASS"
+    assert result.decision == "NOT_ADMISSIBLE"
+    assert "5833241132" in result.reason
+    assert "refuses after the DSR, PBO and merit gates" in result.reason
+    assert "PR 2 removes this stamp" in result.reason
+    assert result.proposals == ()
+    assert result.holdout == "MISSING"
+    assert result.holdout_sharpe is None
     assert result.merit == "OK"
     assert result.dsr > 0.95
     assert result.pbo is not None and result.pbo <= 0.05
@@ -207,45 +222,52 @@ def test_a_supported_series_proposes_but_never_adopts(tmp_path: Path) -> None:
     assert result.best_params is not None
 
     records = tuning.TrialLog(log_path).records
-    assert len(records) == 101
+    assert len(records) == 100
     assert {record["state"] for record in records} <= {"COMPLETE", "PRUNED"}
     assert result.n_complete >= 1
     assert all(json.loads(record["config"])["tier"] == "MODELED" for record in records)
-    assert all(len(record["fold_scores"]) == 6 for record in records[:-1])
+    assert not any(
+        json.loads(record["config"])["arm_id"].endswith(":holdout") for record in records
+    )
+    assert all(len(record["fold_scores"]) == 6 for record in records)
     assert all(
         not any(isinstance(value, float) for value in json.loads(record["params"]).values())
         for record in records
     )
-    assert all(record["days"] == list(sessions[:-13]) for record in records[:-1])
-    assert records[-1]["days"] == list(holdout)
-    assert records[-1]["fold_scores"] == []
+    assert all(record["days"] == list(sessions[:-13]) for record in records)
+    assert all(record["days"] != list(holdout) for record in records)
 
     tuning.write_report(report_path, [result])
     payload = json.loads(report_path.read_text())
     assert payload["schema"] == "b-tuning.study/1"
     assert payload["results"][0]["adoption"] == "none"
-    assert payload["results"][0]["proposals"]
-    assert all(row["adoption"] == "none" for row in payload["results"][0]["proposals"])
-    assert all(
-        row["current"] != row["proposed"] or row["current"]
-        for row in payload["results"][0]["proposals"]
-    )
+    assert payload["results"][0]["decision"] == "NOT_ADMISSIBLE"
+    assert payload["results"][0]["proposals"] == []
 
 
-def test_a_negative_holdout_stops_the_proposal(tmp_path: Path) -> None:
+def test_a_negative_holdout_cannot_be_evaluated_while_the_stamp_holds(tmp_path: Path) -> None:
     sessions = _sessions()
     holdout = sessions[-13:]
+    train = sessions[:-13]
+    calls: list[tuple[str, ...]] = []
+
+    def evaluate(params, days):
+        calls.append(tuple(days))
+        assert all(day in train for day in days), "holdout evaluated"
+        return _evaluate(sessions, holdout=holdout)(params, days)
+
     result = tuning.run_study(
         _spec(),
-        _evaluate(sessions, holdout=holdout),
+        evaluate,
         sessions=sessions,
         holdout_days=holdout,
         log_path=tmp_path / "trials.parquet",
     )
-    assert result.decision == "NO_PROPOSAL"
-    assert result.holdout == "FAIL"
-    assert result.holdout_sharpe is not None and result.holdout_sharpe < 0
+    assert result.decision == "NOT_ADMISSIBLE"
+    assert result.holdout == "MISSING"
+    assert result.holdout_sharpe is None
     assert result.proposals == ()
+    assert calls and all(call == train for call in calls)
 
 
 def test_a_failed_trial_is_logged_and_the_study_continues(tmp_path: Path) -> None:
@@ -271,7 +293,7 @@ def test_a_failed_trial_is_logged_and_the_study_continues(tmp_path: Path) -> Non
     assert failed
     assert "replay refused" in failed[0]["error"]
     assert result.n_failed == len(failed)
-    assert result.n_trials == len(records) - 1
+    assert result.n_trials == len(records)
 
 
 def test_deflated_sharpe_is_a_probability() -> None:
@@ -335,7 +357,7 @@ def test_deflated_sharpe_counts_the_cumulative_ledger(tmp_path: Path) -> None:
         log_path=log_path,
     )
     assert result.dsr < 0.95
-    assert result.decision == "NO_PROPOSAL"
+    assert result.decision == "NOT_ADMISSIBLE"
 
 
 def test_the_wilcoxon_pruner_can_stop_a_bad_trial(tmp_path: Path) -> None:
@@ -516,9 +538,10 @@ def test_pbo_uses_average_ranks_for_tied_trials() -> None:
     assert tuning.pbo_cscv(matrix, s=2) == 1.0
 
 
-def test_a_consumed_holdout_is_not_reused(tmp_path: Path) -> None:
+def test_a_stamped_run_does_not_consume_the_holdout(tmp_path: Path) -> None:
     sessions = _sessions()
     holdout = sessions[-13:]
+    train = sessions[:-13]
     log_path = tmp_path / "trials.parquet"
     first = tuning.run_study(
         _spec(),
@@ -527,7 +550,14 @@ def test_a_consumed_holdout_is_not_reused(tmp_path: Path) -> None:
         holdout_days=holdout,
         log_path=log_path,
     )
-    assert first.decision == "PROPOSED"
+    assert first.decision == "NOT_ADMISSIBLE"
+    assert first.holdout == "MISSING"
+    records = tuning.TrialLog(log_path).records
+    assert len(records) == 100
+    assert all(record["days"] == list(train) for record in records)
+    assert not any(
+        json.loads(record["config"])["arm_id"].endswith(":holdout") for record in records
+    )
     calls: list[tuple[str, ...]] = []
 
     def evaluate(params, days):
@@ -541,9 +571,16 @@ def test_a_consumed_holdout_is_not_reused(tmp_path: Path) -> None:
         holdout_days=holdout,
         log_path=log_path,
     )
-    assert second.decision == "NOT_EVALUABLE"
-    assert "holdout" in second.reason
-    assert calls == []
+    assert second.decision == "NOT_ADMISSIBLE"
+    assert "already consumed" not in second.reason
+    records = tuning.TrialLog(log_path).records
+    assert len(records) == 200
+    assert all(record["days"] == list(train) for record in records)
+    assert calls and all(call == train for call in calls)
+
+
+def test_the_holdout_stage_is_not_a_switch() -> None:
+    assert "OPEN_HOLDOUT_REVIEW" not in vars(tuning)
 
 
 def test_sibling_arms_share_the_multiple_testing_correction(tmp_path: Path) -> None:

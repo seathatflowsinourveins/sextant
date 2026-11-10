@@ -28,10 +28,12 @@ from pathlib import Path
 from types import FrameType
 from typing import Any, cast
 
+from alpaca.data.historical.stock import StockHistoricalDataClient
 from alpaca.trading.client import TradingClient
 
 from sextant.execution.custody import AccountScope, WriterLease
 from sextant.execution.pacer import AccountPacer, ActionKind, PacerRefused
+from sextant.paper.b_feed import LatestDataClient
 from sextant.paper.b_protector import (
     BParameters,
     Page,
@@ -52,6 +54,9 @@ EXPECTED_SUFFIX_ENV = "B_EXPECTED_ACCOUNT_SUFFIX"
 EXPECTED_FULL_ENV = "B_EXPECTED_ACCOUNT_ID"
 DEFAULT_CLIENT_FACTORY: Callable[..., TradingClientLike] = cast(
     Callable[..., TradingClientLike], TradingClient
+)
+DEFAULT_DATA_CLIENT_FACTORY: Callable[..., LatestDataClient] = cast(
+    Callable[..., LatestDataClient], StockHistoricalDataClient
 )
 
 
@@ -194,6 +199,7 @@ def main(
     client_factory: Callable[..., TradingClientLike] = DEFAULT_CLIENT_FACTORY,
     on_page: Callable[[Page], None] = _print_page,
     on_state: Callable[[str], None] = _print_state,
+    data_client_factory: Callable[..., LatestDataClient] = DEFAULT_DATA_CLIENT_FACTORY,
 ) -> int:
     """Read the slot-2 config and keys, then run the protector stream in the foreground."""
 
@@ -237,6 +243,13 @@ def main(
             client_factory(api_key=api_key, secret_key=secret_key, paper=True),
             pacer,
         )
+        try:
+            data_client: LatestDataClient | None = data_client_factory(
+                api_key=api_key, secret_key=secret_key
+            )
+        except Exception as exc:
+            on_page(Page(reason="feed_client_failed", detail=type(exc).__name__))
+            data_client = None
         stream = ProtectorStream(
             client,
             account,
@@ -246,6 +259,7 @@ def main(
             paper=True,
             on_page=on_page,
             on_state=on_state,
+            data_client=data_client,
         )
         _check_expected_account(client, on_page)
         previous = signal.signal(signal.SIGTERM, _sigterm_handler(stream))

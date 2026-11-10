@@ -664,3 +664,41 @@ def test_k3_preregistration_stays_frozen_and_not_run() -> None:
         "docs/research/2026-11-09-k3-preregistration.md",
     ):
         assert not (ROOT / standalone).exists()
+
+
+def test_successor_n1_preregistration_stays_frozen_and_not_run() -> None:
+    note = (ROOT / "docs/research/2026-11-06-ranking.md").read_bytes()
+    title = (
+        "# Successor N1: first-leg entries into B's protection at trade-print "
+        "fidelity — preregistration\n"
+    ).encode()
+    end = b"## K3 preregistration, frozen (NOT_RUN)"
+    section = note[note.index(title) : note.index(end)]
+    digest = "d51a9621403626f0bd6a06eec16fd7cae1b6581be5ad866fe4e3103e4ba33bed"
+    assert sha256(section).hexdigest() == digest
+    text = section.decode()
+    assert "**Status: frozen protocol; NOT_RUN.**" in text
+    assert "fecd378a5b40fc2d6d2e03b16dda605c9f82102dad8e95735ffef24a459aca0b" in text
+    for heading in (
+        "## N1.2 Estimand and pairing (frozen)",
+        "## N1.4 Data, PIT and windows (frozen)",
+        "## N1.5 Arms and the shared entry/protection chain (frozen)",
+        "## N1.7 Costs (frozen: identities and levels; values at the seal)",
+        "## N1.8 Parameters (frozen: names and authority, no defaults)",
+        "## N1.9 Dependence, replication, multiplicity; metrics and tests",
+        "## N1.10 Trial count bound to the one TrialLog (frozen)",
+        "## N1.11 Decision rule (frozen: HOLD)",
+    ):
+        assert heading in text
+    for arm in ("**Arm T-a", "**Arm T-b", "**Arm T-c", "**Arm T-d", "**Arm T-K", "**Arm T-H"):
+        assert arm in text
+    assert "entry minute against onset" in text
+    assert "protected gain against hold-flat" in text
+    assert "1\u00d7 and 2\u00d7 all costs" in text
+    assert "Rejected flag sources stay rejected" in text
+    for standalone in (
+        "docs/research/2026-11-09-successor-n1.md",
+        "docs/research/2026-11-09-successor-preregistration.md",
+        "docs/research/2026-11-09-n1-b-protection.md",
+    ):
+        assert not (ROOT / standalone).exists()

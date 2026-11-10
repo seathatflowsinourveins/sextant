@@ -50,6 +50,32 @@ def test_no_row_key_is_duplicated() -> None:
         raise AssertionError(f"docs/manifest.md row key repeated {count}x: {key!r}")
 
 
+def test_manifest_records_every_adr_0021_display_pin() -> None:
+    manifest = (ROOT / "docs/manifest.md").read_text()
+    controller_rows = [
+        row
+        for row in manifest.splitlines()
+        if row.startswith("| TradingView Desktop display controller pins |")
+    ]
+    assert len(controller_rows) == 1, "Record the complete ADR-0021 Desktop controller roster"
+    for repository, commit in (
+        ("iliaal/tradingview-mcp@1.4.0", "233f29e180031291dacac4c4cc2736a8dde161be"),
+        ("JostQQ/tradingview-mcp@v1.0.0", "89317db92b3b962fd8e89f3ec20462da6e4f2733"),
+        ("FerroxLabs/tvcontrol@v2.5.3", "85200201f92967db9e4b63a9251d51fcdfe1f3a8"),
+    ):
+        assert f"{repository} `{commit}`" in controller_rows[0]
+    for repository, commit in (
+        (
+            "[dgunning/edgartools](https://github.com/dgunning/edgartools)@v5.62.1",
+            "9f2ff388c0ad21cfbaba4c7587ba8be7abe6816d",
+        ),
+        ("gerrymanoim/exchange_calendars@4.13.2", "dbe38b1f6887434bbdd1a7d2df6ff8f1742a048a"),
+    ):
+        assert f"{repository} `{commit}`" in manifest
+    policy = (ROOT / "docs/adr/0021-tradingview-display.md").read_text()
+    assert "Lightweight Charts v5.2.1 (`b2ce010e4ad59f6556c9ed60e2b2b30feccdd2d1`)" in policy
+
+
 def test_no_retired_row_returns() -> None:
     back = [key for key in _keys() if key.startswith(RETIRED)]
     assert not back, f"a union merge from an older base restored retired rows; delete them: {back}"
