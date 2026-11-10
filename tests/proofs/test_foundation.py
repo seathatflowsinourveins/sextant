@@ -3,7 +3,9 @@
 import ast
 import hashlib
 import json
+import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -212,10 +214,78 @@ def test_main_ruleset_turns_off_extra_approval_for_unattributed_changes() -> Non
     assert parameters["require_extra_approval_for_unattributed_changes"] is False
 
 
+@pytest.mark.host
+def test_every_ruleset_and_environment_recipe_is_applied() -> None:
+    """A recipe the apply step skips is a protection the repository does not have."""
+    apply = _read(".github/rulesets/apply.sh")
+    for recipe in ("main.json", "live.json", "ledger.json"):
+        assert recipe in apply
+    assert ".github/rulesets/environments.json" in apply
+    recipe = json.loads(_read(".github/rulesets/environments.json"))
+    assert {entry["name"]: entry["branches"] for entry in recipe["environments"]} == {
+        "review": ["main"],
+        "hosted-workers": ["main"],
+        "paper": ["main"],
+        "live": ["live"],
+    }
+
+
+@pytest.mark.host
+def test_apply_replaces_a_same_named_tag_policy_with_the_branch_policy(tmp_path: Path) -> None:
+    """Codex P1 at ad4053f: matching a policy by name alone kept a tag-typed `main`."""
+    rulesets = tmp_path / ".github" / "rulesets"
+    rulesets.mkdir(parents=True)
+    for recipe in ("apply.sh", "main.json", "live.json", "ledger.json", "environments.json"):
+        shutil.copy(ROOT / ".github" / "rulesets" / recipe, rulesets / recipe)
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    log = tmp_path / "calls"
+    fake_gh = bin_dir / "gh"
+    fake_gh.write_text(
+        "#!/usr/bin/env bash\n"
+        f'printf \'%s\\n\' "$*" >> "{log}"\n'
+        'if [[ "$*" == *deployment-branch-policies* && "$*" != *" -X "* ]]; then\n'
+        '  printf \'%s\' \'{"branch_policies":[{"id":1,"name":"main","type":"tag"}]}\'\n'
+        "fi\n"
+    )
+    fake_gh.chmod(0o755)
+    run = subprocess.run(
+        ["bash", str(rulesets / "apply.sh")],
+        cwd=tmp_path,
+        env={**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"},
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert run.returncode == 0, run.stderr
+
+    calls = log.read_text().splitlines()
+    for name, branch in (
+        ("review", "main"),
+        ("hosted-workers", "main"),
+        ("paper", "main"),
+        ("live", "live"),
+    ):
+        delete = f"api -X DELETE {REPO}/environments/{name}/deployment-branch-policies/1"
+        create = (
+            f"api -X POST {REPO}/environments/{name}/deployment-branch-policies"
+            f" -f name={branch} -f type=branch"
+        )
+        assert delete in calls, f"tag policy 1 kept on {name}"
+        assert create in calls, f"branch {branch} not allowed on {name}"
+        assert calls.index(delete) < calls.index(create)
+
+
 @pytest.mark.github
 @pytest.mark.local
 def test_environments_restrict_branches() -> None:
-    for name, branch in (("review", "main"), ("paper", "main"), ("live", "live")):
+    for name, branch in (
+        ("review", "main"),
+        ("hosted-workers", "main"),
+        ("paper", "main"),
+        ("live", "live"),
+    ):
         policies = _gh(f"{REPO}/environments/{name}/deployment-branch-policies")
         assert [p["name"] for p in policies["branch_policies"]] == [branch]
 
