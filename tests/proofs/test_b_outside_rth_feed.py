@@ -38,8 +38,8 @@ from sextant.paper.b_protector import (
     Protector,
     ProtectorStream,
     TapeRead,
-    read_tape as module_read_tape,
 )
+from sextant.paper.b_protector import read_tape as module_read_tape
 from sextant.paper.config import PaperAccount
 from sextant.paper.sessions import Session
 
@@ -869,9 +869,7 @@ def test_a_timed_out_read_is_retried_on_a_later_cadence_tick() -> None:
         clock[0] += 6 * SEC
         stream._drain_tape()
         assert stream.protector._tape_notes["AAPL"] == "none"
-        assert [page.reason for page in stream.protector.pages] == [
-            "outside_rth_tape_unreadable"
-        ]
+        assert [page.reason for page in stream.protector.pages] == ["outside_rth_tape_unreadable"]
         clock[0] += 10 * SEC
         assert stream.protector.tape_candidates(clock[0]) == [("AAPL", Decimal("10"))]
         stream._poll_tape()
