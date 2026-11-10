@@ -65,6 +65,7 @@ class Queued:
     open_positions: int = field(compare=False)
     exiting_positions: int = field(compare=False)
     position_counts: Callable[[], tuple[int, int]] | None = field(compare=False)
+    refuse: Callable[[str], None] | None = field(compare=False, default=None)
 
 
 class AccountPacer:
@@ -90,6 +91,7 @@ class AccountPacer:
         open_positions: int = 0,
         exiting_positions: int = 0,
         position_counts: Callable[[], tuple[int, int]] | None = None,
+        refuse: Callable[[str], None] | None = None,
     ):
         item = Queued(
             int(kind),
@@ -99,10 +101,13 @@ class AccountPacer:
             open_positions,
             exiting_positions,
             position_counts,
+            refuse,
         )
         if item.kind == ActionKind.SUBMIT:
             reserve = self._entry_reserve(item)
             if reserve is not None and reserve >= self.bucket.burst:
+                if refuse is not None:
+                    refuse(ENTRY_RESERVE_EXCEEDS_BURST)
                 raise PacerRefused(
                     ENTRY_RESERVE_EXCEEDS_BURST,
                     f"{ENTRY_RESERVE_EXCEEDS_BURST}: entry reserve {reserve} "
@@ -143,6 +148,8 @@ class AccountPacer:
                     continue
                 if reserve >= self.bucket.burst:
                     heapq.heappop(self.queue)
+                    if item.refuse is not None:
+                        item.refuse(ENTRY_RESERVE_EXCEEDS_BURST)
                     continue
                 if self.bucket.tokens <= reserve:
                     return

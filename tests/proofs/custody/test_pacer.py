@@ -178,3 +178,23 @@ def test_twentieth_entry_admits_at_180_41_and_a_60s_window_stays_at_or_under_180
         p.request(ActionKind.QUERY, lambda mark: (mark(), sends.append(clock[0])))
     assert max(sum(at <= t < at + 60 * SEC for t in sends) for at in sends) <= 180
     assert p.wire_requests == len(sends)
+
+
+def test_stale_entry_refused_at_drain_notifies_the_registration_owner():
+    clock = [SEC]
+    p = AccountPacer(controls(reserve_per_open_position=2), lambda: clock[0])
+    refused, counts = [], [7]
+    for _ in range(18):
+        p.request(ActionKind.QUERY, lambda mark: mark())
+    p.request(
+        ActionKind.SUBMIT,
+        lambda mark: mark(),
+        position_counts=lambda: (counts[0], 0),
+        refuse=refused.append,
+    )
+    assert p.queue and p.queue[0].kind == ActionKind.SUBMIT
+    counts[0] = 8
+    clock[0] += 10 * SEC
+    p.drain()
+    assert refused == ["entry-reserve-exceeds-burst"]
+    assert p.queue == []
