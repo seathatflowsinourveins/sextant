@@ -27,6 +27,10 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNTIMES = ROOT / "deploy" / "wsl" / "lane-runtimes"
+# The host floats on latest but Fable 5.2 needs this floor: anthropics/claude-code@v2.1.321
+# CHANGELOG.md:5 and code.claude.com/docs/en/model-config, read 2026-11-09; the host acceptance
+# test holds the same floor (tests/host/test_clean_distro.py:15-19).
+CLAUDE_FABLE_FLOOR = "2.1.321"
 CHECKS = ("version", "model_effort", "parity", "guard", "repository")
 ROWS = ("claude", "dsh", "codex", "antigravity", "muse", "omniroute", "orca", "ao")
 WATCH_CHECK = ("watch", "turn_started")
@@ -249,22 +253,36 @@ def _slug(url: str) -> str:
     return found.group(1) if found else ""
 
 
+def _is_main_worktree(host: Host, candidate: Path) -> bool:
+    """A declared checkout is permanent only when git lists it as its main worktree."""
+    result = host.run(["git", "-C", str(candidate), "worktree", "list", "--porcelain"])
+    if result.code != 0:
+        return False
+    for line in result.out.splitlines():
+        if line.startswith("worktree "):
+            return Path(line.removeprefix("worktree ")).resolve() == candidate.resolve()
+    return False
+
+
 def _main_checkout(host: Host) -> Path:
     """The canonical host checkout, even when the doctor runs from an AO clone.
 
     The installer records the host checkout in prefix/repository-path. Trust it only
-    when it is a checkout of the same repository; otherwise fall back to the first
-    worktree entry, which is the main checkout of a normal worktree setup.
+    when it is this repository's main worktree, never a linked task worktree; otherwise
+    fall back to the first worktree entry, which is the main checkout of a normal setup.
     """
     declared = _read(host.prefix / "repository-path")
     if declared:
         candidate = Path(declared.strip()).expanduser()
         if candidate.is_dir():
-            if candidate.resolve() == host.repo.resolve():
-                return candidate.resolve()
-            want = _slug(_remote(host))
-            got = _slug(host.run(["git", "-C", str(candidate), "remote", "get-url", "origin"]).out)
-            if want and got == want:
+            same = candidate.resolve() == host.repo.resolve()
+            if not same:
+                want = _slug(_remote(host))
+                got = _slug(
+                    host.run(["git", "-C", str(candidate), "remote", "get-url", "origin"]).out
+                )
+                same = bool(want) and got == want
+            if same and _is_main_worktree(host, candidate):
                 return candidate.resolve()
     result = host.run(["git", "-C", str(host.repo), "worktree", "list", "--porcelain"])
     if result.code == 0:
@@ -395,17 +413,15 @@ def check_claude(host: Host) -> dict[str, list[Finding]]:
 
     result = host.run(["claude", "--version"])
     installed = _version(result.text)
-    dockerfile = _read(host.repo / ".devcontainer" / "Dockerfile") or ""
-    floor_match = re.search(r"claude install (\d+\.\d+\.\d+)", dockerfile)
-    floor = floor_match.group(1) if floor_match else None
+    floor = CLAUDE_FABLE_FLOOR
     if result.code != 0 or not installed:
         _fail(out, "claude", "version", f"claude --version failed: {result.text.strip()[:160]}")
-    elif floor and _semver(installed) < _semver(floor):
+    elif _semver(installed) < _semver(floor):
         _fail(
             out,
             "claude",
             "version",
-            f"Claude Code {installed} is older than the Dockerfile floor {floor}",
+            f"Claude Code {installed} is older than the Fable floor {floor}",
         )
 
     env_value = settings.get("env")
@@ -593,6 +609,7 @@ def check_dsh(host: Host) -> dict[str, list[Finding]]:
     want_model = _yaml_field(_yaml_block(patch, "agent-default-model"), "model")
     want_effort = _yaml_field(_yaml_block(patch, "agent-default-model"), "reasoningEffort")
     want_thinking = _yaml_field(_yaml_block(patch, "llm-deepseek"), "thinking")
+    want_provider_effort = _yaml_field(_yaml_block(patch, "llm-deepseek"), "reasoningEffort")
     dsh_home = _dsh_home(host)
     profiles = ["acp", "headless", "dsh-tui"]
     for profile in profiles:
@@ -607,8 +624,9 @@ def check_dsh(host: Host) -> dict[str, list[Finding]]:
             _yaml_field(default, "model"),
             _yaml_field(default, "reasoningEffort"),
             _yaml_field(llm, "thinking"),
+            _yaml_field(llm, "reasoningEffort"),
         )
-        want = (want_provider, want_model, want_effort, want_thinking)
+        want = (want_provider, want_model, want_effort, want_thinking, want_provider_effort)
         if got != want:
             _fail(
                 out, "dsh", "model_effort", f"profile {profile} runs {got}, not the tracked {want}"

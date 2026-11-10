@@ -770,11 +770,51 @@ def test_main_checkout_survives_an_ao_clone(tmp_path):
             if command[:2] == ["git", "-C"] and "remote" in command:
                 return doctor.Result(0, REMOTE + "\n", "")
             if "worktree" in command:
+                if command[2] == str(world.repo):
+                    return doctor.Result(0, f"worktree {world.repo}\n", "")
                 return doctor.Result(0, f"worktree {clone}\n", "")
             return doctor.Result(1, "", "")
 
     host = doctor.Host(world.home, clone, world.prefix, CloneRunner())
     assert doctor._main_checkout(host) == world.repo
+
+
+def test_a_linked_worktree_is_not_the_permanent_checkout(tmp_path):
+    world = World(tmp_path)
+    doctor = _load_doctor(world.repo)
+    linked = tmp_path / "linked-worktree"
+    linked.mkdir()
+    (world.prefix / "repository-path").write_text(str(linked))
+    fake = Fake(world)
+
+    def runner(command, **kwargs):
+        cmd = [str(part) for part in command]
+        if cmd[:3] == ["git", "-C", str(linked)] and "worktree" in command:
+            return doctor.Result(0, f"worktree {world.repo}\nworktree {linked}\n", "")
+        return fake(command, **kwargs)
+
+    host = doctor.Host(world.home, linked, world.prefix, runner)
+    assert doctor._main_checkout(host) == world.repo
+    assert not doctor._current_repository(host, str(linked))
+
+
+def test_claude_requires_the_fable_floor(tmp_path):
+    world = World(tmp_path)
+    world.versions["claude"] = "2.1.320"
+    report = inspect(world)
+    assert "claude.version" in codes(report)
+    message = next(f.message for f in report.findings if f.code == "claude.version")
+    assert "2.1.321" in message
+
+
+def test_dsh_compares_the_provider_effort(tmp_path):
+    world = World(tmp_path)
+    world.dsh_dump = world.dsh_dump.replace(
+        "    thinking: enabled\n    reasoningEffort: max",
+        "    thinking: enabled\n    reasoningEffort: high",
+    )
+    report = inspect(world)
+    assert "dsh.model_effort" in codes(report)
 
 
 def test_dsh_probes_the_home_whose_manifests_it_reads(tmp_path):
