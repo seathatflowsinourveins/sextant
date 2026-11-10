@@ -38,5 +38,13 @@
     "source": "ADR-0007/0010; #51 supplies the reviewed authority; this shell supplies none",
     "calibration_state": "UNAVAILABLE",
     "last_change": "2026-11-06"
+  },
+  {
+    "name": "request_log_interval_s",
+    "unit": "seconds between C's c-requests log lines",
+    "value": "60",
+    "source": "alpaca-py@v0.44.0 cc4cb3b7ba50ae250e621983c2779047fb16bb28:alpaca/common/rest.py:85 discards HTTP response headers, so Alpaca's documented X-RateLimit-Remaining (https://docs.alpaca.markets/reference/stockbars, read 2026-11-10) is unavailable to C; 60 s is one custody window_s (lanes/custody-parameters.json) and stays uncalibrated until a C session measures the cadence (ADR-0018)",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-10"
   }
 ]
