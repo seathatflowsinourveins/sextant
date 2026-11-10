@@ -121,10 +121,10 @@ def test_model_policy_keeps_the_approved_google_interim_and_native_claude() -> N
     reviewer, reflection = policy["claude_reviewer"], policy["claude_reflection"]
     assert (worker["model"], worker["effort"]) == ("claude-opus-5-5", "high")
     assert (roles["model"], roles["effort"]) == ("claude-sonnet-5-5", "high")
-    assert roles["launch"] == "claude --model sonnet"
+    assert roles["launch"] == "python3 scripts/role_launch.py <dispatcher|lander|tracker>"
     assert "tracker" in roles["pinned_in"]
     assert (lead["model"], lead["effort"]) == ("claude-fable-5-2", "high")
-    assert lead["launch"] == "claude --model fable"
+    assert lead["launch"] == "python3 scripts/role_launch.py lead"
     assert (reviewer["model"], reviewer["effort"]) == ("claude-fable-5-2", "high")
     assert (reflection["model"], reflection["effort"]) == ("claude-fable-5-2", "high")
     for entry in (worker, roles, lead, reviewer, reflection):
@@ -164,13 +164,13 @@ def test_the_model_mix_table_matches_the_settings_and_launches() -> None:
         "claude-fable-5-2",
         "high",
     )
-    assert policy["claude_lead"]["launch"] == "claude --model fable"
+    assert policy["claude_lead"]["launch"] == "python3 scripts/role_launch.py lead"
     lead_line = next(
         line
         for line in (ROOT / "docs/start.md").read_text().splitlines()
         if "**The lead's launch:**" in line
     )
-    assert "`claude --model fable`" in lead_line and "--effort max" not in lead_line
+    assert "`python3 scripts/role_launch.py lead`" in lead_line and "--effort max" not in lead_line
 
     review = rows[
         "`/code-review` of protection, custody, gate, hard-line or live-promotion changes"
@@ -195,7 +195,9 @@ def test_the_model_mix_table_matches_the_settings_and_launches() -> None:
         "claude-sonnet-5-5",
         "high",
     )
-    assert policy["claude_roles"]["launch"] == "claude --model sonnet"
+    assert policy["claude_roles"]["launch"] == (
+        "python3 scripts/role_launch.py <dispatcher|lander|tracker>"
+    )
 
     lookups = rows["Lookups, inventories"]
     assert "Haiku 5.5 or Sonnet 5.5" in lookups[0] and ".claude/agents/<role>.md" in lookups[0]
