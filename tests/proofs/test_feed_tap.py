@@ -3,14 +3,17 @@
 The tap observes C's SIP handlers: per-second trade/quote counts and distinct
 symbols, the wall-clock receipt lag ``time.time_ns() - ts_event`` (count, p99,
 p99.9, exact max), handler service time (sum and max), feed failures, and per
-symbol the last ``ts_event`` and the longest inter-arrival gap. These proofs
-use scripted clocks and a fake stream: no socket, no broker, no key.
+symbol's longest inter-arrival gap. The handler path takes no lock and writes no
+file; the sidecar carries anonymous counts and the worst gap, never ticker names.
+These proofs use scripted clocks and a fake stream: no socket, no broker, no key.
 """
 
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
+import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -34,6 +37,7 @@ from nautilus_trader.model import (
 )
 
 import sextant.paper.alpaca_feed as feed_module
+import sextant.paper.feed_tap as tap_module
 from sextant.paper.alpaca_feed import AlpacaTickFeed
 from sextant.paper.feed_tap import FeedTap, FeedTapToken
 
@@ -100,16 +104,18 @@ def _tap(
     time_ns: Callable[[], int] | None = None,
     perf_ns: Callable[[], int] | None = None,
     flush_s: float = 0.25,
+    pending: int = 120,
 ) -> FeedTap:
     return FeedTap(
         path=path,
         time_ns=time_ns if time_ns is not None else _Clock(),
         perf_ns=perf_ns if perf_ns is not None else _Clock(),
         flush_s=flush_s,
+        pending=pending,
     )
 
 
-def _message(tap: FeedTap, kind: str, symbol: str, ts_event_ns: int | None) -> FeedTapToken:
+def _message(tap: FeedTap, kind: str, symbol: str, ts_event_ns: int | None) -> FeedTapToken | None:
     entry = tap.trade_entry if kind == "trade" else tap.quote_entry
     token = entry(symbol, ts_event_ns)
     tap.finish(token)
@@ -238,6 +244,104 @@ def test_a_forced_take_marks_the_open_second_partial() -> None:
     assert records[0]["partial"] is True
 
 
+def test_the_percentile_is_the_bin_lower_edge_not_its_exclusive_edge() -> None:
+    tap = _tap(time_ns=_Clock(_T0 + 999_999_999), perf_ns=_Clock(0, 0))
+    _message(tap, "trade", "AAPL", _T0)
+
+    lag = tap.take(_T0 + _S)[0]["lag_ns"]
+
+    # A 0.999999999 s lag sits in the 999 ms bin; its lower edge satisfies < 1 s.
+    assert lag["p99"] == 999 * _MS
+    assert lag["p999"] == 999 * _MS
+    assert lag["max"] == 999_999_999
+
+
+def test_the_handler_path_takes_no_shared_lock() -> None:
+    source = inspect.getsource(tap_module)
+
+    assert "Lock(" not in source
+    assert "_lock" not in vars(FeedTap())
+
+
+def test_a_sidecar_that_cannot_open_never_stops_the_feed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    blocker = tmp_path / "not-a-directory"
+    blocker.write_text("x")
+    tap = FeedTap(blocker / "feed-tap.jsonl", time_ns=_Now(_T0), perf_ns=_Clock())
+    _feed_clock(monkeypatch, _CountingClock(_T0))
+    feed, fake = _wire_feed(tap=tap)
+
+    feed.start()
+
+    assert fake.run_calls == 1
+    assert fake.trade_symbols == ("AAPL",)
+    assert tap.init_errors == 1
+    feed.stop()
+    assert not (blocker / "feed-tap.jsonl").exists()
+
+
+def test_retention_is_bounded_and_overflow_is_counted() -> None:
+    now = _Now(_T0)
+    tap = _tap(time_ns=now, perf_ns=_Clock(*([0] * 20)), pending=2)
+    tap.start()
+    for step in range(5):
+        now.value = _T0 + step * _S
+        _message(tap, "trade", "AAPL", now.value)
+
+    tap.stop()
+
+    assert tap.pending <= 2
+    assert tap.dropped_buckets == 3
+
+
+def test_a_stuck_writer_never_blocks_the_handler_and_its_drops_are_counted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    now = _Now(_T0)
+    release = threading.Event()
+    tap = FeedTap(
+        tmp_path / "feed-tap.jsonl",
+        time_ns=now,
+        perf_ns=_Clock(*([0] * 40)),
+        flush_s=0.01,
+        pending=2,
+    )
+    tap.start()
+    monkeypatch.setattr(tap, "_write", lambda record: release.wait(5))
+
+    started = time.monotonic()
+    for step in range(6):
+        now.value = _T0 + step * _S
+        _message(tap, "trade", "AAPL", now.value)
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 1.0
+    assert tap.dropped_buckets >= 1
+
+    release.set()
+    tap.stop()
+
+
+def test_stop_waits_for_the_handler_before_it_writes_the_sidecar(tmp_path: Path) -> None:
+    now = _Now(_T0)
+    path = tmp_path / "feed-tap.jsonl"
+    tap = FeedTap(path, time_ns=now, perf_ns=_Clock(0, 5_000_000), flush_s=0.01)
+    tap.start()
+    token = tap.trade_entry("AAPL", _T0)
+
+    stopper = threading.Thread(target=tap.stop)
+    stopper.start()
+    time.sleep(0.05)
+    assert stopper.is_alive()
+
+    tap.finish(token)
+    stopper.join(5.0)
+
+    assert not stopper.is_alive()
+    assert _lines(path)[0]["service_ns"] == {"sum": 5_000_000, "max": 5_000_000}
+
+
 # -- the sidecar: each closed second, then the per-symbol freshness line ---------------------
 
 
@@ -265,11 +369,13 @@ def test_the_sidecar_writes_each_closed_second_then_the_symbols_line(tmp_path: P
     final = lines[-1]
     assert final["kind"] == "symbols"
     assert final["symbols_seen"] == 2
-    assert final["symbols"]["AAPL"] == {
-        "last_ts_event_ns": _T0 + 100 * _MS,
-        "max_gap_ns": 100 * _MS,
-    }
-    assert final["symbols"]["MSFT"]["max_gap_ns"] is None
+    assert final["symbols_with_gap"] == 1
+    assert final["max_gap_ns"] == 100 * _MS
+    assert final["dropped_buckets"] == 0
+    assert final["write_errors"] == 0
+    assert final["reconnects"] is None
+    text = path.read_text()
+    assert "AAPL" not in text and "MSFT" not in text
 
 
 def test_stop_is_idempotent_and_closes_the_sidecar(tmp_path: Path) -> None:
@@ -319,6 +425,7 @@ class _FakeStream(StockDataStream):
         self.quote_handler: Callable[..., Any] | None = None
         self.trade_symbols: tuple[str, ...] = ()
         self.quote_symbols: tuple[str, ...] = ()
+        self.during_run: Callable[[], None] | None = None
         self.run_calls = 0
         self.stop_calls = 0
 
@@ -332,6 +439,8 @@ class _FakeStream(StockDataStream):
 
     def run(self) -> None:
         self.run_calls += 1
+        if self.during_run is not None:
+            self.during_run()
 
     def stop(self) -> None:
         self.stop_calls += 1
@@ -356,10 +465,12 @@ def _wire_feed(
     *,
     tap: FeedTap | None = None,
     stream: _FakeStream | None = None,
+    during_run: Callable[[], None] | None = None,
     on_trade: Callable[[TradeTick], None] = _ignored,
     on_quote: Callable[[QuoteTick], None] = _ignored,
 ) -> tuple[AlpacaTickFeed, _FakeStream]:
     fake = stream if stream is not None else _FakeStream()
+    fake.during_run = during_run
     feed = AlpacaTickFeed(
         {"AAPL.ALPACA": _EQUITY},
         on_trade=on_trade,
@@ -419,9 +530,13 @@ def test_a_feed_without_the_tap_delivers_identically_and_reads_the_clock_once(
         trades_seen.clear()
         quotes_seen.clear()
         feed, fake = _wire_feed(tap=tap, on_trade=trades_seen.append, on_quote=quotes_seen.append)
+
+        def deliver() -> None:
+            _deliver(fake, _trade())
+            _deliver(fake, _quote(), quote=True)
+
+        fake.during_run = deliver
         feed.start()
-        _deliver(fake, _trade())
-        _deliver(fake, _quote(), quote=True)
         feed.stop()
         return (
             [_view(tick) for tick in trades_seen],
@@ -442,17 +557,21 @@ def test_the_sidecar_carries_the_handlers_the_feed_delivered(
 ) -> None:
     _feed_clock(monkeypatch, _CountingClock(_T0))
     path = tmp_path / "feed-tap.jsonl"
-    tap = FeedTap(path, time_ns=_Now(_T0), perf_ns=_Clock(0, 1, 2, 3))
+    tap = FeedTap(path, time_ns=_Now(_T0), perf_ns=_Clock(0, 0, 0, 0))
     feed, fake = _wire_feed(tap=tap)
-    feed.start()
-    _deliver(fake, _trade())
-    _deliver(fake, _quote(), quote=True)
 
+    def deliver() -> None:
+        _deliver(fake, _trade())
+        _deliver(fake, _quote(), quote=True)
+
+    fake.during_run = deliver
+    feed.start()
     feed.stop()
 
     lines = _lines(path)
     assert lines[-1]["kind"] == "symbols"
-    assert lines[-1]["symbols"]["AAPL"]["last_ts_event_ns"] is not None
+    assert lines[-1]["symbols_seen"] == 1
+    assert lines[-1]["max_gap_ns"] is None
     assert lines[0]["trades"] == 1
     assert lines[0]["quotes"] == 1
     assert lines[0]["symbols_seen"] == 1
@@ -483,19 +602,24 @@ def test_a_boats_feed_refuses_the_tap() -> None:
 
 
 def test_a_failing_callback_still_records_its_service_and_the_failure(
-    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _feed_clock(monkeypatch, _CountingClock(_T0))
-    tap = FeedTap()
+    path = tmp_path / "feed-tap.jsonl"
+    tap = FeedTap(path, time_ns=_Now(_T0), perf_ns=_Clock(0, 2_000))
 
     def explode(tick: TradeTick) -> None:
         raise RuntimeError("callback failed")
 
     feed, fake = _wire_feed(tap=tap, on_trade=explode)
-    feed.start()
-    _deliver(fake, _trade())
 
-    record = tap.take(time.time_ns(), force=True)[0]
+    def deliver() -> None:
+        _deliver(fake, _trade())
+
+    fake.during_run = deliver
+    feed.start()
+
+    record = _lines(path)[0]
     assert record["trades"] == 1
     assert record["service_ns"]["max"] > 0
     assert record["failures"] == 1
@@ -504,15 +628,20 @@ def test_a_failing_callback_still_records_its_service_and_the_failure(
 
 
 def test_the_receipt_lag_is_read_at_handler_entry_not_from_ts_init(
-    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _feed_clock(monkeypatch, _CountingClock(_T0 + 9 * _MS))
-    tap = FeedTap(time_ns=_Now(_T0 + 7 * _MS), perf_ns=_Clock(0, 0))
+    path = tmp_path / "feed-tap.jsonl"
+    tap = FeedTap(path, time_ns=_Now(_T0 + 7 * _MS), perf_ns=_Clock(0, 0))
     feed, fake = _wire_feed(tap=tap)
-    feed.start()
-    _deliver(fake, _trade())
 
-    record = tap.take(time.time_ns(), force=True)[0]
+    def deliver() -> None:
+        _deliver(fake, _trade())
+
+    fake.during_run = deliver
+    feed.start()
+
+    record = _lines(path)[0]
 
     # The tap read its wall clock at 7 ms; the tick carried ts_init at 9 ms.
     assert record["lag_ns"]["p99"] == 7 * _MS
@@ -520,14 +649,18 @@ def test_the_receipt_lag_is_read_at_handler_entry_not_from_ts_init(
     feed.stop()
 
 
-def test_a_stream_start_error_is_counted_once(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_stream_start_error_is_counted_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _feed_clock(monkeypatch, _CountingClock(_T0))
-    tap = FeedTap()
+    path = tmp_path / "feed-tap.jsonl"
+    tap = FeedTap(path, time_ns=_Now(_T0), perf_ns=_Clock())
     feed, _ = _wire_feed(tap=tap, stream=_ExplodingStream())
 
     with pytest.raises(ConnectionError, match="socket closed"):
         feed.start()
 
-    assert tap.take(time.time_ns(), force=True)[0]["failures"] == 1
+    assert tap.failures == 1
+    assert next(line for line in _lines(path) if line["kind"] == "second")["failures"] == 1
     assert isinstance(feed.failure, ConnectionError)
     feed.stop()

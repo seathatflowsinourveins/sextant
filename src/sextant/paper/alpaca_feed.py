@@ -179,23 +179,25 @@ class AlpacaTickFeed:
 
         if self._tap is not None:
             self._tap.start()
-        stream = self._stream_factory(self._api_key, self._secret_key, feed=DataFeed.SIP)
-        self._stream = stream
-        symbols = tuple(sorted(self._instruments))
-        stream.subscribe_trades(self._handle_trade, *symbols)
-        stream.subscribe_quotes(self._handle_quote, *symbols)
         try:
+            stream = self._stream_factory(self._api_key, self._secret_key, feed=DataFeed.SIP)
+            self._stream = stream
+            symbols = tuple(sorted(self._instruments))
+            stream.subscribe_trades(self._handle_trade, *symbols)
+            stream.subscribe_quotes(self._handle_quote, *symbols)
             stream.run()
         except Exception as exc:
             self._observe_failure()
             if self.failure is None:
                 self.failure = exc
             raise
+        finally:
+            # run() has returned, so no handler is mid-flight: finalize on this thread.
+            if self._tap is not None:
+                self._tap.stop()
 
     def stop(self) -> None:
         """Wake the BOATS poll loop, or delegate alpaca-py's cross-thread stream stop."""
-        if self._tap is not None:
-            self._tap.stop()
         self._stopped.set()
         stream = self._stream
         if stream is None:
