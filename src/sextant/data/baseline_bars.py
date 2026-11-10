@@ -83,7 +83,7 @@ def _raw_rows(response: object) -> dict[str, list[MinuteBarRow]]:
     return rows
 
 
-def _prior_sessions(as_of: date, count: int) -> tuple[date, ...]:
+def prior_xnys_sessions(as_of: date, count: int) -> tuple[date, ...]:
     if count <= 0:
         raise ValueError("prior_sessions must be positive")
     sessions: list[date] = []
@@ -195,7 +195,7 @@ def fetch_overnight_baseline(
     The bars come from the overnight feed (``boats`` on an Algo Trader Plus
     plan); the same flat ``{symbol: [bar, ...]}`` response shape is expected.
     """
-    sessions = _prior_sessions(as_of, prior_sessions)
+    sessions = prior_xnys_sessions(as_of, prior_sessions)
     names = tuple(symbol_name(symbol) for symbol in symbols)
     if not names:
         raise ValueError("at least one symbol is required")
@@ -252,7 +252,7 @@ def fetch_baseline(
     The request window is 04:00 ET on the first prior session through 19:59:59.999999
     ET on the last; ``limit`` is left unset so alpaca-py paginates to exhaustion.
     """
-    sessions = _prior_sessions(as_of, prior_sessions)
+    sessions = prior_xnys_sessions(as_of, prior_sessions)
     names = tuple(symbol_name(symbol) for symbol in symbols)
     start = datetime.combine(sessions[0], time(4), tzinfo=ET)
     end = datetime.combine(sessions[-1], time(20), tzinfo=ET) - timedelta(microseconds=1)
