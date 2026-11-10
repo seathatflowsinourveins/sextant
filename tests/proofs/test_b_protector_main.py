@@ -23,6 +23,7 @@ from sextant.paper.b_protector_main import (
     main,
 )
 from sextant.paper.config import PaperBudget
+from sextant.paper.decision_record import DecisionLog
 from sextant.risk.controls import Controls
 
 ROOT = Path(__file__).parents[2]
@@ -257,6 +258,33 @@ def test_a_second_writer_holding_the_account_lease_refuses_before_any_broker_cal
 
     assert factory_calls == []
     assert runs == []
+
+
+def test_the_lease_is_released_even_when_the_decision_log_close_raises(tmp_path, monkeypatch):
+    monkeypatch.setenv("ALPACA_PAPER_2_API_KEY", "test-key")
+    monkeypatch.setenv("ALPACA_PAPER_2_SECRET_KEY", "test-secret")
+    monkeypatch.setenv("B_EXPECTED_ACCOUNT_SUFFIX", "ture")
+    parameters = ROOT / "lanes/paper/b-parameters.json"
+    config = write_config(tmp_path, "b-slot2.json")
+    patch_stream(monkeypatch)
+    real_close = DecisionLog.close
+
+    def failing_close(self, timeout: float = 5.0) -> None:
+        real_close(self, timeout)
+        raise RuntimeError("close broke")
+
+    monkeypatch.setattr(DecisionLog, "close", failing_close)
+
+    with pytest.raises(RuntimeError, match="close broke"):
+        main(
+            ["--config", str(config), "--parameters", str(parameters)],
+            client_factory=lambda **_: FakeTradingClient(),
+            on_page=no_page,
+        )
+
+    second = WriterLease(AccountScope("ALPACA", "paper-fixture"), tmp_path / "locks", "review")
+    second.acquire()
+    second.close()
 
 
 def test_a_deferred_submit_is_retained_and_sent_by_the_next_pacer_drain():
