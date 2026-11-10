@@ -177,6 +177,7 @@ def test_the_registry_carries_the_scheduled_reconcile_interval(tmp_path):
         "tape_max_quotes",
         "tape_deadline_s",
         "tape_max_requests",
+        "tape_max_bars",
     }
     assert all(row["calibration_state"] == "UNCALIBRATED" for row in rows)
     assert all(row["source"] for row in rows)

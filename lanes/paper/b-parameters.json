@@ -62,5 +62,13 @@
     "source": "lanes/limits.yaml alpaca-paper-b order_actions_budget_per_min 180 and BudgetControls burst = budget // 10 = 18 (src/sextant/paper/b_protector_main.py); 8 leaves 10 tokens for the first reconcile's positions, open-orders and arming calls, so one held position reads at most 6 quote pages (8 - 1 positions - 1 orders), 60,000 rows at tape_max_quotes; lead rulings LEAD-0041 G6 and b-tape-pages R5; UNCALIBRATED",
     "calibration_state": "UNCALIBRATED",
     "last_change": "2026-11-10"
+  },
+  {
+    "name": "tape_max_bars",
+    "unit": "bars per batched bars page, all held symbols together (Alpaca's limit counts every symbol)",
+    "value": "10000",
+    "source": "alpacahq/alpaca-py@v0.44.0 cc4cb3b7ba50ae250e621983c2779047fb16bb28 alpaca/common/rest.py:368-408 (page_limit 10,000, the page's maximum) and docs.alpaca.markets/reference/stockbars (limit counts all symbols; read 2026-11-10), the same bound as tape_max_quotes; UNCALIBRATED",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-10"
   }
 ]

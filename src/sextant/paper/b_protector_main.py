@@ -292,7 +292,10 @@ def main(
                 bound_transport(bounded, timeout_s)
                 start_client = PacedTradingClient(bounded, pacer)
                 paced = PacedHistoricalDataClient(cast(TradingClientLike, tape_client), pacer)
-                history = BHistoricalTape(paced, int(max_quotes))
+                bars = parameters.tape_max_bars
+                history = BHistoricalTape(
+                    paced, int(max_quotes), None if bars is None else int(bars)
+                )
             except Exception as exc:
                 on_page(Page(reason="outside_rth_tape_unreadable", detail=type(exc).__name__))
         stream = ProtectorStream(
