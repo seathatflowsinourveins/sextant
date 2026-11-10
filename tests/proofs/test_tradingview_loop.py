@@ -666,3 +666,34 @@ def test_loop_cli_requires_a_research_directory(capsys):
     cli = importlib.import_module("sextant.tradingview.__main__")
     assert cli.main(["--loop"]) == 2
     assert "--research-dir" in capsys.readouterr().out
+
+
+def test_run_loop_stop_prints_the_same_safe_diagnostic_as_one_cycle(tmp_path, capsys):
+    module = loop()
+    directory = unit(tmp_path / "unit")
+
+    @asynccontextmanager
+    async def client(authorize):
+        raise SyncError(
+            "TradingView session stopped; re-inventory before retry.",
+            label="OAuthTokenError",
+            stage="token",
+            detail="HTTP 400 at token endpoint",
+        )
+        yield  # pragma: no cover - the raise above refuses the consent session
+
+    result = module.run_loop(
+        research_dir=directory,
+        authorize=True,
+        registry=registry(tmp_path),
+        state_root=tmp_path / "state",
+        landed_sha="f" * 40,
+        open_client=client,
+    )
+
+    assert result == 2
+    out = capsys.readouterr().out
+    assert out == (
+        f"{module._STOP} Safe diagnostic: OAuthTokenError at token (HTTP 400 at token endpoint).\n"
+    )
+    assert "TradingView session stopped" not in out
