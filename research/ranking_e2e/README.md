@@ -183,6 +183,11 @@ witnesses fail there):
    once for the whole session, so a name admitted in PRE keeps it when RTH
    replays and persistence at an RTH onset is counted. Witness:
    `test_keep_alive_keeps_the_first_admission_across_pre_and_rth`.
+3. **Empty denominators**: ranking recall with no onset, and paired recall
+   with no name rankable in both arms, are `null` (undefined), never a
+   numeric zero. Witnesses:
+   `test_ranking_metrics_leaves_recall_undefined_with_no_onsets`,
+   `test_paired_recall_leaves_recall_undefined_with_no_common_name`.
 
 The round-2 P2 and P3 findings not subsumed here, and the hosted review's
 P2s, are in the follow-up issue #199, including the seal items'
@@ -218,7 +223,7 @@ task under its own frozen, costed protocol (K3.7).
 
 ## Tests
 
-`tests/proofs/test_ranking_e2e.py` has 33 tests: protocol hashes and the
+`tests/proofs/test_ranking_e2e.py` has 35 tests: protocol hashes and the
 K3 presence gate, cohort labels/validation/hashing, mean/median curves,
 the fixed gap window, the CUSUM recurrence, keep-alive retention and
 quota order, percentiles, signed latency and recall at onset, the false

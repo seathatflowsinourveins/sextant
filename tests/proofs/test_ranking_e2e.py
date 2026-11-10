@@ -1160,3 +1160,21 @@ def test_keep_alive_keeps_the_first_admission_across_pre_and_rth(
     assert keep["persistence_at_onset"] == 1
     assert keep["persistence_rate"] == "1"
     assert keep["entered_at_onset_excluded"] == 0
+
+
+def test_ranking_metrics_leaves_recall_undefined_with_no_onsets() -> None:
+    # WITNESS (P2 empty recall denominator)
+    result = metrics.ranking_metrics({}, {}, {}, arm="k2")
+    assert result.total == 0 and result.rankable == 0
+    # No name could be recalled, so the rate is undefined, never a numeric zero.
+    assert result.recall == {30: None, 100: None}
+
+
+def test_paired_recall_leaves_recall_undefined_with_no_common_name() -> None:
+    # WITNESS (P2 empty paired denominator)
+    result = metrics.paired_recall({"X": 0}, {"X": None}, {"X": 1})
+    assert result["common"] == 0
+    # One arm ranks X and the other does not, so neither arm has a paired
+    # denominator; both rates are undefined, not "0".
+    assert result["recall_a"] == {30: None, 100: None}
+    assert result["recall_b"] == {30: None, 100: None}

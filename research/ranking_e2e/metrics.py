@@ -191,7 +191,7 @@ class RankingMetrics:
     total: int
     rankable: int
     no_rank: int
-    recall: Mapping[int, Decimal]
+    recall: Mapping[int, Decimal | None]
     first_entry_before_onset: int
     p50_signed_lead_s: Decimal | None
     p90_signed_lead_s: Decimal | None
@@ -208,15 +208,18 @@ def ranking_metrics(
     ks: Sequence[int] = (30, 100),
     universe_at_onset: Mapping[str, int] | None = None,
 ) -> RankingMetrics:
+    """Recall at each depth; a depth with no onset has an undefined (None) rate."""
     total = len(onsets)
     rankable = sum(1 for symbol in onsets if rank_at_onset.get(symbol) is not None)
     recall = {
-        k: Decimal(
-            sum(1 for s in onsets if (rank := rank_at_onset.get(s)) is not None and rank <= k)
+        k: (
+            Decimal(
+                sum(1 for s in onsets if (rank := rank_at_onset.get(s)) is not None and rank <= k)
+            )
+            / total
+            if total
+            else None
         )
-        / total
-        if total
-        else ZERO
         for k in ks
     }
     leads = [
@@ -250,7 +253,11 @@ def paired_recall(
     *,
     ks: Sequence[int] = (30, 100),
 ) -> dict[str, object]:
-    """Both arms on the identical available names (K3.9 paired contrast)."""
+    """Both arms on the identical available names (K3.9 paired contrast).
+
+    A rate is undefined (None) when no name is rankable in both arms; it is
+    never a numeric zero for an empty denominator.
+    """
     common = [
         symbol
         for symbol in onsets
@@ -261,21 +268,25 @@ def paired_recall(
         "only_a": sum(1 for s in onsets if rank_a.get(s) is not None and rank_b.get(s) is None),
         "only_b": sum(1 for s in onsets if rank_b.get(s) is not None and rank_a.get(s) is None),
         "recall_a": {
-            k: str(
-                Decimal(sum(1 for s in common if (r := rank_a.get(s)) is not None and r <= k))
-                / len(common)
+            k: (
+                str(
+                    Decimal(sum(1 for s in common if (r := rank_a.get(s)) is not None and r <= k))
+                    / len(common)
+                )
+                if common
+                else None
             )
-            if common
-            else "0"
             for k in ks
         },
         "recall_b": {
-            k: str(
-                Decimal(sum(1 for s in common if (r := rank_b.get(s)) is not None and r <= k))
-                / len(common)
+            k: (
+                str(
+                    Decimal(sum(1 for s in common if (r := rank_b.get(s)) is not None and r <= k))
+                    / len(common)
+                )
+                if common
+                else None
             )
-            if common
-            else "0"
             for k in ks
         },
     }
