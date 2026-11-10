@@ -33,7 +33,7 @@ esac
 
 def test_the_distro_loads_this_repo_from_github() -> None:
     assert USER_DATA.startswith("#cloud-config\n")
-    assert "gh repo clone seathatflowsinourveins/sextant-next" in USER_DATA
+    assert 'gh repo clone seathatflowsinourveins/sextant "$HOME/sextant"' in USER_DATA
     assert "deploy/wsl/setup.sh" in USER_DATA
     assert "sha256sum -c -" in USER_DATA
     assert "timezone: America/New_York" in USER_DATA
