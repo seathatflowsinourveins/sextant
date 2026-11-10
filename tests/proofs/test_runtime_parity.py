@@ -424,6 +424,7 @@ def muse_delivery(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
             shutil.rmtree(root)
         package = root / digest / "package"
         shutil.copytree(origin, package, ignore=shutil.ignore_patterns(".git"))
+        (package.parent / "agent-definitions").mkdir()
         state = (
             json.loads(registry.read_text())
             if registry.exists()
@@ -498,6 +499,7 @@ def _muse_mutations():
     for operation in ("add-file", "add-dir", "add-fifo"):
         yield pytest.param(operation, "owner-added", id=operation)
     yield pytest.param("add-file", "../../other-digest/package", id="orphan-cache")
+    yield pytest.param("add-file", "../agent-definitions/owner.md", id="agent-cache")
     for field in ("cache_path", "package_sha256"):
         for operation in ("missing", "empty", "malformed", "other"):
             yield pytest.param(operation, field, id=f"record-{field}-{operation}")
