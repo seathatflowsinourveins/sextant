@@ -1816,6 +1816,8 @@ def test_a_ledger_failure_keeps_the_receipt_and_exits_non_zero(
     assert written["commands"]
     assert "trial ledger refused" in capsys.readouterr().err
     assert not (live_env / "reports/research/trials.parquet").exists()
+
+
 def test_the_feed_tap_is_off_by_default_and_writes_no_sidecar(live_env: Path) -> None:
     feeds: list[FakeFeed] = []
 

@@ -801,6 +801,8 @@ def test_measurement_symbols_stay_subscribed_inside_the_bound(
     assert stream.unsubscribed == []
     assert ("EXTRA",) in [symbols for _, symbols in stream.trade_subscriptions]
     assert feed.failure is None
+
+
 def test_measurement_symbols_require_the_tap() -> None:
     with pytest.raises(ValueError, match="measurement symbols require the feed tap"):
         AlpacaTickFeed(
