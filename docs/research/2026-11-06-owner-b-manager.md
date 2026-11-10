@@ -83,8 +83,9 @@ template is NautilusTrader's official trailing-stop example strategy, with entry
 to "the owner's fill at time T". The protection is the same 2.5% `trailing_stop_market`
 the live owner-B protector submitted for the owner's PARA fill.
 
-The replay is research code (`src/sextant/backtest/b_e2e.py`); the minimal proof fixture
-is `tests/fixtures/b-e2e-owner-fill.json` with `tests/proofs/test_b_e2e.py`. Every run
+The replay is research code on the tagged branch `research/b-replay-5830f0e` at
+`b-replay-2026-11-10` (`research/b_e2e.py` there); its minimal proof fixture
+`tests/fixtures/b-e2e-owner-fill.json` and `tests/proofs/test_b_e2e.py` move with it. Every run
 writes MODELED rows to the one TrialLog, rejected arms included.
 
 ### Inputs
@@ -164,7 +165,7 @@ The hold-flat controls: PARA −64.48%, SPCX −1.20%, OMH +169.71%.
 ### Addendum: the six-mover cohort
 
 The owner's 2026-11-09 cross-section (sextant-next #4, comment 6746927782) adds today's six
-movers: ONDS, NWGL, TTD, MF, OMH and CKX. `src/sextant/backtest/b_e2e_cohort.py` replays the
+movers: ONDS, NWGL, TTD, MF, OMH and CKX. `research/b_e2e_cohort.py` replays the
 same first-leg policy on the SIP tapes and the e2e-omh K2 generations, then runs B's 2.5%
 trail and ADR-0024's slots.
 
@@ -257,7 +258,8 @@ trail and ADR-0024's slots.
 
 ## PR-4: the tuning harness on these MODELED rows
 
-`src/sextant/validation/tuning.py` and `src/sextant/research/b_tuning.py` search six reviewed rows
+`src/sextant/validation/tuning.py` on main and `research/b_tuning.py` on the tagged branch
+`research/b-replay-5830f0e` at `b-replay-2026-11-10` search six reviewed rows
 (the trail fraction up to ADR-0025's 2.5% cap; the first-leg window, count, span and max move; and
 the quote-freshness window) with 100-300 Optuna multivariate TPE trials, scoring the lower
 quartile of six CPCV folds. Every trial is one MODELED TrialLog row, refusals and prunes included.
@@ -265,12 +267,12 @@ The report holds proposals with `adoption: none`; a proposal needs an untouched 
 holdout, DSR > 0.95, PBO <= 0.05 and at least 30 training sessions. While codex review
 `5833241132`'s three holdout-custody findings are open, every supported study is stamped
 `NOT_ADMISSIBLE` after the DSR/PBO/merit gates and before the holdout is evaluated; PR 2
-removes the stamp with the three fixes.
+removes the stamp with the three fixes; the adapter and those fixes continue on the tagged ref.
 
 The run on these rows is NOT_EVALUABLE by construction. The six-mover cohort is one session
 (2026-11-09), and the three replay sessions (2026-10-21, 11-03, 11-09) cannot supply a 12-24 month
 holdout or 30 sessions. No TrialLog file and no proposals were written, which is the honest
-result; `test_b_tuning.py` proves the mechanism on a synthetic 60-session series instead.
+result; the ref's `test_b_tuning.py` proves the mechanism on a synthetic 60-session series instead.
 
 Two boundaries are deliberate. K2's thresholds are not tuned: they can only enter as paired arms
 against TV-REG's UNCALIBRATED rows, and the per-name features they gate are absent from these
