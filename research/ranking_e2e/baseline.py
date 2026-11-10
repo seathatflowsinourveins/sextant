@@ -3,8 +3,9 @@
 K2's baseline is the median, at the same elapsed offset, of each prior
 session's own cumulative dollar-volume curve.  Arm (b) swaps only the
 statistic to the mean of the identical session set.  Missing minutes are
-carried forward within a session (a symbol that did not trade is a zero, not
-an unknown); no future session enters the curve.
+carried forward within a recorded session (a symbol that did not trade there
+is a zero), but a prior session that never recorded the symbol is unknown and
+does not enter the sample; no future session enters the curve.
 """
 
 from __future__ import annotations

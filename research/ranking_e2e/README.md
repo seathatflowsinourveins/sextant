@@ -24,10 +24,14 @@ refuses to run if either moves.
 - Labels: `survivor_only`, `pit_verified` and `inference_eligible` travel
   with the cohort verbatim. The 2026-11-09 table is not a dated PIT
   universe, so the W1 1,436-session K2 run stays `NOT_RUN`.
-- Baselines: five prior XNYS sessions (2026-11-02..06), PRE 04:00-09:30
-  (330 minute offsets) and RTH 09:30-11:35 (125), cumulative
-  `close x volume` and bar count at each minute, missing minutes carried
-  forward. K2 uses the per-offset median; the mean arm uses the mean.
+- Baselines: up to five prior XNYS sessions (2026-11-02..06), PRE
+  04:00-09:30 (330 minute offsets) and RTH 09:30-11:35 (125), cumulative
+  `close x volume` and bar count at each minute. A prior session supplies a
+  sample only for symbols its recording's batch metadata declared; within a
+  covered session a missing minute is a zero, but a session that never
+  recorded the symbol is unknown and supplies nothing, so the sample size
+  can be below five. K2 uses the per-offset median; the mean arm uses the
+  mean of the identical covered set.
 - Replay: one synthetic tick per non-zero-volume minute at bar close, one
   generation per minute. No print is fabricated: there is no anchor or
   segment-start tick. A segment's dollar-volume prefix is covered only by
@@ -168,6 +172,14 @@ never-crossed controls read bars past 11:35
 following the onset's segment, an 11:35 onset now lands in the last
 stratum too.
 
+Round 3, the remaining P1 and P2 on the review of `81f64bb` (the
+witnesses fail there):
+
+1. **Historical coverage**: a prior session contributes a curve only for
+   the symbols its recording declared; three unrecorded sessions no longer
+   pad a two-session sample with zeros, so a positive median is not erased.
+   Witness: `test_uncovered_prior_sessions_do_not_supply_zero_baselines`.
+
 The round-2 P2 and P3 findings not subsumed here, and the hosted review's
 P2s, are in the follow-up issue #199, including the seal items'
 derivation and the arm tier labels.
@@ -202,7 +214,7 @@ task under its own frozen, costed protocol (K3.7).
 
 ## Tests
 
-`tests/proofs/test_ranking_e2e.py` has 31 tests: protocol hashes and the
+`tests/proofs/test_ranking_e2e.py` has 32 tests: protocol hashes and the
 K3 presence gate, cohort labels/validation/hashing, mean/median curves,
 the fixed gap window, the CUSUM recurrence, keep-alive retention and
 quota order, percentiles, signed latency and recall at onset, the false

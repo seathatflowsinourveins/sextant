@@ -176,15 +176,19 @@ def _prior_curves(
     start: tuple[int, int],
     minutes: int,
 ) -> dict[str, tuple[tuple[Decimal, ...], ...]]:
-    start_ns = _at(prior[0], *start)
     per_symbol: dict[str, list[tuple[Decimal, ...]]] = {symbol: [] for symbol in symbols}
     for day in prior:
-        day_bars = bars.load_raw_day(root, day, symbols=set(symbols))
-        curves = baseline.cumulative_curves(day_bars, symbols, _at(day, *start), minutes)
-        for symbol in symbols:
+        requested: set[str] = set()
+        day_bars = bars.load_raw_day(root, day, symbols=set(symbols), requested_out=requested)
+        covered = [symbol for symbol in symbols if symbol in requested]
+        curves = (
+            baseline.cumulative_curves(day_bars, covered, _at(day, *start), minutes)
+            if covered
+            else {}
+        )
+        for symbol in covered:
             per_symbol[symbol].append(curves[symbol])
-        del day_bars, curves
-    del start_ns
+        del day_bars, curves, requested
     return {symbol: tuple(curves) for symbol, curves in per_symbol.items()}
 
 
@@ -244,6 +248,7 @@ def _onset_record(state: MoverState | None) -> dict[str, object]:
         "computable": row.score is not None and row.trades_accel is not None,
         "baseline_available": available,
         "baseline_reason": reason,
+        "baseline_sessions": row.observations.get("baseline_sessions"),
         "unknown_reasons": [str(item) for item in row.observations.get("unknown_reasons", ())],
     }
 
@@ -828,12 +833,14 @@ def run_session(
             "k2_universe_at_onset": k2_universe.get(symbol),
             "k2_computable_at_onset": k2_state[symbol]["computable"],
             "k2_baseline_available": k2_state[symbol]["baseline_available"],
+            "k2_baseline_sessions": k2_state[symbol].get("baseline_sessions"),
             "k2_unknown_reasons": k2_state[symbol]["unknown_reasons"],
             "mean_rank_at_onset": mean_rank.get(symbol),
             "mean_first_top100": mean_first100.get(symbol),
             "mean_universe_at_onset": mean_universe.get(symbol),
             "mean_computable_at_onset": mean_state[symbol]["computable"],
             "mean_baseline_available": mean_state[symbol]["baseline_available"],
+            "mean_baseline_sessions": mean_state[symbol].get("baseline_sessions"),
             "mean_unknown_reasons": mean_state[symbol]["unknown_reasons"],
             "keepalive_first": ka_first.get(symbol),
             "keepalive_member_at_onset": ka_members.get(symbol),
