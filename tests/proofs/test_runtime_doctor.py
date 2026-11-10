@@ -311,21 +311,7 @@ class World:
                 }
             ),
         )
-        _write(
-            repo / "deploy/wsl/ao.sh",
-            "\n".join(
-                [
-                    "pin_version=0.14.10",
-                    "pin_commit=033d597032e448a0ea16c298350e36b099f74106",
-                    "--claim-pr --no-takeover",
-                    "review-family codex",
-                    'baseRefName == "main"',
-                    'mergeMethod == "SQUASH"',
-                    'select(.name == "ci"',
-                    "",
-                ]
-            ),
-        )
+        _write(repo / "deploy/wsl/ao.sh", (ROOT / "deploy/wsl/ao.sh").read_text())
         _write(repo / "deploy/wsl/lifecycle-prompt.md", LIFECYCLE)
         _write(repo / "deploy/wsl/reflection-prompt.md", REFLECTION)
         _write(repo / "deploy/wsl/lifecycle-precheck.sh", "exit 1\n", 0o755)
@@ -734,6 +720,14 @@ def test_main_checkout_is_the_first_worktree(tmp_path):
     assert doctor._main_checkout(host) == world.repo
     assert doctor._current_repository(host, str(world.repo / ".claude"))
     assert not doctor._current_repository(host, "/srv/old-sextant")
+
+
+def test_ao_guard_reads_the_tracked_parameterized_script(tmp_path):
+    world = World(tmp_path)
+    report = inspect(world)
+    assert "ao.guard" not in codes(report), [
+        f.message for f in report.findings if f.code == "ao.guard"
+    ]
 
 
 def test_codex_launcher_wires_the_pool_and_effort_from_its_recipe(tmp_path):

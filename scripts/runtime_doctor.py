@@ -1189,7 +1189,8 @@ def check_ao(host: Host) -> dict[str, list[Finding]]:
         "--claim-pr",
         "--no-takeover",
         "review-family codex",
-        'baseRefName == "main"',
+        'default=$(gh repo view "$repo_url" --json defaultBranchRef --jq .defaultBranchRef.name)',
+        ".baseRefName == $default",
         'mergeMethod == "SQUASH"',
         'select(.name == "ci"',
     ):
