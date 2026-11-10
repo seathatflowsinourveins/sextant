@@ -412,7 +412,7 @@ class AlpacaBridge:
             self._bump(cid)
             row = self.custody.registrations.get(cid)
             if row is not None and not row.get("unsent"):
-                self.custody.release_unsent(cid, reason=reason)
+                self.custody.release_local_unsent(cid, reason=reason)
 
     def cancel(self, cid: str):
         r = self._owned(cid)

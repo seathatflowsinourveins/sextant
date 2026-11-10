@@ -9,9 +9,11 @@ the silence watchdog; they name the pinned alpaca-py client, requests and feeds 
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Sequence
 from datetime import datetime
 from decimal import Decimal
+from pathlib import Path
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
@@ -134,9 +136,11 @@ def api_update(
     )
 
 
-def api_quote(bid: str = "99.505", ask: str = "99.51", at: datetime = NOW) -> Quote:
+def api_quote(
+    bid: str = "99.505", ask: str = "99.51", at: datetime = NOW, symbol: str = "AAPL"
+) -> Quote:
     return Quote(
-        "AAPL",
+        symbol,
         {
             "t": at.isoformat(),
             "bp": float(bid),
@@ -163,9 +167,16 @@ def _symbols(value: str | Sequence[str]) -> tuple[str, ...]:
 
 
 class FakeDataClient:
-    def __init__(self, *, quote: Quote | None = None, trades: Sequence[Trade] = ()) -> None:
+    def __init__(
+        self,
+        *,
+        quote: Quote | None = None,
+        trades: Sequence[Trade] = (),
+        repeat_last_trade: bool = False,
+    ) -> None:
         self.quote = quote
         self.trades = list(trades)
+        self.repeat_last_trade = repeat_last_trade
         self.requests: list[tuple[str, DataFeed | None, tuple[str, ...]]] = []
 
     def get_stock_latest_quote(self, request: StockLatestQuoteRequest) -> dict[str, Quote]:
@@ -180,7 +191,7 @@ class FakeDataClient:
         self.requests.append(("trade", request.feed, symbols))
         if not self.trades or self.trades[0].symbol not in symbols:
             return {}
-        trade = self.trades.pop(0)
+        trade = self.trades[0] if self.repeat_last_trade else self.trades.pop(0)
         return {trade.symbol: trade}
 
 
@@ -263,6 +274,7 @@ def test_a_fed_breach_cancels_the_trail_and_releases_one_limit() -> None:
 
     for _ in range(3):
         batch = feed.poll(("AAPL",), "sip")
+        p.note_poll(clock[0])
         for quote in batch.quotes:
             p.on_quote(
                 quote.symbol,
@@ -296,13 +308,14 @@ def test_a_missing_feed_pages_instead_of_staying_silent() -> None:
     assert "feed=none" in p.states[-1]
 
 
-def test_a_stale_quote_unarms_and_pages_then_a_fresh_quote_rearms() -> None:
+def test_a_standing_quote_stays_armed_while_polls_succeed() -> None:
     clock = [NOW_NS]
     client = FakeClient()
     client.positions = [api_position("10")]
     client.orders = [api_order(stop_price="97.50")]
     p = protector(client, feed="sip", clock=clock)
     p.reconcile()
+    p.note_poll(NOW_NS)
     p.on_quote(
         "AAPL",
         bid=Decimal("99.50"),
@@ -313,26 +326,122 @@ def test_a_stale_quote_unarms_and_pages_then_a_fresh_quote_rearms() -> None:
     p.watch()
     assert p.pages == []
     assert "protected=10" in p.states[-1]
-    assert "age=0.0s" in p.states[-1]
+    assert "poll_age=0.0s" in p.states[-1]
+    assert "quote_age=0.0s" in p.states[-1]
+
+    clock[0] += 56 * SEC // 10
+    p.note_poll(clock[0])
+    p.on_quote(
+        "AAPL",
+        bid=Decimal("99.50"),
+        ask=Decimal("99.51"),
+        last=Decimal("99.50"),
+        ts_ns=NOW_NS,
+    )
+    p.watch()
+    assert p.pages == []
+    assert "protected=10" in p.states[-1]
+    assert "poll_age=0.0s" in p.states[-1]
+    assert "quote_age=5.6s" in p.states[-1]
+
+
+def test_polls_that_stop_still_page_and_unarm() -> None:
+    clock = [NOW_NS]
+    client = FakeClient()
+    client.positions = [api_position("10")]
+    client.orders = [api_order(stop_price="97.50")]
+    p = protector(client, feed="sip", clock=clock)
+    p.reconcile()
+    p.note_poll(NOW_NS)
+    p.on_quote(
+        "AAPL",
+        bid=Decimal("99.50"),
+        ask=Decimal("99.51"),
+        last=Decimal("99.50"),
+        ts_ns=NOW_NS,
+    )
+    p.watch()
+    assert p.pages == []
 
     clock[0] += 6 * SEC
     p.watch()
     assert [page.reason for page in p.pages] == ["outside_rth_feed_silent"]
     assert "protected=0" in p.states[-1]
     assert "trigger=none" in p.states[-1]
-    assert "age=6.0s" in p.states[-1]
+    assert "poll_age=6.0s" in p.states[-1]
+    assert "quote_age=6.0s" in p.states[-1]
 
+
+def test_a_quiet_interval_does_not_reset_the_breach_run() -> None:
+    clock = [NOW_NS]
+    client = FakeClient()
+    client.positions = [api_position("10")]
+    client.orders = [api_order(stop_price="99.45")]
+    data = FakeDataClient(quote=api_quote(at=NOW), trades=[api_trade(at=NOW)])
+    feed = BMarketDataFeed(data)
+    p = protector(client, feed="sip", clock=clock)
+    p.reconcile()
+    trail = client.orders[0]
+
+    for second in range(13):
+        if second == 6:
+            data.quote = api_quote(at=datetime(2026, 11, 9, 20, 30, 6, tzinfo=ET))
+            data.trades = [api_trade(at=datetime(2026, 11, 9, 20, 30, 6, tzinfo=ET))]
+        if second == 12:
+            data.quote = api_quote(at=datetime(2026, 11, 9, 20, 30, 12, tzinfo=ET))
+            data.trades = [api_trade(at=datetime(2026, 11, 9, 20, 30, 12, tzinfo=ET))]
+        batch = feed.poll(("AAPL",), "sip")
+        p.note_poll(clock[0])
+        for quote in batch.quotes:
+            p.on_quote(
+                quote.symbol,
+                bid=quote.bid,
+                ask=quote.ask,
+                last=quote.last,
+                ts_ns=quote.ts_ns,
+            )
+        for trade in batch.trades:
+            p.on_trade(trade.symbol, trade.price, trade.ts_ns)
+        p.watch()
+        clock[0] += SEC
+
+    assert p.pages == []
+    p.handle(api_update(trail, "canceled", datetime(2026, 11, 9, 20, 30, 12, tzinfo=ET), 10))
+    assert isinstance(client.submitted[-1], LimitOrderRequest)
+
+
+def test_each_symbol_reports_its_own_quote_age() -> None:
+    client = FakeClient()
+    client.positions = [api_position("10", "AAPL"), api_position("10", "MSFT")]
+    client.orders = [
+        api_order(client_order_id="B001-trail-aapl", symbol="AAPL", stop_price="97.50"),
+        api_order(client_order_id="B001-trail-msft", symbol="MSFT", stop_price="197.50"),
+    ]
+    p = protector(client, feed="sip")
+    p.reconcile()
+    p.note_poll(NOW_NS)
     p.on_quote(
         "AAPL",
         bid=Decimal("99.50"),
         ask=Decimal("99.51"),
         last=Decimal("99.50"),
-        ts_ns=clock[0],
+        ts_ns=NOW_NS,
+    )
+    p.on_quote(
+        "MSFT",
+        bid=Decimal("199.50"),
+        ask=Decimal("199.51"),
+        last=Decimal("199.50"),
+        ts_ns=NOW_NS - 2 * SEC,
     )
     p.watch()
-    assert [page.reason for page in p.pages] == ["outside_rth_feed_silent"]
-    assert "protected=10" in p.states[-1]
-    assert "age=0.0s" in p.states[-1]
+
+    aapl = next(line for line in reversed(p.states) if "symbol=AAPL" in line)
+    msft = next(line for line in reversed(p.states) if "symbol=MSFT" in line)
+    assert "protected=10" in aapl
+    assert "quote_age=0.0s" in aapl
+    assert "protected=10" in msft
+    assert "quote_age=2.0s" in msft
 
 
 def test_pre_and_post_poll_sip_and_the_overnight_polls_boats() -> None:
@@ -354,7 +463,7 @@ def test_pre_and_post_poll_sip_and_the_overnight_polls_boats() -> None:
 
 
 def test_the_same_latest_trade_is_counted_once() -> None:
-    data = FakeDataClient(quote=api_quote(), trades=[api_trade()])
+    data = FakeDataClient(quote=api_quote(), trades=[api_trade()], repeat_last_trade=True)
     feed = BMarketDataFeed(data)
 
     first = feed.poll(("AAPL",), "sip")
@@ -362,7 +471,8 @@ def test_the_same_latest_trade_is_counted_once() -> None:
 
     assert len(first.quotes) == 1
     assert len(first.trades) == 1
-    assert second.quotes == ()
+    assert len(second.quotes) == 1
+    assert second.quotes[0].ts_ns == first.quotes[0].ts_ns
     assert second.trades == ()
 
 
@@ -401,4 +511,169 @@ def test_the_stream_startup_line_names_the_live_feed(monkeypatch) -> None:
     assert len(lines) == 1
     assert "feed=boats" in lines[0]
     assert "protected=10" in lines[0]
-    assert "age=0.0s" in lines[0]
+    assert "poll_age=0.0s" in lines[0]
+    assert "quote_age=0.0s" in lines[0]
+
+
+def test_a_quote_stamped_after_the_print_still_prices_the_release() -> None:
+    clock = [NOW_NS + SEC + SEC // 20]
+    client = FakeClient()
+    client.positions = [api_position("10")]
+    client.orders = [api_order(stop_price="99.45")]
+    p = protector(client, feed="sip", clock=clock)
+    p.reconcile()
+    trail = client.orders[0]
+    p.note_poll(clock[0])
+    p.on_quote(
+        "AAPL",
+        bid=Decimal("99.50"),
+        ask=Decimal("99.51"),
+        last=Decimal("99.40"),
+        ts_ns=clock[0],
+    )
+
+    for offset in (0, SEC // 2, SEC):
+        p.on_trade("AAPL", Decimal("99.40"), NOW_NS + offset)
+
+    assert p.pages == []
+    assert client.cancelled
+    p.handle(api_update(trail, "canceled", NOW, 10))
+    assert isinstance(client.submitted[-1], LimitOrderRequest)
+
+
+def test_a_quote_older_than_the_vendor_bound_still_prices_while_polls_succeed() -> None:
+    clock = [NOW_NS]
+    client = FakeClient()
+    client.positions = [api_position("10")]
+    client.orders = [api_order(stop_price="99.45")]
+    p = protector(client, feed="sip", clock=clock)
+    p.reconcile()
+    trail = client.orders[0]
+    p.note_poll(NOW_NS)
+    p.on_quote(
+        "AAPL",
+        bid=Decimal("99.50"),
+        ask=Decimal("99.51"),
+        last=Decimal("99.45"),
+        ts_ns=NOW_NS,
+    )
+
+    clock[0] += 4 * SEC + SEC // 5
+    p.note_poll(clock[0])
+    p.watch()
+    assert "protected=10" in p.states[-1]
+    assert "quote_age=4.2s" in p.states[-1]
+
+    for offset in (0, SEC // 2, SEC):
+        clock[0] = NOW_NS + 4 * SEC + SEC // 5 + offset
+        p.on_trade("AAPL", Decimal("99.40"), clock[0])
+
+    assert p.pages == []
+    p.handle(api_update(trail, "canceled", NOW, 10))
+    assert isinstance(client.submitted[-1], LimitOrderRequest)
+
+
+def test_a_prior_session_quote_never_arms_or_ratchets_the_new_session() -> None:
+    at = datetime(2026, 11, 9, 20, 0, 1, tzinfo=ET)
+    clock = [int(at.timestamp()) * SEC]
+    client = FakeClient()
+    client.positions = [api_position("10")]
+    client.orders = [api_order(stop_price="97.50")]
+    p = protector(client, feed="none", clock=clock)
+    p.reconcile()
+    p.set_feed("sip")
+
+    p.on_quote(
+        "AAPL",
+        bid=Decimal("105.00"),
+        ask=Decimal("105.01"),
+        last=Decimal("105.00"),
+        ts_ns=int(datetime(2026, 11, 9, 3, 59, 50, tzinfo=ET).timestamp()) * SEC,
+    )
+
+    assert p.emulated_trigger("AAPL") == Decimal("97.50")
+
+
+def test_a_segment_change_resets_the_breach_run() -> None:
+    at = datetime(2026, 11, 9, 19, 59, 30, tzinfo=ET)
+    clock = [int(at.timestamp()) * SEC]
+    client = FakeClient()
+    client.positions = [api_position("10")]
+    client.orders = [api_order(stop_price="99.45")]
+    p = protector(client, feed="sip", clock=clock)
+    p.reconcile()
+    p.note_poll(clock[0])
+    p.on_quote(
+        "AAPL",
+        bid=Decimal("99.50"),
+        ask=Decimal("99.51"),
+        last=Decimal("99.50"),
+        ts_ns=clock[0],
+    )
+    p.on_trade("AAPL", Decimal("99.40"), clock[0])
+    p.on_trade("AAPL", Decimal("99.40"), clock[0] + SEC // 2)
+
+    clock[0] = int(datetime(2026, 11, 9, 20, 0, 1, tzinfo=ET).timestamp()) * SEC
+    p.set_feed("boats")
+    assert p.on_trade("AAPL", Decimal("99.40"), clock[0]) is False
+    assert p.pages == []
+    assert client.submitted == []
+
+
+def test_the_first_post_quote_never_seeds_below_the_native_stop() -> None:
+    before = datetime(2026, 11, 9, 15, 59, 59, tzinfo=ET)
+    after = datetime(2026, 11, 9, 16, 0, 1, tzinfo=ET)
+    clock = [int(before.timestamp()) * SEC]
+    client = FakeClient()
+    client.positions = [api_position("10")]
+    client.orders = [api_order(stop_price="107.25")]
+    p = protector(client, feed="none", clock=clock)
+    p.reconcile()
+
+    clock[0] = int(after.timestamp()) * SEC
+    p.set_feed("sip")
+    p.on_quote(
+        "AAPL",
+        bid=Decimal("108.00"),
+        ask=Decimal("108.01"),
+        last=Decimal("108.00"),
+        ts_ns=clock[0],
+    )
+
+    assert p.emulated_trigger("AAPL") == Decimal("107.25")
+
+
+def test_a_symbol_without_a_quote_pages_while_another_is_armed() -> None:
+    client = FakeClient()
+    client.positions = [api_position("10", "AAPL"), api_position("10", "MSFT")]
+    client.orders = [
+        api_order(client_order_id="B001-trail-aapl", symbol="AAPL", stop_price="97.50"),
+        api_order(client_order_id="B001-trail-msft", symbol="MSFT", stop_price="197.50"),
+    ]
+    p = protector(client, feed="sip")
+    p.reconcile()
+    p.note_poll(NOW_NS)
+    p.on_quote(
+        "AAPL",
+        bid=Decimal("99.50"),
+        ask=Decimal("99.51"),
+        last=Decimal("99.50"),
+        ts_ns=NOW_NS,
+    )
+    p.watch()
+
+    assert [(page.reason, page.symbol) for page in p.pages] == [("outside_rth_feed_silent", "MSFT")]
+    aapl = next(line for line in reversed(p.states) if "symbol=AAPL" in line)
+    msft = next(line for line in reversed(p.states) if "symbol=MSFT" in line)
+    assert "protected=10" in aapl
+    assert "protected=0" in msft
+
+
+def test_the_silence_registry_row_says_what_is_measured() -> None:
+    root = Path(__file__).resolve().parents[2]
+    rows = json.loads((root / "lanes/paper/b-parameters.json").read_text())
+    row = next(item for item in rows if item["name"] == "feed_silence_s")
+    assert row["unit"] == "seconds without a successful outside-RTH poll before the watchdog pages"
+    assert "UNCALIBRATED" in row["source"]
+    assert "X4" not in row["source"]
+    assert "docs/design.md" not in row["source"]

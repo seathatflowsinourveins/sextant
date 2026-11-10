@@ -131,6 +131,11 @@ class SyncError(RuntimeError):
         self.stage = stage
         self.detail = detail
 
+    def stop_tail(self) -> str:
+        tail = f": {self}" if str(self) in SAFE_STOP_MESSAGES else ""
+        tail += f" ({self.detail})" if self.detail else ""
+        return f"{self.label or type(self).__name__} at {self.stage or 'sync'}{tail}"
+
 
 def _sanitized(error: BaseException) -> Never:
     """Upstream auth_safety.raise_sanitized; no retained raw exception graph."""

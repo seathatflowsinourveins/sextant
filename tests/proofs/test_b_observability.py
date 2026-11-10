@@ -203,6 +203,7 @@ def test_the_line_names_every_field_of_an_overnight_hold() -> None:
         last=Decimal("99.50"),
         ts_ns=NOW_NS - 2 * SEC,
     )
+    p.note_poll(NOW_NS)
     p.reconcile()
 
     line = p.states[-1]
@@ -211,11 +212,12 @@ def test_the_line_names_every_field_of_an_overnight_hold() -> None:
     assert "symbol=AAPL" in line
     assert "position=10" in line
     assert "protected=10" in line
-    assert "trigger=97.01" in line
+    assert "trigger=97.50" in line
     assert "on=bid" in line
     assert f"order={client.orders[0].id}" in line
     assert "feed=sip" in line
-    assert "age=2.0s" in line
+    assert "poll_age=0.0s" in line
+    assert "quote_age=2.0s" in line
     assert "order=none" not in line
 
 
@@ -274,6 +276,7 @@ def test_a_custody_change_writes_the_cancel_then_the_rearmed_line() -> None:
         last=Decimal("99.50"),
         ts_ns=NOW_NS,
     )
+    p.note_poll(NOW_NS)
     p.reconcile()
     trail = client.orders[0]
     assert "protected=10" in p.states[-1]
@@ -301,14 +304,15 @@ def test_the_production_default_names_no_feed_and_no_age() -> None:
 
     line = p.states[-1]
     assert "feed=none" in line
-    assert "age=none" in line
+    assert "poll_age=none" in line
+    assert "quote_age=none" in line
 
 
 def test_a_release_writes_the_unprotected_cancel_then_the_limit() -> None:
     client = FakeClient()
     client.positions = [api_position("10")]
     client.orders = [api_order(stop_price="99.45")]
-    p = protector(client)
+    p = protector(client, feed="sip")
     p.reconcile()
     trail = client.orders[0]
 
@@ -319,6 +323,7 @@ def test_a_release_writes_the_unprotected_cancel_then_the_limit() -> None:
         last=Decimal("99.51"),
         ts_ns=NOW_NS,
     )
+    p.note_poll(NOW_NS)
     assert p.on_trade("AAPL", Decimal("99.40"), NOW_NS) is False
     assert p.on_trade("AAPL", Decimal("99.40"), NOW_NS + SEC // 2) is False
     assert p.on_trade("AAPL", Decimal("99.40"), NOW_NS + SEC) is True
