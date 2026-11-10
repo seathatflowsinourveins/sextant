@@ -8,6 +8,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import shlex
 import shutil
 import stat
 import subprocess
@@ -470,6 +471,26 @@ def test_parity_delivers_muse_skills_and_mcp_without_changing_settings(muse_deli
     assert 'muse: {"unchanged": 12}' in capsys.readouterr().out
     assert settings.read_bytes() == b'{"model":"owner-value"}\n'
     assert registry.read_bytes() == state
+
+
+def test_muse_mcp_wrappers_supply_config_after_muse_clears_the_environment(muse_delivery):
+    run, _source, registry, _config, _skills = muse_delivery
+    assert run() == 0
+    plugins = json.loads(registry.read_text())["plugins"]
+    package = registry.parents[1] / plugins["sextant-mcp"]["cache_path"]
+    for name, key, header in (
+        ("context7", "CONTEXT7_API_KEY", "Authorization: Bearer ${CONTEXT7_API_KEY}"),
+        ("exa", "EXA_API_KEY", "x-api-key: ${EXA_API_KEY}"),
+    ):
+        script = (package / f"mcp/{name}.sh").read_text()
+        command = shlex.split(script.split("exec ", 1)[1])
+        assert command[:5] == [str(ROOT / "scripts/with-keys.sh"), "--strict", "-k", key, "--"]
+        assert command[command.index("--header") + 1] == header
+    paper = (package / "mcp/paper-search.sh").read_text()
+    assert shlex.split(paper.split("exec ", 1)[1])[:2] == [
+        "env",
+        "PAPER_SEARCH_MCP_ENV_FILE=/dev/null",
+    ]
 
 
 def _muse_package(registry: Path) -> Path:
