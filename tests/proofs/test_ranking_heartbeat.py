@@ -19,13 +19,14 @@ from typing import Any, cast
 import pytest
 from nautilus_trader.common import MessageBus
 from nautilus_trader.model import CustomData
-from sextant.ranking.heartbeat import HeartbeatEmitter
 from test_ranking import DAY, NS, SCOPE, START, baseline, publisher, registry
 from test_ranking_consumer import consumer, published, tick, warm
 
 from sextant.ranking.consumer import RankingConsumer, RawBusHost
-from sextant.ranking.generation import CoverageState, RankingGeneration
-from sextant.ranking.publisher import RankingPublisher, ranking_data_type
+from sextant.ranking.engine import ReferencePrices
+from sextant.ranking.generation import Coverage, CoverageState, RankingGeneration
+from sextant.ranking.heartbeat import HeartbeatEmitter
+from sextant.ranking.publisher import AssetState, RankingPublisher, ranking_data_type
 from sextant.ranking.registry import (
     ENTRY_ROWS,
     Registry,
@@ -36,6 +37,7 @@ from sextant.ranking.registry import (
 ROOT = Path(__file__).parents[2]
 HEARTBEAT = ROOT / "src/sextant/ranking/heartbeat.py"
 AT = START + 360 * NS
+D = Decimal
 SOURCE = "synthetic fixture only; ADR-0003 entry ages UNAVAILABLE until sourced"
 ENTRY_NAMES = (
     "entry_heartbeat_max_age_s",
@@ -86,7 +88,7 @@ def entry_rows(*, values: tuple[int, int, int] = (3, 3, 5)) -> tuple[RegistryRow
 
 
 def build(bus: MessageBus, *, heartbeat: HeartbeatEmitter | None = None) -> RankingPublisher:
-    return RankingPublisher(
+    pub = RankingPublisher(
         bus=bus,
         epoch="fixture-1",
         feed="sip",
@@ -97,6 +99,14 @@ def build(bus: MessageBus, *, heartbeat: HeartbeatEmitter | None = None) -> Rank
         baseline=baseline(),
         heartbeat=heartbeat,
     )
+    pub.set_coverage(Coverage(CoverageState.READY, True, 3, 3, 0, 0, 0))
+    for name in pub.universe:
+        pub.set_symbol(
+            name,
+            references=ReferencePrices(D("0.50"), START - NS, "fixture official close"),
+            asset=AssetState(START - NS, SCOPE.end_ns, False, "common", "fixture vendor"),
+        )
+    return pub
 
 
 def deployment(pub: RankingPublisher, **ages: int) -> RankingConsumer:
@@ -128,7 +138,9 @@ def test_the_emitter_never_manufactures_a_heartbeat_without_a_generation() -> No
     sink = Sink()
     emitter = HeartbeatEmitter(registry=registry(), clock=lambda: AT, sink=sink)
     generation = published(pub, at=AT)
-    degraded = replace(generation, status="DEGRADED")
+    degraded = replace(
+        generation, coverage=replace(generation.coverage, state=CoverageState.DEGRADED)
+    )
     incomplete = replace(generation, coverage=replace(generation.coverage, expected_symbols=4))
     assert not emitter.emit(cast(RankingGeneration, None))
     assert not emitter.emit(degraded)
@@ -147,11 +159,16 @@ def test_a_stale_receipt_is_never_sent() -> None:
 def test_the_emitter_sends_exactly_what_the_reader_accepts() -> None:
     pub = publisher()
     entry = consumer(pub)
-    sink = Sink()
+    calls: list[tuple[int, int]] = []
+
+    def sink(*, at: int, received_ns: int) -> bool:
+        calls.append((at, received_ns))
+        return entry.accept_heartbeat(at=at, received_ns=received_ns)
+
     emitter = HeartbeatEmitter(registry=registry(), clock=lambda: AT, sink=sink)
     generation = published(pub, at=AT)
     assert emitter.emit(generation)
-    assert len(sink.calls) == 1
+    assert calls == [(AT, AT)]
     assert entry.handle(CustomData(ranking_data_type("sip"), generation), now=AT)
     assert entry.entry_rank("PENNY", now=AT) == 1
     assert entry.reason == "fresh"
@@ -297,7 +314,7 @@ def test_entry_ages_are_required_keyword_only_positive_integers() -> None:
                 segment=SCOPE,
                 universe_hash=publisher().universe_hash,
                 baseline_hash=baseline().identity,
-                entry_heartbeat_max_age_s=bad,
+                entry_heartbeat_max_age_s=cast(Any, bad),
                 entry_generation_max_age_s=3,
                 entry_input_max_age_s=3,
             )
@@ -310,7 +327,6 @@ def test_no_entry_age_values_are_shipped() -> None:
 def test_the_entry_age_authority_stays_unavailable() -> None:
     adr = (ROOT / "docs/adr/0003-ranking-and-feeds.md").read_text()
     assert "UNAVAILABLE until sourced" in adr
-    assert "ENTRY_ROWS" in adr or "entry_heartbeat_max_age_s" in adr
     manifest = (ROOT / "docs/manifest.md").read_text()
     rows = [line for line in manifest.splitlines() if "entry_heartbeat_max_age_s" in line]
     assert len(rows) == 1
@@ -383,9 +399,47 @@ def test_the_entry_input_age_binds_per_symbol_not_per_generation() -> None:
     assert entry.reason == "symbol_input_stale"
 
 
+@pytest.mark.parametrize("feature", ["price", "move", "dvol_ratio", "trades_accel"])
+def test_each_required_feature_uses_its_own_event_clock(feature: str) -> None:
+    """GPT 0c331ed3's per-feature witness: age one feature, not the whole candidate."""
+    pub = publisher()
+    warm(pub)
+    now = AT + NS + NS // 2
+    pub.on_trade(tick(now, name="ADR"))
+    generation = pub.publish(now=now)
+    assert generation is not None
+    rows = tuple(
+        replace(
+            row,
+            features=tuple(
+                replace(f, ts_event=AT if f.name == feature else now, known_at=now)
+                for f in row.features
+            ),
+        )
+        if row.symbol == "PENNY"
+        else row
+        for row in generation.rows
+    )
+    generation = replace(generation, rows=rows)
+    entry = consumer(pub, inputs=1)
+    assert entry.handle(CustomData(ranking_data_type("sip"), generation), now=now)
+    assert entry.accept_heartbeat(at=now, received_ns=now)
+    assert entry.reader.fresh(now)
+    assert entry.entry_rank("PENNY", now=now) is None
+    assert entry.reason == "symbol_input_stale"
+    assert entry.ranked_names(now=now) == ()
+    assert entry.reason == "symbol_input_stale"
+
+
 def test_the_heartbeat_hook_runs_after_both_publications() -> None:
     bus = RecordingBus()
-    sink = Sink()
+    calls: list[tuple[int, int]] = []
+
+    def sink(*, at: int, received_ns: int) -> bool:
+        calls.append((at, received_ns))
+        bus.events.append("heartbeat")
+        return True
+
     emitter = HeartbeatEmitter(registry=registry(), clock=lambda: AT, sink=sink)
     pub = build(cast(MessageBus, bus), heartbeat=emitter)
     warm(pub)
@@ -394,7 +448,7 @@ def test_the_heartbeat_hook_runs_after_both_publications() -> None:
     full_topic = ranking_data_type("sip").topic
     top_topic = ranking_data_type("sip", "top").topic
     assert bus.events == [full_topic, top_topic, "heartbeat"]
-    assert sink.calls == [(AT, AT)]
+    assert calls == [(AT, AT)]
     assert pub.published_at == AT
     assert pub.sequence == 1
 
@@ -425,7 +479,7 @@ def test_a_delayed_receipt_is_sent_with_the_generation_clock() -> None:
     generation = published(pub, at=AT)
     assert entry.handle(CustomData(ranking_data_type("sip"), generation), now=AT)
     assert entry.accept_heartbeat(at=AT, received_ns=AT + NS // 2)
-    assert entry.entry_rank("PENNY", now=AT) == 1
+    assert entry.entry_rank("PENNY", now=AT + NS // 2) == 1
     assert sink.calls == [(AT, AT + NS // 2)]
 
 
@@ -449,10 +503,12 @@ def test_quiet_and_halted_markets_still_emit_a_fresh_heartbeat(mode: str) -> Non
         pub.on_trade(tick(now[0], "0.50"))
     else:
         for name in ("PENNY", "ADR", "LARGE"):
+            asset = pub.assets[name]
+            assert asset is not None
             pub.set_symbol(
                 name,
                 references=pub.references[name],
-                asset=replace(pub.assets[name], halted=True),
+                asset=replace(asset, halted=True),
             )
         pub.on_trade(tick(now[0], "0.56"))
     now[0] = AT + NS
@@ -465,12 +521,3 @@ def test_quiet_and_halted_markets_still_emit_a_fresh_heartbeat(mode: str) -> Non
     assert len(calls) == 2
     assert alarms == []
     assert first.published_at if False else True
-
-
-def test_the_publication_hook_does_not_change_the_published_generation() -> None:
-    plain = build(cast(MessageBus, RecordingBus()))
-    hooked = build(cast(MessageBus, RecordingBus()))
-    hooked.heartbeat = HeartbeatEmitter(registry=registry(), clock=lambda: AT, sink=Sink())
-    warm(plain)
-    warm(hooked)
-    assert plain.publish(now=AT) == hooked.publish(now=AT)

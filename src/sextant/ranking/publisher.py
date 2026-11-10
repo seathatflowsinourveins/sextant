@@ -32,6 +32,7 @@ from sextant.ranking.generation import (
     RankingRow,
     register_ranking_generation,
 )
+from sextant.ranking.heartbeat import HeartbeatEmitter
 from sextant.ranking.registry import Registry
 
 LANES_PIN = "00203275944a22655b3e14b221cfde9a265d549a"
@@ -76,6 +77,7 @@ class RankingPublisher:
         universe: tuple[str, ...],
         universe_source: str,
         baseline: BaselineTable,
+        heartbeat: HeartbeatEmitter | None = None,
     ) -> None:
         if not epoch or not universe_source or not universe or len(set(universe)) != len(universe):
             raise ValueError("explicit epoch, unique universe and source required")
@@ -89,6 +91,7 @@ class RankingPublisher:
             universe_source,
         )
         self.baseline = baseline
+        self.heartbeat = heartbeat
         self.universe_hash = universe_digest(self.universe)
         self.states = {name: MoverState() for name in universe}
         self.references: dict[str, ReferencePrices] = {}
@@ -301,4 +304,6 @@ class RankingPublisher:
         )
         self.published_at = now
         self.sequence += 1
+        if self.heartbeat is not None:
+            self.heartbeat.emit(generation)
         return generation
