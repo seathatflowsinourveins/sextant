@@ -14,11 +14,13 @@ with no recorded start stays unavailable (AGENTS.md Rule 2).
 
 from __future__ import annotations
 
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, field, fields
 from decimal import Decimal
 
 ZERO = Decimal(0)
 ONE = Decimal(1)
+# The run's observations are evidence, not state: keep the completing tail of a fast tape.
+MAX_BREACH_OBSERVATIONS = 64
 
 ADR = "docs/adr/0005-exit-engine.md"
 
@@ -192,14 +194,19 @@ class Bar1mArming:
 class BreachRun:
     count: int = 0
     first_ns: int | None = None
+    # The completing run, so a durable release record can name the prints that fired it.
+    seen: list[tuple[int, Decimal]] = field(default_factory=list)
 
     def observe(self, price: Decimal, trigger: Decimal, ts_ns: int, p: ExitParams) -> bool:
         if price > trigger:
-            self.count, self.first_ns = 0, None
+            self.count, self.first_ns, self.seen = 0, None, []
             return False
         if self.first_ns is None:
             self.first_ns = ts_ns
         self.count += 1
+        self.seen.append((ts_ns, price))
+        if len(self.seen) > MAX_BREACH_OBSERVATIONS:
+            del self.seen[0]
         span_ns = int(p.breach_persist_span_s * 1_000_000_000)
         return self.count >= p.breach_persist_count and ts_ns - self.first_ns >= span_ns
 
