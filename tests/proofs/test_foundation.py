@@ -1,5 +1,6 @@
 """One test per row of docs/manifest.md. `just prove` runs them; CI publishes the count."""
 
+import ast
 import hashlib
 import json
 import re
@@ -30,6 +31,24 @@ def _gh(path: str) -> Any:
     return json.loads(_run("gh", "api", path).stdout)
 
 
+@pytest.mark.host
+def test_every_foundation_proof_declares_where_it_holds() -> None:
+    """A proof runs only where its claim holds: container, host, or GitHub settings."""
+    tree = ast.parse(Path(__file__).read_text())
+    scopes = {"container", "host", "github"}
+    for node in tree.body:
+        if not isinstance(node, ast.FunctionDef) or not node.name.startswith("test_"):
+            continue
+        declared = {
+            decorator.attr
+            for decorator in node.decorator_list
+            if isinstance(decorator, ast.Attribute) and decorator.attr in scopes
+        }
+        assert len(declared) == 1, f"{node.name} declares {sorted(declared) or 'no scope'}"
+    assert 'prove marker="not container and not github"' in _read("justfile")
+
+
+@pytest.mark.host
 def test_sandbox_is_the_upstream_template() -> None:
     assert _sha(_read(".devcontainer/post_install.py")) == (
         "30614d41a891768032f65d583fee4423c402d144402203a0189fcb169a8fedb9"
@@ -43,6 +62,7 @@ def test_sandbox_is_the_upstream_template() -> None:
     assert _sha(body) == "61fb7595307fc4d9ab69de9ab3048555d9d3f13314c96097b2901842f38c7b42"
 
 
+@pytest.mark.host
 def test_template_read_only_binds_are_kept() -> None:
     config = json.loads(_read(".devcontainer/devcontainer.json"))
     mounts = " ".join(config["mounts"])
@@ -78,11 +98,13 @@ def test_runtimes_match_their_pins() -> None:
     assert agents["@deepseek-ai/dsh"] in _run("dsh", "--version").stdout
 
 
+@pytest.mark.host
 def test_source_rule_is_enforced() -> None:
     assert "--dangerfile dangerfile.js --failOnErrors" in _read(".github/workflows/gate.yml")
     assert "Self-invention" in _read(".github/workflows/shared/review-rules.md")
 
 
+@pytest.mark.host
 def test_review_uses_upstream_actions_and_posts_required_statuses() -> None:
     import yaml
 
@@ -97,12 +119,14 @@ def test_review_uses_upstream_actions_and_posts_required_statuses() -> None:
     assert not list(WORKFLOWS.glob("*.lock.yml"))
 
 
+@pytest.mark.host
 def test_rubric_is_verbatim_upstream() -> None:
     assert _sha(_read(".github/review/rubric.md")) == (
         "ec60e7f36a1d1c2679ce095c0205ecc56f7dd8fb57707a13ef362072390f219f"
     )
 
 
+@pytest.mark.host
 def test_ci_gives_pr_code_no_repository_secret() -> None:
     from test_public_gate import test_ci_runs_the_complete_check_without_repository_secrets
 
@@ -111,6 +135,7 @@ def test_ci_gives_pr_code_no_repository_secret() -> None:
     assert ci.count("persist-credentials: false") == ci.count("actions/checkout@")
 
 
+@pytest.mark.host
 def test_every_action_is_pinned() -> None:
     from test_public_gate import test_every_action_in_workflows_and_composites_has_a_full_pin
 
@@ -120,6 +145,7 @@ def test_every_action_is_pinned() -> None:
     assert '"$checksum" "$tool_archive" | sha256sum -c -' in setup
 
 
+@pytest.mark.host
 def test_lint_covers_every_non_lock_workflow_with_shellcheck() -> None:
     """Hosted ci's lint job runs just lint, which discovers every workflow with ShellCheck."""
     ci = _read(".github/workflows/ci.yml")
@@ -142,6 +168,7 @@ def test_lint_covers_every_non_lock_workflow_with_shellcheck() -> None:
     assert '--strip-components=1 "$member"' in install
 
 
+@pytest.mark.host
 @pytest.mark.local
 def test_gitleaks_is_wired() -> None:
     assert _run("gitleaks", "version").returncode == 0
@@ -152,6 +179,7 @@ def test_gitleaks_is_wired() -> None:
     assert "git config core.hooksPath .githooks" in setup
 
 
+@pytest.mark.github
 @pytest.mark.local
 def test_rulesets_are_active() -> None:
     rulesets = {item["name"]: item for item in _gh(f"{REPO}/rulesets")}
@@ -174,6 +202,7 @@ def test_rulesets_are_active() -> None:
         assert {"pull_request", "deletion", "non_fast_forward"} <= rules(name).keys()
 
 
+@pytest.mark.host
 def test_main_ruleset_turns_off_extra_approval_for_unattributed_changes() -> None:
     """At zero required approvals the live ruleset kept this on and held unattributed PRs."""
     ruleset = json.loads(_read(".github/rulesets/main.json"))
@@ -183,6 +212,7 @@ def test_main_ruleset_turns_off_extra_approval_for_unattributed_changes() -> Non
     assert parameters["require_extra_approval_for_unattributed_changes"] is False
 
 
+@pytest.mark.github
 @pytest.mark.local
 def test_environments_restrict_branches() -> None:
     for name, branch in (("review", "main"), ("paper", "main"), ("live", "live")):
@@ -190,6 +220,7 @@ def test_environments_restrict_branches() -> None:
         assert [p["name"] for p in policies["branch_policies"]] == [branch]
 
 
+@pytest.mark.host
 def test_dependabot_covers_every_ecosystem() -> None:
     import yaml
 
@@ -217,12 +248,14 @@ def test_dependabot_covers_every_ecosystem() -> None:
     assert "# pnpm moves only with dsh-tui's toolchain" in dependabot
 
 
+@pytest.mark.host
 def test_scoreboard_uses_upstream_actions() -> None:
     scoreboard = (WORKFLOWS / "scoreboard.yml").read_text()
     assert "github/issue-metrics@" in scoreboard
     assert "peter-evans/create-issue-from-file@" in scoreboard
 
 
+@pytest.mark.host
 def test_scoreboard_runs_only_daily_or_on_dispatch() -> None:
     import yaml
 
@@ -237,13 +270,18 @@ def test_scoreboard_runs_only_daily_or_on_dispatch() -> None:
     )
 
 
+@pytest.mark.host
 def test_scoreboard_proves_in_the_container_without_local_only_rows() -> None:
     scoreboard = (WORKFLOWS / "scoreboard.yml").read_text()
     justfile = (ROOT / "justfile").read_text()
     assert 'just prove "not local"' in scoreboard
-    assert 'prove marker="":\n    uv run --frozen pytest tests/proofs -m "{{marker}}"' in justfile
+    assert (
+        'prove marker="not container and not github":\n'
+        '    uv run --frozen pytest tests/proofs -m "{{marker}}"'
+    ) in justfile
 
 
+@pytest.mark.host
 def test_scoreboard_measures_the_stop_rule_over_the_last_twenty_merges() -> None:
     text = (WORKFLOWS / "scoreboard.yml").read_text()
     assert "--state merged --limit 100" in text
@@ -262,6 +300,7 @@ def test_scoreboard_measures_the_stop_rule_over_the_last_twenty_merges() -> None
     assert "refs/heads/main" not in text
 
 
+@pytest.mark.host
 def test_every_lesson_lane_is_in_the_schema() -> None:
     """The journal's records must be loadable by the schema the writer validates against."""
     schema = json.loads(_read("docs/handbook/lesson-v1.schema.json"))
@@ -274,6 +313,7 @@ def test_every_lesson_lane_is_in_the_schema() -> None:
     assert lanes <= allowed, f"lessons use lanes the schema refuses: {sorted(lanes - allowed)}"
 
 
+@pytest.mark.host
 def test_lessons_keep_their_seed_and_stay_append_only() -> None:
     lines = _read("docs/handbook/lessons.jsonl").splitlines(True)
     assert _sha("".join(lines[:130])) == (
@@ -282,6 +322,7 @@ def test_lessons_keep_their_seed_and_stay_append_only() -> None:
     assert {json.loads(line)["schema"] for line in lines} == {"northstar.handbook.lesson/1"}
 
 
+@pytest.mark.host
 def test_ci_fans_out_into_parallel_jobs_and_the_fan_in_fails_closed() -> None:
     """GitHub workflow syntax `jobs` and `jobs.<job_id>.needs`, read 2026-11-09."""
     import os
@@ -330,6 +371,7 @@ def test_ci_fans_out_into_parallel_jobs_and_the_fan_in_fails_closed() -> None:
         assert "tests=" + bad in done.stdout + done.stderr
 
 
+@pytest.mark.host
 def test_pytest_runs_on_every_runner_core_with_a_cooled_down_pin() -> None:
     """pytest-xdist 3.8.0, uploaded 2025-07-01, against `release_cooldown_days: 14`."""
     assert "pytest-xdist==3.8.0" in _read("pyproject.toml").split("[dependency-groups]", 1)[1]
@@ -337,6 +379,7 @@ def test_pytest_runs_on_every_runner_core_with_a_cooled_down_pin() -> None:
     assert re.search(r"^test.*:\n    uv run --frozen pytest -n auto", just, re.MULTILINE)
 
 
+@pytest.mark.host
 def test_uv_dependency_cache_is_restored_for_ci_and_nowhere_else() -> None:
     """astral-sh/setup-uv README at the ci.yml pin: `enable-cache` and `save-cache`."""
     ci = _read(".github/workflows/ci.yml")

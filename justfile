@@ -76,8 +76,8 @@ omni-keys *args:
 gh-app *args:
     bash deploy/wsl/github-app.sh {{args}}
 
-# Run every manifest row's proof. Pass a -m expression; the scoreboard passes "not local".
-prove marker="":
+# Run host proofs; container proofs run in the devcontainer build and GitHub-settings proofs need the admin token.
+prove marker="not container and not github":
     uv run --frozen pytest tests/proofs -m "{{marker}}"
 
 # Import a disposable copy of the committed research docs into local OpenViking.
