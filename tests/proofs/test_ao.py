@@ -280,11 +280,26 @@ def test_fixture_ignores_shell_startup(tmp_path: Path, monkeypatch) -> None:
     assert any(call.startswith("spawn ") for call in calls)
 
 
+POLICY = json.loads((ROOT / "deploy" / "wsl" / "lane-runtimes" / "model-policy.json").read_text())
+POLICY_EFFORT = POLICY["claude"]["effort"]
 PROJECT_CONFIG = {
-    "agentConfig": {"model": "claude-opus-5-5", "effort": "max"},
+    "agentConfig": {
+        "model": "claude-opus-5-5",
+        "effort": "max",
+        "permissions": "by-pass-permissions",
+    },
     "worker": {"agent": "claude-code", "agentConfig": {}},
+    "orchestrator": {"agentConfig": {}},
+    "trackerIntake": {"enabled": False},
 }
 ARCHIVE = "https://github.com/seathatflowsinourveins/sextant-archive"
+
+
+def _carried(config: dict) -> dict:
+    """The record's config as recreated: every key, but the policy's worker effort."""
+    carried = json.loads(json.dumps(config))
+    carried["agentConfig"]["effort"] = POLICY_EFFORT
+    return carried
 
 
 def _project(tmp_path: Path, path: Path, config: dict | None = PROJECT_CONFIG):
@@ -331,7 +346,7 @@ def test_project_recreates_the_record_and_the_clone_that_name_another_repository
         f"ao project add --path {clone} --id sextant --name Sextant (AO fix-CI/review) "
         "--worker-agent codex"
     )
-    saved = json.dumps(PROJECT_CONFIG, separators=(",", ":"))
+    saved = json.dumps(_carried(PROJECT_CONFIG), separators=(",", ":"))
     restored = f"ao project set-config sextant --config-json {saved}"
     assert registered in calls and restored in calls
 
@@ -344,8 +359,9 @@ def test_project_recreates_the_record_and_the_clone_that_name_another_repository
         < calls.index(registered)
         < calls.index(restored)
     )
-    # The lead-set worker, model and effort survive the recreation.
-    assert json.loads(state.read_text())["project"]["config"] == PROJECT_CONFIG
+    # The lead-set worker, model and every other key survive; the effort is the policy's, not the
+    # record's old value, because the doctor compares it with the tracked policy.
+    assert json.loads(state.read_text())["project"]["config"] == _carried(PROJECT_CONFIG)
     assert str(stale) in run.stdout and "not name" in run.stdout
     assert str(clone) not in run.stdout
     assert stale.is_dir(), "the script never removes the old clone itself"
@@ -363,6 +379,53 @@ def test_project_recreates_the_record_and_the_clone_that_name_another_repository
         )
     ], calls
     assert str(stale) not in again.stdout, "the stale clone is reported once, not on every run"
+
+
+def test_project_recreation_replaces_the_old_worker_effort_with_the_policys(
+    tmp_path: Path,
+) -> None:
+    seeded = PROJECT_CONFIG["agentConfig"]["effort"]
+    assert seeded != POLICY_EFFORT, "the fixture seeds an old effort"
+    stale = tmp_path / "home" / ".ao" / "repos" / "sextant"
+    stale.mkdir(parents=True)
+    run, calls, _, state, _ = _project(tmp_path, stale)
+    assert run.returncode == 0, run.stderr
+    restored = json.loads(state.read_text())["project"]["config"]
+    assert restored["agentConfig"]["effort"] == POLICY_EFFORT
+    written = next(
+        call for call in calls if call.startswith("ao project set-config sextant --config-json ")
+    )
+    payload = json.loads(written.split("--config-json ", 1)[1])
+    assert payload["agentConfig"]["effort"] == POLICY_EFFORT
+
+
+def test_project_recreation_creates_the_worker_effort_when_the_record_has_none(
+    tmp_path: Path,
+) -> None:
+    config = {
+        "agentConfig": {"model": "claude-opus-5-5"},
+        "worker": {"agent": "claude-code", "agentConfig": {}},
+    }
+    stale = tmp_path / "home" / ".ao" / "repos" / "sextant"
+    stale.mkdir(parents=True)
+    run, _, _, state, _ = _project(tmp_path, stale, config)
+    assert run.returncode == 0, run.stderr
+    restored = json.loads(state.read_text())["project"]["config"]
+    assert restored["agentConfig"]["effort"] == POLICY_EFFORT
+    assert restored["agentConfig"]["model"] == "claude-opus-5-5"
+    assert restored["worker"] == {"agent": "claude-code", "agentConfig": {}}
+
+
+def test_project_recreation_carries_every_other_lead_set_key(tmp_path: Path) -> None:
+    stale = tmp_path / "home" / ".ao" / "repos" / "sextant"
+    stale.mkdir(parents=True)
+    run, _, _, state, _ = _project(tmp_path, stale)
+    assert run.returncode == 0, run.stderr
+    restored = json.loads(state.read_text())["project"]["config"]
+    assert restored == _carried(PROJECT_CONFIG)
+    assert restored["agentConfig"]["permissions"] == "by-pass-permissions"
+    assert restored["orchestrator"] == {"agentConfig": {}}
+    assert restored["trackerIntake"] == {"enabled": False}
 
 
 def test_project_moves_a_record_that_points_outside_aos_clones_into_one(tmp_path: Path) -> None:

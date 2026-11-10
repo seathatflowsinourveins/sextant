@@ -90,10 +90,12 @@ ao_clone() {
 # that names a checkout outside AO's own clones is moved into one: AO's worktrees must never hold a
 # branch an Orca worktree has checked out, and this script's git settings belong to AO's clone alone.
 # The old clone is never removed here: it is reported for the owner, who alone can say nothing still
-# uses it. AO's project config (worker, model, effort) is lead-owned, so the recreation carries it
-# across rather than resetting it to the worker this script registers.
+# uses it. AO's project config (worker, model and the rest) is lead-owned, so the recreation carries it
+# across rather than resetting it to the worker this script registers, except the worker effort: the
+# doctor compares that with the tracked policy's Claude effort, so the recreation always writes the
+# policy's value and never carries the record's old one.
 project() {
-  local record old saved exists=0 recreate=0
+  local record old saved exists=0 recreate=0 effort
   if record=$(ao project get "$project" --json 2> /dev/null); then
     exists=1
   else
@@ -101,6 +103,11 @@ project() {
   fi
   old=$(jq -r '.project.path // empty' <<< "${record:-{}}" 2> /dev/null || true)
   saved=$(jq -c '.project.config // empty' <<< "${record:-{}}" 2> /dev/null || true)
+  effort=$(jq -r '.claude.effort // empty' "$here/lane-runtimes/model-policy.json") || effort=""
+  if [[ -z "$effort" ]]; then
+    echo "model-policy.json names no Claude effort for AO's worker" >&2
+    return 1
+  fi
   if [[ -n "$old" ]] && [[ "$old" == "$HOME/.ao/repos/"* ]] && names_this_repository "$old"; then
     clone=$old
   else
@@ -116,7 +123,10 @@ project() {
     ao project rm "$project" --yes > /dev/null
   fi
   ao project add --path "$clone" --id "$project" --name "Sextant (AO fix-CI/review)" --worker-agent codex
-  [[ -z "$saved" ]] || ao project set-config "$project" --config-json "$saved" > /dev/null
+  if [[ -n "$saved" ]]; then
+    saved=$(jq -c --arg effort "$effort" '.agentConfig.effort = $effort' <<< "$saved")
+    ao project set-config "$project" --config-json "$saved" > /dev/null
+  fi
 }
 
 # AO's sessions outlive the App's one-hour installation token, which each inherits at spawn. So git in
