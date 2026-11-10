@@ -42,6 +42,7 @@ class CConfig:
     slot_count: int
     segment: Segment
     params: EntryParameters
+    held_symbols: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
         if type(self.symbols) is not tuple or not self.symbols:
@@ -62,6 +63,12 @@ class CConfig:
             raise ValueError("slot_count must be an integer")
         if self.slot_count <= 0:
             raise ValueError("slot_count must be positive")
+        if type(self.held_symbols) is not frozenset:
+            raise ValueError("C held symbols must be a frozenset")
+        for symbol in self.held_symbols:
+            if not isinstance(symbol, str) or not symbol:
+                raise ValueError("C held symbols must be non-empty full instrument ids")
+            InstrumentId.from_str(symbol)
 
 
 def _fraction(value: Decimal, name: str, *, zero: bool) -> None:
@@ -225,6 +232,8 @@ class CSession:
     def _maybe_enter(self, state: _SymbolState, quote: QuoteTick, now: int) -> None:
         surge = state.entry.surge
         if surge is None or state.pending or state.cid is not None:
+            return
+        if str(state.instrument.id) in self.config.held_symbols:
             return
         ask = quote.ask_price.as_decimal()
         if not state.entry.first_leg_ready(ask, now):

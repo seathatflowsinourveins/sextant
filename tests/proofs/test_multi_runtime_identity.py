@@ -19,7 +19,7 @@ HARD_LINES = ROOT / "deploy/wsl/hard-lines"
 # P2.3 moves the lane-runtimes README's two issue links to the archive and P2.7 owns
 # deploy/wsl/github-app.json. Neither is this cutover's config, so the audit skips them.
 OTHER_ROWS = {"README.md"}
-OLD = re.compile(r"seathatflowsinourveins/sextant(?!-next)")
+OLD = re.compile(r"seathatflowsinourveins/sextant-archive")
 ROW = (
     "Multi-runtime identity: AO names sextant-next, lane runtimes derive their checkout, "
     "hard-lines and dsh carry no repo URL"
@@ -38,7 +38,7 @@ def test_ao_names_the_new_repo_and_its_claim_reads_through_it() -> None:
     text = AO.read_text()
     assert "project=sextant" in text
     assert 'clone="$HOME/.ao/repos/sextant-next"' in text
-    assert "repo_url=https://github.com/seathatflowsinourveins/sextant-next" in text
+    assert "repo_url=https://github.com/seathatflowsinourveins/sextant\n" in text
     assert 'gh pr view "$pr" --repo "$repo_url"' in text
     assert "!$here/github-app/bin/gh auth git-credential" in text
 

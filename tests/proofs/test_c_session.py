@@ -95,6 +95,7 @@ FIXTURE_VALUES: dict[str, object] = {
     "atr_period": 3,
     "atr_bar_minutes": 1,
     "max_data_age_s": "5",
+    "max_armed_symbols": 5,
     "bp_target_fraction": "1",
     "stop_ref_fraction": "0.01",
     "portfolio_slots": 5,
