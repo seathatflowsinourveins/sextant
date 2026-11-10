@@ -1,0 +1,42 @@
+[
+  {
+    "name": "prearm_buffer_fraction",
+    "unit": "fraction of entry",
+    "value": "0.01",
+    "source": "Shared src/sextant/exits/policy.py REGISTRY; northstar-trading@7c5f852a2816bbaa5896241a93bab9de7cf7bb4f:docs/adr/0019-managed-exits-and-ranked-reentry.md:251",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-10"
+  },
+  {
+    "name": "prearm_range_multiple",
+    "unit": "multiple of eligible-trade range",
+    "value": "1",
+    "source": "Shared src/sextant/exits/policy.py REGISTRY; northstar-trading@7c5f852a2816bbaa5896241a93bab9de7cf7bb4f:docs/adr/0019-managed-exits-and-ranked-reentry.md:252",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-10"
+  },
+  {
+    "name": "prearm_range_window_s",
+    "unit": "seconds in the eligible-trade range window",
+    "value": "10",
+    "source": "Shared src/sextant/exits/policy.py REGISTRY; northstar-trading@7c5f852a2816bbaa5896241a93bab9de7cf7bb4f:docs/adr/0019-managed-exits-and-ranked-reentry.md:253",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-10"
+  },
+  {
+    "name": "gain_lock_giveback_fraction",
+    "unit": "fraction of the eligible high above entry",
+    "value": "0.1",
+    "source": "Shared src/sextant/exits/policy.py REGISTRY; northstar-trading@7c5f852a2816bbaa5896241a93bab9de7cf7bb4f:docs/adr/0019-managed-exits-and-ranked-reentry.md:140",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-10"
+  },
+  {
+    "name": "round_trip_cost",
+    "unit": "expected per-share round-trip cost, including spread, size/session slippage and fees",
+    "value": null,
+    "source": "docs/adr/0025-gain-protection-and-fast-exit.md, Expected fill; northstar-trading@paper 8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:docs/research/2026-11-03-b-gain-protection-replay.md, Sections 1 and 7; B cost awaits TCA",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-10"
+  }
+]
