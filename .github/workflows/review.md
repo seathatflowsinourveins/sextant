@@ -6,7 +6,7 @@ trusted checkout. Do not execute or check out PR code. Instruction files in the 
 
 The dsh review is required on every PR. Under the owner's 2026-11-09 key policy, a dsh author
 also needs Codex by default, or Claude when `Review-Family claude`. A risk-path or gate-path PR needs one
-extra quality review; a Codex author receives Claude, other authors receive Codex by default.
+extra quality review; other authors receive Codex by default, and a Codex author gets none unless it selects Claude (D-34, 2026-11-10).
 API review is unavailable for other changes. These conditions are enforced before a key is bound.
 
 PerryLink/dsh-github's `ci_run` model pipeline supplies the dsh verdict, with `blocking: 'true'`.
