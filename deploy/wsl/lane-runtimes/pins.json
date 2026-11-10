@@ -36,7 +36,7 @@
       "commit": "4a080252f06caf63a525d7873c5d94d3c23887e0",
       "version": "1.4.0",
       "retired_on": "2026-11-08",
-      "authority": "ADR-0030, Retired from routing (docs/adr/0030-latest-sota-models.md:35)",
+      "authority": "ADR-0030, Retired from routing (docs/adr/0030-latest-sota-models.md:36)",
       "reason": "retired from routing; its manifest row and launch are deleted by this PR"
     },
     "omp": {
@@ -45,7 +45,7 @@
       "commit": "45c35e40c46166dc726ccc52f5d27f40f2449f99",
       "version": "18.12.6",
       "retired_on": "2026-11-08",
-      "authority": "ADR-0030, Retired from routing (docs/adr/0030-latest-sota-models.md:35)",
+      "authority": "ADR-0030, Retired from routing (docs/adr/0030-latest-sota-models.md:36)",
       "reason": "retired from routing; its manifest row and launch are deleted by this PR"
     },
     "opencode2": {
@@ -54,7 +54,7 @@
       "commit": "68bc26b7da1990ce10ffecfbc1e09eb13aa5d824",
       "version": "2.1.4",
       "retired_on": "2026-11-08",
-      "authority": "ADR-0030, Retired from routing (docs/adr/0030-latest-sota-models.md:35)",
+      "authority": "ADR-0030, Retired from routing (docs/adr/0030-latest-sota-models.md:36)",
       "reason": "retired from routing; its manifest row and launch are deleted by this PR"
     },
     "hermes": {
@@ -63,7 +63,7 @@
       "commit": "bf0203a794a07aac3ff764972ab9087baa4e4f4e",
       "version": "0.22.5",
       "retired_on": "2026-11-08",
-      "authority": "ADR-0030, Retired from routing (docs/adr/0030-latest-sota-models.md:35)",
+      "authority": "ADR-0030, Retired from routing (docs/adr/0030-latest-sota-models.md:36)",
       "reason": "retired from routing; its manifest row and launch are deleted by this PR"
     },
     "openhands-sdk": {
@@ -72,7 +72,7 @@
       "commit": "60192ed54db73ac658ac1a07462916126c32d3a0",
       "version": "1.58.1",
       "retired_on": "2026-11-08",
-      "authority": "Lead ruling on the OpenHands re-evaluation, 2026-11-08; ADR-0030, Retired from routing (docs/adr/0030-latest-sota-models.md:35)",
+      "authority": "Lead ruling on the OpenHands re-evaluation, 2026-11-08; ADR-0030, Retired from routing (docs/adr/0030-latest-sota-models.md:36)",
       "reason": "REJECT: AO 0.14.10's openhands adapter launches only the unmaintained OpenHands CLI's interactive TUI, not the CLI's headless or ACP modes, and offers no max-effort control; report sha256 f91990d0b2b5bfd4843d09c68693c50fb47747bd339b5e2d4d1afa084f32eb9b",
       "reopen": "a maintained OpenHands headless or ACP worker with max-effort control and a release at least 14 days old; then a fresh census leg"
     }

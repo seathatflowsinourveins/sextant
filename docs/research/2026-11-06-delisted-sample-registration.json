@@ -1,0 +1,1022 @@
+{
+  "candidates": 8327,
+  "index_rows": 16654,
+  "indexes": [
+    {
+      "path": "edgar/full-index/2016/QTR4/form.idx",
+      "sha256": "b40e00912a7374ad87350cfa2866edd49ee94632f2b3fb7fa6a2cd02713f5c3e"
+    },
+    {
+      "path": "edgar/full-index/2017/QTR1/form.idx",
+      "sha256": "b98815366aaf210652f640c5472d1dce68b9291ac1d8b8209787667b00b681bc"
+    },
+    {
+      "path": "edgar/full-index/2017/QTR2/form.idx",
+      "sha256": "11559e066c026986b15100ed307c6ca9d74301384518e2436813a6edf452832b"
+    },
+    {
+      "path": "edgar/full-index/2017/QTR3/form.idx",
+      "sha256": "aa4ed92f753ee5cfd19e3acab5ec5db72b7165f9c17baea47085021ebcf93385"
+    },
+    {
+      "path": "edgar/full-index/2017/QTR4/form.idx",
+      "sha256": "672d1a315b6f6f1429fb4b2e1f400e937016b7fc3f285714c9eeed443eec0a22"
+    },
+    {
+      "path": "edgar/full-index/2018/QTR1/form.idx",
+      "sha256": "77b0fcb1f727d756d82c8a6ad01a2443d41635a7aae6bbdc4c263364b4519f96"
+    },
+    {
+      "path": "edgar/full-index/2018/QTR2/form.idx",
+      "sha256": "37fc5a985eb88cd3853989932cd0db783e50138659ac25fb90a4541bceab1f9a"
+    },
+    {
+      "path": "edgar/full-index/2018/QTR3/form.idx",
+      "sha256": "9d1e46464a4ec5a4c84928688f573980f8ca5b2511bf97c245ea5da296c401b7"
+    },
+    {
+      "path": "edgar/full-index/2018/QTR4/form.idx",
+      "sha256": "fb17a0b4e7f5dab378fe34dbc5a9cffef53c451520d072ec70ff6526c3d64c40"
+    },
+    {
+      "path": "edgar/full-index/2019/QTR1/form.idx",
+      "sha256": "88901ad5ec510ebf9c74f58f50fc94bfe44c2ccd2bab94680864a5a1a6323ff2"
+    },
+    {
+      "path": "edgar/full-index/2019/QTR2/form.idx",
+      "sha256": "64a108ce2f798cbf1ef23bc7a24ff15a88d4bd19b2f80acd80765f8751baf68c"
+    },
+    {
+      "path": "edgar/full-index/2019/QTR3/form.idx",
+      "sha256": "2a2b2ac46d85e10b7f9ef04b2acb1ab3fc3eba939a625e208ea42a6dca26da8f"
+    },
+    {
+      "path": "edgar/full-index/2019/QTR4/form.idx",
+      "sha256": "a8e6d873ff24cd31ea8036e990274e9e18d045cfbfc8c7c07d85f94a4cab9e28"
+    },
+    {
+      "path": "edgar/full-index/2020/QTR1/form.idx",
+      "sha256": "593cbf371d422fe526408a74142f00e1e13f22efe63e4b71b48011e077f9af2a"
+    },
+    {
+      "path": "edgar/full-index/2020/QTR2/form.idx",
+      "sha256": "038d6eb07e7fca5b37b8d8f3e0f899f16e1e3cc3a3a38c22a5ffb0ed4fdbec50"
+    },
+    {
+      "path": "edgar/full-index/2020/QTR3/form.idx",
+      "sha256": "d378841b0abbe2d2161d8c9bbd3cb2b99bb4d386eee13118c17f21bae57bbc5f"
+    },
+    {
+      "path": "edgar/full-index/2020/QTR4/form.idx",
+      "sha256": "84aa7452907f241582e01db0d589314af070f434ee0e1884a2e3f14960a56142"
+    },
+    {
+      "path": "edgar/full-index/2021/QTR1/form.idx",
+      "sha256": "78b6719feb4d8da28f7c2f1ca2a40de5f31d6c71339215d90e1b666ca23938d0"
+    },
+    {
+      "path": "edgar/full-index/2021/QTR2/form.idx",
+      "sha256": "9bddf421721ec657e66ebbce9e460a62e31bfe2a609f1411a602dd0a3b892d4f"
+    },
+    {
+      "path": "edgar/full-index/2021/QTR3/form.idx",
+      "sha256": "92e0f94ce1ad3fbaf44ebff85ddc942b0f7ef53a2985528e2104ccdf949bda9c"
+    },
+    {
+      "path": "edgar/full-index/2021/QTR4/form.idx",
+      "sha256": "025be2086f7e01181f1b6560d3731e65268eca1a7e4e8511a2ef2eae2d436d67"
+    },
+    {
+      "path": "edgar/full-index/2022/QTR1/form.idx",
+      "sha256": "3fa246248e37398a3690a83b0730690a9a332db515b734480326a1bc8b5d98ee"
+    },
+    {
+      "path": "edgar/full-index/2022/QTR2/form.idx",
+      "sha256": "6b72ce7a562225bc06c255b9a99ff3035017e291080ac521ea75ae0fd4c7fee0"
+    },
+    {
+      "path": "edgar/full-index/2022/QTR3/form.idx",
+      "sha256": "62175229b297e8070863842ac8f0f00686597dea7ed6d5eb5ca6da20c4939882"
+    },
+    {
+      "path": "edgar/full-index/2022/QTR4/form.idx",
+      "sha256": "e4fa292fcd6e15eb9d0f4552613ebc189ea3b166a8a3b5b550641785f69ec1c2"
+    },
+    {
+      "path": "edgar/full-index/2023/QTR1/form.idx",
+      "sha256": "0f11bf75dd8c43d66a9bb9dd7498fab0cd18316d468f6a941418358efc84d895"
+    },
+    {
+      "path": "edgar/full-index/2023/QTR2/form.idx",
+      "sha256": "de6bea77f33fd87c9489ae0cf5936d902159797aeaf733d851eea006737894c1"
+    },
+    {
+      "path": "edgar/full-index/2023/QTR3/form.idx",
+      "sha256": "58e7d1100b2f7f6ba4733d0e82b42f0fa9589c651b5c30682c037895ccc448c7"
+    },
+    {
+      "path": "edgar/full-index/2023/QTR4/form.idx",
+      "sha256": "a6fde5999151322606a428cc2dd5b40a7abe5d263d5ddef4b7e108cbb7b73cf0"
+    },
+    {
+      "path": "edgar/full-index/2024/QTR1/form.idx",
+      "sha256": "5f91755d27d18df08a2f8497c7b092174285e30b24ea8297b0ec5e17daa0a553"
+    },
+    {
+      "path": "edgar/full-index/2024/QTR2/form.idx",
+      "sha256": "a213f3926c23261d493f88956d23ea20ebf98ac9751a78452b01bc12aeba07f8"
+    },
+    {
+      "path": "edgar/full-index/2024/QTR3/form.idx",
+      "sha256": "2c6e48b5c6a26450366436a2677589dd62bc59a5608c3c8e1ca071c51953fc56"
+    },
+    {
+      "path": "edgar/full-index/2024/QTR4/form.idx",
+      "sha256": "a94001eef171b013dc7971dd59e51763fa8555a870ea81b66f1fca087ec205f0"
+    },
+    {
+      "path": "edgar/full-index/2025/QTR1/form.idx",
+      "sha256": "a5dc097558692f9b8afa5853df36b2f1a6b0924e23a0fb1b78aed1ea87c1914a"
+    },
+    {
+      "path": "edgar/full-index/2025/QTR2/form.idx",
+      "sha256": "49ec60558c04843ef60b1d8f7ba76acc4dc18e1fbdbc5717870b8120e3d83cb1"
+    },
+    {
+      "path": "edgar/full-index/2025/QTR3/form.idx",
+      "sha256": "cac2ad4bde56e559a0d4c0922f9b863845c44266b156a0f59c3a9b3b1995fdd4"
+    },
+    {
+      "path": "edgar/full-index/2025/QTR4/form.idx",
+      "sha256": "c30b406ea9a8a075e1f91fe34230ccdd7117c5aa08c0e0f2df15fcc67cae988f"
+    }
+  ],
+  "issue": 42,
+  "n": 40,
+  "pass_at_least": 38,
+  "rule": {
+    "common": "\\bcommon\\b",
+    "excluded": "preferred|warrant|right|\\bunits?\\b|note|debenture|depositary|\\bbond|trust preferred",
+    "issuer": "<issuer> block",
+    "order": "unique accession number"
+  },
+  "sample": [
+    {
+      "accession": "0000876661-18-001017",
+      "class": "Common Stock",
+      "filed": "2018-09-20",
+      "issuer_cik": "1302343",
+      "issuer_name": "Education Realty Trust, Inc.",
+      "path": "edgar/data/1302343/0000876661-18-001017.txt",
+      "rule_provision": "17 CFR 240.12d2-2(a)(3)",
+      "sha256": "5eaf584341ec5736ea7e8b482f29c65ef64169f1e07bcecb16ecad444bd4573a"
+    },
+    {
+      "accession": "0000876661-25-000707",
+      "class": "Common Stock",
+      "filed": "2025-09-26",
+      "issuer_cik": "0001959348",
+      "issuer_name": "WK Kellogg Co",
+      "path": "edgar/data/1959348/0000876661-25-000707.txt",
+      "rule_provision": "17 CFR 240.12d2-2(a)(3)",
+      "sha256": "2502fe5cd18240e0db1883db64a84c9ef1fe6972ff0d1c307798bfb8b39ac61c"
+    },
+    {
+      "accession": "0000876661-22-000442",
+      "class": "Common Shares of Beneficial Interest",
+      "filed": "2022-05-26",
+      "issuer_cik": "0001686142",
+      "issuer_name": "Nuveen Credit Opportunities 2022 Target Term Fund",
+      "path": "edgar/data/1686142/0000876661-22-000442.txt",
+      "rule_provision": "17 CFR 240.12d2-2(a)(3)",
+      "sha256": "75f6d99144eb1193f4bd06f46fcb5493511528a2bd42c90fc6d9f116b9940ff6"
+    },
+    {
+      "accession": "0001354457-19-000628",
+      "class": "Common Stock",
+      "filed": "2019-12-02",
+      "issuer_cik": "0000713671",
+      "issuer_name": "DNB FINANCIAL CORP /PA/",
+      "path": "edgar/data/1354457/0001354457-19-000628.txt",
+      "rule_provision": "17 CFR 240.12d2-2(a)(3)",
+      "sha256": "70d47dcc659d3d4aed69e4893d62d80829008ed0be1ac6a7b327d65310f39b79"
+    },
+    {
+      "accession": "0000876661-18-001260",
+      "class": "Common Shares of Beneficial Interest",
+      "filed": "2018-11-27",
+      "issuer_cik": "1647932",
+      "issuer_name": "Nuveen High Income December 2018 Target Term Fund",
+      "path": "edgar/data/1647932/0000876661-18-001260.txt",
+      "rule_provision": "17 CFR 240.12d2-2(a)(3)",
+      "sha256": "f5f21215f8049b0c358a3ee5d93523263e224a1c6b44c027e6ddd9fa17386d57"
+    },
+    {
+      "accession": "0000876661-20-000114",
+      "class": "Common Shares of Beneficial Interest",
+      "filed": "2020-02-18",
+      "issuer_cik": "0000878201",
+      "issuer_name": "NUVEEN TEXAS QUALITY MUNICIPAL INCOME FUND",
+      "path": "edgar/data/876661/0000876661-20-000114.txt",
+      "rule_provision": "17 CFR 240.12d2-2(a)(3)",
+      "sha256": "26d1f1bad7fea1a2faeb5f203a0f17d89d7f3f07e160f8ef58a32a54584c1c3f"
+    },
+    {
+      "accession": "0000876661-18-000660",
+      "class": "Common Stock",
+      "filed": "2018-06-06",
+      "issuer_cik": "54507",
+      "issuer_name": "WESTAR ENERGY INC /KS",
+      "path": "edgar/data/54507/0000876661-18-000660.txt",
+      "rule_provision": "17 CFR 240.12d2-2(a)(3)",
+      "sha256": "c622a5cfe685883693fe1920b63eafc5a85c7b0ffdfc0bd38ca0dc9cc4d9c540"
+    },
+    {
+      "accession": "0001354457-20-000833",
+      "class": "Common Stock",
+      "filed": "2020-12-28",
+      "issuer_cik": "0001573097",
+      "issuer_name": "HD Supply Holdings, Inc.",
+      "path": "edgar/data/1354457/0001354457-20-000833.txt",
+      "rule_provision": "17 CFR 240.12d2-2(a)(3)",
+      "sha256": "0f2099ed71546f7e43453202121e9bf52893f1ee531c1aa35b973145eaacb236"
+    },
+    {
+      "accession": "0001354457-18-000523",
+      "class": "Common Stock",
+      "filed": "2018-12-12",
+      "issuer_cik": "0001114220",
+      "issuer_name": "KERYX BIOPHARMACEUTICALS INC",
+      "path": "edgar/data/1114220/0001354457-18-000523.txt",
+      "rule_provision": "17 CFR 240.12d2-2(a)(3)",
+      "sha256": "c2fdec7f5383c751b3da955bc384ecb325d46b47d81b9786c95cf89d28e6a8a1"
+    },
+    {
+      "accession": "0000876661-24-001088",
+      "class": "Common Shares of Beneficial Interest",
+      "filed": "2024-11-20",
+      "issuer_cik": "0000846596",
+      "issuer_name": "DWS STRATEGIC MUNICIPAL INCOME TRUST",
+      "path": "edgar/data/846596/0000876661-24-001088.txt",
+      "rule_provision": "17 CFR 240.12d2-2(a)(3)",
+      "sha256": "029910e860827e168641004cc708b745f1b5952a46fa18e2eec0e8cd0cd2ee5f"
+    },
+    {
+      "accession": "0001354457-20-000714",
+      "class": "Common Stock",
+      "filed": "2020-11-18",
+      "issuer_cik": "0001330436",
+      "issuer_name": "Liquidia Technologies Inc",
+      "path": "edgar/data/1330436/0001354457-20-000714.txt",
+      "rule_provision": "17 CFR 240.12d2-2(a)(3)",
+      "sha256": "feea3d7a85ca545117a185a33bf73791d64019d2e0cc22625cb615d7caff4094"
+    },
+    {
+      "accession": "0000876661-25-000523",
+      "class": "Common Stock",
+      "filed": "2025-07-18",
+      "issuer_cik": "0000004447",
+      "issuer_name": "HESS CORP",
+      "path": "edgar/data/4447/0000876661-25-000523.txt",
+      "rule_provision": "17 CFR 240.12d2-2(a)(3)",
+      "sha256": "2774d59f88647fd31e94a8f52023aeb12033e579b0ce1da6321fbffdd7d69364"
+    },
+    {
+      "accession": "0001354457-19-000499",
+      "class": "Common Stock",
+      "filed": "2019-10-07",
+      "issuer_cik": "0001011006",
+      "issuer_name": "ALTABA INC.",
+      "path": "edgar/data/1011006/0001354457-19-000499.txt",
+      "rule_provision": "17 CFR 240.12d2-2(a)(2)",
+      "sha256": "450040df75211b898fa87a09c25417035aa0d5879d564725a52d0d62235cef3c"
+    },
+    {
+      "accession": "0000876661-21-000139",
+      "class": "Common Shares, Without Par Value",
+      "filed": "2021-02-01",
+      "issuer_cik": "0000877365",
+      "issuer_name": "Norbord Inc.",
+      "path": "edgar/data/876661/0000876661-21-000139.txt",
+      "rule_provision": "17 CFR 240.12d2-2(a)(3)",
+      "sha256": "992733bc54b650f22c2bb0253e6c6391b86f6c913e7325f830ee48bf0e42ac19"
+    },
+    {
+      "accession": "0001354457-25-000938",
+      "class": "Common Stock",
+      "filed": "2025-09-24",
+      "issuer_cik": "0001845022",
+      "issuer_name": "Couchbase, Inc.",
+      "path": "edgar/data/1354457/0001354457-25-000938.txt",
+      "rule_provision": "17 CFR 240.12d2-2(a)(3)",
+      "sha256": "c89f4a93595676e7ba2406b0c844c9fc3938aada689f8b3735b7d1afa512adf9"
+    },
+    {
+      "accession": "0000876661-23-000214",
+      "class": "Common Shares",
+      "filed": "2023-03-13",
+      "issuer_cik": "0001568292",
+      "issuer_name": "Delaware Ivy High Income Opportunities Fund",
+      "path": "edgar/data/1568292/0000876661-23-000214.txt",
+      "rule_provision": "17 CFR 240.12d2-2(a)(3)",
+      "sha256": "2d93567405e2802d5831a8c8ab145c165b1dfa475844d67671294475a87cd966"
+    },
+    {
+      "accession": "0000876661-17-000263",
+      "class": "Common stock, $.0001 par value",
+      "filed": "2017-05-12",
+      "issuer_cik": "753568",
+      "issuer_name": "EXAR CORP",
+      "path": "edgar/data/753568/0000876661-17-000263.txt",
+      "rule_provision": "17 CFR 240.12d2-2(a)(3)",
+      "sha256": "da5a03f130d16614ed50414b55c49d7b76e830921c22bf7ee67e7d291d2f5eaa"
+    },
+    {
+      "accession": "0001354457-21-000191",
+      "class": "Common Stock",
+      "filed": "2021-02-09",
+      "issuer_cik": "0000909724",
+      "issuer_name": "TANDY LEATHER FACTORY INC",
+      "path": "edgar/data/1354457/0001354457-21-000191.txt",
+      "rule_provision": "17 CFR 240.12d2-2(b)",
+      "sha256": "6463327c850da6279ab051ddc6db40e06a79407284248cbc256a1ad8fa3a6e6a"
+    },
+    {
+      "accession": "0000876661-17-000022",
+      "class": "Common Stock",
+      "filed": "2017-01-11",
+      "issuer_cik": "1597503",
+      "issuer_name": "NorthStar Asset Management Group Inc.",
+      "path": "edgar/data/1597503/0000876661-17-000022.txt",
+      "rule_provision": "17 CFR 240.12d2-2(a)(3)",
+      "sha256": "9fbc2c533b4a602f92f145959d687779e4fb5b14179e70e049cb36a9fb1cced3"
+    },
+    {
+      "accession": "0001143313-23-000139",
+      "class": "Class A Common Stock",
+      "filed": "2023-11-01",
+      "issuer_cik": "0000010254",
+      "issuer_name": "EARTHSTONE ENERGY INC",
+      "path": "edgar/data/10254/0001143313-23-000139.txt",
+      "rule_provision": "17 CFR 240.12d2-2(a)(3)",
+      "sha256": "6cf5f7c5a1022b162a3061d150f7bcbb20aced898392b6ecf7a9aaa92edcf4b1"
+    },
+    {
+      "accession": "0001354457-18-000345",
+      "class": "Common Stock",
+      "filed": "2018-09-13",
+      "issuer_cik": "0001316898",
+      "issuer_name": "JAMBA, INC.",
+      "path": "edgar/data/1316898/0001354457-18-000345.txt",
+      "rule_provision": "17 CFR 240.12d2-2(a)(3)",
+      "sha256": "99d277ad8335f81e77238f538c4ccd60f7ca2e0847e88380b7da7d98380d4a74"
+    },
+    {
+      "accession": "0001354457-18-000186",
+      "class": "Common Stock",
+      "filed": "2018-06-06",
+      "issuer_cik": "0000749038",
+      "issuer_name": "CCUR Holdings, Inc.",
+      "path": "edgar/data/1354457/0001354457-18-000186.txt",
+      "rule_provision": "17 CFR 240.12d2-2(b)",
+      "sha256": "26f43f2ec76482c8cac09c269738a0e58e2edebff91d4b9a4757406d6bd5bb2d"
+    },
+    {
+      "accession": "0001354457-23-000961",
+      "class": "Class A Common Stock",
+      "filed": "2023-12-21",
+      "issuer_cik": "0001946425",
+      "issuer_name": "Hammerhead Energy Inc.",
+      "path": "edgar/data/1354457/0001354457-23-000961.txt",
+      "rule_provision": "17 CFR 240.12d2-2(a)(3)",
+      "sha256": "96055d69888ddf1ab7d1e17a405a488bbec4a2caeeec77cc88ee14a0852835f3"
+    },
+    {
+      "accession": "0001354457-19-000222",
+      "class": "Common Stock",
+      "filed": "2019-04-30",
+      "issuer_cik": "0001551739",
+      "issuer_name": "Hamilton Bancorp, Inc.",
+      "path": "edgar/data/1354457/0001354457-19-000222.txt",
+      "rule_provision": "17 CFR 240.12d2-2(a)(3)",
+      "sha256": "f95021387553051521b1a1e817ef70327cd9644d750c392726d5569caa36c140"
+    },
+    {
+      "accession": "0001354457-25-000811",
+      "class": "Common Stock",
+      "filed": "2025-08-14",
+      "issuer_cik": "0001496323",
+      "issuer_name": "IGM Biosciences, Inc.",
+      "path": "edgar/data/1354457/0001354457-25-000811.txt",
+      "rule_provision": "17 CFR 240.12d2-2(a)(3)",
+      "sha256": "1bd52fdf6a652329020ce06cad3cdb6564421c8cf12843442e4994a2f37836d9"
+    },
+    {
+      "accession": "0001354457-19-000046",
+      "class": "Common Stock",
+      "filed": "2019-02-01",
+      "issuer_cik": "0000819926",
+      "issuer_name": "SHARING ECONOMY INTERNATIONAL INC.",
+      "path": "edgar/data/1354457/0001354457-19-000046.txt",
+      "rule_provision": "17 CFR 240.12d2-2(b)",
+      "sha256": "523d2036e7d6a424dd268faefd86745383b41d16f2f9eaea19cba245d3f62b43"
+    },
+    {
+      "accession": "0001143313-24-000020",
+      "class": "Common Stock",
+      "filed": "2024-02-12",
+      "issuer_cik": "0001830795",
+      "issuer_name": "Quantum FinTech Acquisition Corp",
+      "path": "edgar/data/1143313/0001143313-24-000020.txt",
+      "rule_provision": "17 CFR 240.12d2-2(a)(3)",
+      "sha256": "1b4d87e38d33eaa8252b838c5a7d37eb339ebc083b0d58fe5f18a55bafe908ea"
+    },
+    {
+      "accession": "0000876661-18-000661",
+      "class": "Common Stock",
+      "filed": "2018-06-06",
+      "issuer_cik": "1143068",
+      "issuer_name": "GREAT PLAINS ENERGY INC",
+      "path": "edgar/data/1143068/0000876661-18-000661.txt",
+      "rule_provision": "17 CFR 240.12d2-2(a)(3)",
+      "sha256": "01a6801556fda541d8371d4eb06af4cadb32aacf497c740e72da8d8b45d60520"
+    },
+    {
+      "accession": "0001354457-16-000524",
+      "class": "Common Shares",
+      "filed": "2016-10-21",
+      "issuer_cik": "0001532079",
+      "issuer_name": "Cynapsus Therapeutics Inc.",
+      "path": "edgar/data/1354457/0001354457-16-000524.txt",
+      "rule_provision": "17 CFR 240.12d2-2(a)(3)",
+      "sha256": "2e0956b338ff4fa9b555c5051c0ec7fd042c0f2be7c080793dd1d9aa2b84b0cb"
+    },
+    {
+      "accession": "0001354457-17-000029",
+      "class": "Common Stock",
+      "filed": "2017-02-10",
+      "issuer_cik": "0001292653",
+      "issuer_name": "Inteliquent, Inc.",
+      "path": "edgar/data/1292653/0001354457-17-000029.txt",
+      "rule_provision": "17 CFR 240.12d2-2(a)(3)",
+      "sha256": "84c9e1d5951c3dbd13af6a4f8e6d3d9ac67e2785a49f1878711768b6134b15f3"
+    },
+    {
+      "accession": "0001354457-17-000178",
+      "class": "Common Stock",
+      "filed": "2017-09-12",
+      "issuer_cik": "0000817366",
+      "issuer_name": "VCA INC",
+      "path": "edgar/data/1354457/0001354457-17-000178.txt",
+      "rule_provision": "17 CFR 240.12d2-2(a)(3)",
+      "sha256": "617137050fd70ac8972d419e49fc655a9b725fa09807dbb31d8c2cd5efa7ff13"
+    },
+    {
+      "accession": "0001354457-23-000819",
+      "class": "Common Stock",
+      "filed": "2023-11-08",
+      "issuer_cik": "0001270073",
+      "issuer_name": "INTERCEPT PHARMACEUTICALS, INC.",
+      "path": "edgar/data/1270073/0001354457-23-000819.txt",
+      "rule_provision": "17 CFR 240.12d2-2(a)(3)",
+      "sha256": "cc0de10c6a99de22d4567500ea9b1911e5ba2ae55589973d019d52a030f68425"
+    },
+    {
+      "accession": "0000876661-17-000093",
+      "class": "Common Stock",
+      "filed": "2017-02-28",
+      "issuer_cik": "20740",
+      "issuer_name": "CLARCOR INC.",
+      "path": "edgar/data/20740/0000876661-17-000093.txt",
+      "rule_provision": "17 CFR 240.12d2-2(a)(3)",
+      "sha256": "ecd6488c248894cae8837598fe33bffbb1a94f8cb29af34112afd46924b10f74"
+    },
+    {
+      "accession": "0001354457-19-000315",
+      "class": "Common Stock",
+      "filed": "2019-06-19",
+      "issuer_cik": "0001370702",
+      "issuer_name": "QUANTENNA COMMUNICATIONS INC",
+      "path": "edgar/data/1354457/0001354457-19-000315.txt",
+      "rule_provision": "17 CFR 240.12d2-2(a)(3)",
+      "sha256": "c3007363ec249a57aa1ba640633783124a7fdf40a714b3989e3f5b951034fcc2"
+    },
+    {
+      "accession": "0001354457-18-000014",
+      "class": "Common Stock",
+      "filed": "2018-01-25",
+      "issuer_cik": "0000719274",
+      "issuer_name": "GIGA TRONICS INC",
+      "path": "edgar/data/1354457/0001354457-18-000014.txt",
+      "rule_provision": "17 CFR 240.12d2-2(b)",
+      "sha256": "b7867e55f1248672d6d73f9509b24fd9c4482d33297859eb4b5cb9f2859a5092"
+    },
+    {
+      "accession": "0001143313-23-000078",
+      "class": "Class A Common Stock",
+      "filed": "2023-10-03",
+      "issuer_cik": "0001910950",
+      "issuer_name": "Atlas Energy Solutions Inc.",
+      "path": "edgar/data/1910950/0001143313-23-000078.txt",
+      "rule_provision": "17 CFR 240.12d2-2(a)(3)",
+      "sha256": "2debea6e71176a2e88648241bcb365fe8559d105236d60c450674c839caff9c4"
+    },
+    {
+      "accession": "0000876661-21-000729",
+      "class": "Common Stock",
+      "filed": "2021-05-17",
+      "issuer_cik": "0001419242",
+      "issuer_name": "ATLANTIC POWER CORP",
+      "path": "edgar/data/1419242/0000876661-21-000729.txt",
+      "rule_provision": "17 CFR 240.12d2-2(a)(3)",
+      "sha256": "8b3b6aead4482614f57ab83aac900453a23ed3c057e3a58f47edc3c4e37a1d05"
+    },
+    {
+      "accession": "0000876661-19-000821",
+      "class": "Common Stock",
+      "filed": "2019-08-07",
+      "issuer_cik": "0000890491",
+      "issuer_name": "BARNES &amp; NOBLE INC",
+      "path": "edgar/data/876661/0000876661-19-000821.txt",
+      "rule_provision": "17 CFR 240.12d2-2(a)(3)",
+      "sha256": "c276557b177ddc4e78c06ca26583f331d6003e7f636ac4b9c405baf3c6792c25"
+    },
+    {
+      "accession": "0001354457-25-001073",
+      "class": "Common Stock",
+      "filed": "2025-10-30",
+      "issuer_cik": "0001785173",
+      "issuer_name": "89bio, Inc.",
+      "path": "edgar/data/1354457/0001354457-25-001073.txt",
+      "rule_provision": "17 CFR 240.12d2-2(a)(3)",
+      "sha256": "b4902c4ce49781989839e3066a0003939d9a98afcd40ea9e95706ef3cf936cec"
+    },
+    {
+      "accession": "0000876661-25-000479",
+      "class": "Common Stock",
+      "filed": "2025-07-01",
+      "issuer_cik": "0001593548",
+      "issuer_name": "PlayAGS, Inc.",
+      "path": "edgar/data/1593548/0000876661-25-000479.txt",
+      "rule_provision": "17 CFR 240.12d2-2(a)(3)",
+      "sha256": "3e150221358df3050312eedf07acd97ec3de4ec4e82b171a217fefe0e81ade78"
+    }
+  ],
+  "seed": 20261106,
+  "skipped_non_common": [
+    {
+      "accession": "0001143362-19-000162",
+      "class": "Columbia India Infrastructure ETF"
+    },
+    {
+      "accession": "0001143362-18-000141",
+      "class": "Guggenheim BulletShares 2018 Corporate Bond ETF"
+    },
+    {
+      "accession": "0000876661-24-000886",
+      "class": "Natixis Loomis Sayles Short Duration Income ETF"
+    },
+    {
+      "accession": "0001354457-19-000203",
+      "class": "Reinhart Intermediate Bond NextShares"
+    },
+    {
+      "accession": "0000876661-18-000705",
+      "class": "Barclays ETN+ FI Enhanced Europe 50 ETN"
+    },
+    {
+      "accession": "0001354457-25-000631",
+      "class": "Class A Ordinary Shares"
+    },
+    {
+      "accession": "0001143313-24-000058",
+      "class": "Common Stock; Units, each consisting of one share of common stock, par value $0.0001 per share and one-half of one warrant; Warrants, each whole warrant exercisable for one share of common stock at an exercise price of $11.50"
+    },
+    {
+      "accession": "0000876661-23-000379",
+      "class": "Preferred Stock Purchase Rights"
+    },
+    {
+      "accession": "0000876661-18-001376",
+      "class": "Warrants (expiring December 31, 2018)"
+    },
+    {
+      "accession": "0001143362-19-000198",
+      "class": "Sprott Junior Gold Miners ETF"
+    },
+    {
+      "accession": "0000876661-25-000401",
+      "class": "Guarantor of 4.000% Notes due 2028"
+    },
+    {
+      "accession": "0001354457-19-000021",
+      "class": "Warrant"
+    },
+    {
+      "accession": "0001354457-24-000099",
+      "class": "ADSs"
+    },
+    {
+      "accession": "0001354457-22-000693",
+      "class": "Class A Common Stock, Warrant, and Unit"
+    },
+    {
+      "accession": "0001354457-24-000612",
+      "class": "Series A 9.00% Series A Cumulative Preferred Stock"
+    },
+    {
+      "accession": "0001354457-21-000310",
+      "class": "Ordinary Shares"
+    },
+    {
+      "accession": "0000876661-24-000235",
+      "class": "Concord Acquisition Corp III - Units, each consisting of one share of Class A Common Stock and one-half of one Warrant"
+    },
+    {
+      "accession": "0000876661-17-000540",
+      "class": "2.248% Guaranteed Notes due 2016"
+    },
+    {
+      "accession": "0001354457-20-000205",
+      "class": "Warrants"
+    },
+    {
+      "accession": "0001354457-16-000523",
+      "class": "Units"
+    },
+    {
+      "accession": "0001354457-25-000836",
+      "class": "Warrant"
+    },
+    {
+      "accession": "0000876661-19-001112",
+      "class": "1.125% Senior Notes Due November 6, 2019"
+    },
+    {
+      "accession": "0000876661-25-000234",
+      "class": "3.869% Callable Fixed-to-Floating Rate Senior Notes due 2026; Callable Floating Rate Senior Notes due 2026"
+    },
+    {
+      "accession": "0000876661-18-000274",
+      "class": "7.125% Series C Cumulative Redeemable Preferred Stock"
+    },
+    {
+      "accession": "0000876661-21-001452",
+      "class": "5.125% Junior Subordinated Debentures due January 15, 2073"
+    },
+    {
+      "accession": "0000876661-25-000447",
+      "class": "Fixed-to-Floating Rate Non-Cumulative Perpetual Preferred Stock, Series E"
+    },
+    {
+      "accession": "0000876661-20-000871",
+      "class": "4.50% Guaranteed Notes due 2020"
+    },
+    {
+      "accession": "0000876661-24-000593",
+      "class": "Warrants, each whole warrant entitles the holder thereof to purchase one share of Class A common stock at a price of $11.50 per share"
+    },
+    {
+      "accession": "0000876661-22-000466",
+      "class": "2019 Series A Corporate Units"
+    },
+    {
+      "accession": "0000876661-21-000120",
+      "class": "Preferred Stock Purchase Rights"
+    },
+    {
+      "accession": "0000876661-19-000405",
+      "class": "As Guarantor of 3.750% Notes due 2022"
+    },
+    {
+      "accession": "0000876661-18-000602",
+      "class": "Guggenheim Raymond James SB-1 Equity ETF"
+    },
+    {
+      "accession": "0001354457-25-000455",
+      "class": "Depositary Shares"
+    },
+    {
+      "accession": "0001143362-24-000368",
+      "class": "Gaurantor of 5.75% Fixed-to-Floating Rate Trust Preference Securities of SCE Trust III"
+    },
+    {
+      "accession": "0000876661-20-001267",
+      "class": "6.25% Senior Notes due 2022"
+    },
+    {
+      "accession": "0000876661-22-000911",
+      "class": "Depository Shares each representing a 1/4000 interest in a share of Fixed-to-Floating Rate Non-Cumulative Perpetual Preferred Stock, Series P"
+    },
+    {
+      "accession": "0001143362-25-000198",
+      "class": "Hartford Schroders Commodity Strategy ETF"
+    },
+    {
+      "accession": "0001143362-21-000283",
+      "class": "Global X MSCI Norway ETF"
+    },
+    {
+      "accession": "0000876661-18-001331",
+      "class": "Common Units representing limited partner interests"
+    },
+    {
+      "accession": "0000876661-21-000599",
+      "class": "6.25% Notes due 2022"
+    },
+    {
+      "accession": "0001417835-25-000270",
+      "class": "iShares iBonds Dec 2025 Term Muni Bond ETF (IBMN)"
+    },
+    {
+      "accession": "0000876661-18-000142",
+      "class": "As Guarantor for the 6.25% Senior Notes due 2021"
+    },
+    {
+      "accession": "0001354457-22-000169",
+      "class": "class a common stock, warrant &amp; unit"
+    },
+    {
+      "accession": "0001143362-24-000114",
+      "class": "Defiance Pure Electric Vehicle ETF"
+    },
+    {
+      "accession": "0001354457-19-000032",
+      "class": "Warrant"
+    },
+    {
+      "accession": "0001354457-24-000412",
+      "class": "Warrant"
+    },
+    {
+      "accession": "0000876661-22-001198",
+      "class": "Warrants, each whole warrant exercisable for one Class A ordinary share at an exercise price of $11.50 per share"
+    },
+    {
+      "accession": "0000876661-21-000050",
+      "class": "3.25% Fixed Rate Senior Notes due 2021"
+    },
+    {
+      "accession": "0001354457-25-000144",
+      "class": "6.375% Senior Notes due 2025"
+    },
+    {
+      "accession": "0000876661-22-000733",
+      "class": "Guarantor of 3.375% Notes due 2023"
+    },
+    {
+      "accession": "0000876661-23-000788",
+      "class": "Co-Registrant of 1.125% Senior Notes due 2023"
+    },
+    {
+      "accession": "0000876661-20-001136",
+      "class": "Units, each consisting of one share of Class A Common Stock and one-half of one Redeemable Warrant"
+    },
+    {
+      "accession": "0000876661-22-000113",
+      "class": "5.45% Series J Cumulative Preferred Stock"
+    },
+    {
+      "accession": "0000876661-21-000457",
+      "class": "6.875% Notes due April 15, 2047"
+    },
+    {
+      "accession": "0000876661-19-000080",
+      "class": "Depositary Shares, each representing 1/20th interest in the Company's 8.00% Series A Mandatory Convertible Preferred Stock"
+    },
+    {
+      "accession": "0000876661-19-000355",
+      "class": "As Guarantor of 500,000,000 Floating Rate Notes due 2019"
+    },
+    {
+      "accession": "0000876661-25-000901",
+      "class": "Series 26 Subordinated Debt Securities due November 2025"
+    },
+    {
+      "accession": "0000876661-18-000542",
+      "class": "4.875% Global Notes due 2020"
+    },
+    {
+      "accession": "0001417835-19-000023",
+      "class": "iShares Adaptive Currency Hedged MSCI Japan ETF (DEWJ), iShares Adaptive Currency Hedged MSCI Eurozone ETF (DEZU), iShares 10+ Year Investment Grade Corporate Bond ETF (LLQD), iShares 5-10 Year Investment Grade Corporate Bond ETF (MLQD)"
+    },
+    {
+      "accession": "0001354457-18-000172",
+      "class": "Common Units Representing Limited Partner Interests"
+    },
+    {
+      "accession": "0001354457-23-000405",
+      "class": "Class A Ordinary Shares"
+    },
+    {
+      "accession": "0000876661-19-000997",
+      "class": "5.875% Guaranteed Notes due 2021"
+    },
+    {
+      "accession": "0001354457-22-000767",
+      "class": "Class A Common Stock, Warrant, Unit"
+    },
+    {
+      "accession": "0001354457-25-000766",
+      "class": "American Depositary Shares"
+    },
+    {
+      "accession": "0001143362-18-000246",
+      "class": "iPath Inverse S&amp;P 500 VIX Short-Term Futures Exchange Traded Notes (II)"
+    },
+    {
+      "accession": "0001354457-25-000659",
+      "class": "Ordinary shares, Units, Rights and Warrants"
+    },
+    {
+      "accession": "0001354457-21-001249",
+      "class": "6.25% Notes Due 2023"
+    },
+    {
+      "accession": "0000876661-18-001311",
+      "class": "Preferred Stock Purchase Rights"
+    },
+    {
+      "accession": "0001354457-22-000669",
+      "class": "Class A Ordinary Shares, Warrant, and Units"
+    },
+    {
+      "accession": "0000876661-23-000158",
+      "class": "5.279% Corporate Units"
+    },
+    {
+      "accession": "0000876661-17-000644",
+      "class": "6 1/8% Series Class A Preferred Stock, Non-Cumulative"
+    },
+    {
+      "accession": "0000876661-17-000633",
+      "class": "4.00% Notes due 2018"
+    },
+    {
+      "accession": "0000876661-20-000162",
+      "class": "Depositary Shares, each representing 1/400th interest in a share of 6.125% Non-Cumulative Preferred Stock, Series Y"
+    },
+    {
+      "accession": "0000876661-21-001349",
+      "class": "2.112% Guaranteed Notes due 2021"
+    },
+    {
+      "accession": "0001354457-21-000359",
+      "class": "Roth CH Acquisition I Co. Common Stock, Warrant, and Unit"
+    },
+    {
+      "accession": "0001143362-24-000123",
+      "class": "VanEck Future of Food ETF"
+    },
+    {
+      "accession": "0001354457-19-000603",
+      "class": "Class A Common Stock, Unit, and Warrant"
+    },
+    {
+      "accession": "0000876661-16-001396",
+      "class": "Series A Participating Preferred Stock Purchase Rights"
+    },
+    {
+      "accession": "0001143362-17-000049",
+      "class": "Credit Suisse X-Links Long/Short Equity ETNs due February 19, 2020"
+    },
+    {
+      "accession": "0001354457-25-000451",
+      "class": "Senior Notes Due 2025"
+    },
+    {
+      "accession": "0001354457-23-000388",
+      "class": "Class A Common Stock, Warrant, Unit"
+    },
+    {
+      "accession": "0001354457-20-000829",
+      "class": "Haymaker Acquisition Corp. II Class A Common Stock, Warrants, and Units"
+    },
+    {
+      "accession": "0001354457-20-000274",
+      "class": "Warrants"
+    },
+    {
+      "accession": "0000876661-18-000348",
+      "class": "Warrants to purchase Common Stock (Expiring February 2, 2024)"
+    },
+    {
+      "accession": "0001354457-21-000428",
+      "class": "7.50% Senior Notes Due 2027"
+    },
+    {
+      "accession": "0000876661-20-000123",
+      "class": "7.500% Senior Notes due 2020"
+    },
+    {
+      "accession": "0000876661-23-000409",
+      "class": "3.950% Fixed Rate/Floating Rate Senior Unsecured Notes due 2024"
+    },
+    {
+      "accession": "0001354457-25-000233",
+      "class": "JPMorgan Sustainable Infrastructure ETF"
+    },
+    {
+      "accession": "0001354457-23-000093",
+      "class": "Unit"
+    },
+    {
+      "accession": "0001143362-20-000078",
+      "class": "Invesco Global ESG Revenue ETF"
+    },
+    {
+      "accession": "0000876661-23-000132",
+      "class": "Warrants, each whole warrant exercisable for one share of class A common stock at an exercise price of $11.50"
+    },
+    {
+      "accession": "0000876661-20-001037",
+      "class": "Guarantor of the 2.250% Guaranteed Notes due 2020"
+    },
+    {
+      "accession": "0001143362-19-000184",
+      "class": "Global X JPMorgan Efficiente Index ETF"
+    },
+    {
+      "accession": "0000876661-16-001471",
+      "class": "As Guarantor of the 1.125% Notes due 2017"
+    },
+    {
+      "accession": "0001354457-22-000084",
+      "class": "Warrant expiring 1/29/2022"
+    },
+    {
+      "accession": "0001143362-20-000493",
+      "class": "Arrow QVM Equity Factor ETF"
+    },
+    {
+      "accession": "0000876661-23-000008",
+      "class": "7.20% Series C Cumulative Redeemable Perpetual Preferred Shares"
+    },
+    {
+      "accession": "0001354457-23-000366",
+      "class": "Warrant expiring on 5/31/2023"
+    },
+    {
+      "accession": "0001143362-20-000246",
+      "class": "Credit Suisse X-Links Multi-Asset High Income Exchange Traded Notes (ETNs) due September 28, 2035"
+    },
+    {
+      "accession": "0001143313-23-000184",
+      "class": "Redeemable Warrants, each whole warrant exercisable for one share of Common Stock at an exercise price of $11.50"
+    },
+    {
+      "accession": "0001143362-19-000093",
+      "class": "Workplace Equality Portfolio"
+    },
+    {
+      "accession": "0000876661-19-000612",
+      "class": "Guarantor of the 3.25% Notes Due 2019"
+    },
+    {
+      "accession": "0001143362-25-000269",
+      "class": "Neuberger Berman Next Generation Connected Consumer ETF"
+    },
+    {
+      "accession": "0000876661-18-000559",
+      "class": "As Guarantor of 1.900% Notes due 2019"
+    },
+    {
+      "accession": "0001354457-21-000687",
+      "class": "6.50% Subordinated Notes due 2042"
+    },
+    {
+      "accession": "0001143362-20-000462",
+      "class": "Exchange-Traded Notes linked to the VelocityShares Daily 4X Long USD vs. EUR Index due December 15, 2032"
+    },
+    {
+      "accession": "0000876661-16-001376",
+      "class": "9.25% Series A Cumulative Redeemable Preferred Stock"
+    },
+    {
+      "accession": "0001354457-23-000696",
+      "class": "Class A Ordinary Shares, Rights, Units, Warrants"
+    },
+    {
+      "accession": "0001354457-22-000074",
+      "class": "Unit"
+    },
+    {
+      "accession": "0001143362-18-000278",
+      "class": "Guggenheim Solar ETF"
+    },
+    {
+      "accession": "0000876661-19-000532",
+      "class": "Guarantor of the Floating Rate Notes due 2019"
+    },
+    {
+      "accession": "0001143362-17-000130",
+      "class": "ProShares Ultra Oil &amp; Gas Exploration &amp; Production"
+    }
+  ],
+  "source": "SEC EDGAR full-index form.idx, Form 25-NSE",
+  "walked": 152,
+  "window": [
+    "2016-10-01",
+    "2025-12-31"
+  ]
+}
