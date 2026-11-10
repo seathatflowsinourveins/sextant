@@ -67,3 +67,16 @@ a draft, not a finding.
 
 If a route is missing, add it here with the same one-owner rule; do not add a second
 plugin or a second index.
+
+## Complete B protection reserves
+
+ADR-0007 C4 and Codex review of `602479b` (2026-11-10): reserve B's mandatory positions/open-orders reads at terminal handovers as well as the reviewed 2/1 write floor, including the entry-created position. Optional entry authority that cannot be parsed leaves entries unavailable while protection starts. `test_b_entry_reserve_review.py` retains the executed fill, resize, invalid-control and exiting-position witnesses.
+
+The pinned SDK's retry count is private: prove `_retry` exists on the real 0.44.0 client before disabling retries for a separate entry client. Reuse `b_feed.no_retries`; missing support leaves entry unavailable and pages, without changing protection. One 429/504 attempt is one POST and one pacer wire; refusal waits for the next generation, with no SDK sleep (`test_b_entry_sdk.py` and `test_b_entry_facade_sdk.py`).
+
+Reserve unsettled entries by retained client order ID, once at the wire boundary; a lost acknowledgement keeps its charge, a refused same-ID retry cannot clear it, and a terminal receipt settles only that ID once. Keep settled identities to refuse replay. Withdraw an unsent entry even when an older protective drain raises, before creating any charge. Prove this ledger invariant with fixed-seed event sequences and real SDK lost responses (`test_b_entry_charge_ledger.py`). Measure the whole protective path: one reconcile reads twice, but each resize's terminal cancellation reconciles again, making full rearm 2+4n wires. Burst 18 therefore admits held counts 0-3; sharing a single pair of reads across all handovers under-reserves protection.
+
+An entry needs its stable nonempty client order ID before admission; never coerce the SDK's optional ID into a shared placeholder. For the real SDK, its method call precedes JSON preparation: count the entry wire and create its charge at requests' `Session.send`, after preparation succeeds. Invalid JSON then creates neither; a timeout after dispatch retains its own exposure (`test_b_entry_sdk.py` and `test_b_entry_facade_sdk.py`).
+
+
+Opus review of `18c6226` (2026-11-10): the entry-created position needs its own partial-fill/full-fill resize path, not only an initial trail. Measure all three reconciles: nine wires at the existing 2/1 rows and two reads per snapshot. Retain that path for every unsettled entry; the additional reserve is two snapshot pairs plus one exiting write floor per new/pending ID. A definitive 403/422 rejection settles its own charge, while uncertain outcomes retain exposure. `test_b_entry_partial_reserve.py` proves the path at 0/1 held and the old boundary's refusal. The earlier held 0-3 admission table is superseded: burst 18 admits a fresh ID at held 0-2 only with 9/13/17 tokens left after it; a second unsettled entry refuses. The 6144-operation proof uses a derived measurement-only bucket for four pending IDs and retains every assertion. Burst changes and the restart/separate-reconcile findings remain separate work under #351.
