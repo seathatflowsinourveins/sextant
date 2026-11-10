@@ -41,9 +41,11 @@ def test_the_sweep_runs_in_place_and_forces_only_merged_heads() -> None:
         assert subprocess.run(["bash", "-n", str(script)], check=False).returncode == 0, script
     lifecycle = LIFECYCLE.read_text()
     assert "git config fetch.prune true" in lifecycle and "git maintenance start" in lifecycle
-    # A workspace target, not a repo one, so no run creates a worktree of its own.
+    # A workspace target on create, and on edit this checkout's repository too, so an existing sweep
+    # converges its stored run-context path; no run creates a worktree of its own.
     assert "orca-ide automations create" in lifecycle and '--workspace "path:$PWD"' in lifecycle
-    assert "--repo" not in lifecycle and "--precheck" in lifecycle
+    assert '--repo "path:$PWD"' in lifecycle, "the edit path names this checkout's repository"
+    assert "--workspace-mode" not in lifecycle and "--precheck" in lifecycle
     assert "orca worktree rm --worktree branch:<branch> --delete-branch" in PROMPT
     assert "git branch -d <branch>" in PROMPT and "issue #89" in PROMPT
     # Squash merges never look merged to git, so the one forced delete is bound to GitHub's record:
@@ -87,6 +89,7 @@ def test_setting_up_the_sweep_twice_makes_one(tmp_path: Path) -> None:
     edits = [call for call in calls if call.startswith("orca-ide automations edit a1 ")]
     assert len(edits) == 1, "the second run brings the existing sweep to this checkout's prompt"
     assert "--prompt" in edits[0] and "lifecycle-precheck.sh" in edits[0]
+    assert f"--repo path:{ROOT}" in edits[0], "an existing sweep converges its run-context path"
 
 
 def test_the_precheck_runs_the_sweep_only_when_there_is_work(tmp_path: Path) -> None:

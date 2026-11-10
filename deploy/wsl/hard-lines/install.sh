@@ -46,12 +46,40 @@ mv -f -- "${temp[-1]}" "$lane/rules/sextant-hard-lines.rules"
 settings="$HOME/.gemini/antigravity-cli/settings.json"
 mkdir -p "$(dirname "$settings")"
 temp+=("$(mktemp "$settings.XXXXXX")")
+merged=${temp[-1]}
 if [[ -s "$settings" ]]; then cat -- "$settings"; else echo '{}'; fi |
   jq --slurpfile ours "$here/antigravity.json" \
     '.permissions.deny = ((.permissions.deny // []) + ($ours[0].permissions.deny - (.permissions.deny // [])))' \
-    > "${temp[-1]}"
-chmod 600 "${temp[-1]}"
-mv -f -- "${temp[-1]}" "$settings"
+    > "$merged"
+
+# A trusted path that no longer exists is what the runtime doctor's antigravity.repository rule reports,
+# so prune exactly those and print each removed path for the owner to re-trust a current checkout. Every
+# other key and entry stays. The doctor resolves a path the same way: a leading `~` is this HOME and a
+# relative path is this main checkout.
+pruned=$(jq -r 'if (.trustedWorkspaces | type) == "array" then .trustedWorkspaces[] | strings else empty end' "$merged")
+if [[ -n "$pruned" ]]; then
+  removed=()
+  while IFS= read -r value; do
+    path=$value
+    case "$path" in
+      "~") path=$HOME ;;
+      "~/"*) path="$HOME/${path#\~/}" ;;
+    esac
+    [[ "$path" == /* ]] || path="$main/$path"
+    if [[ ! -e "$path" ]]; then removed+=("$value"); fi
+  done <<< "$pruned"
+  if ((${#removed[@]})); then
+    temp+=("$merged.removed" "$merged.kept")
+    printf '%s\n' "${removed[@]}" | jq -R . > "$merged.removed"
+    jq --slurpfile removed "$merged.removed" \
+      '.trustedWorkspaces |= map(select(. as $v | $removed | index($v) | not))' \
+      "$merged" > "$merged.kept"
+    for value in "${removed[@]}"; do echo "removed Antigravity trusted workspace: $value"; done
+    mv -f -- "$merged.kept" "$merged"
+  fi
+fi
+chmod 600 "$merged"
+mv -f -- "$merged" "$settings"
 
 [[ -x "$dsh" ]] || { echo "dsh not found at $dsh; set DSH_BIN to the sandbox lock's dsh" >&2; exit 1; }
 for profile in acp headless dsh-tui; do
