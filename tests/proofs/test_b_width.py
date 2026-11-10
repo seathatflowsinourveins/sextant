@@ -102,20 +102,29 @@ def test_atr_counts_only_completed_bars():
     rows = bars([Decimal("0.5")] * 3 + [Decimal("5")])
     last_open_ns = rows[-1].ts_ns
     # The fourth bar is still forming: its large range must not enter the ATR.
-    assert completed_atr(rows, 3, 5, last_open_ns + MINUTE_NS) == Decimal("0.5")
-    assert completed_atr(rows, 3, 5, last_open_ns + 5 * MINUTE_NS) == Decimal("2")
+    assert completed_atr(rows, 3, 5, last_open_ns + MINUTE_NS, last_open_ns + MINUTE_NS) == Decimal(
+        "0.5"
+    )
+    assert completed_atr(
+        rows, 3, 5, last_open_ns + 5 * MINUTE_NS, last_open_ns + 5 * MINUTE_NS
+    ) == Decimal("2")
 
 
 def test_atr_is_none_until_the_period_has_completed_bars():
     rows = bars([Decimal("0.5")] * 2)
-    assert completed_atr(rows, 3, 5, rows[-1].ts_ns + 5 * MINUTE_NS) is None
-    assert completed_atr([], 3, 5, START_NS) is None
+    assert (
+        completed_atr(rows, 3, 5, rows[-1].ts_ns + 5 * MINUTE_NS, rows[-1].ts_ns + 5 * MINUTE_NS)
+        is None
+    )
+    assert completed_atr([], 3, 5, START_NS, START_NS) is None
 
 
 def test_atr_ignores_the_order_bars_arrive_in():
     rows = bars([Decimal("0.4"), Decimal("0.6"), Decimal("0.5"), Decimal("0.9")])
     now = rows[-1].ts_ns + 5 * MINUTE_NS
-    assert completed_atr(list(reversed(rows)), 3, 5, now) == completed_atr(rows, 3, 5, now)
+    assert completed_atr(list(reversed(rows)), 3, 5, now, now) == completed_atr(
+        rows, 3, 5, now, now
+    )
 
 
 def test_atr_matches_nautilus_rc8_wilder_average_true_range():
@@ -132,7 +141,7 @@ def test_atr_matches_nautilus_rc8_wilder_average_true_range():
     native = AverageTrueRange(3, MovingAverageType.Wilder)
     for row in rows:
         native.update_raw(float(row.high), float(row.low), float(row.close))
-    ours = completed_atr(rows, 3, 5, rows[-1].ts_ns + 5 * MINUTE_NS)
+    ours = completed_atr(rows, 3, 5, rows[-1].ts_ns + 5 * MINUTE_NS, rows[-1].ts_ns + 5 * MINUTE_NS)
     assert ours is not None and native.initialized
     assert abs(float(ours) - native.value) < 1e-9
 
@@ -154,11 +163,17 @@ def test_atr_reads_only_this_sessions_rth_bars_and_needs_a_recent_newest_bar():
     ]  # probe 6: quiet pre-market bars seeded the ATR 3.3x tighter
     rth = bars([Decimal("1")] * 3)
     now = rth[-1].ts_ns + 5 * MINUTE_NS
-    assert completed_atr(pre + rth, 3, 5, now) == Decimal("1")
-    assert completed_atr(rth, 3, 5, now + 5 * MINUTE_NS - 1) == Decimal("1")
-    assert completed_atr(rth, 3, 5, now + 5 * MINUTE_NS) is None  # no bar of the interval closed
+    assert completed_atr(pre + rth, 3, 5, now, now) == Decimal("1")
+    assert completed_atr(rth, 3, 5, now + 5 * MINUTE_NS - 1, now + 5 * MINUTE_NS - 1) == Decimal(
+        "1"
+    )
+    assert (
+        completed_atr(rth, 3, 5, now + 5 * MINUTE_NS, now + 5 * MINUTE_NS) is None
+    )  # no bar of the interval closed
     evening = int(datetime(2025, 11, 10, 18, 0, tzinfo=ET).timestamp()) * SEC
-    assert completed_atr(rth, 3, 5, evening) is None  # outside RTH there are no RTH bars now
+    assert (
+        completed_atr(rth, 3, 5, evening, evening) is None
+    )  # outside RTH there are no RTH bars now
 
 
 def test_the_atr_is_usable_only_when_the_newest_bar_is_the_interval_that_just_closed():
@@ -174,10 +189,10 @@ def test_the_atr_is_usable_only_when_the_newest_bar_is_the_interval_that_just_cl
 
     # The Codex max witness (LEAD-1021, per completed bar interval): bars ending 11:20 give no
     # new width from 11:25:00 on; the last good width is kept and the reason paged (part 2).
-    assert completed_atr(ending(11, 20), 3, 5, at(11, 24, 59)) == Decimal("1")
-    assert completed_atr(ending(11, 20), 3, 5, at(11, 25)) is None
-    assert completed_atr(ending(11, 20), 3, 5, at(11, 29, 59)) is None
-    assert completed_atr(ending(11, 25), 3, 5, at(11, 25)) == Decimal("1")
+    assert completed_atr(ending(11, 20), 3, 5, at(11, 24, 59), at(11, 24, 59)) == Decimal("1")
+    assert completed_atr(ending(11, 20), 3, 5, at(11, 25), at(11, 25)) is None
+    assert completed_atr(ending(11, 20), 3, 5, at(11, 29, 59), at(11, 29, 59)) is None
+    assert completed_atr(ending(11, 25), 3, 5, at(11, 25), at(11, 25)) == Decimal("1")
 
 
 def test_the_width_refuses_a_cap_above_the_native_max_a_non_positive_minimum_and_floats():
@@ -232,3 +247,82 @@ def test_each_width_tunable_has_one_uncalibrated_registry_row_with_its_source():
         assert rows[name]["value"] == value and rows[name]["calibration_state"] == "UNCALIBRATED"
         assert "UNCALIBRATED" in rows[name]["source"]
         assert getattr(params, name) == Decimal(value)
+
+
+# --- The lead's review of part 1 (LEAD-REVIEW-bw1-1ec614b) ------------------------------------
+
+
+def et(hour: int, minute: int, second: int = 0) -> int:
+    return int(datetime(2026, 11, 9, hour, minute, second, tzinfo=ET).timestamp()) * SEC
+
+
+def test_a_bar_counts_as_complete_only_if_it_ended_by_the_time_the_page_was_fetched():
+    one, mid = Decimal("1"), Decimal("100")
+    done = [
+        BarRow(et(11, 15) - i * 5 * MINUTE_NS, mid + one / 2, mid - one / 2, mid) for i in range(3)
+    ]
+    forming = BarRow(et(11, 20), mid + Decimal("0.005"), mid - Decimal("0.005"), mid)  # 0.01 so far
+    rows = [*done, forming]
+    # Fetched at 11:24:59, the 11:20 bar was still forming: no width at 11:25:00 (review item 2).
+    assert completed_atr(rows, 3, 5, et(11, 25), et(11, 24, 59)) is None
+    assert completed_atr(rows, 3, 5, et(11, 25), et(11, 25)) is not None  # fetched once closed
+
+
+ZERO, NEG = Decimal(0), Decimal("-1")
+VIEW = MarketView(bid=Decimal("100"), spread=Decimal("0.01"), one_tick=Decimal("0.01"))
+
+
+@pytest.mark.parametrize(
+    ("overrides", "view"),
+    [
+        ({"multiple": ZERO}, VIEW),  # review item 3: each drops a term of the max()
+        ({"multiple": Decimal("-3")}, VIEW),
+        ({"atr": NEG}, VIEW),
+        ({}, MarketView(bid=Decimal("100"), spread=Decimal("-5"), one_tick=Decimal("0.01"))),
+        ({}, MarketView(bid=Decimal("100"), spread=Decimal("0.01"), one_tick=ZERO)),
+        ({}, MarketView(bid=Decimal("100"), spread=Decimal("0.01"), one_tick=NEG)),
+        ({"native": Decimal("0.0005")}, VIEW),  # item 4: under the 0.001 floor
+        ({"atr": Decimal("NaN")}, VIEW),  # item 6: never InvalidOperation
+        ({"atr": Decimal("Infinity")}, VIEW),
+        ({"native": Decimal("NaN")}, VIEW),
+        ({"minimum": Decimal("NaN")}, VIEW),
+        ({}, MarketView(bid=Decimal("100"), spread=Decimal("NaN"), one_tick=Decimal("0.01"))),
+        ({}, MarketView(bid=Decimal("NaN"), spread=Decimal("0.01"), one_tick=Decimal("0.01"))),
+        ({}, MarketView(bid=ZERO, spread=Decimal("0.01"), one_tick=Decimal("0.01"))),
+        ({}, MarketView(bid=NEG, spread=Decimal("0.01"), one_tick=Decimal("0.01"))),
+    ],
+)
+def test_the_width_refuses_every_input_that_would_drop_a_term_or_is_not_a_number(overrides, view):
+    args: dict[str, Any] = {"native": NATIVE, "minimum": MINIMUM, "multiple": MULTIPLE}
+    args |= {"atr": Decimal("1")} | overrides
+    with pytest.raises(ValueError):
+        trail_fraction(**args, view=view)
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"native_trail_fraction": Decimal("0.0005")},  # item 4: native under the minimum
+        {"trail_atr_period": Decimal("2.5")},  # item 8: an AssertionError in the tick
+        {"trail_atr_period": Decimal("0")},
+        {"trail_atr_bar_minutes": Decimal("2.5")},
+        {"tape_max_bars": Decimal("0.5")},  # int() would make it 0
+    ],
+)
+def test_the_registry_refuses_a_native_under_the_minimum_and_a_fractional_count(overrides):
+    from sextant.paper.b_protector import BParameters
+
+    facts: dict[str, Any] = {
+        "native_trail_fraction": NATIVE,
+        "reconcile_interval_s": Decimal("10"),
+        "feed_poll_interval_s": Decimal("1"),
+        "feed_silence_s": Decimal("5"),
+        "tape_max_bars": Decimal("10000"),
+        "alpaca_min_trail_fraction": MINIMUM,
+        "trail_atr_period": Decimal("22"),
+        "trail_atr_bar_minutes": Decimal("5"),
+        "trail_atr_multiple": MULTIPLE,
+    }
+    BParameters(**facts)  # the registry's own values load
+    with pytest.raises(ValueError):
+        BParameters(**(facts | overrides))
