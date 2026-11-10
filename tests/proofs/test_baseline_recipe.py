@@ -5,13 +5,18 @@ Hand-built minute bars only: no vendor call, no network, no clock.
 
 import hashlib
 import json
+import os
+import subprocess
+import sys
 from datetime import UTC, date, datetime, time, timedelta
+from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
 import pytest
 from alpaca.data.enums import DataFeed
 
+from sextant.data import baseline_recipe as recipe
 from sextant.data.baseline_bars import prior_xnys_sessions
 from sextant.data.baseline_recipe import (
     RECIPE_SEGMENTS,
@@ -76,12 +81,15 @@ DAYTIME_BARS = daytime_rows()
 class FakeBars:
     """A fake data client: one window of bars per feed, filtered by the request."""
 
-    def __init__(self, *, omit: str | None = None) -> None:
+    def __init__(self, *, omit: str | None = None, empty: bool = False) -> None:
         self.omit = omit
+        self.empty = empty
         self.requests: list[Any] = []
 
     def get_stock_bars(self, request: Any) -> dict[str, list[dict[str, object]]]:
         self.requests.append(request)
+        if self.empty:
+            return {}
         requested = request.symbol_or_symbols
         if isinstance(requested, str):
             requested = [requested]
@@ -330,3 +338,91 @@ def test_main_defaults_as_of_to_the_current_segments_session_date(tmp_path) -> N
 
 def test_prior_xnys_sessions_is_public_and_names_the_builder_window() -> None:
     assert prior_xnys_sessions(AS_OF, 2) == SESSIONS
+
+
+def test_the_advertised_module_command_runs_main() -> None:
+    root = Path(__file__).resolve().parents[2]
+
+    result = subprocess.run(
+        [sys.executable, "-m", "sextant.data.baseline_recipe", "--help"],
+        cwd=root,
+        env={**os.environ, "PYTHONPATH": str(root / "src")},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "usage: python -m sextant.data.baseline_recipe" in result.stdout
+
+
+def test_the_default_client_asks_its_vendor_for_raw_bars(monkeypatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakeHistoricalClient:
+        def __init__(self, **kwargs: object) -> None:
+            calls.append(kwargs)
+
+    monkeypatch.setenv("APCA_API_KEY_ID", "test-key")
+    monkeypatch.setenv("APCA_API_SECRET_KEY", "test-secret")
+    monkeypatch.setattr("alpaca.data.historical.StockHistoricalDataClient", FakeHistoricalClient)
+
+    client = recipe._default_client()
+
+    assert isinstance(client, FakeHistoricalClient)
+    assert calls == [{"api_key": "test-key", "secret_key": "test-secret", "raw_data": True}]
+
+
+def test_a_venue_qualified_symbol_is_refused_before_the_vendor_call() -> None:
+    client = FakeBars()
+
+    with pytest.raises(ValueError, match="bare vendor ticker"):
+        build(client, ["AAPL.ALPACA"], as_of=AS_OF, known_at=KNOWN_AT, prior_sessions=2)
+
+    assert client.requests == []
+
+
+def test_an_empty_vendor_window_is_flagged_and_exits_nonzero(tmp_path) -> None:
+    out = tmp_path / "baselines"
+
+    code = main(
+        [
+            "--out",
+            str(out),
+            "--symbols",
+            "AAPL",
+            "--as-of",
+            "2026-11-09",
+            "--prior-sessions",
+            "2",
+        ],
+        client_factory=lambda: FakeBars(empty=True),
+        now_ns=lambda: KNOWN_AT,
+    )
+
+    assert code == 1
+    manifest = json.loads((out / "manifest.json").read_text())
+    assert manifest["zero_filled"] == {
+        "OVERNIGHT": ["AAPL"],
+        "PRE": ["AAPL"],
+        "RTH": ["AAPL"],
+        "POST": ["AAPL"],
+    }
+    assert manifest["sparse"] == {}
+    overnight = json.loads((out / "overnight.json").read_text())
+    assert {
+        (sample["dollar_volume"], sample["trade_count"]) for sample in overnight["samples"]
+    } == {("0", "0")}
+
+
+def test_a_table_missing_a_session_is_flagged_sparse() -> None:
+    tables = build_tables()
+    pre = [sample for sample in tables["PRE"].samples if sample.session != "2026-11-06"]
+    thin = BaselineTable(
+        tuple(pre), tables["PRE"].provenance, tables["PRE"].known_at, tables["PRE"].feed
+    )
+
+    flags = recipe.survey({**tables, "PRE": thin}, SYMBOLS, SESSIONS)
+
+    assert flags["sparse"] == {"PRE": ["AAPL", "MF"]}
+    assert flags["zero_filled"] == {}

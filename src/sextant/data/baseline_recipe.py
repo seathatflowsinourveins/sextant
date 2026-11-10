@@ -12,6 +12,12 @@ commit record and checks the digests before using the files.
 ``python -m sextant.paper.c_universe --out PATH``; this recipe never re-ranks.
 Only :func:`main` reads the environment or builds a client.
 
+Symbols are bare vendor tickers: a venue-qualified instrument ID such as
+``AAPL.ALPACA`` is refused before any request. A segment that is zero across
+its whole window, or thinner than the schema floor, is named under
+``zero_filled`` or ``sparse`` in the manifest and the run exits non-zero
+instead of publishing an unremarkable zero-filled baseline.
+
 Upstream: alpacahq/alpaca-py@v0.44.0 ``alpaca/data/requests.py:StockBarsRequest``
 and ``alpaca/data/client.py:get_stock_bars``, called as ``baseline_bars`` does.
 """
@@ -46,13 +52,21 @@ SEGMENT_FILES = {
 }
 FEEDS = {"OVERNIGHT": "boats", "PRE": "sip", "RTH": "sip", "POST": "sip"}
 MANIFEST_NAME = "manifest.json"
+MIN_SAMPLES_PER_SESSION = 2  # the schema's start and end sample for one session
 
 
 def _symbols(symbols: Iterable[str]) -> tuple[str, ...]:
-    names = tuple(dict.fromkeys(symbol_name(symbol) for symbol in symbols))
+    names: list[str] = []
+    for symbol in symbols:
+        if symbol.endswith(".ALPACA"):
+            raise ValueError(
+                "baseline symbols are bare vendor tickers, not instrument IDs: "
+                f"{symbol} (pass {symbol.removesuffix('.ALPACA')})"
+            )
+        names.append(symbol_name(symbol))
     if not names:
         raise ValueError("at least one symbol is required")
-    return names
+    return tuple(dict.fromkeys(names))
 
 
 def segment_table(table: BaselineTable, name: str) -> BaselineTable:
@@ -117,6 +131,42 @@ def render(tables: Mapping[str, BaselineTable]) -> dict[str, str]:
     return texts
 
 
+def survey(
+    tables: Mapping[str, BaselineTable],
+    symbols: Sequence[str],
+    sessions: Sequence[date],
+) -> dict[str, dict[str, list[str]]]:
+    """Name each segment file that is zero-filled or thinner than the schema floor.
+
+    The fetchers keep their empty-response semantics: a quiet window is a
+    complete window. This recipe still has to say so out loud, because a table
+    whose samples are all zero is indistinguishable from a missing baseline and
+    must never arm a slot silently.
+    """
+    expected = [session.isoformat() for session in sessions]
+    flags: dict[str, dict[str, list[str]]] = {"zero_filled": {}, "sparse": {}}
+    for name in RECIPE_SEGMENTS:
+        table = tables[name]
+        zero: list[str] = []
+        sparse: list[str] = []
+        for symbol in symbols:
+            samples = [sample for sample in table.samples if sample.symbol == symbol]
+            present = {sample.session for sample in samples}
+            if len(samples) < MIN_SAMPLES_PER_SESSION * len(expected):
+                sparse.append(symbol)
+            elif set(expected) - present:
+                sparse.append(symbol)
+            if samples and all(
+                sample.dollar_volume == 0 and sample.trade_count == 0 for sample in samples
+            ):
+                zero.append(symbol)
+        if zero:
+            flags["zero_filled"][name] = zero
+        if sparse:
+            flags["sparse"][name] = sparse
+    return flags
+
+
 def publish(
     out: Path,
     tables: Mapping[str, BaselineTable],
@@ -136,6 +186,7 @@ def publish(
         raise ValueError("at least one prior session is required")
     verify(tables, names)
     texts = render(tables)
+    flags = survey(tables, names, sessions)
     manifest: dict[str, Any] = {
         "command": list(command),
         "as_of": as_of.isoformat(),
@@ -148,6 +199,8 @@ def publish(
         },
         "source": source,
         "universe": dict(universe) if universe is not None else None,
+        "zero_filled": flags["zero_filled"],
+        "sparse": flags["sparse"],
         "files": {},
     }
     out.mkdir(parents=True, exist_ok=True)
@@ -260,8 +313,12 @@ def _default_client() -> BarsClient:
     from alpaca.data.historical import StockHistoricalDataClient
 
     api_key, secret_key = environment_credentials()
+    # raw_data=True returns the flat {symbol: [bar, ...]} mapping the fetchers read.
     # alpaca-py names the parameter request_params; the fetchers call positionally.
-    return cast(BarsClient, StockHistoricalDataClient(api_key=api_key, secret_key=secret_key))
+    return cast(
+        BarsClient,
+        StockHistoricalDataClient(api_key=api_key, secret_key=secret_key, raw_data=True),
+    )
 
 
 def main(
@@ -303,4 +360,16 @@ def main(
         universe=universe,
     )
     print(f"wrote {len(manifest['files'])} baselines and {args.out / MANIFEST_NAME}", flush=True)
+    flags = {key: manifest[key] for key in ("zero_filled", "sparse") if manifest[key]}
+    if flags:
+        print(
+            f"warning: baseline flags {json.dumps(flags, sort_keys=True)}",
+            file=sys.stderr,
+            flush=True,
+        )
+        return 1
     return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
