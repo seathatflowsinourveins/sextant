@@ -2,12 +2,15 @@
 
 Source: code.claude.com/docs/en/hooks-guide.md, "Re-inject context after
 compaction"; code.claude.com/docs/en/hooks.md, SessionStart and PreCompact;
-code.claude.com/docs/en/context-window.md, "What survives compaction". All
-read 2026-11-09. Authority: LEAD-2228 section N1.
+code.claude.com/docs/en/context-window.md, "What survives compaction";
+code.claude.com/docs/en/best-practices.md, "Keep cost and context down";
+code.claude.com/docs/en/settings-reference.md, `idleCompaction`. All read
+2026-11-09. Authority: LEAD-2228 section N1; LEAD-2313 item 2.
 """
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import subprocess
@@ -59,6 +62,46 @@ def _pointer(role: str) -> str:
 
 def _mtime() -> str:
     return datetime.fromtimestamp(TS).astimezone().strftime("%Y-%m-%d %H:%M")
+
+
+_MISSING = object()
+
+
+def _hook_command(mode: str) -> str:
+    return 'python3 -I "${CLAUDE_PROJECT_DIR}/scripts/compact_context.py" ' + mode + " || true"
+
+
+def _check_module():
+    spec = importlib.util.spec_from_file_location("compact_context", SCRIPT)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _fake_root(tmp_path: Path, *, idle: object = _MISSING) -> Path:
+    root = tmp_path / "repo"
+    (root / ".claude").mkdir(parents=True)
+    (root / "CLAUDE.md").write_text(
+        "# Compact instructions\n\n" + "".join("- line " + str(n) + "\n" for n in range(8))
+    )
+    settings: dict[str, object] = {
+        "hooks": {
+            "SessionStart": [
+                {
+                    "matcher": "compact",
+                    "hooks": [{"type": "command", "command": _hook_command("session-start")}],
+                }
+            ],
+            "PreCompact": [
+                {"hooks": [{"type": "command", "command": _hook_command("pre-compact")}]}
+            ],
+        }
+    }
+    if idle is not _MISSING:
+        settings["idleCompaction"] = idle
+    (root / ".claude" / "settings.json").write_text(json.dumps(settings))
+    return root
 
 
 def test_claude_md_keeps_the_shared_compact_instructions_to_eight_lines() -> None:
@@ -200,6 +243,29 @@ def test_check_passes_and_names_its_checks(tmp_path: Path) -> None:
     assert "Compact instructions" in out.stdout
     assert "SessionStart" in out.stdout
     assert "PreCompact" in out.stdout
+    assert "idleCompaction" in out.stdout
+
+
+def test_check_fails_without_an_explicit_idle_compaction_key(tmp_path: Path) -> None:
+    module = _check_module()
+    problems = module.check(_fake_root(tmp_path))
+    assert any("idleCompaction" in problem for problem in problems), problems
+
+
+def test_check_passes_on_a_complete_synthetic_tree(tmp_path: Path) -> None:
+    module = _check_module()
+    assert module.check(_fake_root(tmp_path, idle=True)) == []
+
+
+def test_claude_md_instructs_clear_between_unrelated_tasks() -> None:
+    text = (ROOT / "CLAUDE.md").read_text()
+    assert "`/clear`" in text
+    assert "unrelated tasks" in text
+
+
+def test_settings_make_idle_compaction_explicit() -> None:
+    settings = json.loads((ROOT / ".claude/settings.json").read_text())
+    assert settings["idleCompaction"] is True
 
 
 def test_just_session_start_runs_the_compact_check() -> None:

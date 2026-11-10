@@ -2,8 +2,10 @@
 """Print the session role's compaction context, or check the checked-in wiring.
 
 Source: code.claude.com/docs/en/hooks-guide.md, "Re-inject context after
-compaction"; code.claude.com/docs/en/hooks.md, SessionStart and PreCompact.
-Read 2026-11-09. Authority: LEAD-2228 section N1.
+compaction"; code.claude.com/docs/en/hooks.md, SessionStart and PreCompact;
+code.claude.com/docs/en/best-practices.md, "Keep cost and context down";
+code.claude.com/docs/en/settings-reference.md, `idleCompaction`. All read
+2026-11-09. Authority: LEAD-2228 section N1; LEAD-2313 item 2.
 
 The hook modes print only. They never read a state file's contents, never print
 an environment variable's value, make no network call and write no repository
@@ -159,11 +161,15 @@ def check(root: Path) -> list[str]:
         problems.append("CLAUDE.md: " + str(len(section)) + " compact lines, at most 8 allowed")
 
     hooks: dict = {}
+    settings: dict = {}
     try:
         settings = json.loads((root / ".claude" / "settings.json").read_text())
         hooks = settings.get("hooks", {})
     except (OSError, json.JSONDecodeError) as exc:
         problems.append(".claude/settings.json: unreadable (" + str(exc) + ")")
+    else:
+        if settings.get("idleCompaction") is not True:
+            problems.append(".claude/settings.json: idleCompaction is not set explicitly to true")
     if not _has_hook(hooks, "SessionStart", "compact", MODE_SESSION_START):
         problems.append(".claude/settings.json: missing the SessionStart compact hook")
     if not _has_hook(hooks, "PreCompact", None, MODE_PRE_COMPACT):
@@ -194,7 +200,10 @@ def main(argv: list[str], stdin_text: str, home: Path) -> int:
             return 1
         print(
             "ok: Compact instructions (at most 8 lines); SessionStart compact hook; "
-            "PreCompact hook; output under " + str(CAP) + " characters for " + ", ".join(ROLES)
+            "PreCompact hook; idleCompaction explicit; output under "
+            + str(CAP)
+            + " characters for "
+            + ", ".join(ROLES)
         )
         return 0
     role = _role_from(argv[1:], stdin_text)
