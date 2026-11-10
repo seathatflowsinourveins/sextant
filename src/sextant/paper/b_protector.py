@@ -1653,6 +1653,8 @@ class Protector:
 
     def _handle_update(self, update: TradeUpdate, symbol: str) -> None:
         event = _event_name(update.event)
+        if note := getattr(self._client, "entry_update", None):
+            note(update.order, event)
         if self._is_ours(update.order):
             self._handle_house(update, symbol, event)
             return
