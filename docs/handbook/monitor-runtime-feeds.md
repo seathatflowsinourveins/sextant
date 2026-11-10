@@ -12,12 +12,12 @@ the existing lane installer/parity path; never run the installer against B early
 
 - Claude: run `bash deploy/wsl/lane-runtimes/claude-launch.sh` from the checkout,
   or the installed `~/.local/share/sextant-lane-runtimes/claude-launch.sh`;
-  `python3 scripts/role_launch.py <role>` takes that path for every role and worker.
-  It execs native `claude`, retaining its authentication. The wrapper is the only
-  place that sets the exporter variables: Claude Code ignores them in a repository's
-  project settings, so `.claude/settings.json` keeps only the opt-outs the page still
-  honours. Keep user/managed settings consistent with the contract: a process
-  environment cannot override managed policy.
+  `python3 scripts/role_launch.py <role>` takes it for every role and worker.
+  It execs native `claude` with its authentication. Metrics export cumulatively for
+  the store's Prometheus. The wrapper alone sets the exporter variables: Claude Code
+  ignores them in a repository's project settings, so `.claude/settings.json` keeps
+  only the page's opt-outs. User/managed settings must match the contract: managed
+  policy beats a process environment.
 - Codex: `sextant-codex` and `sextant-codex-review` send explicit `-c` overrides
   even when an existing lane config is kept. `parity.py` renders the same settings
   into a new lane `CODEX_HOME/config.toml`; project `.codex/config.toml` cannot

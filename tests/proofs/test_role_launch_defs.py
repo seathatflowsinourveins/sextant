@@ -140,6 +140,7 @@ def test_the_launcher_command_goes_through_the_checked_in_wrapper(tmp_path: Path
         "import json, os, sys\n"
         "print(json.dumps({'argv': sys.argv[1:], "
         "'endpoint': os.environ.get('OTEL_EXPORTER_OTLP_ENDPOINT'), "
+        "'temporality': os.environ.get('OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE'), "
         "'attributes': os.environ.get('OTEL_RESOURCE_ATTRIBUTES')}))\n"
     )
     stub.chmod(0o755)
@@ -161,6 +162,7 @@ def test_the_launcher_command_goes_through_the_checked_in_wrapper(tmp_path: Path
     payload = json.loads(launched.stdout)
     assert payload["argv"] == ["--agent", "worker", "--name", "worker"]
     assert payload["endpoint"] == "http://127.0.0.1:4317"
+    assert payload["temporality"] == "cumulative"
     assert payload["attributes"] == "sextant.runtime=claude-code"
 
 
