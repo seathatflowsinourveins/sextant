@@ -1,11 +1,13 @@
 """ADR-0030's owner model-pins manifest row: superseded DeepSeek models are unavailable."""
 
+import json
 import re
 from pathlib import Path
 
 import pytest
 
 ROOT = Path(__file__).parents[2]
+POLICY = ROOT / "deploy/wsl/lane-runtimes/model-policy.json"
 MODEL = re.compile(r"\bdeepseek-[\w.-]+\b", re.IGNORECASE)
 SUFFIXES = {".md", ".yml", ".yaml", ".json", ".toml", ".sh", ".py", ".js", ".mjs"}
 # Live surfaces: every configured runtime, workflow, deploy and policy document. Only historical
@@ -86,7 +88,10 @@ def test_each_review_surface_requests_its_highest_supported_effort() -> None:
     codex = next(s for s in gate["jobs"]["codex"]["steps"] if s.get("id") == "review")["with"]
     claude = next(s for s in gate["jobs"]["claude"]["steps"] if s.get("id") == "review")["with"]
     assert codex["effort"] == "max"
-    assert "--model claude-fable-5-2 --effort max" in claude["claude_args"]
+    # The Claude reviewer's pin follows model-policy.json's reviewer entry (ADR-0030).
+    reviewer = json.loads(POLICY.read_text())["claude_reviewer"]
+    assert reviewer["effort"] == "max"
+    assert f"--model {reviewer['model']} --effort max" in claude["claude_args"]
     patch = (ROOT / "config/dsh/mcp/max-effort.cordis.yml").read_text()
     assert "reasoningEffort: max" in patch
     action = (ROOT / ".github/actions/dsh-github/action.yml").read_text()

@@ -3,8 +3,8 @@
 Alpaca's native trailing stop does not trigger outside regular market hours, so B rests the
 native order and emulates its trigger from the feed: the trigger is NautilusTrader's own
 BID_ASK trailing calculation, and a persistent run of eligible trades at or below it
-releases one marketable LIMIT with ``extended_hours=True`` (``docs/design.md`` X4; Alpaca
-orders page read 2026-11-09).
+releases one marketable LIMIT with ``extended_hours=True`` (``docs/design.md``:31 and
+``docs/adr/0005-exit-engine.md`` X4; Alpaca orders page read 2026-11-09).
 
 The node's feed is the caller's concern: this module is pure state over observations.
 ``ExitParams`` supplies the breach count and span and the chaser; no value is duplicated
@@ -162,8 +162,14 @@ class OutsideRthTrail:
             self._breached = True
         return breached
 
-    def release_price(self, ts_ns: int) -> Decimal:
-        """The one marketable LIMIT price: the fresh bid on Alpaca's increment ladder."""
+    def release_price(self, ts_ns: int, *, fresh: bool | None = None) -> Decimal:
+        """The one marketable LIMIT price: the fresh bid on Alpaca's increment ladder.
+
+        ``fresh`` is the caller's priceability predicate (the same one that reports the
+        shares armed). ``None`` keeps the older vendor-timestamp check used by the
+        emulation's own proofs; ``True`` trusts the caller's successful poll and accepts a
+        standing quote, including one stamped after the print that completed the breach.
+        """
 
         if self._released:
             raise OutsideRthError("a release is already outstanding")
@@ -171,15 +177,26 @@ class OutsideRthTrail:
             raise OutsideRthError("no persistent breach has completed")
         if self._quote_ts_ns is None or self._bid is None:
             raise OutsideRthError("a fresh quote is required to price the release")
-        age_ns = ts_ns - self._quote_ts_ns
-        if age_ns < 0 or Decimal(age_ns) / NS > OUTSIDE_QUOTE_MAX_AGE_S:
+        if fresh is False:
             raise OutsideRthError("a fresh quote is required to price the release")
+        if fresh is None:
+            age_ns = ts_ns - self._quote_ts_ns
+            if age_ns < 0 or Decimal(age_ns) / NS > OUTSIDE_QUOTE_MAX_AGE_S:
+                raise OutsideRthError("a fresh quote is required to price the release")
         price = chase_limit(self._bid, self._last, self._params)
         quantum = Decimal("0.01") if price >= 1 else SUB_DOLLAR_INCREMENT
         collared = price.quantize(quantum, rounding=ROUND_FLOOR)
         if collared <= 0:
             raise OutsideRthError("the release price must be positive")
         return collared
+
+    def reset_run(self) -> None:
+        """Forget a partial breach run without moving the ratcheted trigger."""
+
+        if self._pending or self._released:
+            return
+        self._breach = BreachRun()
+        self._breached = False
 
     def begin_release(self, ts_ns: int) -> None:
         """Mark the completed breach as waiting for its trail's terminal cancellation."""

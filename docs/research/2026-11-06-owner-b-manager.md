@@ -262,7 +262,10 @@ trail and ADR-0024's slots.
 the quote-freshness window) with 100-300 Optuna multivariate TPE trials, scoring the lower
 quartile of six CPCV folds. Every trial is one MODELED TrialLog row, refusals and prunes included.
 The report holds proposals with `adoption: none`; a proposal needs an untouched 365-730 day
-holdout, DSR > 0.95, PBO <= 0.05 and at least 30 training sessions.
+holdout, DSR > 0.95, PBO <= 0.05 and at least 30 training sessions. While codex review
+`5833241132`'s three holdout-custody findings are open, every supported study is stamped
+`NOT_ADMISSIBLE` after the DSR/PBO/merit gates and before the holdout is evaluated; PR 2
+removes the stamp with the three fixes.
 
 The run on these rows is NOT_EVALUABLE by construction. The six-mover cohort is one session
 (2026-11-09), and the three replay sessions (2026-10-21, 11-03, 11-09) cannot supply a 12-24 month

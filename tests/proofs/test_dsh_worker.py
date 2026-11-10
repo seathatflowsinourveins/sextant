@@ -1,13 +1,15 @@
 """Hosted dsh worker invariants.
 
 One dispatched ``dsh`` headless job edits the checked-out workspace, then
-``create-pull-request`` opens a PR into ``gate``. The job is owner-only, has
-minimal write permissions, never receives a broker/paper/live key, loads the
-repository hard-lines bundle, and mints its pull-request token from the
+``create-pull-request`` opens a PR into the repository's default branch. The
+job is owner-only, runs only on that default branch, has minimal write
+permissions, never receives a broker/paper/live key, loads the repository
+hard-lines bundle, and mints its pull-request token from the
 ``hosted-workers`` environment's App installation.
 
-Sources: GitHub workflow_dispatch/permissions/concurrency documentation, read
-2026-11-09; PerryLink/dsh-github@2fc0009c:action.yml:51-62,118-161 and
+Sources: GitHub workflow_dispatch/permissions/concurrency documentation and the
+``github`` context's ``repository.default_branch`` field, read 2026-11-09;
+PerryLink/dsh-github@2fc0009c:action.yml:51-62,118-161 and
 scripts/action-patch.mjs:49-152; peter-evans/create-pull-request@v8.1.1
 README.md:50-95; actions/create-github-app-token@v3.3.0 action.yml.
 """
@@ -38,7 +40,7 @@ def _step(name: str) -> dict[str, Any]:
     return next(step for step in _job()["steps"] if step.get("name") == name)
 
 
-def test_one_hosted_job_per_owner_dispatch_on_gate() -> None:
+def test_one_hosted_job_per_owner_dispatch_on_the_default_branch() -> None:
     workflow = _workflow()
     if "on" in workflow:
         events = workflow["on"]
@@ -51,8 +53,12 @@ def test_one_hosted_job_per_owner_dispatch_on_gate() -> None:
     assert job["runs-on"] == "ubuntu-24.04"
     assert job["environment"] == "hosted-workers"
     assert job["if"] == (
-        "${{ github.actor == github.repository_owner && github.ref == 'refs/heads/gate' }}"
+        "${{ github.actor == github.repository_owner && "
+        "github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}"
     )
+    # No branch is named in the file: the only ref is the default-branch placeholder, so the
+    # gate-to-main rename needs no edit here.
+    assert re.search(r"refs/heads/(?!\{0\})", WORKFLOW.read_text()) is None
     assert job["permissions"] == {"contents": "write", "pull-requests": "write"}
     assert job["concurrency"] == {
         "group": "dsh-worker-${{ inputs.slug }}",
@@ -63,9 +69,8 @@ def test_one_hosted_job_per_owner_dispatch_on_gate() -> None:
     assert "pull_request" not in events
 
 
-def test_worker_never_reaches_main_paper_live_or_broker_keys() -> None:
+def test_worker_never_receives_paper_live_or_broker_keys() -> None:
     text = WORKFLOW.read_text()
-    assert "refs/heads/main" not in text
     assert "environment: hosted-workers" in text
     assert "environment: paper" not in text
     assert "environment: live" not in text
@@ -153,7 +158,7 @@ def test_brief_is_repo_local_and_pr_body_is_sibling() -> None:
 def test_cpr_uses_the_app_token() -> None:
     cpr = _step("Open the worker pull request")
     assert cpr["with"]["token"] == "${{ steps.app-token.outputs.token }}"  # noqa: S105
-    assert cpr["with"]["base"] == "gate"
+    assert cpr["with"]["base"] == "${{ github.event.repository.default_branch }}"
     assert cpr["with"]["branch"] == "dsh-worker/${{ inputs.slug }}"
     assert cpr["with"]["body-path"] == "${{ steps.brief.outputs.pr_body }}"
     mint = _step("Mint the pull-request app token")
@@ -181,7 +186,7 @@ def test_manifest_row_names_the_worker_and_its_proofs() -> None:
     name = "Hosted dsh workers: one dispatched headless job on a free public runner"
     assert f"| {name} |" in manifest
     row = next(line for line in manifest.splitlines() if line.startswith(f"| {name} |"))
-    assert "test_dsh_worker.py::test_one_hosted_job_per_owner_dispatch_on_gate" in row
+    assert "test_dsh_worker.py::test_one_hosted_job_per_owner_dispatch_on_the_default_branch" in row
     assert "test_dsh_worker.py::test_cpr_uses_the_app_token" in row
     assert "PerryLink/dsh-github@v0.7.27" in row
     assert "peter-evans/create-pull-request@v8.1.1" in row

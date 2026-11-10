@@ -14,5 +14,21 @@
     "source": "docs/adr/0007-custody-and-order-writing.md C1-C2 (claim and protect immediately); lead decision 2026-11-07: 10 s reconcile interval; UNCALIBRATED until PR-4",
     "calibration_state": "UNCALIBRATED",
     "last_change": "2026-11-09"
+  },
+  {
+    "name": "feed_poll_interval_s",
+    "unit": "seconds between REST latest quote and trade polls",
+    "value": "1",
+    "source": "Alpaca 24/5 trading and Market Data API docs read 2026-11-09 (Algo Trader Plus: 10,000 historical calls/min; one batched quote and one batched trade per poll); lead decision 2026-11-09; UNCALIBRATED",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-09"
+  },
+  {
+    "name": "feed_silence_s",
+    "unit": "seconds without a successful outside-RTH poll before the watchdog pages",
+    "value": "5",
+    "source": "lead decision 2026-11-09 (M4 outside-RTH witness; a quiet poller must page while protection is unarmed); the release's own freshness bound is OUTSIDE_QUOTE_MAX_AGE_S = 2 s in src/sextant/paper/outside_rth.py:29 (the quote_max_age_s row cited there), used only when no successful poll can vouch for the standing quote; 5 s is an uncalibrated poll-liveness bound that tolerates the 1 s poll plus jitter; UNCALIBRATED",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-09"
   }
 ]
