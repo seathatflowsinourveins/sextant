@@ -488,6 +488,7 @@ class Protector:
         self._start_client = client if start_client is None else start_client
         self._monotonic = monotonic
         self.pages: list[Page] = []
+        self.page_sink_failures = 0  # fallback pages whose sink raised (Codex max P1 rule)
         self.states: list[str] = []
         self._feed = feed
         self._last_quote_ns: dict[str, int] = {}
@@ -1949,15 +1950,16 @@ class Protector:
             return trail_percent(self._width[symbol]), "computed"
         return trail_percent(self._parameters.native_trail_fraction), "native"
 
-    def _arm_percent(self, symbol: str) -> float:
-        """A new trail's percent; never moves a working one. Native pages once per episode."""
+    def _arm_percent(self, symbol: str) -> tuple[float, bool]:
+        """A new trail's percent, and whether native opens a page episode; never moves a
+        working trail."""
 
         if symbol in self._width:
-            return float(trail_percent(self._width[symbol]))  # the one broker-boundary float
-        if self._parameters.width_on and symbol not in self._native_paged:
+            return float(trail_percent(self._width[symbol])), False  # the boundary float
+        fallback = self._parameters.width_on and symbol not in self._native_paged
+        if fallback:
             self._native_paged.add(symbol)
-            self.page("dynamic_width_native_fallback", symbol, "no width stored; armed at native")
-        return float(self._parameters.native_trail_fraction * 100)
+        return float(self._parameters.native_trail_fraction * 100), fallback
 
     def _submit_trail(self, symbol: str, whole: int) -> None:
         client_order_id = self._unresolved.get(symbol)
@@ -1967,12 +1969,13 @@ class Protector:
                 f"{self._account.house_prefix}trail-{_safe_symbol(symbol)}-"
                 f"{self._now_ns()}-{self._sequence}"
             )[:MAX_CLIENT_ORDER_ID]
+        percent, fallback = self._arm_percent(symbol)
         request = TrailingStopOrderRequest(
             symbol=symbol,
             qty=whole,
             side=OrderSide.SELL,
             time_in_force=TimeInForce.GTC,
-            trail_percent=self._arm_percent(symbol),
+            trail_percent=percent,
             client_order_id=client_order_id,
         )
         try:
@@ -1984,6 +1987,12 @@ class Protector:
             self._unresolved[symbol] = client_order_id
             self.page("trail_submit_failed", symbol, type(exc).__name__)
             return
+        finally:  # after the submit; a failing page sink is counted, never raised (P1 rule)
+            if fallback:
+                try:
+                    self.page("dynamic_width_native_fallback", symbol, "no width stored; native")
+                except Exception:
+                    self.page_sink_failures += 1
         self._unresolved.pop(symbol, None)
         if isinstance(submitted, Order):
             self._remember(submitted)
