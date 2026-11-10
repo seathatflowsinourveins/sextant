@@ -26,6 +26,21 @@ session: fix the profile or the lock, never the check.
 | A run, worker or automation | `orca orchestration`; `worker-list` for state | Orca |
 | A plugin's admission | `docs/handbook/plugins.md`; no row, no install | Plugin gate |
 | A lifecycle gap | `handbook/lifecycle.md`, then the owner above | Delivery stage |
+| Which runtime, model and effort a job runs on | the model-mix table below; ADR-0030's second amendment | Harness |
+
+### The model mix
+
+| Work | Runtime and model | Effort |
+| --- | --- | --- |
+| Lead: orchestration, rulings | Claude Fable 5.2 | high |
+| `/code-review` of protection, custody, gate, hard-line or live-promotion changes | Claude Fable 5.2: the lead runs the skill, or a Fable reviewer session | high; `max` only when the owner asks |
+| Hard writer tasks and hard reviews where the situation needs Claude | Claude Opus 5.5 | high; `xhigh` where a sweep shows a gain |
+| Role sessions: dispatcher, lander, tracker | Claude Sonnet 5.5 | high |
+| Lookups, inventories | Claude Haiku 5.5 or Sonnet 5.5 (the later `.claude/agents/<role>.md` definitions); dsh; Muse | low or medium |
+| Writers on well-specified briefs; bulk and delta reviews | GPT through Codex (`gpt-6.1-sol`) and dsh: main workhorses | per LEAD-2345 |
+| Independent screens and second-family checks | dsh, Muse, agy (Google) | the runtime's pin |
+
+Fable's share of Claude weekly use is at most one half; the tracker reports the split by model each pass and alerts past 50% or when the pace would exhaust the week before its reset. Opus 5.5 is for work, not relaying. A Claude review in a class this table names needs no special word; it names its model and effort and is time-bounded. Every Agent call and launch names its model and effort; a fork inherits Fable, so forks are only for the owner's side questions. Each value is a registry row with its source, uncalibrated until the sweeps report. [ADR-0030](../adr/0030-latest-sota-models.md)'s second amendment records the owner's 2026-11-09 23:55 EST words, the tracker's 22:50-23:50 split, and why each level is uncalibrated.
 
 ## The rule behind the table
 

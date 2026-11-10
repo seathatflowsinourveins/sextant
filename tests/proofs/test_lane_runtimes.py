@@ -135,3 +135,91 @@ def test_model_policy_keeps_the_approved_google_interim_and_native_claude() -> N
         "the blanket environment pin gives way to the project default"
     )
     assert claude["effortLevel"] == worker["effort"] == "high"
+
+
+def _model_mix_rows() -> dict[str, list[str]]:
+    lines = (ROOT / "docs/handbook/ecosystem.md").read_text().splitlines()
+    start = lines.index("### The model mix")
+    rows: dict[str, list[str]] = {}
+    for line in lines[start + 1 :]:
+        if not line.startswith("|"):
+            if rows:
+                break
+            continue
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if len(cells) != 3 or cells[0] == "Work" or all(cell.startswith("-") for cell in cells):
+            continue
+        rows[cells[0]] = cells[1:]
+    return rows
+
+
+def test_the_model_mix_table_matches_the_settings_and_launches() -> None:
+    rows = _model_mix_rows()
+    policy = json.loads((RUNTIMES / "model-policy.json").read_text())
+    settings = json.loads((ROOT / ".claude/settings.json").read_text())
+
+    lead = rows["Lead: orchestration, rulings"]
+    assert lead == ["Claude Fable 5.2", "high"]
+    assert (policy["claude_lead"]["model"], policy["claude_lead"]["effort"]) == (
+        "claude-fable-5-2",
+        "high",
+    )
+    assert policy["claude_lead"]["launch"] == "claude --model fable"
+    lead_line = next(
+        line
+        for line in (ROOT / "docs/start.md").read_text().splitlines()
+        if "**The lead's launch:**" in line
+    )
+    assert "`claude --model fable`" in lead_line and "--effort max" not in lead_line
+
+    review = rows[
+        "`/code-review` of protection, custody, gate, hard-line or live-promotion changes"
+    ]
+    assert review[0].startswith("Claude Fable 5.2") and review[1].startswith("high")
+    assert (policy["claude_reviewer"]["model"], policy["claude_reviewer"]["effort"]) == (
+        "claude-fable-5-2",
+        "high",
+    )
+    assert (
+        "--model claude-fable-5-2 --effort high"
+        in (ROOT / ".github/workflows/gate.yml").read_text()
+    )
+
+    hard = rows["Hard writer tasks and hard reviews where the situation needs Claude"]
+    assert hard[0] == "Claude Opus 5.5" and hard[1].startswith("high")
+    assert (policy["claude"]["model"], policy["claude"]["effort"]) == ("claude-opus-5-5", "high")
+
+    roles = rows["Role sessions: dispatcher, lander, tracker"]
+    assert roles == ["Claude Sonnet 5.5", "high"]
+    assert (policy["claude_roles"]["model"], policy["claude_roles"]["effort"]) == (
+        "claude-sonnet-5-5",
+        "high",
+    )
+    assert policy["claude_roles"]["launch"] == "claude --model sonnet"
+
+    lookups = rows["Lookups, inventories"]
+    assert "Haiku 5.5 or Sonnet 5.5" in lookups[0] and ".claude/agents/<role>.md" in lookups[0]
+    assert lookups[1] == "low or medium"
+    assert settings["effortLevel"] == "high" and "CLAUDE_CODE_EFFORT_LEVEL" not in settings["env"]
+
+    writers = rows["Writers on well-specified briefs; bulk and delta reviews"]
+    assert "GPT through Codex (`gpt-6.1-sol`) and dsh" in writers[0]
+    assert writers[1] == "per LEAD-2345"
+    assert policy["gpt"]["effort_by_task"] == {
+        "writer": "high",
+        "review_protected": "max",
+        "review_other": "xhigh",
+        "lookup": "medium",
+    }
+
+    screens = rows["Independent screens and second-family checks"]
+    assert "dsh, Muse, agy (Google)" in screens[0]
+    assert screens[1] == "the runtime's pin"
+    assert (policy["google"]["antigravity"], policy["google"]["effort"]) == (
+        "gemini-4-argon-high",
+        "high",
+    )
+    assert (policy["meta"]["model"], policy["meta"]["effort"]) == ("muse-wonder-full-1.0", "max")
+    assert "reasoningEffort: max" in (ROOT / "config/dsh/mcp/max-effort.cordis.yml").read_text()
+
+    assert "docs/handbook/ecosystem.md#the-model-mix" in (ROOT / "AGENTS.md").read_text()
