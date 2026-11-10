@@ -226,17 +226,30 @@ async function lastAuthorHead(github, context, pr, head, repoPath = process.cwd(
   throw Error('Base-branch update chain is longer than 32 merges');
 }
 
-// The review status at that head is the gate's durable verdict for the work, for
-// dsh and every quality family alike. A clean base merge cannot clear a failure;
-// only a fresh review at an author head can. The newest review status decides.
+// A clean base merge cannot clear a completed blocking verdict at the last author
+// head; only a fresh review at an author head can. Only a completed verdict is
+// carried. The reviewers record one status per family when they finish a review; a
+// run that was cancelled, lost its head or broke for infrastructure reasons records
+// nothing, so a clean base update is never blamed for it. The newest status per
+// family decides: a completed pass clears an earlier blocking verdict at the same head.
+async function recordVerdict(github, context, head, family, passed) {
+  await github.rest.repos.createCommitStatus({ ...context.repo, sha: head, context: `review-blocking-${family}`,
+    state: passed ? 'success' : 'failure',
+    description: passed ? 'The review completed without a blocking finding' : 'The review completed with a blocking finding' });
+}
+
 async function carriedReview(github, context, pr, head, repoPath = process.cwd()) {
   const author = await lastAuthorHead(github, context, pr, head, repoPath);
   if (!author) return '';
   const statuses = await github.paginate(github.rest.repos.listCommitStatusesForRef,
     { ...context.repo, ref: author, per_page: 100 });
-  const latest = statuses.find(candidate => candidate.context === 'review');
-  if (!latest || (latest.state !== 'failure' && latest.state !== 'error')) return '';
-  return `The last author head ${author.slice(0, 7)} did not pass its review; a clean base merge cannot clear it`;
+  const newest = new Map();
+  for (const status of statuses) {
+    if (!String(status.context || '').startsWith('review-blocking-') || newest.has(status.context)) continue;
+    newest.set(status.context, status);
+  }
+  if (![...newest.values()].some(status => status.state === 'failure' || status.state === 'error')) return '';
+  return `The last author head ${author.slice(0, 7)} has a completed blocking review verdict; a clean base merge cannot clear it`;
 }
 
 // The reviewer's schema: "patch is incorrect" is a verdict about the patch, so it
@@ -295,6 +308,7 @@ async function qualityResult({ github, context, core }, number, head, text, fami
   }
   core.setOutput('followups', JSON.stringify(report.findings.filter(finding => finding.priority === null || finding.priority > threshold)
     .map(finding => `${family}: ${finding.title}\n${finding.body}`)));
+  await recordVerdict(github, context, head, family, passed);
   await github.rest.pulls.createReview({ ...context.repo, pull_number: Number(number), commit_id: head, event: 'COMMENT',
     body: `Review of ${head} (${family} quality review)\n\n${report.overall_explanation}\n\n` +
       report.findings.map(finding => `${finding.title}\n${finding.body}`).join('\n\n') });
@@ -307,6 +321,10 @@ async function dshResult({ github, context, core }, number, head, filename) {
   await current(github, context, number, head);
   core.setOutput('followups', JSON.stringify((report.findings || []).filter(finding => finding.severity !== 'error')
     .map(finding => `dsh: ${finding.file}:${finding.line ?? ''} ${finding.rule}\n${finding.message}`)));
+  if (report.headSha === head && !report.truncated && report.engine === 'model' &&
+      (report.verdict === 'pass' || report.verdict === 'needs-changes')) {
+    await recordVerdict(github, context, head, 'dsh', report.verdict === 'pass');
+  }
   if (report.headSha !== head || report.verdict !== 'pass' || report.truncated || report.engine !== 'model') {
     core.setFailed('The upstream report did not pass a complete model review at this head');
   }

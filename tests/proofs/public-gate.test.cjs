@@ -477,15 +477,15 @@ function mergeRepo() {
   return {dir, sha: {root, author, base, base2, merge1, merge2, dirty}, data, install, statuses};
 }
 
-test("a clean base-merge head cannot clear the last author head's failed review (#208, #201)", async () => {
+test("a clean base-merge head cannot clear the last author head's completed blocking review (#208, #201)", async () => {
   const cwd = process.cwd();
   const f = fixture();
   const repo = mergeRepo();
   try {
     repo.install(f);
     f.pr.head.sha = repo.sha.merge2;
-    repo.statuses(f, {[repo.sha.author]: [{context: 'review', state: 'failure',
-      description: 'A required review failed, was skipped or did not complete'}]});
+    repo.statuses(f, {[repo.sha.author]: [{context: 'review-blocking-dsh', state: 'failure',
+      description: 'The dsh review completed with a blocking finding'}]});
     process.chdir(repo.dir);
     await gate.finish(f, 7, repo.sha.merge2, {source: 'success', dsh: 'success'}, '');
     assert.equal(f.statuses.at(-1).state, 'failure');
@@ -498,8 +498,8 @@ test("a clean base-merge head cannot clear the last author head's failed review 
     repo.install(cleared);
     cleared.pr.head.sha = repo.sha.merge2;
     repo.statuses(cleared, {[repo.sha.author]: [
-      {context: 'review', state: 'success'},
-      {context: 'review', state: 'failure'},
+      {context: 'review-blocking-dsh', state: 'success'},
+      {context: 'review-blocking-dsh', state: 'failure'},
     ]});
     await gate.finish(cleared, 7, repo.sha.merge2, {source: 'success', dsh: 'success'}, '');
     assert.equal(cleared.statuses.at(-1).state, 'success');
@@ -507,6 +507,65 @@ test("a clean base-merge head cannot clear the last author head's failed review 
   } finally {
     process.chdir(cwd);
     fs.rmSync(repo.dir, {recursive: true, force: true});
+  }
+});
+
+test('a stale run failure at the last author head is not carried to a clean base merge', async () => {
+  const cwd = process.cwd();
+  const f = fixture();
+  const repo = mergeRepo();
+  try {
+    repo.install(f);
+    f.pr.head.sha = repo.sha.merge2;
+    // M landed while A was still reviewed: A's run then failed the stale-head check and
+    // published a generic failure. No reviewer completed a blocking verdict at A.
+    repo.statuses(f, {[repo.sha.author]: [{context: 'review', state: 'failure',
+      description: 'A required review failed, was skipped or did not complete'}]});
+    process.chdir(repo.dir);
+    await gate.finish(f, 7, repo.sha.merge2, {source: 'success', dsh: 'success'}, '');
+    assert.equal(f.statuses.at(-1).state, 'success');
+    assert.equal(f.failures.length, 0);
+  } finally {
+    process.chdir(cwd);
+    fs.rmSync(repo.dir, {recursive: true, force: true});
+  }
+});
+
+test('only a completed review verdict records the carry status', async () => {
+  const blocking = fixture();
+  await gate.qualityResult(blocking, 7, blocking.head, JSON.stringify({
+    findings: [{title: '[P1] The gate copies a stale run', body: 'file:1, wrong output', priority: 1}],
+    overall_correctness: 'patch is incorrect',
+    overall_explanation: 'One blocking finding.',
+  }), 'codex');
+  assert.equal(blocking.statuses.find(status => status.context === 'review-blocking-codex')?.state, 'failure');
+
+  const hollow = fixture();
+  await gate.qualityResult(hollow, 7, hollow.head, HOLLOW_205, 'codex');
+  assert.equal(hollow.statuses.length, 0);
+
+  const passing = fixture();
+  await gate.qualityResult(passing, 7, passing.head, JSON.stringify({
+    findings: [], overall_correctness: 'patch is correct', overall_explanation: 'No blocking findings.',
+  }), 'claude');
+  assert.equal(passing.statuses.find(status => status.context === 'review-blocking-claude')?.state, 'success');
+
+  const dir = fs.mkdtempSync(path.join(process.cwd(), '.gate-dsh-verdict-'));
+  try {
+    const file = path.join(dir, 'report.json');
+    const write = report => fs.writeFileSync(file, JSON.stringify(report));
+    const dsh = fixture();
+    write({headSha: dsh.head, verdict: 'needs-changes', truncated: false, engine: 'model',
+      findings: [{severity: 'error', file: 'a.cjs', line: 1, rule: 'r', message: 'm'}]});
+    await gate.dshResult(dsh, 7, dsh.head, file);
+    assert.equal(dsh.statuses.find(status => status.context === 'review-blocking-dsh')?.state, 'failure');
+
+    const truncated = fixture();
+    write({headSha: truncated.head, verdict: 'needs-changes', truncated: true, engine: 'model', findings: []});
+    await gate.dshResult(truncated, 7, truncated.head, file);
+    assert.equal(truncated.statuses.length, 0);
+  } finally {
+    fs.rmSync(dir, {recursive: true, force: true});
   }
 });
 
