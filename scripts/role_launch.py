@@ -14,6 +14,13 @@ effort, hooks stay in `.claude/settings.json`, effort comes from the project
 `effortLevel`, and this launcher passes no `--model`, `--effort`, `--settings`
 or `--advisor`. A `--model` here would hide a definition that drifted from the
 policy.
+
+Telemetry: code.claude.com/docs/en/monitoring-usage and
+code.claude.com/docs/en/settings-reference#variables-claude-code-ignores-in-env,
+read 2026-11-10. Claude Code ignores the OpenTelemetry exporter variables in a
+repository's project settings, so every session starts through the one checked-in
+process that sets them, `deploy/wsl/lane-runtimes/claude-launch.sh`. Authority:
+LEAD-D item 1 (D-37).
 """
 
 from __future__ import annotations
@@ -30,6 +37,7 @@ from compact_context import ROLES, STATE_PATHS, WORKER_TASK_DIR  # noqa: E402
 
 POLICY = ROOT / "deploy/wsl/lane-runtimes/model-policy.json"
 SETTINGS = ROOT / ".claude/settings.json"
+WRAPPER = "deploy/wsl/lane-runtimes/claude-launch.sh"
 AGENT_DIR = ROOT / ".claude" / "agents"
 COORDINATION = ("lead", "dispatcher", "lander", "tracker")
 WINDOW = 200_000
@@ -90,7 +98,7 @@ def argv(role: str) -> list[str]:
     """Build the launch argv for one role; the definition supplies the model."""
     if role not in ROLES:
         raise KeyError(role)
-    built = ["claude", "--agent", role, "--name", role]
+    built = ["bash", WRAPPER, "--agent", role, "--name", role]
     if role in COORDINATION:
         built += ["--autocompact", str(WINDOW)]
     return built
@@ -173,7 +181,8 @@ def main(args: list[str]) -> int:
         return 0
     if len(args) == 1 and args[0] in ROLES:
         os.chdir(ROOT)
-        os.execvp("claude", argv(args[0]))  # noqa: S606 - the launcher is the process
+        built = argv(args[0])
+        os.execvp(built[0], built)  # noqa: S606 - the launcher is the process
         return 1
     print(USAGE, file=sys.stderr)
     return 2
