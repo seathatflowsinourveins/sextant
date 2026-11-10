@@ -5,6 +5,15 @@
   "gpt": {
     "model": "gpt-6.1-sol",
     "effort": "max",
+    "effort_by_task": {
+      "writer": "high",
+      "review_protected": "max",
+      "review_other": "xhigh",
+      "lookup": "medium"
+    },
+    "effort_calibration": "uncalibrated",
+    "effort_source": "https://developers.openai.com/api/docs/guides/reasoning, read 2026-11-09",
+    "effort_note": "the installed sextant-codex launcher reads effort; the dispatcher follows effort_by_task; no run of ours compares GPT effort levels (25 of 25 Codex gate reviews before 2026-11-09 23:31 ran at max), so every row is an uncalibrated starting value",
     "vendor_source": "https://developers.openai.com/api/docs/models/gpt-6.1-sol"
   },
   "claude": {

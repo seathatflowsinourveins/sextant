@@ -95,6 +95,17 @@ def test_model_policy_keeps_the_approved_google_interim_and_native_claude() -> N
     assert policy["read_date"] == "2026-11-09"
     assert policy["comparison_source"] == "https://artificialanalysis.ai/models"
     assert policy["gpt"]["model"] == "gpt-6.1-sol" and policy["gpt"]["effort"] == "max"
+    # ADR-0030's 2026-11-09 second amendment, GPT by task: the installed sextant-codex
+    # launcher keeps its owner pin; the dispatcher's rows are uncalibrated starting values
+    # until the sweep's GPT arm and the known-defect measurement (#180) report.
+    assert policy["gpt"]["effort_by_task"] == {
+        "writer": "high",
+        "review_protected": "max",
+        "review_other": "xhigh",
+        "lookup": "medium",
+    }
+    assert policy["gpt"]["effort_calibration"] == "uncalibrated"
+    assert "developers.openai.com/api/docs/guides/reasoning" in policy["gpt"]["effort_source"]
     assert policy["google"]["antigravity"] == "gemini-4-argon-high"
     assert policy["google"]["effort"] == "high"
     assert policy["google"]["router_connections"] == ["agy", "antigravity"]
