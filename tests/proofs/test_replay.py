@@ -6,8 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from sextant.backtest import replay
-from sextant.research import exit_study_41
+from sextant.backtest import exit_inputs, replay
 
 
 @pytest.fixture
@@ -28,12 +27,12 @@ def recorded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Pat
         for symbol in ("AAPL", "MSFT")
         for minute in (30, 31, 32)
     ]
-    for name in exit_study_41.INPUTS:
-        content = "\n".join(json.dumps(row) for row in rows) if name == exit_study_41.BARS else "[]"
+    for name in exit_inputs.INPUTS:
+        content = "\n".join(json.dumps(row) for row in rows) if name == exit_inputs.BARS else "[]"
         (inputs / name).write_text(content)
     # Isolated test evidence replaces only the pin expectations, not the checksum implementation.
     monkeypatch.setattr(
-        exit_study_41,
+        exit_inputs,
         "INPUTS",
         {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in inputs.iterdir()},
     )
@@ -71,7 +70,7 @@ def test_two_native_nodes_replay_every_bar_identically_with_missing_returns_kept
         assert manifest["parameter_authority"] == "NONE: explicitly selected fixture values"
         assert len(manifest["implementation_sha"]) == 40
         assert len(manifest["source_tree_sha256"]) == 64
-        assert manifest["input_hashes"] == exit_study_41.INPUTS
+        assert manifest["input_hashes"] == exit_inputs.INPUTS
 
 
 @pytest.mark.parametrize("target", ["raw", "parquet"])
@@ -79,7 +78,7 @@ def test_changed_input_is_refused_and_the_attempt_manifest_survives(
     recorded: tuple[Path, Path], tmp_path: Path, target: str
 ) -> None:
     inputs, catalog = recorded
-    path = inputs / exit_study_41.BARS if target == "raw" else next(catalog.rglob("*.parquet"))
+    path = inputs / exit_inputs.BARS if target == "raw" else next(catalog.rglob("*.parquet"))
     path.write_bytes(path.read_bytes() + b"corruption")
     out = tmp_path / "failed"
     with pytest.raises(ValueError, match=r"hash|inputs differ"):
@@ -149,6 +148,6 @@ def test_recorded_full_data_pair_has_identical_results_from_distinct_processes()
     for manifest, result in zip(manifests, results, strict=True):
         assert manifest["state"] == "COMPLETED"
         assert manifest["result_sha256"] == hashlib.sha256(result).hexdigest()
-        assert manifest["input_hashes"] == exit_study_41.INPUTS
+        assert manifest["input_hashes"] == exit_inputs.INPUTS
         assert manifest["daily_net_returns"] is None and manifest["n_trials"] is None
         assert manifest["trial_log_binding"] == "NOT_RUN: #72 has not landed"

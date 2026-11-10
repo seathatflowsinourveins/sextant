@@ -4,7 +4,7 @@ Source: tradingview/lightweight-charts@v5.2.1 b2ce010e4ad59f6556c9ed60e2b2b30fec
 dist/typings.d.ts:212 (createChart), :294 (createSeriesMarkers), :98-104 (LineType.WithSteps),
 :2541 (createPriceLine), :3176 (attributionLogo); .github/skills/lightweight-charts/SKILL.md:158
 (marker time must match a data point), :179,400-407 (standalone window.LightweightCharts).
-Fixtures use the recorded shapes: exit_study_41 minute-bar rows (t/o/h/l/c) and ExitEngine
+Fixtures use the recorded shapes: recorded minute-bar rows (t/o/h/l/c) and ExitEngine
 event dicts (ts as digit string, Decimal strings). Browser pixels are not claimed here.
 """
 
