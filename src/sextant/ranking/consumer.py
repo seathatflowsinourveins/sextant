@@ -48,6 +48,9 @@ class RankingConsumer:
     ) -> None:
         self.feed = feed
         self._alarm = alarm
+        self.alarm_errors = 0
+        self.last_alarm_error: str | None = None
+        self._last_alarm: tuple[str, str | None, str | None] | None = None
         self._entry_heartbeat_ns = (
             _positive_age("entry_heartbeat_max_age_s", entry_heartbeat_max_age_s) * NS
         )
@@ -61,7 +64,7 @@ class RankingConsumer:
             segment=segment,
             universe_hash=universe_hash,
             baseline_hash=baseline_hash,
-            alarm=None if alarm is None else lambda reason: alarm(reason, None),
+            alarm=None if alarm is None else lambda reason: self._emit_alarm(reason, None),
         )
         self._heartbeat: tuple[int, int] | None = None
         self.reason = self.reader.reason
@@ -71,12 +74,16 @@ class RankingConsumer:
         accepted = self.reader.accept_generation(envelope, now=now)
         if not accepted:
             self._heartbeat = None
+        else:
+            self._last_alarm = None
         self.reason = self.reader.reason
         return accepted
 
     def accept_heartbeat(self, *, at: int, received_ns: int) -> bool:
         accepted = self.reader.accept_heartbeat(at=at, received_ns=received_ns)
         self._heartbeat = (at, received_ns) if accepted else None
+        if accepted:
+            self._last_alarm = None
         self.reason = self.reader.reason
         return accepted
 
@@ -93,6 +100,8 @@ class RankingConsumer:
             return None
         rank = self.reader.entry_rank(symbol, now=now)
         self.reason = self.reader.reason
+        if rank is not None:
+            self._last_alarm = None
         return rank
 
     def ranked_names(self, *, now: int) -> tuple[str, ...]:
@@ -115,6 +124,7 @@ class RankingConsumer:
             if self.reader.entry_rank(row.symbol, now=now) is not None:
                 names.append(row.symbol)
         if names:
+            self._last_alarm = None
             self.reason = "fresh"
         elif filtered:
             self.reason = "symbol_input_stale"
@@ -137,8 +147,20 @@ class RankingConsumer:
 
     def _refuse(self, reason: str, symbol: str | None = None) -> None:
         self.reason = reason
-        if self._alarm is not None:
+        key = (reason, symbol, self.reader.generation_key)
+        if key == self._last_alarm:
+            return
+        self._last_alarm = key
+        self._emit_alarm(reason, symbol)
+
+    def _emit_alarm(self, reason: str, symbol: str | None) -> None:
+        if self._alarm is None:
+            return
+        try:
             self._alarm(reason, symbol)
+        except Exception as exc:  # containment: a broken transport never un-vetoes a name
+            self.alarm_errors += 1
+            self.last_alarm_error = f"{type(exc).__name__}: {exc}"
 
     def _entry_fresh(self, now: int) -> bool:
         if not self.reader.fresh(now):
