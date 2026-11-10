@@ -2,7 +2,8 @@
 
 Alpaca's native trailing stop rests outside regular hours but does not trigger, so B emulates
 the trigger from quotes and releases one marketable LIMIT after a persistent run of eligible
-trades (``docs/design.md`` X4; Alpaca orders page read 2026-11-09).
+trades (``docs/design.md``:31 and ``docs/adr/0005-exit-engine.md`` X4;
+Alpaca orders page read 2026-11-09).
 """
 
 from __future__ import annotations
@@ -183,7 +184,7 @@ class FakeClient:
 
 
 def protector(client: FakeClient) -> Protector:
-    return Protector(client, b_account(), b_params(), now_ns=lambda: NOW_NS)
+    return Protector(client, b_account(), b_params(), now_ns=lambda: NOW_NS, feed="sip")
 
 
 def drive_breach(p: Protector, *, bid: str = "99.505", trade: str = "99.40") -> None:
@@ -196,6 +197,7 @@ def drive_breach(p: Protector, *, bid: str = "99.505", trade: str = "99.40") -> 
         last=Decimal(bid) + Decimal("0.005"),
         ts_ns=NOW_NS,
     )
+    p.note_poll(NOW_NS)
     assert p.on_trade("AAPL", Decimal(trade), NOW_NS) is False
     assert p.on_trade("AAPL", Decimal(trade), NOW_NS + SEC // 2) is False
     assert p.on_trade("AAPL", Decimal(trade), NOW_NS + SEC) is True
@@ -232,6 +234,7 @@ def test_a_persistent_breach_cancels_the_trail_then_releases_one_extended_hours_
     p.on_quote(
         "AAPL", bid=Decimal("99.505"), ask=Decimal("99.51"), last=Decimal("99.51"), ts_ns=NOW_NS
     )
+    p.note_poll(NOW_NS)
     assert p.on_trade("AAPL", Decimal("99.40"), NOW_NS) is False
     assert p.on_trade("AAPL", Decimal("99.40"), NOW_NS + SEC // 2) is False
     assert p.on_trade("AAPL", Decimal("99.40"), NOW_NS + SEC) is True
@@ -325,6 +328,7 @@ def test_a_reconcile_while_the_cancel_is_pending_does_not_rearm_the_trail() -> N
     p.on_quote(
         "AAPL", bid=Decimal("99.505"), ask=Decimal("99.51"), last=Decimal("99.51"), ts_ns=NOW_NS
     )
+    p.note_poll(NOW_NS)
     assert p.on_trade("AAPL", Decimal("99.40"), NOW_NS) is False
     assert p.on_trade("AAPL", Decimal("99.40"), NOW_NS + SEC // 2) is False
     assert p.on_trade("AAPL", Decimal("99.40"), NOW_NS + SEC) is True
@@ -429,7 +433,7 @@ def test_the_release_price_is_refreshed_when_the_cancellation_completes() -> Non
     client.positions = [api_position("10")]
     trail = api_order(stop_price="99.45")
     client.orders = [trail]
-    p = Protector(client, b_account(), b_params(), now_ns=lambda: clock["ns"])
+    p = Protector(client, b_account(), b_params(), now_ns=lambda: clock["ns"], feed="sip")
     p.reconcile()
     drive_breach(p)
     clock["ns"] = NOW_NS + SEC
@@ -440,6 +444,7 @@ def test_the_release_price_is_refreshed_when_the_cancellation_completes() -> Non
         last=Decimal("98.01"),
         ts_ns=clock["ns"],
     )
+    p.note_poll(clock["ns"])
     p.handle(api_update(trail, event="canceled"))
     limits = [order for order in client.submitted if isinstance(order, LimitOrderRequest)]
     assert len(limits) == 1
@@ -491,7 +496,7 @@ def test_the_0930_handover_snapshot_submits_only_the_released_limit() -> None:
     client.positions = [api_position("10")]
     trail = api_order(stop_price="99.45")
     client.orders = [trail]
-    p = Protector(client, b_account(), b_params(), now_ns=lambda: clock["ns"])
+    p = Protector(client, b_account(), b_params(), now_ns=lambda: clock["ns"], feed="sip")
     p.reconcile()
 
     p.on_quote(
@@ -501,6 +506,7 @@ def test_the_0930_handover_snapshot_submits_only_the_released_limit() -> None:
         last=Decimal("99.510"),
         ts_ns=clock["ns"],
     )
+    p.note_poll(clock["ns"])
     assert p.on_trade("AAPL", Decimal("99.40"), clock["ns"]) is False
     assert p.on_trade("AAPL", Decimal("99.40"), clock["ns"] + SEC // 2) is False
     assert p.on_trade("AAPL", Decimal("99.40"), clock["ns"] + SEC) is True
