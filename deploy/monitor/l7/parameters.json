@@ -124,6 +124,26 @@
       "applies_to": "sextant:monitor_staleness:seconds"
     },
     {
+      "name": "monitor_alert_hold_seconds",
+      "kind": "alert-hold",
+      "value": 60,
+      "unit": "seconds",
+      "status": "UNCALIBRATED",
+      "source": "Grafana v13.2 file provisioning example `for: 60s`; https://grafana.com/docs/grafana/v13.2/alerting/set-up/provision-alerting-resources/file-provisioning/; read 2026-11-10",
+      "last_change": "2026-11-10",
+      "applies_to": "sextant-monitor-staleness.yaml for"
+    },
+    {
+      "name": "monitor_alert_query_from_seconds",
+      "kind": "alert-query-range",
+      "value": 600,
+      "unit": "seconds",
+      "status": "UNCALIBRATED",
+      "source": "Grafana v13.2 alerting provisioning API example `relativeTimeRange: {from: 600, to: 0}`; https://grafana.com/docs/grafana/v13.2/developers/http_api/alerting_provisioning/; read 2026-11-10",
+      "last_change": "2026-11-10",
+      "applies_to": "sextant-monitor-staleness.yaml A.relativeTimeRange.from"
+    },
+    {
       "name": "prometheus_retention_days",
       "kind": "storage",
       "value": 30,

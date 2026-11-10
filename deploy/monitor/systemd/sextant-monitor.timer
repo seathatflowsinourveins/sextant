@@ -1,0 +1,10 @@
+[Unit]
+Description=Run the Sextant monitor bridges at the registered period
+
+[Timer]
+OnStartupSec=60s
+OnUnitActiveSec=60s
+Unit=sextant-monitor.service
+
+[Install]
+WantedBy=timers.target

@@ -9,7 +9,8 @@
 # they never kill a lane, gate a merge or act on a broker.
 #
 # Labels `delivery` and `action` are part of the contract, not decoration. The
-# monitor's own staleness is rendered as unknown/stale, never as a measured 0.
+# monitor's own staleness is defined once by the Grafana provisioned rule in
+# deploy/monitor/lgtm/alerting/, not by a duplicate alert in this file.
 groups:
   # Normalize the pinned OTel GenAI counters into the contract series this pack
   # can derive without inventing a metric. The token names are the ones in M1's
@@ -56,8 +57,6 @@ groups:
         expr: sextant_llm_quota_remaining_ratio / clamp_min(sextant_llm_quota_burn_ratio_per_hour, 0.000001)
       - record: sextant:model_effort_compliance:ratio
         expr: avg_over_time(sextant_review_model_effort_compliance_ratio[1h])
-      - record: sextant:monitor_staleness:seconds
-        expr: time() - sextant_monitor_last_success_timestamp_seconds
 
   - name: sextant-monitor-alerts
     rules:
@@ -235,20 +234,4 @@ groups:
         annotations:
           summary: "Model/effort compliance below the ADR-0030 floor"
           description: "A drift proposal; model pins change only through their reviewed PR."
-          runbook: deploy/monitor/l7/README.md
-
-      - alert: MonitorEvidenceStale
-        expr: absent(sextant_monitor_last_success_timestamp_seconds) or (time() - sextant_monitor_last_success_timestamp_seconds > 900)
-        for: 5m
-        labels:
-          severity: info
-          delivery: informational
-          action: proposal-only
-          threshold_ref: monitor_staleness_seconds_max
-          threshold_value: "900"
-          source_series: sextant_monitor_last_success_timestamp_seconds
-          producer_status: produced
-        annotations:
-          summary: "Monitor evidence is stale or unknown"
-          description: "Render stale/unknown, never 0; the monitor does not hide its own gap."
           runbook: deploy/monitor/l7/README.md

@@ -1055,6 +1055,13 @@ def metric_rows(
             return
         rows.append({"name": name, "value": number, "unit": unit, "attributes": dict(attributes)})
 
+    add(
+        "sextant_monitor_last_success_timestamp_seconds",
+        current.timestamp(),
+        {"bridge": "l3_l4"},
+        "seconds",
+    )
+
     router = snap.get("router", {})
     if router.get("available"):
         for row in router["calls"]["by_provider_status"]:

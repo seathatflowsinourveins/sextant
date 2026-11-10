@@ -280,37 +280,35 @@ def test_alert_thresholds_are_registered_uncalibrated_and_informational() -> Non
         r"threshold_ref:\s*([A-Za-z0-9_]+)\s*\n\s*threshold_value:\s*\"([^\"]+)\"",
         rules,
     )
-    assert len(pairs) == 12
+    assert len(pairs) == 11
     parameters = _parameters()
-    assert len(parameters) == 15
+    assert len(parameters) == 17
     assert all(row["status"] == "UNCALIBRATED" for row in parameters.values())
     for name, value in pairs:
         assert name in parameters
         assert parameters[name]["status"] == "UNCALIBRATED"
         assert Decimal(str(parameters[name]["value"])) == Decimal(value)
-    assert rules.count("delivery: informational") == 12
-    assert rules.count("action: proposal-only") == 12
+    assert rules.count("delivery: informational") == 11
+    assert rules.count("action: proposal-only") == 11
     assert "action: kill" not in rules
     assert "action: gate" not in rules
 
 
-def test_l7_rules_cover_the_converged_signals_and_staleness_is_not_zero() -> None:
+def test_l7_rules_cover_the_converged_signals_and_leave_staleness_to_grafana() -> None:
     rules = RULES.read_text(encoding="utf-8")
     alerts = re.findall(r"^\s+- alert:\s*(\w+)", rules, re.MULTILINE)
     records = re.findall(r"^\s+- record:\s*(\w+)", rules, re.MULTILINE)
-    assert len(alerts) == 12
-    assert len(records) == 13
+    assert len(alerts) == 11
+    assert len(records) == 12
     assert "sextant_llm_cache_hit_ratio" in records
     assert "sextant_llm_cache_write_waste_ratio" in records
     assert "sextant_agent_error_ratio" in records
     assert "MonitorRetryLoop" in alerts
     assert "MonitorCostAnomaly" in alerts
     assert "MonitorModelEffortDrift" in alerts
-    assert "MonitorEvidenceStale" in alerts
-    stale = rules.split("alert: MonitorEvidenceStale", 1)[1]
-    assert "absent(" in stale
-    assert "time()" in stale
-    assert "time() - sextant_monitor_last_success_timestamp_seconds" in rules
+    assert "MonitorEvidenceStale" not in alerts
+    assert "sextant:monitor_staleness:seconds" not in records
+    assert "sextant_monitor_last_success_timestamp_seconds" not in rules
     assert all("for:" in block for block in rules.split("- alert:")[1:])
 
 
@@ -519,13 +517,12 @@ def test_every_l7_alert_series_has_a_registered_producer() -> None:
         "sextant_llm_quota_remaining_ratio",
         "sextant_llm_quota_burn_ratio_per_hour",
         "sextant_review_model_effort_compliance_ratio",
-        "sextant_monitor_last_success_timestamp_seconds",
     }
     assert required <= set(rows)
 
     rules = RULES.read_text(encoding="utf-8")
     alerts = rules.split("- alert:")[1:]
-    assert len(alerts) == 12
+    assert len(alerts) == 11
     for alert in alerts:
         series = re.search(r"source_series:\s*([a-z0-9_]+)", alert)
         status = re.search(r"producer_status:\s*(produced|pending)", alert)

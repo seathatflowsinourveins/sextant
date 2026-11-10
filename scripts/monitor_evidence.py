@@ -514,6 +514,12 @@ def _attribute(key: str, value: str) -> dict[str, Any]:
 def _gauges(summary: Mapping[str, Any]) -> list[dict[str, Any]]:
     evidence = summary.get("evidence", {})
     metrics: list[tuple[str, str, float, dict[str, str]]] = [
+        (
+            "sextant_monitor_last_success_timestamp_seconds",
+            "seconds",
+            time.time(),
+            {"bridge": "evidence"},
+        ),
         ("sextant_manifest_rows", "rows", float(evidence.get("rows", 0)), {}),
         ("sextant_manifest_proof_refs", "refs", float(evidence.get("refs", 0)), {}),
         ("sextant_manifest_unparsed", "refs", float(evidence.get("unparsed", 0)), {}),

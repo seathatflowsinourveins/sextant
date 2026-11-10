@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "schema": "sextant.monitor.parameters/1",
+  "source": "A 60 s bridge period matches the OTel SDK's default metric export interval and the store's 60 s Prometheus scrape interval, and sits under monitor_staleness_seconds_max.",
+  "rows": [
+    {
+      "name": "monitor_bridge_period_seconds",
+      "kind": "period",
+      "value": 60,
+      "unit": "seconds",
+      "status": "UNCALIBRATED",
+      "source": "OpenTelemetry SDK environment variables, Periodic exporting MetricReader: OTEL_METRIC_EXPORT_INTERVAL default 60000 ms (https://opentelemetry.io/docs/specs/otel/configuration/sdk-environment-variables/, read 2026-11-10); under monitor_staleness_seconds_max=900 in deploy/monitor/l7/parameters.json.",
+      "last_change": "2026-11-10",
+      "applies_to": "sextant-monitor.timer OnStartupSec and OnUnitActiveSec"
+    }
+  ]
+}
