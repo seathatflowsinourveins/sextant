@@ -33,7 +33,12 @@ from alpaca.trading.client import TradingClient
 
 from sextant.execution.custody import AccountScope, WriterLease
 from sextant.execution.pacer import AccountPacer, ActionKind, PacerRefused
-from sextant.paper.b_feed import BHistoricalTape, LatestDataClient, bound_transport
+from sextant.paper.b_feed import (
+    BHistoricalTape,
+    BMarketDataFeed,
+    LatestDataClient,
+    bound_transport,
+)
 from sextant.paper.b_protector import (
     BParameters,
     Page,
@@ -281,6 +286,8 @@ def main(
             on_page(Page(reason="feed_client_failed", detail=type(exc).__name__))
             data_client = None
         history: BHistoricalTape | None = None
+        width_quotes: Any = None
+        width_bars: BHistoricalTape | None = None
         start_client: TradingClientLike | None = None
         timeout_s, max_quotes = parameters.tape_read_timeout_s, parameters.tape_max_quotes
         if data_client is not None and timeout_s is not None and max_quotes is not None:
@@ -292,10 +299,14 @@ def main(
                 bound_transport(bounded, timeout_s)
                 start_client = PacedTradingClient(bounded, pacer)
                 paced = PacedHistoricalDataClient(cast(TradingClientLike, tape_client), pacer)
+                history = BHistoricalTape(paced, int(max_quotes))
                 bars = parameters.tape_max_bars
-                history = BHistoricalTape(
-                    paced, int(max_quotes), None if bars is None else int(bars)
+                # LEAD-1445: both width reads are market data on the bounded client, no SDK
+                # retry, never on the account's trading pacer.
+                width_bars = BHistoricalTape(
+                    cast(Any, tape_client), int(max_quotes), None if bars is None else int(bars)
                 )
+                width_quotes = BMarketDataFeed(tape_client).latest_quotes
             except Exception as exc:
                 on_page(Page(reason="outside_rth_tape_unreadable", detail=type(exc).__name__))
         stream = ProtectorStream(
@@ -311,6 +322,8 @@ def main(
             history=history,
             start_client=start_client,
             decisions=decisions,
+            bars=width_bars,
+            width_quotes=width_quotes,
         )
         _check_expected_account(client, on_page)
         previous = signal.signal(signal.SIGTERM, _sigterm_handler(stream))
