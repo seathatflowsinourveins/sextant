@@ -41,9 +41,9 @@
   },
   {
     "name": "tape_max_quotes",
-    "unit": "quotes per historical tape request at process start; a window that reaches it is partial",
+    "unit": "quotes per page of the historical tape read at process start (one page is one request); a window larger than one page is read over further pages, newest first",
     "value": "10000",
-    "source": "alpacahq/alpaca-py v0.44.0 alpaca/common/rest.py:368-408 (_get_marketdata page_limit = 10,000 rows, so this is one page per window); lead ruling LEAD-0010 R3; UNCALIBRATED",
+    "source": "alpacahq/alpaca-py v0.44.0 alpaca/common/rest.py:368-408 (_get_marketdata page_limit = 10,000 rows a page; page_token in and next_page_token out at :381,388,398) and alpaca/data/requests.py:40 (sort; Sort.DESC at alpaca/common/enums.py:36-38); a page over this bound is malformed; lead rulings LEAD-0010 R3 and b-tape-pages R1/R4/R5; UNCALIBRATED",
     "calibration_state": "UNCALIBRATED",
     "last_change": "2026-11-10"
   },
@@ -57,9 +57,9 @@
   },
   {
     "name": "tape_max_requests",
-    "unit": "paced requests the whole start read may spend (positions, orders and quote windows); the rest of the account burst is left to the first reconcile",
+    "unit": "paced requests the whole start read may spend (positions, orders and every quote page); the rest of the account burst is left to the first reconcile",
     "value": "8",
-    "source": "lanes/limits.yaml alpaca-paper-b order_actions_budget_per_min 180 and BudgetControls burst = budget // 10 = 18 (src/sextant/paper/b_protector_main.py); 8 leaves 10 tokens for the first reconcile's positions, open-orders and arming calls; lead ruling LEAD-0041 G6; UNCALIBRATED",
+    "source": "lanes/limits.yaml alpaca-paper-b order_actions_budget_per_min 180 and BudgetControls burst = budget // 10 = 18 (src/sextant/paper/b_protector_main.py); 8 leaves 10 tokens for the first reconcile's positions, open-orders and arming calls, so one held position reads at most 6 quote pages (8 - 1 positions - 1 orders), 60,000 rows at tape_max_quotes; lead rulings LEAD-0041 G6 and b-tape-pages R5; UNCALIBRATED",
     "calibration_state": "UNCALIBRATED",
     "last_change": "2026-11-10"
   }

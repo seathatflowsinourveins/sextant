@@ -725,24 +725,41 @@ def historical_rows() -> dict[str, list[dict[str, object]]]:
     }
 
 
-def test_the_historical_tape_requests_the_session_feed_in_time_order() -> None:
+def test_the_historical_tape_requests_the_session_feed_newest_first() -> None:
+    # R4: alpaca-py 0.44.0 BaseTimeseriesDataRequest.sort (alpaca/data/requests.py:40), so a
+    # partial read covers the most recent part of the window.
     client = FakeHistoricalClient(historical_rows())
     tape = BHistoricalTape(client, 10_000)
     start = int(datetime(2026, 11, 9, 12, 47, tzinfo=ET).timestamp()) * SEC
     end = int(datetime(2026, 11, 9, 18, 10, tzinfo=ET).timestamp()) * SEC
 
-    observations = tape.quotes("AAPL", start, end, "sip")
+    observations, token = tape.quote_page("AAPL", start, end, "sip")
 
-    assert [item.bid for item in observations] == [Decimal("36.99"), Decimal("38.70")]
-    assert [item.ts_ns for item in observations] == sorted(item.ts_ns for item in observations)
+    assert {item.bid for item in observations} == {Decimal("36.99"), Decimal("38.70")}
+    assert token is None
     path, request = client.requests[0]
     assert path == "/stocks/quotes"
     assert request["symbols"] == "AAPL"
     assert request["feed"] is DataFeed.SIP
-    assert request["sort"] is Sort.ASC
+    assert request["sort"] is Sort.DESC
+    assert request.get("page_token") is None
     assert request["limit"] == 10_000
     assert request["start"] == "2026-11-09T17:47:00+00:00"
     assert request["end"] == "2026-11-09T23:10:00+00:00"
+
+
+def test_a_continuation_page_sends_the_token_and_returns_the_next_one() -> None:
+    # R1: the token alpaca-py's own page loop sends (alpaca/common/rest.py:381,388,398).
+    class Pages(FakeHistoricalClient):
+        def get(self, path: str, data: dict[str, object]) -> dict[str, object]:
+            self.requests.append((path, dict(data)))
+            return {"quotes": self.rows, "next_page_token": "page-three"}
+
+    client = Pages(historical_rows())
+    _, token = BHistoricalTape(client, 10_000).quote_page("AAPL", 0, 1, "sip", "page-two")
+
+    assert token == "page-three"  # noqa: S105 - a page token
+    assert client.requests[0][1]["page_token"] == "page-two"  # noqa: S105 - a page token
 
 
 @pytest.mark.parametrize(("feed", "expected"), [("sip", DataFeed.SIP), ("boats", DataFeed.BOATS)])
@@ -750,7 +767,7 @@ def test_the_historical_tape_uses_the_sessions_feed(feed: str, expected: DataFee
     client = FakeHistoricalClient(historical_rows())
     tape = BHistoricalTape(client, 10_000)
 
-    tape.quotes("AAPL", 0, 1, feed)
+    tape.quote_page("AAPL", 0, 1, feed)
 
     assert client.requests[0][1]["feed"] is expected
 
@@ -822,9 +839,10 @@ POST_AT_NS = ns(datetime(2026, 11, 9, 18, 10, tzinfo=ET))
         {"quotes": []},
         {"AAPL": []},
         {"quotes": {"AAPL": [None]}},
+        # R1: a token is followed now; one that never ends is partial when the budget ends.
         {"quotes": {"AAPL": []}, "next_page_token": "unread"},
     ],
-    ids=["other-symbol-key", "non-mapping", "no-quotes-key", "null-row", "unread-page"],
+    ids=["other-symbol-key", "non-mapping", "no-quotes-key", "null-row", "endless-pages"],
 )
 def test_a_malformed_tape_response_is_partial_never_ok(response: object) -> None:
     # F6: an unexpected shape is not an empty window.
@@ -835,11 +853,14 @@ def test_a_malformed_tape_response_is_partial_never_ok(response: object) -> None
     assert [page.reason for page in p.pages] == ["outside_rth_tape_unreadable"]
 
 
-def test_a_window_that_reaches_the_quote_bound_is_partial() -> None:
+def test_a_page_over_the_quote_bound_is_partial() -> None:
+    # R1 changes N3's bound: a page AT the bound with no token is the window's last page; a
+    # page OVER the bound is not what was asked for, so it is malformed and partial.
     rows = {
         "AAPL": [
             {"t": "2026-11-09T21:59:00Z", "bp": 38.70, "ap": 38.71, "bs": 1, "as": 1},
             {"t": "2026-11-09T22:00:00Z", "bp": 38.60, "ap": 38.61, "bs": 1, "as": 1},
+            {"t": "2026-11-09T22:01:00Z", "bp": 38.50, "ap": 38.51, "bs": 1, "as": 1},
         ]
     }
     tape = BHistoricalTape(FakeHistoricalClient(rows), 2)
@@ -904,7 +925,7 @@ def test_historical_quote_reads_wait_on_the_account_pacer() -> None:
     pacer = paced(1)
     client = FakeHistoricalClient(historical_rows())
     tape = BHistoricalTape(PacedHistoricalDataClient(client, pacer), 10_000)  # type: ignore[arg-type]
-    tape.quotes("AAPL", 0, 1, "sip")
+    tape.quote_page("AAPL", 0, 1, "sip")
     assert len(client.requests) == 1
     assert pacer.bucket.tokens == 0
 
@@ -918,7 +939,7 @@ def test_a_refused_historical_read_is_withdrawn_and_never_runs_later() -> None:
     client = FakeHistoricalClient(historical_rows())
     tape = BHistoricalTape(PacedHistoricalDataClient(client, pacer), 10_000)  # type: ignore[arg-type]
     with pytest.raises(PacerRefused):
-        tape.quotes("AAPL", 0, 1, "sip")
+        tape.quote_page("AAPL", 0, 1, "sip")
     assert pacer.queue == []
     pacer.bucket.tokens = 5
     pacer.drain()
@@ -930,13 +951,15 @@ def test_the_stream_reads_the_tape_once_before_its_loop_and_never_inside_it(monk
     reads: list[bool] = []
 
     class LoopProbe:
-        def quotes(self, symbol: str, start_ns: int, end_ns: int, feed: str) -> tuple:
+        def quote_page(
+            self, symbol: str, start_ns: int, end_ns: int, feed: str, page_token: object = None
+        ) -> tuple:
             try:
                 asyncio.get_running_loop()
                 reads.append(True)
             except RuntimeError:
                 reads.append(False)
-            return ()
+            return (), None
 
     async def no_connect(self) -> None:
         return None
@@ -967,9 +990,10 @@ def test_a_one_sided_historical_quote_is_skipped_not_a_malformed_window() -> Non
     rows = historical_rows()
     rows["AAPL"].insert(1, {"t": "2026-11-09T20:00:00Z", "bp": 0, "ap": 38.80, "bs": 0, "as": 1})
     tape = BHistoricalTape(FakeHistoricalClient(rows), 10_000)
-    observations = tape.quotes("AAPL", 0, POST_AT_NS, "sip")
+    observations, token = tape.quote_page("AAPL", 0, POST_AT_NS, "sip")
 
     assert [item.bid for item in observations] == [Decimal("36.99"), Decimal("38.70")]
+    assert token is None
 
 
 def test_the_bounded_tape_client_makes_no_internal_retries() -> None:
@@ -998,7 +1022,7 @@ def test_the_bounded_tape_client_makes_no_internal_retries() -> None:
 
     data._session.request = request  # type: ignore[method-assign]
     with pytest.raises(APIError):
-        BHistoricalTape(data, 10_000).quotes("AAPL", 0, 1, "sip")
+        BHistoricalTape(data, 10_000).quote_page("AAPL", 0, 1, "sip")
     assert len(sent) == 1
 
 
