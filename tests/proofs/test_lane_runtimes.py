@@ -99,20 +99,28 @@ def test_model_policy_keeps_the_approved_google_interim_and_native_claude() -> N
     assert policy["google"]["effort"] == "high"
     assert policy["google"]["router_connections"] == ["agy", "antigravity"]
     assert policy["google"]["status"].startswith("interim: Carbon not in this account's catalog")
-    # ADR-0030's 2026-11-09 amendment, one entry per row of its table: the worker entry is the
-    # owner's named exception, Opus 5.5, and the project settings follow it (test_hard_lines.py
-    # binds the hard-lines receipt to them, and only a host engine run re-records it); the lead,
-    # the API reviewer and the reflection automation run Fable 5.2.
+    # ADR-0030's 2026-11-09 second amendment: the blanket environment pin gives way to the
+    # project default, and the lead, the dispatcher/lander/tracker roles, the worker tabs and
+    # the reflection automation all run high. Only the API reviewer and the reflection pass
+    # their level explicitly, because they run outside the interactive project settings.
+    # test_hard_lines.py binds the hard-lines receipt to these settings, and only a host
+    # engine run re-records it.
     worker, lead = policy["claude"], policy["claude_lead"]
+    roles = policy["claude_roles"]
     reviewer, reflection = policy["claude_reviewer"], policy["claude_reflection"]
-    assert (worker["model"], worker["effort"]) == ("claude-opus-5-5", "max")
-    assert (lead["model"], lead["effort"]) == ("claude-fable-5-2", "max")
-    assert lead["launch"] == "claude --model fable --effort max"
-    assert (reviewer["model"], reviewer["effort"]) == ("claude-fable-5-2", "max")
-    assert (reflection["model"], reflection["effort"]) == ("claude-fable-5-2", "max")
-    for entry in (worker, lead, reviewer, reflection):
+    assert (worker["model"], worker["effort"]) == ("claude-opus-5-5", "high")
+    assert (roles["model"], roles["effort"]) == ("claude-sonnet-5-5", "high")
+    assert roles["launch"] == "claude --model sonnet"
+    assert "tracker" in roles["pinned_in"]
+    assert (lead["model"], lead["effort"]) == ("claude-fable-5-2", "high")
+    assert lead["launch"] == "claude --model fable"
+    assert (reviewer["model"], reviewer["effort"]) == ("claude-fable-5-2", "high")
+    assert (reflection["model"], reflection["effort"]) == ("claude-fable-5-2", "high")
+    for entry in (worker, roles, lead, reviewer, reflection):
         assert "ADR-0030, 2026-11-09 amendment" in entry["authority"]
     claude = json.loads((ROOT / ".claude/settings.json").read_text())
     assert claude["model"] == worker["model"]
-    assert claude["env"]["CLAUDE_CODE_EFFORT_LEVEL"] == worker["effort"]
-    assert "effortLevel" not in claude, "persistent max uses the upstream environment setting"
+    assert "CLAUDE_CODE_EFFORT_LEVEL" not in claude["env"], (
+        "the blanket environment pin gives way to the project default"
+    )
+    assert claude["effortLevel"] == worker["effort"] == "high"
