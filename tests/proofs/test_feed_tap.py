@@ -726,3 +726,32 @@ def test_a_quiet_stream_still_publishes_the_last_closed_second(tmp_path: Path) -
     closed = [r for r in _lines(path) if r.get("kind") == "second" and r["second"] == _T0 // _S]
     assert closed and closed[0]["trades"] == 1
     tap.stop()
+
+
+def test_extra_ticks_are_counted_separately_and_last_record_clears() -> None:
+    now = _Now(_T0)
+    tap = _tap(time_ns=now, perf_ns=_Now(0))
+
+    assert tap.started is False
+    tap.start()
+    assert tap.started is True
+    tap.extra_trade()
+    tap.extra_quote()
+    tap.extra_trade()
+    assert tap.last_record is None
+
+    now.value = _T0 + _S
+    records = tap.take(_T0 + _S)
+
+    assert len(records) == 1
+    record = records[0]
+    assert record["extra_trades"] == 2
+    assert record["extra_quotes"] == 1
+    assert record["trades"] == 0
+    assert record["quotes"] == 0
+    assert record["symbols_seen"] == 0
+    assert record["lag_ns"]["count"] == 0
+    assert record["service_ns"] == {"sum": 0, "max": None}
+    assert tap.last_record is record
+    tap.clear_last()
+    assert tap.last_record is None

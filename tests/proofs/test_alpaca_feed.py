@@ -33,6 +33,7 @@ from nautilus_trader.model import (
 )
 
 from sextant.paper.alpaca_feed import AlpacaTickFeed
+from sextant.paper.feed_tap import FeedTap
 
 _TRADE_TS = 1_794_234_600_123_456_000
 _QUOTE_TS = 1_794_234_600_000_000_000
@@ -61,6 +62,9 @@ class _FakeStream(StockDataStream):
         self.quote_handler: Callable[..., Any] | None = None
         self.trade_symbols: tuple[str, ...] = ()
         self.quote_symbols: tuple[str, ...] = ()
+        self.trade_subscriptions: list[tuple[Callable[..., Any], tuple[str, ...]]] = []
+        self.quote_subscriptions: list[tuple[Callable[..., Any], tuple[str, ...]]] = []
+        self.unsubscribed: list[tuple[str, tuple[str, ...]]] = []
         self.run_calls = 0
         self.stop_calls = 0
         self.stop_ws_calls = 0
@@ -68,10 +72,18 @@ class _FakeStream(StockDataStream):
     def subscribe_trades(self, handler: Callable[..., Any], *symbols: str) -> None:
         self.trade_handler = handler
         self.trade_symbols = symbols
+        self.trade_subscriptions.append((handler, symbols))
 
     def subscribe_quotes(self, handler: Callable[..., Any], *symbols: str) -> None:
         self.quote_handler = handler
         self.quote_symbols = symbols
+        self.quote_subscriptions.append((handler, symbols))
+
+    def unsubscribe_trades(self, *symbols: str) -> None:
+        self.unsubscribed.append(("trades", symbols))
+
+    def unsubscribe_quotes(self, *symbols: str) -> None:
+        self.unsubscribed.append(("quotes", symbols))
 
     def run(self) -> None:
         self.run_calls += 1
@@ -81,6 +93,18 @@ class _FakeStream(StockDataStream):
 
     async def stop_ws(self) -> None:
         self.stop_ws_calls += 1
+
+
+class _ScriptedStream(_FakeStream):
+    """A stream whose run() delivers a scripted exchange, still without a socket."""
+
+    def __init__(self, script: Callable[[_ScriptedStream], None]) -> None:
+        super().__init__()
+        self.script = script
+
+    def run(self) -> None:
+        self.run_calls += 1
+        self.script(self)
 
 
 class _PreLoopStopStream(_FakeStream):
@@ -113,8 +137,18 @@ def _make_feed(
     on_trade: Callable[[TradeTick], None] = _ignore_trade,
     on_quote: Callable[[QuoteTick], None] = _ignore_quote,
     stream: _FakeStream | None = None,
+    tap: FeedTap | None = None,
+    tap_symbols: tuple[str, ...] = (),
+    on_page: Callable[[str], None] | None = None,
 ) -> tuple[AlpacaTickFeed, _FakeStream]:
     fake = stream if stream is not None else _FakeStream()
+    extra: dict[str, Any] = {}
+    if tap is not None:
+        extra["tap"] = tap
+    if tap_symbols:
+        extra["tap_symbols"] = tap_symbols
+    if on_page is not None:
+        extra["on_page"] = on_page
     feed = AlpacaTickFeed(
         {"AAPL.ALPACA": _EQUITY},
         on_trade=on_trade,
@@ -122,11 +156,12 @@ def _make_feed(
         api_key=_TEST_API_KEY,
         secret_key=_TEST_API_CREDENTIAL,
         stream_factory=_factory_for(fake),
+        **extra,
     )
     return feed, fake
 
 
-def _trade(**overrides: Any) -> Trade:
+def _trade(symbol: str = "AAPL", **overrides: Any) -> Trade:
     raw: dict[str, Any] = {
         "t": "2026-11-09T14:30:00.123456789Z",
         "p": 123.4567,
@@ -137,10 +172,10 @@ def _trade(**overrides: Any) -> Trade:
         "z": "C",
     }
     raw.update(overrides)
-    return Trade("AAPL", raw)
+    return Trade(symbol, raw)
 
 
-def _quote(**overrides: Any) -> Quote:
+def _quote(symbol: str = "AAPL", **overrides: Any) -> Quote:
     raw: dict[str, Any] = {
         "t": "2026-11-09T14:30:00Z",
         "bp": 100.12,
@@ -149,7 +184,7 @@ def _quote(**overrides: Any) -> Quote:
         "as": 5,
     }
     raw.update(overrides)
-    return Quote("AAPL", raw)
+    return Quote(symbol, raw)
 
 
 def _deliver_trade(stream: _FakeStream, trade: Trade) -> None:
@@ -160,6 +195,20 @@ def _deliver_trade(stream: _FakeStream, trade: Trade) -> None:
 def _deliver_quote(stream: _FakeStream, quote: Quote) -> None:
     assert stream.quote_handler is not None
     asyncio.run(stream.quote_handler(quote))
+
+
+def _handler_for(
+    subscriptions: list[tuple[Callable[..., Any], tuple[str, ...]]], symbol: str
+) -> Callable[..., Any]:
+    for handler, symbols in reversed(subscriptions):
+        if symbol in symbols:
+            return handler
+    raise AssertionError(f"no handler subscribed for {symbol}")
+
+
+def _deliver_to(stream: _FakeStream, kind: str, symbol: str, message: Any) -> None:
+    subscriptions = stream.trade_subscriptions if kind == "trade" else stream.quote_subscriptions
+    asyncio.run(_handler_for(subscriptions, symbol)(message))
 
 
 def test_trade_converts_to_exact_nautilus_tick() -> None:
@@ -638,3 +687,143 @@ def test_the_default_cadence_is_the_registry_feed_poll_interval() -> None:
     default = inspect.signature(AlpacaTickFeed).parameters["poll_interval_s"].default
 
     assert Decimal(str(default)) == Decimal(row["value"])
+
+
+def test_measurement_symbols_reach_only_the_tap_counters(tmp_path: Path) -> None:
+    path = tmp_path / "feed-tap.jsonl"
+    tap = FeedTap(path, flush_s=0.01)
+    trades: list[TradeTick] = []
+    quotes: list[QuoteTick] = []
+
+    def script(stream: _FakeStream) -> None:
+        _deliver_to(stream, "trade", "AAPL", _trade())
+        _deliver_to(stream, "quote", "AAPL", _quote())
+        _deliver_to(stream, "trade", "EXTRA", _trade(symbol="EXTRA"))
+        _deliver_to(stream, "quote", "EXTRA", _quote(symbol="EXTRA"))
+
+    stream = _ScriptedStream(script)
+    feed, _ = _make_feed(
+        on_trade=trades.append,
+        on_quote=quotes.append,
+        tap=tap,
+        tap_symbols=("EXTRA",),
+        stream=stream,
+    )
+
+    feed.start()
+
+    assert feed.failure is None
+    assert [tick.instrument_id.symbol.value for tick in trades] == ["AAPL"]
+    assert [tick.instrument_id.symbol.value for tick in quotes] == ["AAPL"]
+    records = [json.loads(line) for line in path.read_text().splitlines()]
+    second = next(record for record in records if record["kind"] == "second")
+    assert second["trades"] == 1
+    assert second["quotes"] == 1
+    assert second["extra_trades"] == 1
+    assert second["extra_quotes"] == 1
+    assert second["symbols_seen"] == 1
+    assert second["lag_ns"]["count"] == 2
+    assert ("AAPL",) in [symbols for _, symbols in stream.trade_subscriptions]
+    assert ("EXTRA",) in [symbols for _, symbols in stream.trade_subscriptions]
+
+
+def test_a_breach_drops_only_measurement_subscriptions_and_pages_once(tmp_path: Path) -> None:
+    now = _Now(_T0)
+    tap = FeedTap(tmp_path / "feed-tap.jsonl", time_ns=now, perf_ns=lambda: 0, flush_s=0.01)
+    pages: list[str] = []
+    trades: list[TradeTick] = []
+
+    def script(stream: _FakeStream) -> None:
+        now.value = _T0 + 2 * _S
+        _deliver_to(stream, "trade", "AAPL", _trade())
+        now.value = _T0 + 3 * _S
+        _deliver_to(stream, "trade", "AAPL", _trade())
+        deadline = time.monotonic() + 2.0
+        while not pages and time.monotonic() < deadline:
+            time.sleep(0.01)
+
+    stream = _ScriptedStream(script)
+    feed, _ = _make_feed(
+        on_trade=trades.append,
+        tap=tap,
+        tap_symbols=("EXTRA",),
+        on_page=pages.append,
+        stream=stream,
+    )
+
+    feed.start()
+
+    assert len(pages) == 1
+    assert ("trades", ("EXTRA",)) in stream.unsubscribed
+    assert ("quotes", ("EXTRA",)) in stream.unsubscribed
+    assert all("AAPL" not in symbols for _, symbols in stream.unsubscribed)
+    assert ("AAPL",) in [symbols for _, symbols in stream.trade_subscriptions]
+    assert ("EXTRA",) in [symbols for _, symbols in stream.trade_subscriptions]
+    assert len(trades) == 2
+    assert feed.failure is None
+
+
+def test_measurement_symbols_stay_subscribed_inside_the_bound(tmp_path: Path) -> None:
+    now = _Now(_T0)
+    tap = FeedTap(tmp_path / "feed-tap.jsonl", time_ns=now, perf_ns=lambda: 0, flush_s=0.01)
+    pages: list[str] = []
+
+    def script(stream: _FakeStream) -> None:
+        _deliver_to(stream, "trade", "AAPL", _trade())
+        now.value = _T0 + _S
+        _deliver_to(stream, "trade", "AAPL", _trade())
+        time.sleep(0.6)
+
+    stream = _ScriptedStream(script)
+    feed, _ = _make_feed(
+        tap=tap,
+        tap_symbols=("EXTRA",),
+        on_page=pages.append,
+        stream=stream,
+    )
+
+    feed.start()
+
+    assert pages == []
+    assert stream.unsubscribed == []
+    assert ("EXTRA",) in [symbols for _, symbols in stream.trade_subscriptions]
+    assert feed.failure is None
+
+
+def test_measurement_symbols_require_the_tap() -> None:
+    with pytest.raises(ValueError, match="measurement symbols require the feed tap"):
+        AlpacaTickFeed(
+            {"AAPL.ALPACA": _EQUITY},
+            on_trade=_ignore_trade,
+            on_quote=_ignore_quote,
+            api_key=_TEST_API_KEY,
+            secret_key=_TEST_API_CREDENTIAL,
+            tap_symbols=("EXTRA",),
+        )
+
+
+def test_measurement_symbols_must_not_overlap_traded_symbols() -> None:
+    with pytest.raises(ValueError, match="already traded"):
+        AlpacaTickFeed(
+            {"AAPL.ALPACA": _EQUITY},
+            on_trade=_ignore_trade,
+            on_quote=_ignore_quote,
+            api_key=_TEST_API_KEY,
+            secret_key=_TEST_API_CREDENTIAL,
+            tap=FeedTap(),
+            tap_symbols=("AAPL",),
+        )
+
+
+def test_measurement_symbols_are_refused_on_the_boats_poll() -> None:
+    with pytest.raises(ValueError, match="measures the SIP socket"):
+        AlpacaTickFeed(
+            {"AAPL.ALPACA": _EQUITY},
+            on_trade=_ignore_trade,
+            on_quote=_ignore_quote,
+            api_key=_TEST_API_KEY,
+            secret_key=_TEST_API_CREDENTIAL,
+            feed="boats",
+            tap=FeedTap(),
+            tap_symbols=("EXTRA",),
+        )
