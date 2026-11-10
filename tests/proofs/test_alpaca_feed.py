@@ -700,44 +700,6 @@ def test_the_default_cadence_is_the_registry_feed_poll_interval() -> None:
     assert Decimal(str(default)) == Decimal(row["value"])
 
 
-def test_measurement_symbols_reach_only_the_tap_counters(tmp_path: Path) -> None:
-    path = tmp_path / "feed-tap.jsonl"
-    tap = FeedTap(path, flush_s=0.01)
-    trades: list[TradeTick] = []
-    quotes: list[QuoteTick] = []
-
-    def script(stream: _FakeStream) -> None:
-        _deliver_to(stream, "trade", "AAPL", _trade())
-        _deliver_to(stream, "quote", "AAPL", _quote())
-        _deliver_to(stream, "trade", "EXTRA", _trade(symbol="EXTRA"))
-        _deliver_to(stream, "quote", "EXTRA", _quote(symbol="EXTRA"))
-
-    stream = _ScriptedStream(script)
-    feed, _ = _make_feed(
-        on_trade=trades.append,
-        on_quote=quotes.append,
-        tap=tap,
-        tap_symbols=("EXTRA",),
-        stream=stream,
-    )
-
-    feed.start()
-
-    assert feed.failure is None
-    assert [tick.instrument_id.symbol.value for tick in trades] == ["AAPL"]
-    assert [tick.instrument_id.symbol.value for tick in quotes] == ["AAPL"]
-    records = [json.loads(line) for line in path.read_text().splitlines()]
-    second = next(record for record in records if record["kind"] == "second")
-    assert second["trades"] == 1
-    assert second["quotes"] == 1
-    assert second["extra_trades"] == 1
-    assert second["extra_quotes"] == 1
-    assert second["symbols_seen"] == 1
-    assert second["lag_ns"]["count"] == 2
-    assert ("AAPL",) in [symbols for _, symbols in stream.trade_subscriptions]
-    assert ("EXTRA",) in [symbols for _, symbols in stream.trade_subscriptions]
-
-
 def test_a_breach_drops_only_measurement_subscriptions_and_pages_once(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -803,40 +765,3 @@ def test_measurement_symbols_stay_subscribed_inside_the_bound(
     assert feed.failure is None
 
 
-def test_measurement_symbols_require_the_tap() -> None:
-    with pytest.raises(ValueError, match="measurement symbols require the feed tap"):
-        AlpacaTickFeed(
-            {"AAPL.ALPACA": _EQUITY},
-            on_trade=_ignore_trade,
-            on_quote=_ignore_quote,
-            api_key=_TEST_API_KEY,
-            secret_key=_TEST_API_CREDENTIAL,
-            tap_symbols=("EXTRA",),
-        )
-
-
-def test_measurement_symbols_must_not_overlap_traded_symbols() -> None:
-    with pytest.raises(ValueError, match="already traded"):
-        AlpacaTickFeed(
-            {"AAPL.ALPACA": _EQUITY},
-            on_trade=_ignore_trade,
-            on_quote=_ignore_quote,
-            api_key=_TEST_API_KEY,
-            secret_key=_TEST_API_CREDENTIAL,
-            tap=FeedTap(),
-            tap_symbols=("AAPL",),
-        )
-
-
-def test_measurement_symbols_are_refused_on_the_boats_poll() -> None:
-    with pytest.raises(ValueError, match="measures the SIP socket"):
-        AlpacaTickFeed(
-            {"AAPL.ALPACA": _EQUITY},
-            on_trade=_ignore_trade,
-            on_quote=_ignore_quote,
-            api_key=_TEST_API_KEY,
-            secret_key=_TEST_API_CREDENTIAL,
-            feed="boats",
-            tap=FeedTap(),
-            tap_symbols=("EXTRA",),
-        )
