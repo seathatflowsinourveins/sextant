@@ -12,17 +12,19 @@ NAMES = frozenset(
     "first_leg_window_s first_leg_trades_count first_leg_span_s first_leg_max_move "
     "entry_max_vwap_extension_atr entry_chase_bps entry_ttl_s reclaim_lookback_s "
     "reclaim_trades_count reclaim_trades_span_s reclaim_hold_s reclaim_max_above_buffers "
-    "atr_period atr_bar_minutes max_data_age_s bp_target_fraction stop_ref_fraction "
-    "portfolio_slots stopout_size_decay stopout_size_floor confidence_size_floor "
+    "atr_period atr_bar_minutes max_data_age_s max_armed_symbols bp_target_fraction "
+    "stop_ref_fraction portfolio_slots stopout_size_decay stopout_size_floor confidence_size_floor "
     "chase_cap_fraction flow_share_cap flow_share_window_s covered_flow_window_s "
     "covered_flow_baseline_min covered_flow_ratio".split()
 )
-FIRST_LEG = frozenset(  # Northstar FirstLegParams.from_row: the first leg's own rows (N1:46)
+FIRST_LEG = frozenset(
     "first_leg_window_s first_leg_trades_count first_leg_span_s first_leg_max_move "
-    "entry_chase_bps entry_ttl_s atr_period atr_bar_minutes max_data_age_s".split()
+    "entry_chase_bps entry_ttl_s atr_period atr_bar_minutes max_data_age_s "
+    "max_armed_symbols".split()
 )
 COUNTS = frozenset(
-    "first_leg_trades_count reclaim_trades_count atr_period atr_bar_minutes portfolio_slots".split()
+    "first_leg_trades_count reclaim_trades_count atr_period atr_bar_minutes "
+    "max_armed_symbols portfolio_slots".split()
 )
 FRACTIONS = frozenset(
     "first_leg_max_move reclaim_max_above_buffers bp_target_fraction stop_ref_fraction "

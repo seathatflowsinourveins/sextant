@@ -9,6 +9,9 @@
 #   - claim: docs/cli/README.md and docs/scm-observer.md, `ao spawn --claim-pr`, AO's own PR ownership,
 #     with --no-takeover so a second owner is refused. The lifecycle manager then sends that session
 #     each failed check and review comment (backend/internal/lifecycle/reactions.go). It never merges.
+#     The hand-off base is the repository's default branch, read with `gh repo view --json
+#     defaultBranchRef` (https://cli.github.com/manual/gh_repo_view, read 2026-11-09): gate now, main
+#     after the cutover.
 #   - harness ids: backend/internal/adapters/agent/deepseekharness/deepseekharness.go:59 defines
 #     deepseek-harness, resolving dsh (:228-246) and launching its headless profile (:144);
 #     backend/internal/adapters/agent/codex/codex.go:95 defines codex.
@@ -22,7 +25,7 @@ pin_commit=033d597032e448a0ea16c298350e36b099f74106
 port=3301
 project=sextant
 clone="$HOME/.ao/repos/sextant-next"
-repo_url=https://github.com/seathatflowsinourveins/sextant-next
+repo_url=https://github.com/seathatflowsinourveins/sextant
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 install() {
@@ -68,15 +71,18 @@ credential() {
 }
 
 claim() {
-  local pr=${1:?usage: ao.sh claim <pr-number>} view head sha
+  local pr=${1:?usage: ao.sh claim <pr-number>} view default head sha
   [[ "$pr" =~ ^[0-9]+$ ]] || { echo "PR must be a number." >&2; exit 2; }
   view=$(gh pr view "$pr" --repo "$repo_url" --json state,isDraft,baseRefName,headRefName,headRefOid,autoMergeRequest,statusCheckRollup,body)
+  # The hand-off base is the repository's default branch, not the literal main: gate before the
+  # cutover, main after it. gh reads it once, its own JSON filtered by jq.
+  default=$(gh repo view "$repo_url" --json defaultBranchRef --jq .defaultBranchRef.name)
   # One writer per branch: AO takes a PR only once its worker has handed it off, open, landing by squash
-  # auto-merge on main, and with `ci` settled green or red.
-  jq -e '.state == "OPEN" and (.isDraft | not) and .baseRefName == "main"
+  # auto-merge on that default branch, and with `ci` settled green or red.
+  jq -e --arg default "$default" '.state == "OPEN" and (.isDraft | not) and .baseRefName == $default
     and .autoMergeRequest.mergeMethod == "SQUASH"
     and ([.statusCheckRollup[] | select(.name == "ci" and .status == "COMPLETED")] | length > 0)' <<< "$view" > /dev/null || {
-    echo "PR #$pr is not handed off: it must be open, not a draft, on main, set to squash auto-merge, with ci settled." >&2
+    echo "PR #$pr is not handed off: it must be open, not a draft, on the repository's default branch ($default), set to squash auto-merge, with ci settled." >&2
     exit 1
   }
   # Match the workflows' case-insensitive, whole-body contains, including comments.
