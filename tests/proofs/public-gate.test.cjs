@@ -1,6 +1,7 @@
 // Native node:test pattern already used by workflow-scenarios.mjs; no provider or GitHub calls.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const gate = require('../../.github/gate/gate.cjs');
@@ -407,4 +408,187 @@ test('two base updates in a row never count, even after the base moves', async (
   later.github.paginate = async () => afterSecond;
   assert.equal(await gate.reviewedHeadCount(later.github, later.context, 7, sha.later), 2);
   assert.equal(await gate.blockingPriority(later.github, later.context, 7, sha.later), 1);
+});
+
+// A base update is only a clean one when its merge tree equals the clean merge of
+// its parents (git merge-tree --write-tree, read 2026-11-09). #208's ca98e85 and
+// #201's 8457400 are such merges. A merge that also carries author changes has a
+// different tree and is an author head: its own review decides, and the earlier
+// head's failed review is not carried into it.
+function mergeRepo() {
+  const dir = fs.mkdtempSync(path.join(process.cwd(), '.gate-merge-test-'));
+  const run = (...args) => execFileSync('git', args, {cwd: dir, encoding: 'utf8'}).trim();
+  const write = (file, text) => fs.writeFileSync(path.join(dir, file), text);
+  const commit = (file, message) => {
+    run('add', file);
+    run('commit', '-q', '-m', message);
+    return run('rev-parse', 'HEAD');
+  };
+  const merge = (ref, message) => {
+    run('merge', '-q', '--no-ff', '-m', message, ref);
+    return run('rev-parse', 'HEAD');
+  };
+  const data = ref => ({
+    sha: run('rev-parse', ref),
+    parents: run('rev-list', '--parents', '-n', '1', ref).split(' ').slice(1).map(sha => ({sha})),
+    commit: {tree: {sha: run('rev-parse', `${ref}^{tree}`)}},
+  });
+  run('init', '-q', '-b', 'main');
+  run('config', 'user.name', 'Gate Test');
+  run('config', 'user.email', 'gate@example.com');
+  write('root.txt', 'root\n');
+  const root = commit('root.txt', 'root');
+  run('checkout', '-q', '-b', 'author');
+  write('author.txt', 'author\n');
+  const author = commit('author.txt', 'author');
+  run('checkout', '-q', '-b', 'base', root);
+  write('base.txt', 'base\n');
+  const base = commit('base.txt', 'base');
+  run('checkout', '-q', 'author');
+  const merge1 = merge('base', 'Merge base into author');
+  run('checkout', '-q', 'base');
+  write('base-two.txt', 'base two\n');
+  const base2 = commit('base-two.txt', 'base two');
+  run('checkout', '-q', 'author');
+  const merge2 = merge(base2, 'Merge base two into author');
+  run('checkout', '-q', '-b', 'dirty', merge1);
+  run('merge', '-q', '--no-commit', base2);
+  write('review-fix.txt', 'authored fix\n');
+  run('add', 'review-fix.txt');
+  run('commit', '-q', '-m', 'Merge base two with an authored fix');
+  const dirty = run('rev-parse', 'HEAD');
+  const install = f => {
+    f.pr.base.sha = base2;
+    f.github.rest.repos.getCommit = async ({ref}) => ({data: data(ref)});
+    f.github.rest.repos.compareCommitsWithBasehead = async ({basehead}) => {
+      const [from, to] = basehead.split('...');
+      let status = 'diverged';
+      try {
+        execFileSync('git', ['merge-base', '--is-ancestor', from, to], {cwd: dir});
+        status = 'ahead';
+      } catch { /* not an ancestor */ }
+      assert.equal(status, 'ahead', `unexpected base comparison: ${basehead}`);
+      return {data: {status}};
+    };
+  };
+  const statuses = (f, byRef) => {
+    f.github.paginate = async (method, params) => byRef[params.ref] || [];
+  };
+  return {dir, sha: {root, author, base, base2, merge1, merge2, dirty}, data, install, statuses};
+}
+
+test("a clean base-merge head cannot clear the last author head's completed blocking review (#208, #201)", async () => {
+  const cwd = process.cwd();
+  const f = fixture();
+  const repo = mergeRepo();
+  try {
+    repo.install(f);
+    f.pr.head.sha = repo.sha.merge2;
+    repo.statuses(f, {[repo.sha.author]: [{context: 'review-blocking-dsh', state: 'failure',
+      description: 'The dsh review completed with a blocking finding'}]});
+    process.chdir(repo.dir);
+    await gate.finish(f, 7, repo.sha.merge2, {source: 'success', dsh: 'success'}, '');
+    assert.equal(f.statuses.at(-1).state, 'failure');
+    assert.match(f.statuses.at(-1).description, /last author head/);
+    assert.equal(f.failures.length, 1);
+    assert.match(f.failures[0], /last author head/);
+
+    // A newer passing review at the author head clears it, as a fresh review should.
+    const cleared = fixture();
+    repo.install(cleared);
+    cleared.pr.head.sha = repo.sha.merge2;
+    repo.statuses(cleared, {[repo.sha.author]: [
+      {context: 'review-blocking-dsh', state: 'success'},
+      {context: 'review-blocking-dsh', state: 'failure'},
+    ]});
+    await gate.finish(cleared, 7, repo.sha.merge2, {source: 'success', dsh: 'success'}, '');
+    assert.equal(cleared.statuses.at(-1).state, 'success');
+    assert.equal(cleared.failures.length, 0);
+  } finally {
+    process.chdir(cwd);
+    fs.rmSync(repo.dir, {recursive: true, force: true});
+  }
+});
+
+test('a stale run failure at the last author head is not carried to a clean base merge', async () => {
+  const cwd = process.cwd();
+  const f = fixture();
+  const repo = mergeRepo();
+  try {
+    repo.install(f);
+    f.pr.head.sha = repo.sha.merge2;
+    // M landed while A was still reviewed: A's run then failed the stale-head check and
+    // published a generic failure. No reviewer completed a blocking verdict at A.
+    repo.statuses(f, {[repo.sha.author]: [{context: 'review', state: 'failure',
+      description: 'A required review failed, was skipped or did not complete'}]});
+    process.chdir(repo.dir);
+    await gate.finish(f, 7, repo.sha.merge2, {source: 'success', dsh: 'success'}, '');
+    assert.equal(f.statuses.at(-1).state, 'success');
+    assert.equal(f.failures.length, 0);
+  } finally {
+    process.chdir(cwd);
+    fs.rmSync(repo.dir, {recursive: true, force: true});
+  }
+});
+
+test('only a completed review verdict records the carry status', async () => {
+  const blocking = fixture();
+  await gate.qualityResult(blocking, 7, blocking.head, JSON.stringify({
+    findings: [{title: '[P1] The gate copies a stale run', body: 'file:1, wrong output', priority: 1}],
+    overall_correctness: 'patch is incorrect',
+    overall_explanation: 'One blocking finding.',
+  }), 'codex');
+  assert.equal(blocking.statuses.find(status => status.context === 'review-blocking-codex')?.state, 'failure');
+
+  const hollow = fixture();
+  await gate.qualityResult(hollow, 7, hollow.head, HOLLOW_205, 'codex');
+  assert.equal(hollow.statuses.length, 0);
+
+  const passing = fixture();
+  await gate.qualityResult(passing, 7, passing.head, JSON.stringify({
+    findings: [], overall_correctness: 'patch is correct', overall_explanation: 'No blocking findings.',
+  }), 'claude');
+  assert.equal(passing.statuses.find(status => status.context === 'review-blocking-claude')?.state, 'success');
+
+  const dir = fs.mkdtempSync(path.join(process.cwd(), '.gate-dsh-verdict-'));
+  try {
+    const file = path.join(dir, 'report.json');
+    const write = report => fs.writeFileSync(file, JSON.stringify(report));
+    const dsh = fixture();
+    write({headSha: dsh.head, verdict: 'needs-changes', truncated: false, engine: 'model',
+      findings: [{severity: 'error', file: 'a.cjs', line: 1, rule: 'r', message: 'm'}]});
+    await gate.dshResult(dsh, 7, dsh.head, file);
+    assert.equal(dsh.statuses.find(status => status.context === 'review-blocking-dsh')?.state, 'failure');
+
+    const truncated = fixture();
+    write({headSha: truncated.head, verdict: 'needs-changes', truncated: true, engine: 'model', findings: []});
+    await gate.dshResult(truncated, 7, truncated.head, file);
+    assert.equal(truncated.statuses.length, 0);
+  } finally {
+    fs.rmSync(dir, {recursive: true, force: true});
+  }
+});
+
+test('a merge that carries an authored fix is a fresh author head, not a base update (#208, #201)', async () => {
+  const cwd = process.cwd();
+  const f = fixture();
+  const repo = mergeRepo();
+  try {
+    repo.install(f);
+    assert.equal(await gate.isCleanBaseMerge(f.github, f.context, f.pr, repo.data(repo.sha.author), repo.dir), false);
+    assert.equal(await gate.isCleanBaseMerge(f.github, f.context, f.pr, repo.data(repo.sha.merge1), repo.dir), true);
+    assert.equal(await gate.isCleanBaseMerge(f.github, f.context, f.pr, repo.data(repo.sha.dirty), repo.dir), false);
+    assert.equal(await gate.lastAuthorHead(f.github, f.context, f.pr, repo.sha.merge2, repo.dir), repo.sha.author);
+    assert.equal(await gate.lastAuthorHead(f.github, f.context, f.pr, repo.sha.dirty, repo.dir), null);
+
+    repo.statuses(f, {[repo.sha.author]: [{context: 'review', state: 'failure'}]});
+    f.pr.head.sha = repo.sha.dirty;
+    process.chdir(repo.dir);
+    await gate.finish(f, 7, repo.sha.dirty, {source: 'success', dsh: 'success'}, '');
+    assert.equal(f.statuses.at(-1).state, 'success');
+    assert.equal(f.failures.length, 0);
+  } finally {
+    process.chdir(cwd);
+    fs.rmSync(repo.dir, {recursive: true, force: true});
+  }
 });

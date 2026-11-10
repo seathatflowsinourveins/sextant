@@ -69,6 +69,7 @@ jobs:
       contents: read
       pull-requests: write
       checks: write
+      statuses: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -145,6 +146,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
+      statuses: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -193,6 +195,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
+      statuses: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -275,6 +278,15 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      # The clean-merge check needs the pull request head and its merge parents.
+      # A failed fetch leaves finish() to fail closed with the git error.
+      - name: Fetch the pull request head and its merge parents
+        continue-on-error: true
+        env:
+          PR: ${{ needs.source.outputs.pr }}
+        run: |
+          git fetch --no-tags --unshallow origin || true
+          git fetch --no-tags origin "refs/pull/${PR}/head:refs/remotes/origin/pr-${PR}"
       - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         env:
           PR: ${{ needs.source.outputs.pr }}

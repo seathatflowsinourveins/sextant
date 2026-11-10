@@ -192,7 +192,9 @@
     "https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#pull_request",
     "https://docs.github.com/en/actions/reference/workflows-and-actions/variables#default-environment-variables",
     "https://code.claude.com/docs/en/agent-sdk/structured-outputs#recognize-the-structuredoutput-tool-call",
-    "https://cli.github.com/manual/gh_release_download"
+    "https://cli.github.com/manual/gh_release_download",
+    "https://git-scm.com/docs/git-merge-tree",
+    "https://docs.github.com/en/rest/commits/statuses?apiVersion=2022-11-28#list-commit-statuses-for-a-reference"
   ],
   "vendored_scripts": {
     "action-patch.mjs": "a897b80da6c1a42f32261e54a92e2bd1163dd075e0574edc4c336b96ceb3e797",
