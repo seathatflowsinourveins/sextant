@@ -215,6 +215,7 @@ class TapeRead:
     status: str
     reason: str = ""
     detail: str = ""
+    end_ns: int = 0
 
 
 def tape_windows(start_ns: int, end_ns: int) -> tuple[tuple[int, int, str], ...]:
@@ -353,6 +354,7 @@ def read_tape(
         status,
         "outside_rth_tape_unreadable" if failures else "",
         "; ".join(failures),
+        now_ns,
     )
 
 
@@ -760,23 +762,43 @@ class Protector:
     def _tape_key(self, symbol: str, qty: Decimal) -> tuple[str, Decimal, int]:
         return (symbol, qty, self._segment_start_ns)
 
-    def apply_tape(self, result: TapeRead, now_ns: int) -> None:
-        """Record one tape read; only the running high may move, and never down."""
+    def apply_tape(self, result: TapeRead, now_ns: int, *, late: bool = False) -> None:
+        """Record one tape read; only the running high may move, and never down.
 
+        A read is complete only for the windows it actually covered: a result drained
+        after the session's feed changed cannot make the new segment ``ok``. A late
+        result (one that outlived its budget) may raise the trigger and nothing else.
+        """
+
+        if late:
+            self._raise_tape_level(result, now_ns)
+            return
         symbol = result.symbol
+        covered_until = result.end_ns or now_ns
+        stale = result.status == "ok" and covered_until < self._segment_start_ns
         key = self._tape_key(symbol, result.qty)
         self._tape_adoptions[symbol] = result.adoption_ns
-        if result.status == "ok":
+        if result.status == "ok" and not stale:
             self._tape_notes[symbol] = "ok"
             self._tape_results[key] = result.level
         else:
-            self._tape_notes[symbol] = result.status
+            note = result.status
+            if stale:
+                note = "partial"
+            self._tape_notes[symbol] = note
             page_key = (symbol, self._segment_start_ns)
             if page_key not in self._tape_paged:
                 self._tape_paged.add(page_key)
-                self.page(result.reason or "outside_rth_tape_unreadable", symbol, result.detail)
+                detail = result.detail
+                if stale:
+                    detail = "the read ended before the current session's feed window"
+                self.page(result.reason or "outside_rth_tape_unreadable", symbol, detail)
+        self._raise_tape_level(result, now_ns)
+
+    def _raise_tape_level(self, result: TapeRead, now_ns: int) -> None:
         if result.level is None:
             return
+        symbol = result.symbol
         prior = self._tape_levels.get(symbol)
         if prior is None or result.level > prior:
             self._tape_levels[symbol] = result.level
@@ -1511,7 +1533,14 @@ class ProtectorStream(TradingStream):
                 budget_ns = int(self._parameters.feed_silence_s * NS_PER_SECOND)
                 if now_ns - self._tape_started_ns >= budget_ns:
                     self._tape_timed_out = True
-                    self.protector.tape_timed_out(self._tape_symbol, now_ns)
+                    symbol = self._tape_symbol
+                    self.protector.tape_timed_out(symbol, now_ns)
+                    # Release the slot: a later cadence tick must start a fresh read.
+                    # The abandoned task may still land; it may only raise the trigger.
+                    self._tape_task = None
+                    task.add_done_callback(
+                        lambda finished, symbol=symbol: self._late_tape(finished, symbol)
+                    )
             return
         self._tape_task = None
         try:
@@ -1522,6 +1551,18 @@ class ProtectorStream(TradingStream):
             self.protector.tape_failed(self._tape_symbol, now_ns, type(exc).__name__)
             return
         self.protector.apply_tape(result, now_ns)
+
+    def _late_tape(self, task: asyncio.Future[TapeRead], symbol: str) -> None:
+        """A result after its timeout may raise the trigger and nothing else."""
+
+        if task.cancelled():
+            return
+        try:
+            result = task.result()
+        except Exception:
+            return
+        if result.symbol == symbol:
+            self.protector.apply_tape(result, self._now_ns(), late=True)
 
     async def _on_trade_update(self, update: TradeUpdate) -> None:
         try:

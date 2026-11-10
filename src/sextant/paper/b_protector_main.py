@@ -102,6 +102,32 @@ class PacedTradingClient:
         self._call(ActionKind.CANCEL, self._client.cancel_order_by_id, order_id)
 
 
+class PacedHistoricalDataClient:
+    """Historical quote reads wait on the account pacer; latest polls stay direct."""
+
+    def __init__(self, client: Any, pacer: Any) -> None:
+        self._client = client
+        self._pacer = pacer
+
+    def get_stock_latest_quote(self, request: Any) -> Any:
+        return self._client.get_stock_latest_quote(request)
+
+    def get_stock_latest_trade(self, request: Any) -> Any:
+        return self._client.get_stock_latest_trade(request)
+
+    def get_stock_quotes(self, request: Any) -> Any:
+        results: list[Any] = []
+
+        def send(before_wire: Callable[[], None]) -> None:
+            before_wire()
+            results.append(self._client.get_stock_quotes(request))
+
+        self._pacer.request(ActionKind.QUERY, send, admission=lambda: True)
+        if not results:
+            raise PacerRefused("the account pacer did not admit the historical quote read")
+        return results[0]
+
+
 class BudgetControls:
     """The row-8 controls AccountPacer needs, from the existing paper budget row."""
 
@@ -250,6 +276,8 @@ def main(
         except Exception as exc:
             on_page(Page(reason="feed_client_failed", detail=type(exc).__name__))
             data_client = None
+        if data_client is not None:
+            data_client = cast(LatestDataClient, PacedHistoricalDataClient(data_client, pacer))
         stream = ProtectorStream(
             client,
             account,
