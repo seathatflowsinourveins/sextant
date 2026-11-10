@@ -11,11 +11,13 @@ This PR does not write any live home or change an active session. Deployment use
 the existing lane installer/parity path; never run the installer against B early.
 
 - Claude: run `bash deploy/wsl/lane-runtimes/claude-launch.sh` from the checkout,
-  or the installed `~/.local/share/sextant-lane-runtimes/claude-launch.sh`.
-  It execs native `claude`, retaining its authentication. `.claude/settings.json`
-  supplies the same project defaults; use the wrapper to clear inherited content
-  flags and per-signal destinations. Keep user/managed settings consistent with
-  the contract: a process environment cannot override managed policy.
+  or the installed `~/.local/share/sextant-lane-runtimes/claude-launch.sh`;
+  `python3 scripts/role_launch.py <role>` takes that path for every role and worker.
+  It execs native `claude`, retaining its authentication. The wrapper is the only
+  place that sets the exporter variables: Claude Code ignores them in a repository's
+  project settings, so `.claude/settings.json` keeps only the opt-outs the page still
+  honours. Keep user/managed settings consistent with the contract: a process
+  environment cannot override managed policy.
 - Codex: `sextant-codex` and `sextant-codex-review` send explicit `-c` overrides
   even when an existing lane config is kept. `parity.py` renders the same settings
   into a new lane `CODEX_HOME/config.toml`; project `.codex/config.toml` cannot
@@ -44,8 +46,9 @@ contain arguments/output. We explicitly override all three exporters and set
 then redact secret matches before persistence, retaining invocation names. This
 proof establishes the launch flags, not live collector redaction or delivery.
 
-Sources: [Claude monitoring](https://code.claude.com/docs/en/monitoring-usage) and
-[operational telemetry](https://code.claude.com/docs/en/data-usage#telemetry-services),
+Sources: [Claude monitoring](https://code.claude.com/docs/en/monitoring-usage),
+read 2026-11-08 and 2026-11-10; [settings reference](https://code.claude.com/docs/en/settings-reference#variables-claude-code-ignores-in-env),
+read 2026-11-10; [operational telemetry](https://code.claude.com/docs/en/data-usage#telemetry-services),
 read 2026-11-08; `openai/codex@rust-v0.167.0`
 `086ccc833bc9cf01024ad2dd6af7dbd421b6bf9a` (`codex-rs/config/src/types.rs:250-261,640-672`,
 `otel/src/config.rs:9-35`, `otel/src/tool_result.rs:54-81`);

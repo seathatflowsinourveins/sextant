@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import shlex
 import shutil
 import subprocess
 import sys
@@ -18,6 +19,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).parents[2]
 SCRIPT = ROOT / "scripts/role_launch.py"
+WRAPPER = "deploy/wsl/lane-runtimes/claude-launch.sh"
 POLICY = ROOT / "deploy/wsl/lane-runtimes/model-policy.json"
 AGENTS = ROOT / ".claude/agents"
 ROLES = ("lead", "dispatcher", "lander", "tracker", "worker")
@@ -80,7 +82,8 @@ def test_each_definition_has_the_probed_keys_an_empty_body_and_its_model() -> No
 def test_the_launcher_uses_the_agent_definition_and_names_the_session() -> None:
     module = _module()
     assert module.argv("lead") == [
-        "claude",
+        "bash",
+        WRAPPER,
         "--agent",
         "lead",
         "--name",
@@ -88,13 +91,77 @@ def test_the_launcher_uses_the_agent_definition_and_names_the_session() -> None:
         "--autocompact",
         "200000",
     ]
-    assert module.argv("worker") == ["claude", "--agent", "worker", "--name", "worker"]
+    assert module.argv("worker") == [
+        "bash",
+        WRAPPER,
+        "--agent",
+        "worker",
+        "--name",
+        "worker",
+    ]
     for role in ROLES:
         built = module.argv(role)
         assert "--model" not in built
         assert "--effort" not in built
         assert "--settings" not in built
         assert "--advisor" not in built
+
+
+def test_the_launcher_command_goes_through_the_checked_in_wrapper(tmp_path: Path) -> None:
+    """D-37 item 4: the printed command and the started process both cross the wrapper.
+
+    Source: code.claude.com/docs/en/monitoring-usage and
+    code.claude.com/docs/en/settings-reference#variables-claude-code-ignores-in-env,
+    read 2026-11-10.
+    """
+    printed = subprocess.run(
+        [sys.executable, str(SCRIPT), "--print", "worker"],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert printed.returncode == 0, printed.stderr
+    assert shlex.split(printed.stdout) == [
+        "bash",
+        WRAPPER,
+        "--agent",
+        "worker",
+        "--name",
+        "worker",
+    ]
+    assert (ROOT / WRAPPER).is_file()
+    # A stub on PATH stands in for native Claude, so the hop through the wrapper is
+    # observable in the child's environment; no Claude session starts.
+    stub = tmp_path / "bin/claude"
+    stub.parent.mkdir()
+    stub.write_text(
+        f"#!{sys.executable}\n"
+        "import json, os, sys\n"
+        "print(json.dumps({'argv': sys.argv[1:], "
+        "'endpoint': os.environ.get('OTEL_EXPORTER_OTLP_ENDPOINT'), "
+        "'attributes': os.environ.get('OTEL_RESOURCE_ATTRIBUTES')}))\n"
+    )
+    stub.chmod(0o755)
+    launched = subprocess.run(
+        [sys.executable, str(SCRIPT), "worker"],
+        cwd=ROOT,
+        env={
+            "HOME": str(tmp_path),
+            "TMPDIR": str(tmp_path),
+            "PATH": f"{tmp_path / 'bin'}:{Path(sys.executable).parent}:/usr/bin:/bin",
+        },
+        text=True,
+        capture_output=True,
+        stdin=subprocess.DEVNULL,
+        timeout=15,
+        check=False,
+    )
+    assert launched.returncode == 0, launched.stderr
+    payload = json.loads(launched.stdout)
+    assert payload["argv"] == ["--agent", "worker", "--name", "worker"]
+    assert payload["endpoint"] == "http://127.0.0.1:4317"
+    assert payload["attributes"] == "sextant.runtime=claude-code"
 
 
 def test_the_four_coordination_roles_take_the_window_and_workers_keep_the_default() -> None:

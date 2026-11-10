@@ -33,6 +33,19 @@ CLAUDE_ENV = {
     "DISABLE_ERROR_REPORTING": "1",
     "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY": "1",
 }
+# settings-reference, "variables Claude Code ignores in env", read 2026-11-10: Claude Code
+# drops these from a repository's project and local settings, so the wrapper must supply them.
+IGNORED_EXPORTER_VARS = (
+    "CLAUDE_CODE_ENABLE_TELEMETRY",
+    "CLAUDE_CODE_ENHANCED_TELEMETRY_BETA",
+    "ENABLE_BETA_TRACING_DETAILED",
+    "OTEL_METRICS_EXPORTER",
+    "OTEL_LOGS_EXPORTER",
+    "OTEL_TRACES_EXPORTER",
+    "OTEL_EXPORTER_OTLP_PROTOCOL",
+    "OTEL_EXPORTER_OTLP_ENDPOINT",
+    "OTEL_LOG_TOOL_DETAILS",
+)
 SIGNAL_OVERRIDES = tuple(
     f"OTEL_EXPORTER_OTLP_{signal}_{suffix}"
     for signal in ("METRICS", "LOGS", "TRACES")
@@ -112,10 +125,25 @@ def test_claude_launch_unsets_content_and_exports_only_to_loopback(
 
 
 def test_claude_project_defaults_keep_redaction_and_operational_opt_outs() -> None:
+    """The opt-outs a repository may still set stay; content logging stays unset."""
     settings = json.loads((ROOT / ".claude/settings.json").read_text())["env"]
-    assert {key: settings[key] for key in CLAUDE_ENV} == CLAUDE_ENV
     assert not set(CONTENT) & settings.keys()
     assert "BETA_TRACING_ENDPOINT" not in settings
+    assert settings["DISABLE_TELEMETRY"] == "1"
+    assert settings["DISABLE_ERROR_REPORTING"] == "1"
+    assert settings["CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY"] == "1"
+
+
+def test_claude_project_settings_cannot_carry_the_exporter_the_wrapper_sets() -> None:
+    """settings-reference, "variables Claude Code ignores in env", read 2026-11-10.
+
+    A repository cannot turn telemetry on, choose where it goes, or capture content,
+    so those keys belong in the wrapper alone.
+    """
+    settings = json.loads((ROOT / ".claude/settings.json").read_text())["env"]
+    assert not set(IGNORED_EXPORTER_VARS) & settings.keys()
+    assert settings["CLAUDE_CODE_WORKFLOW_MAX_CONCURRENT_AGENTS"] == "8"
+    assert settings["DISABLE_OMC"] == "1"
 
 
 def _config(home: Path) -> dict:
