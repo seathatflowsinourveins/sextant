@@ -249,20 +249,25 @@ class TradingClientLike(Protocol):
 
 
 class HistoricalTape(Protocol):
-    """The historical-quote read the outside-RTH rebuild needs; the runner supplies alpaca-py."""
+    """One page of the historical-quote read and its continuation token; alpaca-py at run."""
 
-    def quotes(
+    def quote_page(
         self,
         symbol: str,
         start_ns: int,
         end_ns: int,
         feed: str,
-    ) -> Sequence[QuoteLike]: ...
+        page_token: str | None = None,
+    ) -> tuple[Sequence[QuoteLike], str | None]: ...
 
 
 @dataclass(frozen=True)
 class TapeRead:
-    """One start read: its held quantity, the rebuilt level (only when ok) and its status."""
+    """One start read: its held quantity, its status and the level of the rows it read.
+
+    When ``ok`` the level is the whole span's; when ``partial`` it is a lower bound from the
+    rows actually read since adoption (R3), or None when no row was read.
+    """
 
     symbol: str
     qty: Decimal
@@ -381,6 +386,7 @@ class Protector:
         self._house: dict[str, list[Order]] = {}
         self._sequence = 0
         self._tapes: dict[str, TapeRead] = {}
+        self._start_unread = False
         opened_ns = self._now_ns()
         self._feed_started_ns: int | None = opened_ns if feed != "none" else None
         self._segment_start_ns = session_start_ns(opened_ns)
@@ -710,7 +716,8 @@ class Protector:
         tape_deadline_s, and the standard library's interval timer on the main thread
         (signal.setitimer, ITIMER_REAL; its handler raises, so PEP 475 does not retry the
         call) ends the read at tape_deadline_s, so the first reconcile begins by then.
-        Off the main thread nothing is read. Every position not completed is partial.
+        Off the main thread nothing is read. Every position not completed is partial and
+        keeps the level of the pages it did read (R2/R3).
         """
 
         history = self._history
@@ -720,6 +727,7 @@ class Protector:
             return
         if threading.current_thread() is not threading.main_thread():
             self.page("outside_rth_tape_unreadable", None, "start read off the main thread")
+            self._start_unread = True  # the first reconcile marks each held position partial
             return
         reserve = float(self._parameters.tape_read_timeout_s or 0)
         now_ns = self._now_ns()
@@ -755,7 +763,9 @@ class Protector:
             self.page("outside_rth_tape_unreadable", None, f"positions: {detail}")
         for symbol, qty in held:
             if symbol not in done:
-                self._tapes[symbol] = TapeRead(symbol, qty, None, "partial", f"read {detail}")
+                read_so_far = self._tapes.get(symbol)
+                level = None if read_so_far is None else read_so_far.level
+                self._tapes[symbol] = TapeRead(symbol, qty, level, "partial", f"read {detail}")
             tape = self._tapes.get(symbol)
             if tape is not None and tape.status != "ok":
                 reason = "outside_rth_entry_unknown"
@@ -828,19 +838,45 @@ class Protector:
         claimed = [at for at in claims if fill_ns <= at < now_ns]
         if not claimed:
             return None
-        observations: list[QuoteLike] = []
+        # R1-R3: each page is one paced request inside the same deadline and budget; a window
+        # is complete at its page without a token. The level is the maximum over the pages
+        # read (the rc8 trail only ratchets up), so a partial read keeps a lower bound.
+        # No rows and no token is a quiet window; rows of which none is inside the window,
+        # or a token the window already returned, is malformed: partial, no further page.
+        level: Decimal | None = None
+        pages = 0
         for start_ns, end_ns, feed in tape_windows(min(claimed), now_ns):
-            if not spend():
-                return over
-            try:
-                observations.extend(history.quotes(symbol, start_ns, end_ns, feed))
-            except Exception as exc:
-                return TapeRead(symbol, qty, None, "partial", f"{feed}: {type(exc).__name__}")
-        level = rebuild_trigger(
-            observations,
-            trail_fraction=self._parameters.native_trail_fraction,
-            params=self._exit_params,
-        )
+            token: str | None = None
+            seen: set[str] = set()
+            while True:
+                why = f"{pages} page(s) read, the level a lower bound; at {feed}"
+                if not spend():
+                    return TapeRead(symbol, qty, level, "partial", f"{why}: {over.detail}")
+                try:
+                    rows, token = history.quote_page(symbol, start_ns, end_ns, feed, token)
+                except Exception as exc:
+                    return TapeRead(symbol, qty, level, "partial", f"{why}; {type(exc).__name__}")
+                pages += 1
+                inside = [row for row in rows if start_ns <= row.ts_ns <= end_ns]
+                found = rebuild_trigger(
+                    inside,
+                    trail_fraction=self._parameters.native_trail_fraction,
+                    params=self._exit_params,
+                )
+                if found is not None and (level is None or found > level):
+                    level = found
+                # Kept at once, so the interval timer's expiry keeps the pages already read.
+                self._tapes[symbol] = TapeRead(symbol, qty, level, "partial", why)
+                why = f"{pages} page(s) read, the level a lower bound; at {feed}"
+                if rows and not inside:
+                    detail = f"{why}: no row inside its window"
+                    return TapeRead(symbol, qty, level, "partial", detail)
+                if token is None:
+                    break
+                if token in seen:
+                    detail = f"{why}: a repeated continuation token"
+                    return TapeRead(symbol, qty, level, "partial", detail)
+                seen.add(token)
         return TapeRead(symbol, qty, level, "ok")
 
     def _adopt_outside(self, symbol: str, order: Order) -> None:
@@ -860,7 +896,8 @@ class Protector:
         if implied > 0 and percent > 0:
             seeds.append(implied)
         tape = self._tapes.get(symbol)
-        if tape is not None and tape.status == "ok" and tape.level is not None:
+        # R3: a partial read's level is a lower bound on the complete read's, so it counts too.
+        if tape is not None and tape.status in ("ok", "partial") and tape.level is not None:
             seeds.append(tape.level)
         if stop_price is None:
             self.page(
@@ -1042,6 +1079,10 @@ class Protector:
         self._tapes = {
             s: tape for s, tape in self._tapes.items() if tape.qty == self._last_position.get(s)
         }
+        if self._start_unread:  # nothing was read off the main thread: say partial (LEAD-0079)
+            self._start_unread = False
+            for s, qty in self._last_position.items():
+                self._tapes.setdefault(s, TapeRead(s, qty, None, "partial", "off the main thread"))
         for symbol, position in positions.items():
             self._reconcile_symbol(
                 symbol,
