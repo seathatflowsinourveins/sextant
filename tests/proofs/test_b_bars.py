@@ -13,7 +13,13 @@ from typing import Any
 
 import pytest
 
-from sextant.paper.b_feed import BarRow, BHistoricalTape, BMarketDataFeed, TapeShapeError
+from sextant.paper.b_feed import (
+    BarRow,
+    BarsOutsideRth,
+    BHistoricalTape,
+    BMarketDataFeed,
+    TapeShapeError,
+)
 from sextant.paper.b_protector import load_b_parameters
 from sextant.paper.sessions import ET
 
@@ -46,7 +52,7 @@ def page(rows, token=None) -> RawBars:
 
 def test_one_bars_page_is_one_request_for_all_held_symbols_newest_first_on_sip():
     raw = page({"AAPL": [raw_bar(), raw_bar(200.1, 199.9, t="2026-11-09T15:00:00Z")]}, "more")
-    rows, token = BHistoricalTape(raw, 10_000, 10_000).bar_page(["AAPL", "MSFT"], 5, RTH_NOW)
+    rows, token, _ = BHistoricalTape(raw, 10_000, 10_000).bar_page(["AAPL", "MSFT"], 5, RTH_NOW)
 
     assert len(raw.requests) == 1
     path, fields = raw.requests[0]
@@ -80,9 +86,9 @@ def test_bars_are_read_from_the_rth_open_to_now_and_never_outside_rth():
     )
     assert fields["page_token"] == "more"  # noqa: S105 - a truncated page continues
     pre = int(datetime(2026, 11, 9, 9, 0, tzinfo=ET).timestamp()) * SEC
-    with pytest.raises(ValueError):
+    with pytest.raises(BarsOutsideRth):
         tape.bar_page(["AAPL"], 5, pre)
-    assert tape.bar_page([], 5, RTH_NOW) == ({}, None)
+    assert tape.bar_page([], 5, RTH_NOW)[:2] == ({}, None)
     assert len(raw.requests) == 1  # neither a pre-market nor an empty read sends a request
 
 
@@ -238,8 +244,6 @@ def test_a_null_or_non_list_row_set_refuses_as_quote_page_does_and_rows_are_boun
 
 
 def test_outside_rth_is_its_own_signal_and_an_empty_set_returns_before_any_check():
-    from sextant.paper.b_feed import BarsOutsideRth
-
     pre = int(datetime(2026, 11, 9, 9, 0, tzinfo=ET).timestamp()) * SEC
     with pytest.raises(BarsOutsideRth) as refused:
         tape({}).bar_page(["AAPL"], 5, pre)

@@ -196,6 +196,10 @@ class TapeShapeError(ValueError):
     """A historical response that is not the requested symbol's quotes, or one over its bound."""
 
 
+class BarsOutsideRth(RuntimeError):
+    """No bars page outside regular hours (LEAD-1021 item 6); never a refused page."""
+
+
 class BoundedAdapter(HTTPAdapter):
     """requests' transport adapter with one connect and read timeout on every send."""
 
@@ -259,6 +263,8 @@ class BHistoricalTape:
             raise ValueError("the tape's quote bound must be positive")
         self._client = client
         self._max_quotes = max_quotes
+        if max_bars is not None and max_bars < 1:
+            raise ValueError("the tape's bars bound must be positive")
         self._max_bars = max_bars  # the tape_max_bars row; no row, no bars page
 
     def quote_page(
@@ -315,7 +321,7 @@ class BHistoricalTape:
         bar_minutes: int,
         now_ns: int,
         page_token: str | None = None,
-    ) -> tuple[dict[str, tuple[BarRow, ...]], str | None]:
+    ) -> tuple[dict[str, tuple[BarRow, ...]], str | None, int]:
         """One batched page of this session's RTH SIP bars, open to now: one HTTP request.
 
         The request is the one alpaca-py's ``get_stock_bars`` sends (``/stocks/bars`` with
@@ -324,18 +330,23 @@ class BHistoricalTape:
         symbol, then time, and ``limit`` counts all symbols together
         (docs.alpaca.markets/reference/stockbars, read 2026-11-10). A returned token means the
         history is partial: pass it back as ``page_token``, or take no width from this page. A
-        bad bar or token refuses the whole page, as quote_page does; a gap is never data.
+        bad bar, bar time, row set or token refuses the whole page, as quote_page does; a gap
+        is never data. The third value is ``now_ns``, the instant the page was fetched at: a bar
+        is complete only if it ended by then.
         """
 
-        if session_at(now_ns) is not Session.RTH or self._max_bars is None:
-            raise ValueError("B reads bars in regular hours only, with its tape_max_bars row")
         names = tuple(dict.fromkeys(symbol for symbol in symbols if symbol))
         if not names:
-            return {}, None
+            return {}, None, now_ns
+        if session_at(now_ns) is not Session.RTH:
+            raise BarsOutsideRth("B reads bars in regular hours only (LEAD-1021 item 6)")
+        if self._max_bars is None:
+            raise ValueError("no tape_max_bars row: no bars page")
+        start_ns, span_ns = session_start_ns(now_ns), bar_minutes * 60 * NS_PER_SECOND
         request = StockBarsRequest(
             symbol_or_symbols=list(names),
             timeframe=TimeFrame(bar_minutes, TimeFrameUnit("Min")),
-            start=_datetime_at(session_start_ns(now_ns)),
+            start=_datetime_at(start_ns),
             end=_datetime_at(now_ns),
             feed=DataFeed.SIP,
             sort=Sort.DESC,
@@ -356,14 +367,18 @@ class BHistoricalTape:
         if token is not None and (not isinstance(token, str) or not token):
             raise TapeShapeError("the bars page has a malformed continuation token")
         found: dict[str, tuple[BarRow, ...]] = {}
+        total = 0
         for symbol in names:
-            rows = data.get(symbol) or []
-            if not isinstance(rows, Sequence):
-                raise TapeShapeError(f"the bars page for {symbol} is malformed")
+            rows = data.get(symbol, [])
+            total += len(rows) if isinstance(rows, list) else 0
+            if not isinstance(rows, list) or total > self._max_bars:
+                raise TapeShapeError(f"the bars page for {symbol} is malformed or over its bound")
             kept: list[BarRow] = []
             for raw in rows:
                 if not isinstance(raw, Mapping) or not {"t", "h", "l", "c"} <= set(raw):
                     raise TapeShapeError("a bar has no time, high, low and close")
+                if not isinstance(raw["t"], str):
+                    raise TapeShapeError(f"a {symbol} bar time is not the documented text")
                 high, low, close = _price(raw["h"]), _price(raw["l"]), _price(raw["c"])
                 if high is None or low is None or close is None or not low <= close <= high:
                     raise TapeShapeError(f"a {symbol} bar is not a whole, ordered bar")
@@ -371,6 +386,10 @@ class BHistoricalTape:
                     at = Bar(symbol, dict(raw)).timestamp
                 except ValueError as exc:  # pydantic: a documented field is missing
                     raise TapeShapeError(f"a {symbol} bar is not the documented shape") from exc
-                kept.append(BarRow(ts_ns=timestamp_ns(at), high=high, low=low, close=close))
+                ts_ns = timestamp_ns(at)
+                newer = kept[-1].ts_ns if kept else now_ns + 1  # newest first, each one older
+                if ts_ns % span_ns or ts_ns < start_ns or ts_ns >= newer:
+                    raise TapeShapeError(f"a {symbol} bar time is repeated, off-grid or outside")
+                kept.append(BarRow(ts_ns=ts_ns, high=high, low=low, close=close))
             found[symbol] = tuple(kept)
-        return found, token
+        return found, token, now_ns
