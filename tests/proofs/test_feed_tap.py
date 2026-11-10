@@ -518,6 +518,34 @@ def _feed_clock(monkeypatch: pytest.MonkeyPatch, clock: Callable[[], int]) -> No
     monkeypatch.setattr(feed_module, "time", SimpleNamespace(time_ns=clock, time=time.time))
 
 
+def test_the_token_carries_only_what_finish_reads() -> None:
+    assert FeedTapToken._fields == ("second", "ts_event_ns", "entry_ns", "perf_ns")
+
+
+def test_a_naive_trade_timestamp_inside_the_tap_takes_the_failure_path() -> None:
+    tap = _tap(time_ns=_Now(_T0), perf_ns=_Clock())
+    feed, _ = _wire_feed(tap=tap)
+    naive = Trade("AAPL", {"t": "2026-11-09T14:30:00", "p": 1.0, "s": 100, "x": "NASDAQ", "i": 7})
+
+    asyncio.run(feed._handle_trade(naive))
+
+    assert isinstance(feed.failure, ValueError)
+    assert tap.failures == 1
+
+
+def test_a_naive_quote_timestamp_inside_the_tap_takes_the_failure_path() -> None:
+    tap = _tap(time_ns=_Now(_T0), perf_ns=_Clock())
+    feed, _ = _wire_feed(tap=tap)
+    naive = Quote(
+        "AAPL", {"t": "2026-11-09T14:30:00", "bp": 100.12, "bs": 3, "ap": 100.18, "as": 5}
+    )
+
+    asyncio.run(feed._handle_quote(naive))
+
+    assert isinstance(feed.failure, ValueError)
+    assert tap.failures == 1
+
+
 def test_a_feed_without_the_tap_delivers_identically_and_reads_the_clock_once(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

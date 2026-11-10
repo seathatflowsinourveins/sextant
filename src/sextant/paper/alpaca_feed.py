@@ -270,16 +270,13 @@ class AlpacaTickFeed:
     async def _handle_trade(self, trade: Trade | dict[str, Any]) -> None:
         if self.failure is not None:
             return
-        tap = self._tap
-        token = None
-        if tap is not None:
-            ts_event = _timestamp_ns(trade.timestamp) if isinstance(trade, Trade) else None
-            token = tap.trade_entry(getattr(trade, "symbol", ""), ts_event)
+        tap, token = self._tap, None
         try:
             if not isinstance(trade, Trade):
                 raise TypeError("StockDataStream must run with raw_data=False")
-            tick = self._trade_tick(trade, time.time_ns())
-            self._on_trade(tick)
+            if tap is not None:
+                token = tap.trade_entry(trade.symbol, _timestamp_ns(trade.timestamp))
+            self._on_trade(self._trade_tick(trade, time.time_ns()))
         except Exception as exc:
             await self._fail(exc)
         finally:
@@ -289,14 +286,12 @@ class AlpacaTickFeed:
     async def _handle_quote(self, quote: Quote | dict[str, Any]) -> None:
         if self.failure is not None:
             return
-        tap = self._tap
-        token = None
-        if tap is not None:
-            ts_event = _timestamp_ns(quote.timestamp) if isinstance(quote, Quote) else None
-            token = tap.quote_entry(getattr(quote, "symbol", ""), ts_event)
+        tap, token = self._tap, None
         try:
             if not isinstance(quote, Quote):
                 raise TypeError("StockDataStream must run with raw_data=False")
+            if tap is not None:
+                token = tap.quote_entry(quote.symbol, _timestamp_ns(quote.timestamp))
             tick = self._quote_tick(quote, time.time_ns())
             if tick is not None:
                 self._on_quote(tick)

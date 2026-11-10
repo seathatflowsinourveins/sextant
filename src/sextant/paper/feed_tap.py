@@ -1,13 +1,11 @@
 """Read-only per-second measurement of the paper feed's handler traffic.
 
 ``FeedTap`` counts and times what already reaches ``AlpacaTickFeed``'s SIP
-handlers and writes one JSON line per closed wall-clock second to a sidecar.
-Handlers take no lock and write no file: they bump ints and hand a closed
-bucket to a bounded queue that one daemon thread drains. The gap map is keyed
-only by the subscribed instruments, so it cannot grow with time or traffic.
-A sidecar that cannot open or write never stops the feed; it is counted and
-disabled. Reconnects are invisible here, so the sidecar reports them as
-unmeasured rather than as zero.
+handlers and writes one JSON line per closed wall-clock second. Handlers take
+no lock and write no file: closed buckets go to a bounded queue one daemon
+thread drains, and a sidecar that cannot open, a write error or an overflow is
+counted and never stops the feed. The gap map is bounded by the subscribed
+instruments. Reconnects are invisible here and are reported unmeasured.
 """
 
 from __future__ import annotations
@@ -31,8 +29,6 @@ _QUIESCE_S = 5.0
 
 
 class FeedTapToken(NamedTuple):
-    kind: str
-    symbol: str
     second: int
     ts_event_ns: int | None
     entry_ns: int
@@ -55,21 +51,19 @@ def _second(second: int) -> dict[str, Any]:
 
 
 def _percentiles(hist: dict[int, int], max_lag: int | None) -> dict[str, int | None]:
-    """Nearest-rank p99/p99.9, each the floor bin's lower edge, plus the exact max."""
+    """Nearest-rank p99/p99.9 at the floor bin's lower edge, plus the exact max."""
     total = sum(hist.values())
     if not total:
         return {"count": 0, "p99": None, "p999": None, "max": None}
-    keys = sorted(hist)
-
-    def at(quantile: float) -> int:
-        rank, seen = max(1, math.ceil(quantile * total)), 0
-        for key in keys:
-            seen += hist[key]
-            if seen >= rank:
-                return key * _NS_PER_MS
-        return keys[-1] * _NS_PER_MS
-
-    return {"count": total, "p99": at(0.99), "p999": at(0.999), "max": max_lag}
+    ranks = {q: max(1, math.ceil(q * total)) for q in (0.99, 0.999)}
+    found: dict[float, int] = {}
+    seen = 0
+    for key in sorted(hist):
+        seen += hist[key]
+        for q, rank in ranks.items():
+            if q not in found and seen >= rank:
+                found[q] = key * _NS_PER_MS
+    return {"count": total, "p99": found[0.99], "p999": found[0.999], "max": max_lag}
 
 
 class FeedTap:
@@ -94,7 +88,7 @@ class FeedTap:
         self._thread: threading.Thread | None = None
         self._inflight = 0
         self.failures = self.write_errors = self.init_errors = 0
-        self.lost_finishes = self.dropped_buckets = 0
+        self.dropped_buckets = 0
 
     def start(self) -> None:
         if self._started:
@@ -145,7 +139,6 @@ class FeedTap:
         self._inflight -= 1
         bucket = self._seconds.get(token.second)
         if bucket is None:
-            self.lost_finishes += 1
             return
         bucket["service_sum"] += service_ns
         longest = bucket["service_max"]
@@ -167,7 +160,7 @@ class FeedTap:
 
     def take(self, now_ns: int, *, force: bool = False) -> list[dict[str, Any]]:
         """Detach ready seconds and return their records; only for a quiet tap."""
-        if self._inflight == 0:
+        if not self._inflight:
             now = now_ns // _NS_PER_S
             for second in sorted(self._seconds):
                 if force or second < now:
@@ -198,7 +191,7 @@ class FeedTap:
                 flow[1] = gap if flow[1] is None else max(flow[1], gap)
                 flow[0] = ts_event_ns
         self._inflight += 1
-        return FeedTapToken(kind, symbol, second, ts_event_ns, entry_ns, perf_ns)
+        return FeedTapToken(second, ts_event_ns, entry_ns, perf_ns)
 
     def _detach(self, second: int, *, partial: bool) -> None:
         bucket = self._seconds.pop(second)
