@@ -204,6 +204,36 @@ test('the API-only guard refuses execution and publishing for another head or PR
   assert.ok(refusal({name: 'ci_run', arguments: {...args, body: 'Review of another head'}}, env));
 });
 
+test('the API-only guard reads the whole analysis pass only from the named spill root', async () => {
+  const {refusal} = await import('../../.github/gate/bundles/api-only/index.mjs');
+  const env = {DSH_GATE_REPO: 'owner/project', DSH_GATE_PR: '7', DSH_GATE_HEAD: 'a'.repeat(40),
+    DSH_GITHUB_CI_OUTPUT_DIR: '/tmp/gate-output'};
+  const spill = '/tmp/gate-output/spill/session-0123456789ab/0123456789ab-ci_run.txt';
+  const read = (file_path) => refusal({name: 'read', arguments: {file_path}}, env);
+  // The documented spill retrieval path is allowed, and nothing beyond the root is.
+  assert.equal(read(spill), undefined);
+  assert.ok(read('/tmp/gate-output/spill/../dsh-github-ci.cordis.yml'));
+  assert.ok(read('/tmp/gate-output/spill-other/session-0123456789ab/file.txt'));
+  assert.ok(read('/tmp/gate-output/notes.txt'));
+  assert.ok(read('/tmp/other/spill/session-0123456789ab/file.txt'));
+  assert.ok(read('/etc/passwd'));
+  assert.ok(refusal({name: 'read'}, env));
+  const grep = (args) => refusal({name: 'grep', arguments: args}, env);
+  assert.equal(grep({pattern: 'diff', path: spill}), undefined);
+  assert.ok(grep({pattern: 'diff', path: '/tmp/gate-output'}));
+  assert.ok(grep({pattern: 'diff'}));
+  // The pinned grep consumes `path` (dsh-tool-fs-search lib/index.js:924-931,
+  // :1155); a conflicting `file_path` or a missing `path` must not be admitted.
+  assert.ok(grep({pattern: 'diff', file_path: spill, path: '/outside-spill/proof.txt'}));
+  assert.ok(grep({pattern: 'diff', file_path: spill}));
+  // The pinned read consumes `file_path` (dsh-tool-fs lib/index.js:232-237);
+  // an extra `path` inside the root must not authorize it.
+  assert.ok(refusal({name: 'read', arguments: {path: spill}}, env));
+  // Without the configured root, no local read is admitted.
+  assert.ok(refusal({name: 'read', arguments: {file_path: spill}},
+    {...env, DSH_GITHUB_CI_OUTPUT_DIR: ''}));
+});
+
 test('the actual dsh prompt uses the upstream qualified PR reference accepted by its guard', async () => {
   const f = fixture();
   const temporary = fs.mkdtempSync(path.join(process.cwd(), '.gate-prompt-test-'));
@@ -218,6 +248,12 @@ test('the actual dsh prompt uses the upstream qualified PR reference accepted by
     const {refusal} = await import('../../.github/gate/bundles/api-only/index.mjs');
     assert.equal(refusal({name: 'ci_run', arguments: args},
       {DSH_GATE_REPO: 'owner/project', DSH_GATE_PR: '7', DSH_GATE_HEAD: f.head}), undefined);
+    // The prompt names the upstream spill recovery, and keeps the fail-closed rule.
+    assert.match(f.outputs.text, /spill file/i);
+    assert.match(f.outputs.text, /offset/);
+    assert.match(f.outputs.text, /limit/);
+    assert.match(f.outputs.text, /error finding/i);
+    assert.match(f.outputs.text, /do not approve unseen changes/i);
   } finally {
     if (previous === undefined) delete process.env.RUNNER_TEMP;
     else process.env.RUNNER_TEMP = previous;

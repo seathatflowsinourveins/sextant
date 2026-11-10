@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from alpaca.trading.requests import LimitOrderRequest
 
 from sextant.paper import decision_record as record_module
 from sextant.paper.decision_record import (
@@ -511,3 +512,354 @@ def test_log_reopening_appends_and_never_rewrites(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------------------------
+# The trail keeps the quote that raised its trigger and the run that completed the breach.
+# ---------------------------------------------------------------------------------------------
+
+
+from sextant.exits.policy import BreachRun, ExitParams  # noqa: E402
+from sextant.paper.b_feed import QuoteObservation  # noqa: E402
+from sextant.paper.outside_rth import (  # noqa: E402
+    OutsideRthTrail,
+    TriggerQuote,
+    rebuild_trigger,
+    rebuild_trigger_with_source,
+)
+
+
+def new_trail() -> OutsideRthTrail:
+    return OutsideRthTrail(trail_fraction=Decimal("0.025"), params=ExitParams.starts())
+
+
+def source_of(bid: str, ts_ns: int, level: str) -> TriggerQuote:
+    return TriggerQuote(
+        bid=Decimal(bid), ask=Decimal(bid) + Decimal("0.05"), ts_ns=ts_ns, level=Decimal(level)
+    )
+
+
+def test_live_ratchet_keeps_the_bid_that_raised_the_trigger() -> None:
+    state = new_trail()
+
+    assert state.observe_quote(
+        bid=Decimal("38.65"), ask=Decimal("38.70"), last=None, ts_ns=HIGH_NS
+    ) == Decimal("37.68")
+    assert state.source == source_of("38.65", HIGH_NS, "37.68")
+
+    # A lower bid leaves the ratchet, and the quote behind it, where they were.
+    state.observe_quote(bid=Decimal("38.60"), ask=Decimal("38.70"), last=None, ts_ns=HIGH_NS + 1)
+    assert state.trigger == Decimal("37.68")
+    assert state.source == source_of("38.65", HIGH_NS, "37.68")
+
+    # A higher bid moves both.
+    state.observe_quote(bid=Decimal("38.80"), ask=Decimal("38.85"), last=None, ts_ns=HIGH_NS + 2)
+    assert state.trigger == Decimal("37.83")
+    assert state.source == source_of("38.80", HIGH_NS + 2, "37.83")
+
+
+def test_adopted_level_names_the_row_it_came_from() -> None:
+    state = new_trail()
+    source = source_of("38.65", HIGH_NS, "37.68")
+
+    state.adopt(Decimal("37.68"), AT_NS, source=source)
+    assert state.trigger == Decimal("37.68")
+    assert state.source == source
+
+    # A raise replaces the trigger and the quote behind it (the caller guards the ratchet).
+    raised = source_of("38.80", HIGH_NS + 1, "37.83")
+    state.adopt(Decimal("37.83"), AT_NS + 1, source=raised)
+    assert state.trigger == Decimal("37.83")
+    assert state.source == raised
+
+
+def test_breach_run_keeps_the_run_that_completed_the_breach() -> None:
+    run = BreachRun()
+    params = ExitParams.starts()
+    trigger = Decimal("37.68")
+
+    assert run.observe(Decimal("37.19"), trigger, AT_NS, params) is False
+    assert run.observe(Decimal("37.20"), trigger, AT_NS + 500_000_000, params) is False
+    assert run.observe(Decimal("37.10"), trigger, AT_NS + 1_000_000_000, params) is True
+    assert list(run.seen) == [
+        (AT_NS, Decimal("37.19")),
+        (AT_NS + 500_000_000, Decimal("37.20")),
+        (AT_NS + 1_000_000_000, Decimal("37.10")),
+    ]
+
+    # A print back above the trigger restarts the run, so the completing observations go too.
+    assert run.observe(Decimal("37.70"), trigger, AT_NS + 2_000_000_000, params) is False
+    assert list(run.seen) == []
+
+
+def test_breach_run_keeps_at_most_sixty_four_observations() -> None:
+    run = BreachRun()
+    params = ExitParams.starts()
+    trigger = Decimal("37.68")
+
+    for index in range(100):
+        assert run.observe(Decimal("37.00"), trigger, AT_NS + index, params) is False
+
+    assert len(run.seen) == 64
+    assert run.seen[0] == (AT_NS + 36, Decimal("37.00"))
+    assert run.seen[-1] == (AT_NS + 99, Decimal("37.00"))
+
+
+def test_rebuild_trigger_with_source_names_the_raising_row() -> None:
+    rows = [
+        QuoteObservation("ASTS", Decimal("38.50"), Decimal("38.55"), None, HIGH_NS - 2_000_000_000),
+        QuoteObservation("ASTS", Decimal("38.65"), Decimal("38.70"), None, HIGH_NS),
+    ]
+
+    found = rebuild_trigger_with_source(
+        rows, trail_fraction=Decimal("0.025"), params=ExitParams.starts()
+    )
+
+    assert found is not None
+    assert (found.level, found.bid, found.ask, found.ts_ns) == (
+        Decimal("37.68"),
+        Decimal("38.65"),
+        Decimal("38.70"),
+        HIGH_NS,
+    )
+    assert rebuild_trigger(rows, trail_fraction=Decimal("0.025"), params=ExitParams.starts()) == (
+        Decimal("37.68")
+    )
+
+
+# ---------------------------------------------------------------------------------------------
+# The protector writes the record at every exit decision; no decision changes because of it.
+# ---------------------------------------------------------------------------------------------
+
+
+from test_b_protector_outside_rth import (  # noqa: E402
+    NOW_NS,
+    POST_NS,
+    SEC,
+    FakeClient,
+    FakeHistory,
+    api_order,
+    api_position,
+    api_update,
+    b_account,
+    b_params,
+    drive_breach,
+    start,
+    tonight_client,
+)
+
+from sextant.paper.b_protector import Protector  # noqa: E402
+
+
+def log_at(tmp_path: Path) -> tuple[DecisionLog, list[tuple[str, str | None, str]]]:
+    pages: list[tuple[str, str | None, str]] = []
+    log = DecisionLog(
+        tmp_path / "b-decisions.jsonl",
+        on_page=lambda reason, symbol, detail: pages.append((reason, symbol, detail)),
+    )
+    return log, pages
+
+
+def read_records(path: Path) -> list[dict[str, Any]]:
+    return [json.loads(line) for line in path.read_text().splitlines() if line]
+
+
+def incident_history() -> FakeHistory:
+    """The recorded after-hours tape: the 16:59:15 bid of 38.65 inside B's windows."""
+
+    return FakeHistory(
+        [
+            QuoteObservation(
+                "AAPL", Decimal("38.65"), Decimal("38.70"), None, 1_794_261_555_543_085_000
+            )
+        ]
+    )
+
+
+def test_the_recorded_after_hours_tape_names_the_38_65_bid_behind_37_68(tmp_path: Path) -> None:
+    log, pages = log_at(tmp_path)
+    p = Protector(
+        tonight_client(),
+        b_account(),
+        b_params(),
+        now_ns=lambda: POST_NS,
+        feed="sip",
+        history=incident_history(),
+        decisions=log,
+    )
+    start(p)
+    log.close()
+
+    assert pages == []
+    records = read_records(log.path)
+    assert len(records) == 1
+    record = records[0]
+    assert record["action"] == "adopt"
+    assert record["symbol"] == "AAPL"
+    assert record["trigger"] == "37.68"
+    assert record["trigger_source"] == {
+        "kind": "tape_high",
+        "level": "37.68",
+        "quote": {
+            "at": "2026-11-09T21:59:15.543085000Z",
+            "bid": "38.65",
+            "ask": "38.70",
+        },
+        "tape": {
+            "window_start": "2026-11-09T21:00:00.000000000Z",
+            "window_end": stamp(POST_NS),
+            "feed": "sip",
+            "pages": 1,
+            "status": "ok",
+        },
+    }
+    assert record["high_water"] == {
+        "value": "38.65",
+        "kind": "bid",
+        "at": "2026-11-09T21:59:15.543085000Z",
+    }
+
+
+def test_a_release_records_the_trigger_its_high_and_the_completing_run(tmp_path: Path) -> None:
+    client = FakeClient()
+    client.positions = [api_position("10")]
+    trail = api_order(stop_price="99.45")
+    client.orders = [trail]
+    log, pages = log_at(tmp_path)
+    p = Protector(
+        client,
+        b_account(),
+        b_params(),
+        now_ns=lambda: NOW_NS,
+        feed="sip",
+        decisions=log,
+    )
+    p.reconcile()
+    drive_breach(p)
+    p.handle(api_update(trail, event="canceled"))
+    log.close()
+
+    assert pages == []
+    records = read_records(log.path)
+    assert [record["action"] for record in records] == ["adopt", "release"]
+    release = records[1]
+    assert release["at"] == stamp(NOW_NS + SEC)
+    assert release["trigger"] == "99.45"
+    assert release["trigger_source"] == {
+        "kind": "native_stop",
+        "level": "99.45",
+        "stop_price": "99.45",
+    }
+    assert release["high_water"] == {
+        "value": "99.45",
+        "kind": "native_stop",
+        "at": "2026-11-09T23:59:00.000000000Z",
+        "detail": "the broker-held stop, the only high the resting trail reports",
+    }
+    assert [item["price"] for item in release["observations"]] == ["99.40", "99.40", "99.40"]
+    assert [item["count"] for item in release["observations"]] == [1, 2, 3]
+    assert {item["kind"] for item in release["observations"]} == {"trade"}
+    assert release["noise"] == "0.01"
+    assert release["noise_detail"] == {
+        "one_tick": "0.01",
+        "spread": "0.005",
+        "floor": "0.01",
+        "persist_count": "3",
+        "persist_span_s": "1",
+    }
+    order = release["order"]
+    assert order["side"] == "sell"
+    assert order["quantity"] == "10"
+    assert order["limit_price"] == "99.50"
+    assert order["extended_hours"] is True
+    assert order["submitted"] is True
+    assert str(order["client_order_id"]).startswith("B001-outside-AAPL-")
+    assert release["book"] == {
+        "position": "10",
+        "reserved": "0",
+        "available": "10",
+        "quantity": "10",
+    }
+    assert release["outcome"] == "released"
+
+
+def test_a_cancelled_house_exit_records_its_reason(tmp_path: Path) -> None:
+    client = FakeClient()
+    client.positions = [api_position("12")]
+    trail = api_order(qty="10", stop_price="97.50")
+    client.orders = [trail]
+    log, pages = log_at(tmp_path)
+    p = Protector(client, b_account(), b_params(), now_ns=lambda: NOW_NS, feed="sip", decisions=log)
+    p.reconcile()
+    log.close()
+
+    assert pages == []
+    records = read_records(log.path)
+    assert len(records) == 1
+    cancel = records[0]
+    assert cancel["action"] == "cancel"
+    assert cancel["symbol"] == "AAPL"
+    assert cancel["trigger"] == "97.50"
+    assert cancel["note"] == "outside_rth_resize"
+    assert cancel["outcome"] == "cancelled"
+    assert cancel["order"]["quantity"] == "10"
+    assert cancel["order"]["side"] == "sell"
+    assert cancel["book"] == {
+        "position": "12",
+        "reserved": "0",
+        "available": "12",
+        "quantity": "10",
+    }
+
+
+def scenario(decisions: DecisionLog | None) -> tuple[list[dict[str, object]], list[str]]:
+    client = FakeClient()
+    client.positions = [api_position("10")]
+    trail = api_order(stop_price="99.45")
+    client.orders = [trail]
+    p = Protector(
+        client,
+        b_account(),
+        b_params(),
+        now_ns=lambda: NOW_NS,
+        feed="sip",
+        decisions=decisions,
+    )
+    p.reconcile()
+    drive_breach(p)
+    p.handle(api_update(trail, event="canceled"))
+    return [order.model_dump() for order in client.submitted], [page.reason for page in p.pages]
+
+
+def test_the_exit_decisions_are_identical_with_and_without_the_record(tmp_path: Path) -> None:
+    log, _ = log_at(tmp_path)
+    with_log = scenario(log)
+    log.close()
+    without_log = scenario(None)
+
+    assert with_log == without_log
+    assert len(read_records(log.path)) == 2
+
+
+def test_a_write_failure_pages_and_never_blocks_or_changes_the_release(tmp_path: Path) -> None:
+    def broken(line: str) -> None:
+        raise OSError("the receipt disk is full")
+
+    pages: list[tuple[str, str | None, str]] = []
+    log = DecisionLog(
+        tmp_path / "b-decisions.jsonl",
+        writer=broken,
+        on_page=lambda reason, symbol, detail: pages.append((reason, symbol, detail)),
+    )
+    client = FakeClient()
+    client.positions = [api_position("10")]
+    trail = api_order(stop_price="99.45")
+    client.orders = [trail]
+    p = Protector(client, b_account(), b_params(), now_ns=lambda: NOW_NS, feed="sip", decisions=log)
+    p.reconcile()
+    drive_breach(p)
+    p.handle(api_update(trail, event="canceled"))
+    log.close()
+
+    assert ("decision_record_write_failed", None, "OSError") in pages
+    assert p.pages == []
+    limits = [order for order in client.submitted if isinstance(order, LimitOrderRequest)]
+    assert len(limits) == 1
+    assert Decimal(str(limits[0].limit_price)) == Decimal("99.50")

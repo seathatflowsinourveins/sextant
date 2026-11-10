@@ -11,6 +11,10 @@ marketable extended-hours LIMIT (``docs/design.md``:31 and
 The trade-update stream is event-driven, so the protector also reconciles on a fixed cadence
 and once when the regular session opens: a resting trail the broker lost, or a position that
 rested unprotected through the close, is re-armed without waiting for an unrelated event.
+
+Every exit decision also lands in one append-only JSONL record written off the hot path: the
+trigger level and the quote behind it, the high it came from, the prints that completed a
+breach, the order and the book (B-EXIT-1959; LEAD-2354 item 2).
 """
 
 from __future__ import annotations
@@ -41,7 +45,7 @@ from alpaca.trading.requests import (
 from alpaca.trading.stream import TradingStream
 
 from sextant.execution.pacer import PacerRefused
-from sextant.exits.policy import ExitParams
+from sextant.exits.policy import ExitParams, noise_floor
 from sextant.paper.b_feed import (
     BMarketDataFeed,
     FeedBatch,
@@ -50,11 +54,21 @@ from sextant.paper.b_feed import (
     timestamp_ns,
 )
 from sextant.paper.config import PaperAccount
+from sextant.paper.decision_record import (
+    Book,
+    DecisionLog,
+    ExitRecord,
+    HighWater,
+    Observation,
+    TapeSpan,
+    TriggerSource,
+)
 from sextant.paper.outside_rth import (
     OutsideRthError,
     OutsideRthTrail,
     QuoteLike,
-    rebuild_trigger,
+    TriggerQuote,
+    rebuild_trigger_with_source,
 )
 from sextant.paper.sessions import ET, Session, session_at, session_start_ns
 
@@ -140,6 +154,22 @@ class _PendingRelease:
     """One broken trail waiting for its terminal cancellation before the LIMIT goes out."""
 
     trail_order_id: str
+
+
+@dataclass
+class _PendingDecision:
+    """One release decision captured at its breach, written once when it resolves."""
+
+    at_ns: int
+    trigger: Decimal | None
+    source: TriggerSource | None
+    high: HighWater | None
+    observations: tuple[Observation, ...]
+    book: Book
+    quantity: Decimal
+    noise: Decimal | None
+    noise_detail: dict[str, str]
+    price: Decimal
 
 
 @dataclass(frozen=True)
@@ -266,7 +296,9 @@ class TapeRead:
     """One start read: its held quantity, its status and the level of the rows it read.
 
     When ``ok`` the level is the whole span's; when ``partial`` it is a lower bound from the
-    rows actually read since adoption (R3), or None when no row was read.
+    rows actually read since adoption (R3), or None when no row was read. ``source_*`` and
+    ``window_*`` name the quote row that raised the level, so a decision record can say which
+    bid behind the level (B-EXIT-1959).
     """
 
     symbol: str
@@ -274,6 +306,13 @@ class TapeRead:
     level: Decimal | None
     status: str
     detail: str = ""
+    source_bid: Decimal | None = None
+    source_ask: Decimal | None = None
+    source_ns: int | None = None
+    window_start_ns: int | None = None
+    window_end_ns: int | None = None
+    feed: str = ""
+    pages: int = 0
 
 
 TAPE_BOUNDARIES = ((4, 0), (9, 30), (13, 0), (16, 0), (17, 0), (20, 0))
@@ -354,6 +393,7 @@ class Protector:
         history: HistoricalTape | None = None,
         start_client: TradingClientLike | None = None,
         monotonic: Callable[[], float] = time.monotonic,
+        decisions: DecisionLog | None = None,
     ) -> None:
         if account.lane != B_LANE:
             raise ProtectorRefusal("B's protector runs only on the slot-2 B paper lane")
@@ -392,12 +432,194 @@ class Protector:
         self._segment_start_ns = session_start_ns(opened_ns)
         self._last_reconcile_ns = opened_ns
         self._last_session = session_at(opened_ns)
+        self._decisions = decisions
+        self._pending_decision: dict[str, _PendingDecision] = {}
+        self._trigger_source: dict[str, TriggerSource] = {}
+        self._trigger_high: dict[str, HighWater] = {}
 
     def page(self, reason: str, symbol: str | None = None, detail: str = "") -> None:
         page = Page(reason=reason, symbol=symbol, detail=detail)
         self.pages.append(page)
         if self._on_page is not None:
             self._on_page(page)
+
+    def close(self) -> None:
+        """Finish the decision-record writer, fsyncing every line already queued."""
+
+        if self._decisions is not None:
+            self._decisions.close()
+
+    def _record(self, record: ExitRecord) -> None:
+        if self._decisions is not None:
+            self._decisions.append(record)
+
+    def _trigger_book(self, symbol: str, quantity: Decimal | None = None) -> Book:
+        position = self._last_position.get(symbol, Decimal(0))
+        reserved = self._last_reserved.get(symbol, Decimal(0))
+        available = position - reserved
+        return Book(
+            position=position,
+            reserved=reserved,
+            available=available,
+            quantity=available if quantity is None else quantity,
+        )
+
+    def _noise(self, state: OutsideRthTrail) -> tuple[Decimal | None, dict[str, str]]:
+        spread = state.spread
+        floor = None if spread is None else noise_floor(state.increment, spread)
+        detail = {
+            "one_tick": str(state.increment),
+            "spread": "none" if spread is None else str(spread),
+            "floor": "none" if floor is None else str(floor),
+            "persist_count": str(self._exit_params.breach_persist_count),
+            "persist_span_s": str(self._exit_params.breach_persist_span_s),
+        }
+        return floor, detail
+
+    def _observations(self, state: OutsideRthTrail) -> tuple[Observation, ...]:
+        seen = state.breach_observations
+        noise, _ = self._noise(state)
+        offset = state.breach_count - len(seen)
+        return tuple(
+            Observation(
+                at_ns=at_ns,
+                price=price,
+                kind="trade",
+                count=offset + index + 1,
+                noise=noise,
+                spread=state.spread,
+            )
+            for index, (at_ns, price) in enumerate(seen)
+        )
+
+    def _provenance(
+        self, symbol: str, state: OutsideRthTrail | None
+    ) -> tuple[TriggerSource | None, HighWater | None]:
+        source = self._trigger_source.get(symbol)
+        high = self._trigger_high.get(symbol)
+        if source is None and state is not None and state.source is not None:
+            moved = state.source
+            source = TriggerSource(
+                kind="live_ratchet",
+                level=moved.level,
+                at_ns=moved.ts_ns,
+                bid=moved.bid,
+                ask=moved.ask,
+            )
+            high = HighWater(value=moved.bid, kind="bid", at_ns=moved.ts_ns)
+        return source, high
+
+    @staticmethod
+    def _order_line(
+        client_order_id: str,
+        quantity: int,
+        price: Decimal,
+        *,
+        submitted: bool,
+        order_id: str | None = None,
+    ) -> dict[str, object]:
+        line: dict[str, object] = {
+            "client_order_id": client_order_id,
+            "side": "sell",
+            "quantity": Decimal(quantity),
+            "limit_price": price,
+            "extended_hours": True,
+            "submitted": submitted,
+        }
+        if order_id is not None:
+            line["order_id"] = order_id
+        return line
+
+    @staticmethod
+    def _order_from_order(order: Order) -> dict[str, object]:
+        line: dict[str, object] = {
+            "client_order_id": order.client_order_id,
+            "side": _event_name(order.side),
+            "quantity": _leaves(order),
+            "submitted": True,
+        }
+        limit_price = getattr(order, "limit_price", None)
+        if limit_price is not None:
+            line["limit_price"] = limit_price
+        extended = getattr(order, "extended_hours", None)
+        if extended is not None:
+            line["extended_hours"] = bool(extended)
+        return line
+
+    def _record_release(
+        self,
+        symbol: str,
+        context: _PendingDecision | None,
+        *,
+        order: dict[str, object] | None,
+        outcome: str,
+        note: str = "",
+    ) -> None:
+        if context is None:
+            return
+        self._record(
+            ExitRecord(
+                action="release",
+                at_ns=context.at_ns,
+                symbol=symbol,
+                trigger=context.trigger,
+                source=context.source,
+                high=context.high,
+                observations=context.observations,
+                order=order,
+                book=self._trigger_book(symbol, context.quantity),
+                noise=context.noise,
+                noise_detail=context.noise_detail,
+                outcome=outcome,
+                note=note,
+            )
+        )
+
+    def _record_cancel(self, order: Order, reason: str) -> None:
+        symbol = order.symbol
+        if symbol is None:
+            return
+        state = self._outside.get(symbol)
+        source, high = self._provenance(symbol, state)
+        trigger = state.trigger if state is not None else None
+        if trigger is None:
+            stop = getattr(order, "stop_price", None)
+            if stop is not None:
+                try:
+                    trigger = _decimal(str(stop), "order.stop_price")
+                except ValueError:
+                    trigger = None
+        if source is None and trigger is not None:
+            submitted = getattr(order, "submitted_at", None)
+            source = TriggerSource(kind="native_stop", level=trigger, stop_price=trigger)
+            high = HighWater(
+                value=trigger,
+                kind="native_stop",
+                at_ns=timestamp_ns(submitted) if isinstance(submitted, datetime) else None,
+                detail="the cancelled order's resting stop price",
+            )
+        if state is not None:
+            observations = self._observations(state)
+            noise, noise_detail = self._noise(state)
+        else:
+            observations, noise, noise_detail = (), None, None
+        self._record(
+            ExitRecord(
+                action="cancel",
+                at_ns=self._now_ns(),
+                symbol=symbol,
+                trigger=trigger,
+                source=source,
+                high=high,
+                observations=observations,
+                order=self._order_from_order(order),
+                book=self._trigger_book(symbol, _leaves(order)),
+                noise=noise,
+                noise_detail=noise_detail,
+                outcome="cancelled",
+                note=reason,
+            )
+        )
 
     def bind(self) -> None:
         """Confirm the broker account number before the stream starts."""
@@ -676,7 +898,21 @@ class Protector:
         if previous is not None and at < previous:
             return None
         self._last_quote_ns[symbol] = at if previous is None else max(previous, at)
-        return self._outside_state(symbol).observe_quote(bid=bid, ask=ask, last=last, ts_ns=at)
+        state = self._outside_state(symbol)
+        before = state.source
+        trigger = state.observe_quote(bid=bid, ask=ask, last=last, ts_ns=at)
+        moved = state.source
+        if moved is not None and moved != before:
+            # A live quote, not the adopted row, raised the trigger: the record names it.
+            self._trigger_source[symbol] = TriggerSource(
+                kind="live_ratchet",
+                level=moved.level,
+                at_ns=moved.ts_ns,
+                bid=moved.bid,
+                ask=moved.ask,
+            )
+            self._trigger_high[symbol] = HighWater(value=moved.bid, kind="bid", at_ns=moved.ts_ns)
+        return trigger
 
     def on_trade(self, symbol: str, price: Decimal, ts_ns: int | None = None) -> bool:
         """Feed one outside-RTH trade; true when it completes a persistent breach."""
@@ -692,7 +928,7 @@ class Protector:
         state = self._outside.get(symbol)
         if state is None or not state.observe_trade(price, at):
             return False
-        self._begin_outside_release(symbol)
+        self._begin_outside_release(symbol, at)
         return True
 
     def _outside_state(self, symbol: str) -> OutsideRthTrail:
@@ -844,40 +1080,61 @@ class Protector:
         # No rows and no token is a quiet window; rows of which none is inside the window,
         # or a token the window already returned, is malformed: partial, no further page.
         level: Decimal | None = None
+        source: TriggerQuote | None = None
+        window: tuple[int, int, str] | None = None
         pages = 0
+
+        def tape_read(state: str, detail: str = "") -> TapeRead:
+            if source is None or window is None:
+                return TapeRead(symbol, qty, level, state, detail, pages=pages)
+            return TapeRead(
+                symbol,
+                qty,
+                level,
+                state,
+                detail,
+                source_bid=source.bid,
+                source_ask=source.ask,
+                source_ns=source.ts_ns,
+                window_start_ns=window[0],
+                window_end_ns=window[1],
+                feed=window[2],
+                pages=pages,
+            )
+
         for start_ns, end_ns, feed in tape_windows(min(claimed), now_ns):
             token: str | None = None
             seen: set[str] = set()
             while True:
                 why = f"{pages} page(s) read, the level a lower bound; at {feed}"
                 if not spend():
-                    return TapeRead(symbol, qty, level, "partial", f"{why}: {over.detail}")
+                    return tape_read("partial", f"{why}: {over.detail}")
                 try:
                     rows, token = history.quote_page(symbol, start_ns, end_ns, feed, token)
                 except Exception as exc:
-                    return TapeRead(symbol, qty, level, "partial", f"{why}; {type(exc).__name__}")
+                    return tape_read("partial", f"{why}; {type(exc).__name__}")
                 pages += 1
                 inside = [row for row in rows if start_ns <= row.ts_ns <= end_ns]
-                found = rebuild_trigger(
+                found = rebuild_trigger_with_source(
                     inside,
                     trail_fraction=self._parameters.native_trail_fraction,
                     params=self._exit_params,
                 )
-                if found is not None and (level is None or found > level):
-                    level = found
+                if found is not None and (level is None or found.level > level):
+                    level = found.level
+                    source = found
+                    window = (start_ns, end_ns, feed)
                 # Kept at once, so the interval timer's expiry keeps the pages already read.
-                self._tapes[symbol] = TapeRead(symbol, qty, level, "partial", why)
+                self._tapes[symbol] = tape_read("partial", why)
                 why = f"{pages} page(s) read, the level a lower bound; at {feed}"
                 if rows and not inside:
-                    detail = f"{why}: no row inside its window"
-                    return TapeRead(symbol, qty, level, "partial", detail)
+                    return tape_read("partial", f"{why}: no row inside its window")
                 if token is None:
                     break
                 if token in seen:
-                    detail = f"{why}: a repeated continuation token"
-                    return TapeRead(symbol, qty, level, "partial", detail)
+                    return tape_read("partial", f"{why}: a repeated continuation token")
                 seen.add(token)
-        return TapeRead(symbol, qty, level, "ok")
+        return tape_read("ok")
 
     def _adopt_outside(self, symbol: str, order: Order) -> None:
         """Keep the highest of the native stop, the broker hwm's level, the trigger and tape."""
@@ -885,34 +1142,119 @@ class Protector:
         state = self._outside_state(symbol)
         if state.released or state.pending:
             return
-        # G3: the maximum over every valid source, never below any of them.
+        # G3: the maximum over every valid source, never below any of them. Each candidate
+        # keeps its provenance, so the record can say which source the level came from.
+        submitted = getattr(order, "submitted_at", None)
+        submitted_ns = timestamp_ns(submitted) if isinstance(submitted, datetime) else None
+        candidates: list[tuple[Decimal, TriggerSource, HighWater, TriggerQuote | None]] = []
         stop_price = getattr(order, "stop_price", None)
-        seeds = [] if stop_price is None else [_decimal(str(stop_price), "order.stop_price")]
+        if stop_price is not None:
+            stop = _decimal(str(stop_price), "order.stop_price")
+            candidates.append(
+                (
+                    stop,
+                    TriggerSource(kind="native_stop", level=stop, stop_price=stop),
+                    HighWater(
+                        value=stop,
+                        kind="native_stop",
+                        at_ns=submitted_ns,
+                        detail="the broker-held stop, the only high the resting trail reports",
+                    ),
+                    None,
+                )
+            )
         try:
+            hwm = _decimal(str(getattr(order, "hwm", None)), "order.hwm")
             percent = _decimal(str(getattr(order, "trail_percent", None)), "trail_percent")
-            implied = _decimal(str(getattr(order, "hwm", None)), "order.hwm") * (1 - percent / 100)
+            implied = hwm * (1 - percent / 100)
         except ValueError:
-            percent = implied = Decimal(0)  # absent or malformed: not a valid source
+            hwm, percent, implied = Decimal(0), Decimal(0), Decimal(0)
         if implied > 0 and percent > 0:
-            seeds.append(implied)
+            candidates.append(
+                (
+                    implied,
+                    TriggerSource(kind="broker_hwm", level=implied, hwm=hwm, trail_percent=percent),
+                    HighWater(
+                        value=hwm,
+                        kind="broker_hwm",
+                        at_ns=submitted_ns,
+                        detail="the broker's own high-water mark behind the resting stop",
+                    ),
+                    None,
+                )
+            )
         tape = self._tapes.get(symbol)
         # R3: a partial read's level is a lower bound on the complete read's, so it counts too.
         if tape is not None and tape.status in ("ok", "partial") and tape.level is not None:
-            seeds.append(tape.level)
+            span = None
+            if tape.window_start_ns is not None and tape.window_end_ns is not None:
+                span = TapeSpan(
+                    start_ns=tape.window_start_ns,
+                    end_ns=tape.window_end_ns,
+                    feed=tape.feed,
+                    pages=tape.pages,
+                    status=tape.status,
+                )
+            quote = None
+            if tape.source_bid is not None and tape.source_ns is not None:
+                quote = TriggerQuote(
+                    bid=tape.source_bid,
+                    ask=tape.source_ask if tape.source_ask is not None else tape.source_bid,
+                    ts_ns=tape.source_ns,
+                    level=tape.level,
+                )
+            candidates.append(
+                (
+                    tape.level,
+                    TriggerSource(
+                        kind="tape_high",
+                        level=tape.level,
+                        at_ns=tape.source_ns,
+                        bid=tape.source_bid,
+                        ask=tape.source_ask,
+                        tape=span,
+                    ),
+                    HighWater(
+                        value=tape.source_bid if tape.source_bid is not None else tape.level,
+                        kind="bid" if tape.source_bid is not None else "tape_level",
+                        at_ns=tape.source_ns,
+                    ),
+                    quote,
+                )
+            )
         if stop_price is None:
             self.page(
                 "outside_rth_trigger_missing",
                 symbol,
                 "the resting native trail has no stop price to emulate",
             )
-        if not seeds:
+        if not candidates:
             return
-        seed = max(seeds)
+        seed, source, high, quote = max(candidates, key=lambda item: item[0])
         if state.trigger is not None and state.trigger >= seed:
             return
-        state.adopt(seed, self._now_ns())
+        now_ns = self._now_ns()
+        state.adopt(seed, now_ns, source=quote)
+        self._trigger_source[symbol] = source
+        self._trigger_high[symbol] = high
+        noise, noise_detail = self._noise(state)
+        self._record(
+            ExitRecord(
+                action="adopt",
+                at_ns=now_ns,
+                symbol=symbol,
+                trigger=seed,
+                source=source,
+                high=high,
+                observations=self._observations(state),
+                book=self._trigger_book(symbol),
+                noise=noise,
+                noise_detail=noise_detail,
+                outcome="armed",
+            )
+        )
 
-    def _begin_outside_release(self, symbol: str) -> None:
+    def _begin_outside_release(self, symbol: str, at_ns: int) -> None:
         """Cancel the trail and release one LIMIT after its terminal cancellation."""
 
         state = self._outside.get(symbol)
@@ -929,7 +1271,7 @@ class Protector:
         now_ns = self._now_ns()
         fresh = self._priceable(session_at(now_ns), symbol, now_ns)
         try:
-            state.release_price(now_ns, fresh=fresh)
+            price = state.release_price(now_ns, fresh=fresh)
         except OutsideRthError as exc:
             self.page("outside_rth_release_unpriced", symbol, str(exc))
             return
@@ -940,7 +1282,28 @@ class Protector:
         if whole <= 0:
             self.page("outside_rth_release_unquantified", symbol, "no unreserved whole share")
             return
+        source, high = self._provenance(symbol, state)
+        noise, noise_detail = self._noise(state)
+        self._pending_decision[symbol] = _PendingDecision(
+            at_ns=at_ns,  # the print that completed the breach, not the submit time
+            trigger=state.trigger,
+            source=source,
+            high=high,
+            observations=self._observations(state),
+            book=self._trigger_book(symbol, Decimal(whole)),
+            quantity=Decimal(whole),
+            noise=noise,
+            noise_detail=noise_detail,
+            price=price,
+        )
         if not self._cancel(trails[0], "outside_rth_breach"):
+            self._record_release(
+                symbol,
+                self._pending_decision.pop(symbol, None),
+                order=None,
+                outcome="abandoned",
+                note="the native trail could not be cancelled",
+            )
             return
         self._pending_release[symbol] = _PendingRelease(trail_order_id=str(trails[0].id))
         state.begin_release(now_ns)
@@ -952,17 +1315,38 @@ class Protector:
         state = self._outside.get(symbol)
         if state is None:
             self._released_symbols.discard(symbol)
+            self._record_release(
+                symbol,
+                self._pending_decision.pop(symbol, None),
+                order=None,
+                outcome="abandoned",
+                note="no emulated trail was left to release",
+            )
             return
         now_ns = self._now_ns()
         if session_at(now_ns) is Session.CLOSED:
             state.rearm()
             self._released_symbols.discard(symbol)
             self.page("market_closed", symbol, "B writes only in an open session")
+            self._record_release(
+                symbol,
+                self._pending_decision.pop(symbol, None),
+                order=None,
+                outcome="abandoned",
+                note="the session closed before the release",
+            )
             return
         positions = self.reconcile()
         if symbol not in positions:
             state.rearm()
             self._released_symbols.discard(symbol)
+            self._record_release(
+                symbol,
+                self._pending_decision.pop(symbol, None),
+                order=None,
+                outcome="abandoned",
+                note="the position was gone before the release",
+            )
             return
         now_ns = self._now_ns()
         fresh = self._priceable(session_at(now_ns), symbol, now_ns)
@@ -972,6 +1356,13 @@ class Protector:
             state.rearm()
             self._released_symbols.discard(symbol)
             self.page("outside_rth_release_unpriced", symbol, str(exc))
+            self._record_release(
+                symbol,
+                self._pending_decision.pop(symbol, None),
+                order=None,
+                outcome="abandoned",
+                note=str(exc),
+            )
             return
         available = self._last_position.get(symbol, Decimal(0)) - self._last_reserved.get(
             symbol, Decimal(0)
@@ -981,6 +1372,13 @@ class Protector:
             state.rearm()
             self._released_symbols.discard(symbol)
             self.page("outside_rth_release_unquantified", symbol, "no unreserved whole share")
+            self._record_release(
+                symbol,
+                self._pending_decision.pop(symbol, None),
+                order=None,
+                outcome="abandoned",
+                note="no unreserved whole share",
+            )
             return
         self._submit_outside_limit(symbol, whole, price)
 
@@ -989,7 +1387,7 @@ class Protector:
         client_order_id = (
             f"{self._account.house_prefix}outside-{_safe_symbol(symbol)}-"
             f"{self._now_ns()}-{self._sequence}"
-        )
+        )[:MAX_CLIENT_ORDER_ID]
         request = LimitOrderRequest(
             symbol=symbol,
             qty=whole,
@@ -997,7 +1395,7 @@ class Protector:
             time_in_force=TimeInForce.GTC,
             limit_price=str(price),
             extended_hours=True,
-            client_order_id=client_order_id[:MAX_CLIENT_ORDER_ID],
+            client_order_id=client_order_id,
         )
         try:
             submitted = self._client.submit_order(request)
@@ -1007,13 +1405,28 @@ class Protector:
                 state.rearm()
             self._released_symbols.discard(symbol)
             self.page("outside_limit_submit_failed", symbol, type(exc).__name__)
+            self._record_release(
+                symbol,
+                self._pending_decision.pop(symbol, None),
+                order=self._order_line(client_order_id, whole, price, submitted=False),
+                outcome="abandoned",
+                note=f"the release LIMIT was not submitted: {type(exc).__name__}",
+            )
             return
+        order_id = str(submitted.id) if isinstance(submitted, Order) else None
         if isinstance(submitted, Order):
             self._remember(submitted)
         state = self._outside.get(symbol)
         if state is not None:
             state.mark_released(self._now_ns())
         self._announce_symbol(symbol, self._now_ns())
+        context = self._pending_decision.pop(symbol, None)
+        order_line = self._order_line(
+            client_order_id, whole, price, submitted=True, order_id=order_id
+        )
+        if context is not None and context.price != price:
+            order_line["repriced_from"] = context.price
+        self._record_release(symbol, context, order=order_line, outcome="released")
 
     def handle(self, update: TradeUpdate) -> None:
         symbol = update.order.symbol
@@ -1104,6 +1517,10 @@ class Protector:
             s: order_id for s, order_id in self._pending_rearm.items() if s in held
         }
         self._released_symbols &= held
+        self._trigger_source = {
+            s: source for s, source in self._trigger_source.items() if s in held
+        }
+        self._trigger_high = {s: high for s, high in self._trigger_high.items() if s in held}
         if announce:
             self._announce_states(now_ns)
         return positions
@@ -1190,6 +1607,13 @@ class Protector:
                         "outside_rth_release_failed",
                         symbol,
                         f"the resting trail ended {event} before the release",
+                    )
+                    self._record_release(
+                        symbol,
+                        self._pending_decision.pop(symbol, None),
+                        order=None,
+                        outcome="abandoned",
+                        note=f"the resting trail ended {event} before the release",
                     )
             elif self._pending_rearm.get(symbol) == order_id:
                 self._pending_rearm.pop(symbol, None)
@@ -1358,6 +1782,9 @@ class Protector:
             state = self._outside.get(order.symbol)
             if state is not None:
                 state.rearm()
+        if order.symbol is not None and order.symbol not in self._pending_decision:
+            # The release handover writes its own line once it resolves.
+            self._record_cancel(order, reason)
         return True
 
     def _is_ours(self, order: Order) -> bool:
@@ -1389,6 +1816,7 @@ class ProtectorStream(TradingStream):
         data_client: LatestDataClient | None = None,
         history: HistoricalTape | None = None,
         start_client: TradingClientLike | None = None,
+        decisions: DecisionLog | None = None,
     ) -> None:
         if url_override is None:
             super().__init__(api_key=api_key, secret_key=secret_key, paper=paper)
@@ -1416,6 +1844,7 @@ class ProtectorStream(TradingStream):
             on_state=on_state,
             history=history,
             start_client=start_client,
+            decisions=decisions,
         )
         self.subscribe_trade_updates(self._on_trade_update)
 
@@ -1545,4 +1974,7 @@ class ProtectorStream(TradingStream):
             self.protector.rebuild_tapes()
         except Exception as exc:
             self.protector.page("outside_rth_tape_unreadable", None, type(exc).__name__)
-        super().run()
+        try:
+            super().run()
+        finally:
+            self.protector.close()
