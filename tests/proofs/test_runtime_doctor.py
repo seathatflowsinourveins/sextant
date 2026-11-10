@@ -690,6 +690,50 @@ def test_good_fixture_is_green(tmp_path):
     assert len(report.checked) == 41
 
 
+def test_antigravity_trusts_this_repository_wherever_it_lives_and_names_a_removed_path(tmp_path):
+    """An existing checkout of this repository is trusted wherever it lives (the trading lead's own
+    working copy, AO's separate clone); a path that no longer exists is what the installer's prune
+    removes; an existing path that is not a checkout of this repository stays a finding."""
+    world = World(tmp_path)
+    doctor = _load_doctor(world.repo)
+    own = tmp_path / "own-clone"
+    own.mkdir()
+    foreign = tmp_path / "archive-clone"
+    foreign.mkdir()
+    plain = tmp_path / "plain-directory"
+    plain.mkdir()
+    fake = Fake(world)
+
+    def runner(command, **kwargs):
+        cmd = [str(part) for part in command]
+        for candidate, origin in (
+            (own, REMOTE),
+            (foreign, "https://github.com/seathatflowsinourveins/sextant-archive.git"),
+        ):
+            if cmd[:3] == ["git", "-C", str(candidate)]:
+                if cmd[3:] == ["rev-parse", "--show-toplevel"]:
+                    return doctor.Result(0, f"{candidate}\n", "")
+                if cmd[3:] == ["remote", "get-url", "origin"]:
+                    return doctor.Result(0, origin + "\n", "")
+        return fake(command, **kwargs)
+
+    host = doctor.Host(world.home, world.repo, world.prefix, runner)
+
+    def repository_findings(values):
+        _set_agy(world, trustedWorkspaces=values)
+        found = doctor.check_antigravity(host)
+        return [
+            finding for row in found.values() for finding in row if finding.check == "repository"
+        ]
+
+    assert repository_findings([str(world.repo), str(own)]) == []
+    missing = repository_findings([str(world.repo), "/srv/another-checkout"])
+    assert len(missing) == 1 and "no longer exist" in missing[0].message
+    assert "/srv/another-checkout" in missing[0].message
+    assert len(repository_findings([str(world.repo), str(plain)])) == 1
+    assert len(repository_findings([str(world.repo), str(foreign)])) == 1
+
+
 def test_watch_skips_an_unobservable_provider_and_reports_it(tmp_path):
     world = World(tmp_path)
     world.watch_screen_confirm = "running"

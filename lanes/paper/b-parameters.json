@@ -30,5 +30,37 @@
     "source": "lead decision 2026-11-09 (M4 outside-RTH witness; a quiet poller must page while protection is unarmed); the release's own freshness bound is OUTSIDE_QUOTE_MAX_AGE_S = 2 s in src/sextant/paper/outside_rth.py:29 (the quote_max_age_s row cited there), used only when no successful poll can vouch for the standing quote; 5 s is an uncalibrated poll-liveness bound that tolerates the 1 s poll plus jitter; UNCALIBRATED",
     "calibration_state": "UNCALIBRATED",
     "last_change": "2026-11-09"
+  },
+  {
+    "name": "tape_read_timeout_s",
+    "unit": "seconds of requests' connect and read timeout on each historical tape request at process start",
+    "value": "3.05",
+    "source": "requests docs, Advanced Usage > Timeouts, read 2026-11-10, requests 2.34.2 installed (connect timeouts slightly larger than a multiple of 3, the TCP retransmission window, with the 3.05 example; one value bounds connect and each read; neither is wall clock); applied through a mounted requests HTTPAdapter (Advanced Usage > Transport Adapters) on alpaca-py v0.44.0's RESTClient session (alpaca/common/rest.py:69,195); lead ruling LEAD-0010 R3; UNCALIBRATED",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-10"
+  },
+  {
+    "name": "tape_max_quotes",
+    "unit": "quotes per historical tape request at process start; a window that reaches it is partial",
+    "value": "10000",
+    "source": "alpacahq/alpaca-py v0.44.0 alpaca/common/rest.py:368-408 (_get_marketdata page_limit = 10,000 rows, so this is one page per window); lead ruling LEAD-0010 R3; UNCALIBRATED",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-10"
+  },
+  {
+    "name": "tape_deadline_s",
+    "unit": "seconds of one hard elapsed deadline over the whole start read, trading calls included: a request starts only while one tape_read_timeout_s still fits before it, and a main-thread ITIMER_REAL interval timer ends the read at it, so B's first reconcile begins within this many seconds of the read's start (that reconcile then runs under the trading clients' own transport timeouts)",
+    "value": "10",
+    "source": "the reconcile_interval_s row (10 s): B starts protecting no later than one reconcile interval after start; Python time.monotonic docs and the signal module's setitimer example (docs.python.org/3/library/signal.html, read 2026-11-10; PEP 475: a call interrupted by a handler that raises is not retried); lead rulings LEAD-0041 G1 and LEAD-0079; UNCALIBRATED",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-10"
+  },
+  {
+    "name": "tape_max_requests",
+    "unit": "paced requests the whole start read may spend (positions, orders and quote windows); the rest of the account burst is left to the first reconcile",
+    "value": "8",
+    "source": "lanes/limits.yaml alpaca-paper-b order_actions_budget_per_min 180 and BudgetControls burst = budget // 10 = 18 (src/sextant/paper/b_protector_main.py); 8 leaves 10 tokens for the first reconcile's positions, open-orders and arming calls; lead ruling LEAD-0041 G6; UNCALIBRATED",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-10"
   }
 ]
