@@ -31,13 +31,19 @@ from alpaca.trading.models import Order, Position, TradeAccount, TradeUpdate
 from alpaca.trading.requests import LimitOrderRequest, TrailingStopOrderRequest
 from alpaca.trading.stream import TradingStream
 
-from sextant.paper.b_feed import BHistoricalTape, BMarketDataFeed, feed_for
+from sextant.paper.b_feed import BHistoricalTape, BMarketDataFeed, feed_for, timestamp_ns
 from sextant.paper.b_protector import BParameters, Protector, ProtectorStream
 from sextant.paper.config import PaperAccount
 from sextant.paper.sessions import Session
 
 ET = ZoneInfo("America/New_York")
 NOW = datetime(2026, 11, 9, 20, 30, tzinfo=ET)  # overnight, outside the regular session
+
+
+def ns(at: datetime) -> int:
+    return timestamp_ns(at)
+
+
 NOW_NS = int(NOW.timestamp()) * 1_000_000_000
 SEC = 1_000_000_000
 
@@ -731,3 +737,79 @@ def test_the_historical_tape_uses_the_sessions_feed(feed: str, expected: DataFee
     tape.quotes("AAPL", 0, 1, feed)
 
     assert client.requests[0].feed is expected
+
+
+def test_the_tape_windows_split_at_the_feed_boundaries() -> None:
+    from sextant.paper.b_protector import tape_windows
+
+    start = ns(datetime(2026, 11, 9, 18, 10, tzinfo=ET))
+    end = ns(datetime(2026, 11, 9, 21, 0, tzinfo=ET))
+    sip_end = ns(datetime(2026, 11, 9, 20, 0, tzinfo=ET))
+    assert tape_windows(start, end) == ((start, sip_end, "sip"), (sip_end, end, "boats"))
+
+    overnight = ns(datetime(2026, 11, 9, 3, 0, tzinfo=ET))
+    noon = ns(datetime(2026, 11, 9, 12, 0, tzinfo=ET))
+    feeds = [window[2] for window in tape_windows(overnight, noon)]
+    assert feeds == ["boats", "sip"]
+
+
+def test_a_hung_tape_read_leaves_the_loop_counting_breaches_and_paging(monkeypatch) -> None:
+    import threading
+
+    from sextant.paper import b_protector as module
+
+    release = threading.Event()
+
+    def hung(*args: object, **kwargs: object) -> object:
+        release.wait(5)
+        return module.TapeRead(
+            symbol="AAPL",
+            qty=Decimal("10"),
+            adoption_ns=NOW_NS,
+            level=None,
+            status="none",
+        )
+
+    monkeypatch.setattr(module, "read_tape", hung)
+    client = FakeClient()
+    client.positions = [api_position("10")]
+    client.orders = [api_order(stop_price="99.45")]
+    data = FakeDataClient(quote=api_quote())
+    stream = ProtectorStream(
+        client,
+        b_account(),
+        b_params(),
+        api_key="test-key",
+        secret_key="test-secret",  # noqa: S106 - fixture, never a real key
+        now_ns=lambda: NOW_NS,
+        feed="boats",
+        data_client=data,
+    )
+
+    async def scenario() -> None:
+        stream.protector.reconcile()
+        stream._poll_tape(force=True)
+        await asyncio.sleep(0)
+
+        # The historical thread is stuck; the loop still pages a silent symbol feed.
+        stream.protector.note_poll(NOW_NS)
+        stream.protector.watch(NOW_NS)
+        assert any(page.reason == "outside_rth_feed_silent" for page in stream.protector.pages)
+
+        # And a persistent breach is still counted while the read hangs.
+        stream.protector.on_quote(
+            "AAPL",
+            bid=Decimal("99.505"),
+            ask=Decimal("99.510"),
+            last=Decimal("99.510"),
+            ts_ns=NOW_NS,
+        )
+        assert stream.protector.on_trade("AAPL", Decimal("99.40"), NOW_NS) is False
+        assert stream.protector.on_trade("AAPL", Decimal("99.40"), NOW_NS + SEC // 2) is False
+        assert stream.protector.on_trade("AAPL", Decimal("99.40"), NOW_NS + SEC) is True
+        assert stream._tape_task is not None
+        assert not stream._tape_task.done()
+        release.set()
+        await asyncio.wait_for(stream._tape_task, 2)
+
+    asyncio.run(scenario())

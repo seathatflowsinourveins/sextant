@@ -21,7 +21,7 @@ import re
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import ROUND_FLOOR, Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Protocol, cast
@@ -56,7 +56,7 @@ from sextant.paper.outside_rth import (
     QuoteLike,
     rebuild_trigger,
 )
-from sextant.paper.sessions import Session, session_at, session_start_ns
+from sextant.paper.sessions import ET, Session, session_at, session_start_ns
 
 B_LANE = "alpaca-paper-b"
 TRAIL_PERCENT_NAME = "native_trail_fraction"
@@ -204,6 +204,158 @@ class HistoricalTape(Protocol):
     ) -> Sequence[QuoteLike]: ...
 
 
+@dataclass(frozen=True)
+class TapeRead:
+    """One historical-tape rebuild: the adoption instant, its level and how completely it read."""
+
+    symbol: str
+    qty: Decimal
+    adoption_ns: int
+    level: Decimal | None
+    status: str
+    reason: str = ""
+    detail: str = ""
+
+
+def tape_windows(start_ns: int, end_ns: int) -> tuple[tuple[int, int, str], ...]:
+    """Split a span at the 04:00/20:00 ET boundaries: SIP 04:00-20:00, BOATS 20:00-04:00."""
+
+    if end_ns <= start_ns:
+        return ()
+    windows: list[tuple[int, int, str]] = []
+    cursor = start_ns
+    while cursor < end_ns:
+        local = datetime.fromtimestamp(cursor / 1_000_000_000, tz=ET)
+        if 4 <= local.hour < 20:
+            feed = "sip"
+            boundary = local.replace(hour=20, minute=0, second=0, microsecond=0)
+        else:
+            feed = "boats"
+            if local.hour >= 20:
+                boundary = (local + timedelta(days=1)).replace(
+                    hour=4, minute=0, second=0, microsecond=0
+                )
+            else:
+                boundary = local.replace(hour=4, minute=0, second=0, microsecond=0)
+        window_end = min(timestamp_ns(boundary), end_ns)
+        if window_end <= cursor:
+            window_end = end_ns
+        windows.append((cursor, window_end, feed))
+        cursor = window_end
+    return tuple(windows)
+
+
+def _order_time_ns(order: Order, field: str) -> int | None:
+    at = getattr(order, field, None)
+    return timestamp_ns(at) if isinstance(at, datetime) else None
+
+
+def _is_house_order(order: Order, house_prefix: str) -> bool:
+    client_order_id = getattr(order, "client_order_id", None)
+    return isinstance(client_order_id, str) and client_order_id.startswith(house_prefix)
+
+
+def read_tape(
+    client: TradingClientLike,
+    history: HistoricalTape,
+    symbol: str,
+    qty: Decimal,
+    now_ns: int,
+    *,
+    trail_fraction: Decimal,
+    params: ExitParams,
+    house_prefix: str,
+) -> TapeRead:
+    """The broker record's adoption mark plus every feed window since, rebuilt off the loop."""
+
+    try:
+        orders = list(
+            client.get_orders(
+                GetOrdersRequest(
+                    status=QueryOrderStatus.ALL,
+                    symbols=[symbol],
+                    direction=Sort.DESC,
+                    limit=OPEN_ORDER_LIMIT,
+                )
+            )
+        )
+    except Exception as exc:
+        return TapeRead(
+            symbol,
+            qty,
+            now_ns,
+            None,
+            "none",
+            "outside_rth_tape_unreadable",
+            f"orders: {type(exc).__name__}",
+        )
+    buys: list[tuple[int, Order]] = []
+    for order in orders:
+        if _event_name(getattr(order, "side", None)) != "buy":
+            continue
+        filled = getattr(order, "filled_qty", None)
+        at = getattr(order, "filled_at", None)
+        if filled is None or not isinstance(at, datetime):
+            continue
+        try:
+            quantity = _decimal(filled, "order.filled_qty")
+        except ValueError:
+            continue
+        if quantity > 0:
+            buys.append((timestamp_ns(at), order))
+    if not buys:
+        return TapeRead(
+            symbol,
+            qty,
+            now_ns,
+            None,
+            "none",
+            "outside_rth_entry_unknown",
+            "no filled buy covers the held quantity",
+        )
+    fill_ns, fill_order = max(buys, key=lambda item: item[0])
+    lower_ns = _order_time_ns(fill_order, "submitted_at")
+    if lower_ns is None:
+        lower_ns = fill_ns
+    house_times = [
+        at
+        for order in orders
+        if _is_house_order(order, house_prefix)
+        for at in [_order_time_ns(order, "submitted_at")]
+        if at is not None and at >= lower_ns
+    ]
+    adoption_ns = min(now_ns, max(fill_ns, min(house_times) if house_times else now_ns))
+    observations: list[QuoteLike] = []
+    failures: list[str] = []
+    read_ok = 0
+    for start_ns, end_ns, feed in tape_windows(adoption_ns, now_ns):
+        try:
+            observations.extend(history.quotes(symbol, start_ns, end_ns, feed))
+            read_ok += 1
+        except Exception as exc:
+            failures.append(f"{feed}: {type(exc).__name__}")
+    level = (
+        rebuild_trigger(observations, trail_fraction=trail_fraction, params=params)
+        if observations
+        else None
+    )
+    if not failures:
+        status = "ok"
+    elif read_ok:
+        status = "partial"
+    else:
+        status = "none"
+    return TapeRead(
+        symbol,
+        qty,
+        adoption_ns,
+        level,
+        status,
+        "outside_rth_tape_unreadable" if failures else "",
+        "; ".join(failures),
+    )
+
+
 def _event_name(event: object) -> str:
     return str(getattr(event, "value", event))
 
@@ -251,6 +403,7 @@ class Protector:
         feed: str = "none",
         on_state: Callable[[str], None] | None = None,
         history: HistoricalTape | None = None,
+        tape_off_loop: bool = False,
     ) -> None:
         if account.lane != B_LANE:
             raise ProtectorRefusal("B's protector runs only on the slot-2 B paper lane")
@@ -280,10 +433,13 @@ class Protector:
         self._released_symbols: set[str] = set()
         self._house: dict[str, list[Order]] = {}
         self._sequence = 0
+        self._tape_off_loop = tape_off_loop
         self._tape_notes: dict[str, str] = {}
         self._tape_paged: set[tuple[str, int]] = set()
-        self._entry_cache: dict[str, int | None] = {}
-        self._rebuilt_cache: dict[tuple[str, int], Decimal | None] = {}
+        self._tape_levels: dict[str, Decimal] = {}
+        self._tape_adoptions: dict[str, int] = {}
+        self._tape_attempts: dict[str, tuple[int, tuple[str, Decimal, int]]] = {}
+        self._tape_results: dict[tuple[str, Decimal, int], Decimal | None] = {}
         opened_ns = self._now_ns()
         self._feed_started_ns: int | None = opened_ns if feed != "none" else None
         self._segment_start_ns = session_start_ns(opened_ns)
@@ -601,95 +757,111 @@ class Protector:
             self._outside[symbol] = state
         return state
 
-    def _entry_ns(self, symbol: str) -> int | None:
-        """The fill that opened the held quantity, from the closed order history."""
+    def _tape_key(self, symbol: str, qty: Decimal) -> tuple[str, Decimal, int]:
+        return (symbol, qty, self._segment_start_ns)
 
-        if symbol in self._entry_cache:
-            return self._entry_cache[symbol]
-        remaining = self._last_position.get(symbol, Decimal(0))
-        if remaining <= 0:
-            self._entry_cache[symbol] = None
-            return None
-        orders = self._client.get_orders(
-            GetOrdersRequest(
-                status=QueryOrderStatus.CLOSED,
-                symbols=[symbol],
-                direction=Sort.DESC,
-                limit=OPEN_ORDER_LIMIT,
-            )
-        )
-        fills: list[tuple[datetime, str, Decimal]] = []
-        for order in orders:
-            filled = getattr(order, "filled_qty", None)
-            at = getattr(order, "filled_at", None)
-            if filled is None or not isinstance(at, datetime):
-                continue
-            try:
-                quantity = _decimal(filled, "order.filled_qty")
-            except ValueError:
-                continue
-            if quantity <= 0:
-                continue
-            fills.append((at, _event_name(getattr(order, "side", None)), quantity))
-        fills.sort(key=lambda item: item[0], reverse=True)
-        for at, side, quantity in fills:
-            if side == "sell":
-                remaining += quantity
-            elif side == "buy":
-                if quantity >= remaining:
-                    entry = timestamp_ns(at)
-                    self._entry_cache[symbol] = entry
-                    return entry
-                remaining -= quantity
-        self._entry_cache[symbol] = None
-        return None
+    def apply_tape(self, result: TapeRead, now_ns: int) -> None:
+        """Record one tape read; only the running high may move, and never down."""
+
+        symbol = result.symbol
+        key = self._tape_key(symbol, result.qty)
+        self._tape_adoptions[symbol] = result.adoption_ns
+        if result.status == "ok":
+            self._tape_notes[symbol] = "ok"
+            self._tape_results[key] = result.level
+        else:
+            self._tape_notes[symbol] = result.status
+            page_key = (symbol, self._segment_start_ns)
+            if page_key not in self._tape_paged:
+                self._tape_paged.add(page_key)
+                self.page(result.reason or "outside_rth_tape_unreadable", symbol, result.detail)
+        if result.level is None:
+            return
+        prior = self._tape_levels.get(symbol)
+        if prior is None or result.level > prior:
+            self._tape_levels[symbol] = result.level
+        state = self._outside.get(symbol)
+        if state is None or state.released or state.pending:
+            return
+        if state.trigger is not None and state.trigger >= result.level:
+            return
+        state.adopt(result.level, now_ns)
 
     def _rebuilt_trigger(self, symbol: str, now_ns: int) -> Decimal | None:
-        """Replay this session's tape since the entry; None when it cannot be trusted."""
+        """The rebuilt high-water mark; the off-loop stream reads on a cadence, tests inline."""
 
-        session = session_at(now_ns)
-        feed = feed_for(session)
-        if self._history is None or feed is None:
+        if self._history is None:
             return None
-        key = (symbol, self._segment_start_ns)
-        if key in self._rebuilt_cache:
-            return self._rebuilt_cache[key]
-        paged = key in self._tape_paged
+        if self._tape_off_loop:
+            return self._tape_levels.get(symbol)
+        qty = self._last_position.get(symbol, Decimal(0))
+        key = self._tape_key(symbol, qty)
+        if key in self._tape_results:
+            return self._tape_results[key]
+        result = read_tape(
+            self._client,
+            self._history,
+            symbol,
+            qty,
+            now_ns,
+            trail_fraction=self._parameters.native_trail_fraction,
+            params=self._exit_params,
+            house_prefix=self._account.house_prefix,
+        )
+        self.apply_tape(result, now_ns)
+        return self._tape_results.get(key)
 
-        def failed(note: str, reason: str, detail: str) -> Decimal | None:
-            self._tape_notes[symbol] = note
-            self._rebuilt_cache[key] = None
-            if not paged:
-                self._tape_paged.add(key)
-                self.page(reason, symbol, detail)
-            return None
+    def tape_candidates(self, now_ns: int) -> list[tuple[str, Decimal]]:
+        """Held symbols whose tape still needs a complete read for this segment."""
 
-        try:
-            entry_ns = self._entry_ns(symbol)
-        except Exception as exc:
-            return failed(
-                "unreadable",
+        if self._history is None:
+            return []
+        if session_at(now_ns) not in (Session.PRE, Session.POST, Session.OVERNIGHT):
+            return []
+        interval_ns = int(self._parameters.reconcile_interval_s * NS_PER_SECOND)
+        candidates: list[tuple[str, Decimal]] = []
+        for symbol in sorted(self._last_position):
+            qty = self._last_position.get(symbol, Decimal(0))
+            if qty <= 0:
+                continue
+            key = self._tape_key(symbol, qty)
+            if key in self._tape_results:
+                continue
+            attempt = self._tape_attempts.get(symbol)
+            if attempt is not None and attempt[1] == key and now_ns - attempt[0] < interval_ns:
+                continue
+            candidates.append((symbol, qty))
+        return candidates
+
+    def begin_tape(self, symbol: str, qty: Decimal, now_ns: int) -> None:
+        """Mark an off-loop read as started; until it lands the line says none, not ok."""
+
+        key = self._tape_key(symbol, qty)
+        self._tape_attempts[symbol] = (now_ns, key)
+        if key not in self._tape_results:
+            self._tape_notes[symbol] = "none"
+
+    def tape_timed_out(self, symbol: str, now_ns: int) -> None:
+        """The read outlived its budget: page once, keep the trigger already in hand."""
+
+        self._tape_notes[symbol] = "none"
+        page_key = (symbol, self._segment_start_ns)
+        if page_key not in self._tape_paged:
+            self._tape_paged.add(page_key)
+            self.page(
                 "outside_rth_tape_unreadable",
-                f"entry: {type(exc).__name__}",
+                symbol,
+                "the historical read exceeded its time budget",
             )
-        if entry_ns is None:
-            return failed(
-                "entry_unknown",
-                "outside_rth_entry_unknown",
-                "no filled buy covers the held quantity",
-            )
-        try:
-            observations = self._history.quotes(symbol, entry_ns, now_ns, feed)
-            rebuilt = rebuild_trigger(
-                observations,
-                trail_fraction=self._parameters.native_trail_fraction,
-                params=self._exit_params,
-            )
-        except Exception as exc:
-            return failed("unreadable", "outside_rth_tape_unreadable", type(exc).__name__)
-        self._tape_notes[symbol] = "ok"
-        self._rebuilt_cache[key] = rebuilt
-        return rebuilt
+
+    def tape_failed(self, symbol: str, now_ns: int, detail: str) -> None:
+        """An off-loop read died outside read_tape's own handling; retry next tick."""
+
+        self._tape_notes[symbol] = "none"
+        page_key = (symbol, self._segment_start_ns)
+        if page_key not in self._tape_paged:
+            self._tape_paged.add(page_key)
+            self.page("outside_rth_tape_unreadable", symbol, detail)
 
     def _adopt_outside(self, symbol: str, order: Order) -> None:
         """Keep the higher of the native stop, the existing trigger and the rebuilt tape high."""
@@ -899,9 +1071,13 @@ class Protector:
         self._released_symbols &= held
         self._tape_notes = {s: note for s, note in self._tape_notes.items() if s in held}
         self._tape_paged = {key for key in self._tape_paged if key[0] in held}
-        self._entry_cache = {s: entry for s, entry in self._entry_cache.items() if s in held}
-        self._rebuilt_cache = {
-            key: value for key, value in self._rebuilt_cache.items() if key[0] in held
+        self._tape_levels = {s: level for s, level in self._tape_levels.items() if s in held}
+        self._tape_adoptions = {s: ns for s, ns in self._tape_adoptions.items() if s in held}
+        self._tape_attempts = {
+            s: attempt for s, attempt in self._tape_attempts.items() if s in held
+        }
+        self._tape_results = {
+            key: level for key, level in self._tape_results.items() if key[0] in held
         }
         if announce:
             self._announce_states(now_ns)
@@ -1208,6 +1384,10 @@ class ProtectorStream(TradingStream):
         self._feed_failure: str | None = None
         self._feed_label = "none"
         self._poll_task: asyncio.Task[FeedBatch] | None = None
+        self._tape_task: asyncio.Task[TapeRead] | None = None
+        self._tape_symbol = ""
+        self._tape_started_ns = 0
+        self._tape_timed_out = False
         self.protector = Protector(
             client,
             account,
@@ -1217,6 +1397,7 @@ class ProtectorStream(TradingStream):
             feed=feed,
             on_state=on_state,
             history=self._history,
+            tape_off_loop=True,
         )
         self.subscribe_trade_updates(self._on_trade_update)
 
@@ -1290,6 +1471,58 @@ class ProtectorStream(TradingStream):
             asyncio.to_thread(self._market_data.poll, symbols, feed)
         )
 
+    def _poll_tape(self, *, force: bool = False) -> None:
+        """Start one off-loop tape read for the first symbol that still needs it."""
+
+        if self._history is None or self._tape_task is not None:
+            return
+        now_ns = self._now_ns()
+        candidates = self.protector.tape_candidates(now_ns)
+        if not candidates:
+            return
+        symbol, qty = candidates[0]
+        self.protector.begin_tape(symbol, qty, now_ns)
+        self._tape_symbol = symbol
+        self._tape_started_ns = now_ns
+        self._tape_timed_out = False
+        self._tape_task = asyncio.create_task(
+            asyncio.to_thread(
+                read_tape,
+                self.protector._client,
+                self._history,
+                symbol,
+                qty,
+                now_ns,
+                trail_fraction=self._parameters.native_trail_fraction,
+                params=self.protector._exit_params,
+                house_prefix=self.protector._account.house_prefix,
+            )
+        )
+
+    def _drain_tape(self) -> None:
+        """Apply a landed tape result, or page once when it outlives its time budget."""
+
+        task = self._tape_task
+        if task is None:
+            return
+        now_ns = self._now_ns()
+        if not task.done():
+            if not self._tape_timed_out:
+                budget_ns = int(self._parameters.feed_silence_s * NS_PER_SECOND)
+                if now_ns - self._tape_started_ns >= budget_ns:
+                    self._tape_timed_out = True
+                    self.protector.tape_timed_out(self._tape_symbol, now_ns)
+            return
+        self._tape_task = None
+        try:
+            result = task.result()
+        except asyncio.CancelledError:
+            return
+        except Exception as exc:
+            self.protector.tape_failed(self._tape_symbol, now_ns, type(exc).__name__)
+            return
+        self.protector.apply_tape(result, now_ns)
+
     async def _on_trade_update(self, update: TradeUpdate) -> None:
         try:
             self.protector.handle(update)
@@ -1302,6 +1535,10 @@ class ProtectorStream(TradingStream):
             self.protector.reconcile(announce=False)
         except Exception as exc:
             self.protector.page("reconcile_failed", None, type(exc).__name__)
+        try:
+            self._poll_tape(force=True)
+        except Exception as exc:
+            self.protector.page("tape_failed", None, type(exc).__name__)
         try:
             self._poll_feed(force=True)
             await self._await_startup_poll()
@@ -1320,6 +1557,11 @@ class ProtectorStream(TradingStream):
                 self._poll_feed()
             except Exception as exc:
                 self.protector.page("feed_failed", None, type(exc).__name__)
+            try:
+                self._drain_tape()
+                self._poll_tape()
+            except Exception as exc:
+                self.protector.page("tape_failed", None, type(exc).__name__)
             try:
                 self.protector.watch()
             except Exception as exc:
