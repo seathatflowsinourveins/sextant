@@ -37,9 +37,7 @@ from sextant.paper.b_protector import (
     BParameters,
     Protector,
     ProtectorStream,
-    TapeRead,
 )
-from sextant.paper.b_protector import read_tape as module_read_tape
 from sextant.paper.config import PaperAccount
 from sextant.paper.sessions import Session
 
@@ -772,12 +770,15 @@ def test_the_tape_windows_split_at_the_feed_boundaries() -> None:
 
 def test_a_hung_tape_read_leaves_the_loop_counting_breaches_and_paging(monkeypatch) -> None:
     import threading
-    import time
 
+    entered = threading.Event()
     release = threading.Event()
+    finished = threading.Event()
+    failures: list[BaseException] = []
 
     class BlockingHistory(FakeDataClient):
         def get_stock_quotes(self, request: StockQuotesRequest) -> object:
+            entered.set()
             release.wait(5)
             return QuoteSet({})
 
@@ -806,31 +807,38 @@ def test_a_hung_tape_read_leaves_the_loop_counting_breaches_and_paging(monkeypat
         feed="boats",
         data_client=BlockingHistory(),
     )
-    observed: dict[str, list[str] | bool] = {}
 
-    def observe() -> None:
-        time.sleep(0.4)
-        observed["pages"] = [page.reason for page in stream.protector.pages]
-        task = getattr(stream, "_tape_task", None)
-        observed["unfinished"] = task is not None and not task.done()
-
-    async def scenario() -> None:
-        watcher = threading.Thread(target=observe)
-        watcher.start()
-        # Ordinary start: the read runs off the loop, so the silence watchdog pages
-        # and the loop is free while the historical request is still in flight.
+    async def run_startup() -> None:
         await stream._start_ws()
-        watcher.join(2)
-        pages = observed.get("pages")
-        assert isinstance(pages, list) and "outside_rth_feed_silent" in pages
-        assert observed.get("unfinished") is True
-        release.set()
-        task = getattr(stream, "_tape_task", None)
-        if task is not None:
-            await asyncio.wait_for(task, 2)
-        stream._drain_tape()
+        finished.set()
+        # Keep the loop (and its executor threads) alive until teardown releases
+        # the blocked read, so a failing run does not wait on executor shutdown.
+        await asyncio.to_thread(release.wait, 5)
 
-    asyncio.run(scenario())
+    def start() -> None:
+        try:
+            asyncio.run(run_startup())
+        except BaseException as error:
+            failures.append(error)
+        finally:
+            finished.set()
+
+    startup = threading.Thread(target=start, daemon=True)
+    startup.start()
+    try:
+        assert entered.wait(2), "the historical read was never entered"
+        assert finished.wait(2), (
+            "the loop did not return while the read hung: no watchdog page was emitted"
+        )
+        pages = [page.reason for page in stream.protector.pages]
+        assert "outside_rth_feed_silent" in pages, pages
+        task = stream._tape_task
+        assert task is not None and not task.done(), "the historical read should still be in flight"
+    finally:
+        release.set()
+        finished.wait(5)
+        startup.join(5)
+    assert not failures, failures
 
 
 async def _noop_start_ws(self: object) -> None:
@@ -857,6 +865,8 @@ def _probe_stream(clock: list[int], client: FakeClient | None = None) -> Protect
 
 
 def test_a_timed_out_read_is_retried_on_a_later_cadence_tick() -> None:
+    from sextant.paper.b_protector import TapeRead
+
     async def scenario() -> None:
         clock = [NOW_NS]
         stream = _probe_stream(clock)
@@ -878,10 +888,12 @@ def test_a_timed_out_read_is_retried_on_a_later_cadence_tick() -> None:
         await asyncio.sleep(0)
         stream._drain_tape()
 
-    asyncio.run(scenario())
+    asyncio.run(asyncio.wait_for(scenario(), 10))
 
 
 def test_incomplete_states_page_once_per_symbol_per_session() -> None:
+    from sextant.paper.b_protector import TapeRead
+
     clock = [NOW_NS]
     stream = _probe_stream(clock)
     stream.protector.tape_timed_out("AAPL", clock[0])
@@ -904,6 +916,8 @@ def test_incomplete_states_page_once_per_symbol_per_session() -> None:
 
 
 def test_a_broker_record_read_failure_is_none(monkeypatch) -> None:
+    from sextant.paper.b_protector import read_tape as module_read_tape
+
     client = FakeClient()
 
     def unavailable(filter=None) -> list[Order]:
@@ -926,6 +940,8 @@ def test_a_broker_record_read_failure_is_none(monkeypatch) -> None:
 
 
 def test_a_timed_out_read_is_not_reported_as_ok_when_it_lands_late() -> None:
+    from sextant.paper.b_protector import TapeRead
+
     async def scenario() -> None:
         clock = [NOW_NS]
         stream = _probe_stream(clock)
@@ -942,10 +958,35 @@ def test_a_timed_out_read_is_not_reported_as_ok_when_it_lands_late() -> None:
         line, _ = stream.protector._state_snapshot("AAPL", clock[0])
         assert "tape=ok" not in line, line
 
-    asyncio.run(scenario())
+    asyncio.run(asyncio.wait_for(scenario(), 10))
+
+
+def test_a_read_that_completed_after_its_budget_before_drain_is_not_ok() -> None:
+    from sextant.paper.b_protector import TapeRead
+
+    async def scenario() -> None:
+        clock = [NOW_NS]
+        stream = _probe_stream(clock)
+        pending: asyncio.Future[TapeRead] = asyncio.get_running_loop().create_future()
+        stream.protector.begin_tape("AAPL", Decimal("10"), clock[0])
+        stream._tape_task = pending  # type: ignore[assignment]
+        stream._tape_symbol = "AAPL"
+        stream._tape_started_ns = clock[0]
+        clock[0] += 6 * SEC
+        pending.set_result(TapeRead("AAPL", Decimal("10"), clock[0], None, "ok"))
+        stream._drain_tape()
+        line, _ = stream.protector._state_snapshot("AAPL", clock[0])
+        assert "tape=ok" not in line, line
+        assert stream.protector._tape_notes["AAPL"] == "none"
+        assert [page.reason for page in stream.protector.pages] == ["outside_rth_tape_unreadable"]
+
+    asyncio.run(asyncio.wait_for(scenario(), 10))
 
 
 def test_a_previous_feed_result_does_not_complete_the_new_session() -> None:
+    from sextant.paper.b_protector import TapeRead
+    from sextant.paper.b_protector import read_tape as module_read_tape
+
     async def scenario() -> None:
         before = ns(datetime(2026, 11, 9, 19, 59, 59, tzinfo=ET))
         after = ns(datetime(2026, 11, 9, 20, 0, 1, tzinfo=ET))
@@ -1004,7 +1045,7 @@ def test_a_previous_feed_result_does_not_complete_the_new_session() -> None:
         assert "tape=ok" not in line, line
         assert candidates == [("AAPL", Decimal("55"))]
 
-    asyncio.run(scenario())
+    asyncio.run(asyncio.wait_for(scenario(), 10))
 
 
 class RecordingPacer:

@@ -1543,6 +1543,15 @@ class ProtectorStream(TradingStream):
                     )
             return
         self._tape_task = None
+        budget_ns = int(self._parameters.feed_silence_s * NS_PER_SECOND)
+        if self._tape_timed_out or now_ns - self._tape_started_ns >= budget_ns:
+            # A read that finishes after its budget but before the first drain is
+            # still late: page once and let it raise the trigger only.
+            if not self._tape_timed_out:
+                self._tape_timed_out = True
+                self.protector.tape_timed_out(self._tape_symbol, now_ns)
+            self._late_tape(task, self._tape_symbol)
+            return
         try:
             result = task.result()
         except asyncio.CancelledError:
