@@ -50,7 +50,7 @@ class RankingConsumer:
         self._alarm = alarm
         self.alarm_errors = 0
         self.last_alarm_error: str | None = None
-        self._last_alarm: tuple[str, str | None, str | None] | None = None
+        self._active_alarms: set[tuple[str, str | None, str | None]] = set()
         self._entry_heartbeat_ns = (
             _positive_age("entry_heartbeat_max_age_s", entry_heartbeat_max_age_s) * NS
         )
@@ -75,7 +75,11 @@ class RankingConsumer:
         if not accepted:
             self._heartbeat = None
         else:
-            self._last_alarm = None
+            # A new generation ends every refusal tied to an older one; current keys stay.
+            identity = self.reader.generation_key
+            self._active_alarms = {
+                key for key in self._active_alarms if key[2] is None or key[2] == identity
+            }
         self.reason = self.reader.reason
         return accepted
 
@@ -83,7 +87,7 @@ class RankingConsumer:
         accepted = self.reader.accept_heartbeat(at=at, received_ns=received_ns)
         self._heartbeat = (at, received_ns) if accepted else None
         if accepted:
-            self._last_alarm = None
+            self._clear("entry_heartbeat_stale")
         self.reason = self.reader.reason
         return accepted
 
@@ -100,8 +104,6 @@ class RankingConsumer:
             return None
         rank = self.reader.entry_rank(symbol, now=now)
         self.reason = self.reader.reason
-        if rank is not None:
-            self._last_alarm = None
         return rank
 
     def ranked_names(self, *, now: int) -> tuple[str, ...]:
@@ -124,7 +126,6 @@ class RankingConsumer:
             if self.reader.entry_rank(row.symbol, now=now) is not None:
                 names.append(row.symbol)
         if names:
-            self._last_alarm = None
             self.reason = "fresh"
         elif filtered:
             self.reason = "symbol_input_stale"
@@ -143,15 +144,24 @@ class RankingConsumer:
         if stale:
             self._refuse("symbol_input_stale", row.symbol)
             return False
+        self._clear("symbol_input_stale", symbol=row.symbol)
         return True
 
     def _refuse(self, reason: str, symbol: str | None = None) -> None:
         self.reason = reason
         key = (reason, symbol, self.reader.generation_key)
-        if key == self._last_alarm:
+        if key in self._active_alarms:
             return
-        self._last_alarm = key
+        self._active_alarms.add(key)
         self._emit_alarm(reason, symbol)
+
+    def _clear(self, *reasons: str, symbol: str | None = None) -> None:
+        identity = self.reader.generation_key
+        self._active_alarms = {
+            key
+            for key in self._active_alarms
+            if not (key[0] in reasons and key[1] == symbol and key[2] == identity)
+        }
 
     def _emit_alarm(self, reason: str, symbol: str | None) -> None:
         if self._alarm is None:
@@ -160,7 +170,10 @@ class RankingConsumer:
             self._alarm(reason, symbol)
         except Exception as exc:  # containment: a broken transport never un-vetoes a name
             self.alarm_errors += 1
-            self.last_alarm_error = f"{type(exc).__name__}: {exc}"
+            try:
+                self.last_alarm_error = f"{type(exc).__name__}: {exc}"
+            except Exception:  # even an unprintable exception stays inside the boundary
+                self.last_alarm_error = type(exc).__name__
 
     def _entry_fresh(self, now: int) -> bool:
         if not self.reader.fresh(now):
@@ -180,6 +193,7 @@ class RankingConsumer:
         if not 0 <= now - generation.ts_event <= self._entry_input_ns:
             self._refuse("entry_input_stale")
             return False
+        self._clear("entry_heartbeat_stale", "entry_generation_stale", "entry_input_stale")
         self.reason = "fresh"
         return True
 
