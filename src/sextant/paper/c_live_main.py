@@ -70,6 +70,7 @@ from sextant.paper.c_universe import rank_universe
 from sextant.paper.config import PaperAccount
 from sextant.paper.sessions import Session
 from sextant.ranking.baseline import BaselineTable, load_baseline, segment_start
+from sextant.ranking.baseline_coverage import bare_symbol
 from sextant.ranking.engine import Segment
 from sextant.risk.controls import Controls
 from sextant.risk.guard import Guard
@@ -78,6 +79,7 @@ from sextant.validation.trials import WITNESS_PATH, TrialLog, snapshot_hash
 ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_CONTROLS = ROOT / "lanes/custody-parameters.json"
 DEFAULT_ENTRY_PARAMETERS = ROOT / "lanes/sim/entry-parameters.json"
+DEFAULT_LEASE_ROOT = Path.home() / "sextant-data" / "locks"
 CONFIG_KEYS = frozenset({"lane", "account_id", "client_id", "namespace", "sessions"})
 C_LANE = "alpaca-paper-c"
 KEY_NAMES = ("ALPACA_PAPER_3_API_KEY", "ALPACA_PAPER_3_SECRET_KEY")
@@ -352,7 +354,7 @@ def _await_order(
 def _house_cid(account: PaperAccount, command: OrderCommand) -> str:
     """A deterministic house id for the one session that supplies none (it always does)."""
 
-    symbol = command.instrument.rsplit(".", 1)[0]
+    symbol = bare_symbol(command.instrument)
     return (
         f"{account.house_prefix}{symbol}-{command.side.lower()}-"
         f"{command.order_type.lower()}-{command.quantity}"
@@ -423,7 +425,7 @@ def _record_command(
 
 
 def _request_for(command: OrderCommand, cid: str, *, extended_hours: bool) -> Any:
-    symbol = command.instrument.rsplit(".", 1)[0]
+    symbol = bare_symbol(command.instrument)
     if command.order_type == "LIMIT" and command.limit_price is not None:
         return LimitOrderRequest(
             symbol=symbol,
@@ -585,6 +587,7 @@ class _Arming:
     reason: str
     max_armed_symbols: int
     held_back: tuple[str, ...] = ()
+    mover_armed: frozenset[str] = frozenset()
 
 
 def _arm_universe(
@@ -603,13 +606,34 @@ def _arm_universe(
     try:
         ranked = rank_universe(client, data, segment.name.lower(), now=now)
     except Exception as exc:  # the broker/data surface must fail closed, not arm blindly
+        retained_movers = frozenset(retained) & mover_armed
         return (
-            _Arming(0, 0, (), custody_open, "universe ranking failed", max_armed_symbols),
+            _Arming(
+                0,
+                0,
+                tuple(sorted(retained)),
+                custody_open,
+                "universe ranking failed",
+                max_armed_symbols,
+                mover_armed=retained_movers,
+            ),
             f"refused: the {segment.name} universe ranking failed: {type(exc).__name__}: {exc}",
         )
     if not ranked:
         reason = f"no eligible symbols for the {segment.name} session"
-        return _Arming(0, 0, (), custody_open, reason, max_armed_symbols), f"refused: {reason}"
+        retained_movers = frozenset(retained) & mover_armed
+        return (
+            _Arming(
+                0,
+                0,
+                tuple(sorted(retained)),
+                custody_open,
+                reason,
+                max_armed_symbols,
+                mover_armed=retained_movers,
+            ),
+            f"refused: {reason}",
+        )
     candidates = tuple(Candidate(f"{row.symbol}.ALPACA") for row in ranked)
     allocation = SlotPool().allocate(
         candidates,
@@ -631,7 +655,9 @@ def _arm_universe(
             _require_eligible(client.get_asset(iid.symbol.value), iid.symbol.value, segment)
         except Exception:  # an ineligible hold stays charged but leaves the segment's feed
             held_back.append(symbol)
-    armed += tuple(symbol for symbol in retained if symbol not in armed and symbol not in held_back)
+    armed += tuple(
+        symbol for symbol in sorted(retained) if symbol not in armed and symbol not in held_back
+    )
     reason = (
         f"slot pool {allocation.reason}: eligible={len(ranked)} slots={allocation.slots} "
         f"custody_open={custody_open}"
@@ -644,6 +670,7 @@ def _arm_universe(
         reason,
         max_armed_symbols,
         tuple(held_back),
+        allocation.mover_armed,
     )
     if not armed:
         return arming, f"refused: {reason}"
@@ -658,6 +685,7 @@ def _record_arming(run: RunRecord, segment: Segment, arming: _Arming) -> None:
             "slots": arming.slots,
             "max_armed_symbols": arming.max_armed_symbols,
             "armed": list(arming.armed),
+            "mover_armed": sorted(arming.mover_armed),
             "custody_open": arming.custody_open,
             "held_back": list(arming.held_back),
             "reason": arming.reason,
@@ -974,6 +1002,11 @@ def main(
             "C live main refused: the broker account number does not match the expected "
             "C paper account"
         )
+    if account_number != account.account_id:
+        raise SystemExit(
+            "C live main refused: the broker account number does not match the configured "
+            "C paper account"
+        )
     if raw_client.get_all_positions():
         raise SystemExit("C live main refused: account C already has a position")
     open_orders = raw_client.get_orders(GetOrdersRequest(status=QueryOrderStatus.OPEN))
@@ -997,7 +1030,7 @@ def main(
 
     state = Path(args.state)
     state.mkdir(parents=True, exist_ok=True)
-    scope = AccountScope(account.broker, account_number)
+    scope = AccountScope(account.broker, account.account_id)
     try:
         book = Custody(scope, state / "custody.json", create=True)
         guard = Guard(
@@ -1007,7 +1040,7 @@ def main(
             controls,
             mode="paper",
         )
-        lease = WriterLease(scope, state / "writer.lock", "c-live")
+        lease = WriterLease(scope, DEFAULT_LEASE_ROOT, "c-live")
         lease.acquire()
     except (OSError, ValueError, CustodyError) as exc:
         raise SystemExit(f"C live main refused: {exc}") from exc
@@ -1044,6 +1077,7 @@ def main(
         data_client: Any = None
         current_symbols: tuple[str, ...] = ()
         current_slot_count = 2
+        current_mover_armed: frozenset[str] = frozenset()
         current_instruments: dict[str, Equity] = {}
         final_segment_obj = first
         if args.universe:
@@ -1052,18 +1086,33 @@ def main(
             except Exception as exc:
                 failure = f"refused: data client unavailable: {type(exc).__name__}: {exc}"
             else:
-                arming, failure = _arm_universe(
-                    client=client,
-                    data=data_client,
-                    segment=first,
-                    max_armed_symbols=params["max_armed_symbols"],
-                    retained=_retained_symbols(book),
-                    mover_armed=frozenset(current_symbols),
-                    now=datetime.fromtimestamp(now_ns() / _NS_PER_S, tz=UTC),
-                )
+                retained: frozenset[str] = frozenset()
+                try:
+                    retained = _retained_symbols(book)
+                    arming, failure = _arm_universe(
+                        client=client,
+                        data=data_client,
+                        segment=first,
+                        max_armed_symbols=params["max_armed_symbols"],
+                        retained=retained,
+                        mover_armed=current_mover_armed,
+                        now=datetime.fromtimestamp(now_ns() / _NS_PER_S, tz=UTC),
+                    )
+                except LiveRefusal as exc:
+                    arming = _Arming(
+                        0,
+                        0,
+                        tuple(sorted(retained)),
+                        None,
+                        str(exc),
+                        params["max_armed_symbols"],
+                        mover_armed=retained & current_mover_armed,
+                    )
+                    failure = f"refused: {exc}"
                 _record_arming(run, first, arming)
                 current_symbols = arming.armed
                 current_slot_count = arming.max_armed_symbols
+                current_mover_armed = arming.mover_armed
             if failure is None:
                 try:
                     current_instruments = _instruments_for(client, current_symbols, first)
@@ -1479,13 +1528,17 @@ def main(
                 final_segment_obj = current
                 final_segment = current.name
                 final_baseline = current_baseline
-                final_config = _config_for(
-                    current_symbols,
-                    params,
-                    current,
-                    slot_count=current_slot_count,
-                    held_symbols=_retained_symbols(book),
-                )
+                try:
+                    final_config = _config_for(
+                        current_symbols,
+                        params,
+                        current,
+                        slot_count=current_slot_count,
+                        held_symbols=_retained_symbols(book),
+                    )
+                except LiveRefusal as exc:
+                    failure = f"refused: {exc}"
+                    break
                 snapshot, failure, stopped, boundary = run_segment(
                     current, current_baseline, current_instruments, final_config
                 )
@@ -1525,20 +1578,35 @@ def main(
                 next_symbols = current_symbols
                 next_slot_count = current_slot_count
                 if args.universe:
-                    arming, failure = _arm_universe(
-                        client=client,
-                        data=data_client,
-                        segment=nxt,
-                        max_armed_symbols=params["max_armed_symbols"],
-                        retained=_retained_symbols(book),
-                        mover_armed=frozenset(current_symbols),
-                        now=datetime.fromtimestamp(now_ns() / _NS_PER_S, tz=UTC),
-                    )
+                    retained = frozenset()
+                    try:
+                        retained = _retained_symbols(book)
+                        arming, failure = _arm_universe(
+                            client=client,
+                            data=data_client,
+                            segment=nxt,
+                            max_armed_symbols=params["max_armed_symbols"],
+                            retained=retained,
+                            mover_armed=current_mover_armed,
+                            now=datetime.fromtimestamp(now_ns() / _NS_PER_S, tz=UTC),
+                        )
+                    except LiveRefusal as exc:
+                        arming = _Arming(
+                            0,
+                            0,
+                            tuple(sorted(retained)),
+                            None,
+                            str(exc),
+                            params["max_armed_symbols"],
+                            mover_armed=retained & current_mover_armed,
+                        )
+                        failure = f"refused: {exc}"
                     _record_arming(run, nxt, arming)
                     next_symbols = arming.armed
                     next_slot_count = arming.max_armed_symbols
                     current_symbols = next_symbols
                     current_slot_count = next_slot_count
+                    current_mover_armed = arming.mover_armed
                     if failure is not None:
                         final_baseline = next_baseline
                         break

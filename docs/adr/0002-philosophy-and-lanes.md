@@ -59,7 +59,7 @@ US equities are the trading focus. Research feeds replay, sim and paper; measure
   - "FOCUING ON US EQUALITY, OPTION,STOCKS ETC, AND ALL THE LANES PREVIOSU STATED, PHILOSOPY PREVIOUS STATED, JEV TRADE RELATED RPEOS ETC ,RESEARCH LANE ,AUTO LEVERAGE, PROTFOLIO MANGEMENT AND BEYOND"
   - "EVERY HARNESS,EVERY ACTIONS NEED TO BE BUILT FORM SOTA SOURCES ITSELF, INCLUDING THIS VERY HARNESS , FOCUING ON THE TRADING TOPIC , THE QUALITT AND SOTANESS ITSELF RATHER THAN SECURITY OVEREGINNERING ETC"
   - "we need to using full sota harness framework.dsh that is fully enhanced with openviking etc"
-- Owner, 2026-11-06, verbatim, in the session that built Sextant: "no convervative in paper but full factors test e2e". This supersedes Paper C's conservative profile in the table above: every paper arm tests the full factor stack end to end, each factor set as a paired with/without arm. The words set no replacement risk, leverage or name count for C, so those stay unresolved; paper's hard lines are unchanged.
+- Owner, 2026-11-06, verbatim, in the session that built Sextant: "no convervative in paper but full factors test e2e". This supersedes Paper C's conservative profile in the table above: every paper arm tests the full factor stack end to end, each factor set as a paired with/without arm. The words set no replacement risk or leverage for C; the 2026-11-09 capacity authorization sets only 5 names with mover quota 2, uncalibrated, so risk and leverage stay unresolved; paper's hard lines are unchanged.
 
 ## Code and config to carry
 
