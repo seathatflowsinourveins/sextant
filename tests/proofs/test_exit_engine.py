@@ -28,6 +28,16 @@ def test_every_parameter_is_an_uncalibrated_registry_row_with_no_default() -> No
         ExitParams()  # type: ignore[call-arg]
 
 
+def test_every_start_is_sourced_and_both_chase_rows_stay_unavailable() -> None:
+    """Rule 2: a start is recorded at its source, and a row with none stays unavailable."""
+    p = ExitParams.starts()
+    assert p.chase_min_interval_s is None and p.chase_cap_fraction is None and not p.chase_on
+    rows = {r.name: r for r in REGISTRY}
+    assert "no authority" in rows["chase_cap_fraction"].source
+    assert all(r.start is not None for r in REGISTRY if r.name not in policy.CHASE)
+    assert all("@" in r.source or "adr" in r.source for r in REGISTRY)
+
+
 def test_take_profit_above_h_must_exceed_its_step() -> None:
     with pytest.raises(ValueError, match="take_profit_above_h_fraction"):
         dataclasses.replace(FIXTURE, take_profit_step_fraction=D("0.10"))
@@ -43,6 +53,15 @@ def test_buffer_is_the_widest_term_and_unknown_range_is_unknown() -> None:
     assert policy.buffer(D("0.01"), D("0.02"), D(10), D("0.05"), p) == D("0.10")
     assert policy.buffer(D("0.01"), D("0.02"), D(100), D("0.05"), p) == D("0.200")
     assert policy.buffer(D("0.01"), D("0.02"), D(10), None, p) is None
+
+
+def test_the_range_term_drops_only_where_it_is_not_estimable() -> None:
+    """#98 B3: dropping a max term can only tighten the trigger; unknown R_w stays unknown."""
+    p = ExitParams.starts()
+    one_tick, spread, entry = D("0.01"), D("0.02"), D(10)
+    assert policy.buffer(one_tick, spread, entry, None, p) is None
+    assert policy.buffer(one_tick, spread, entry, None, p, range_estimable=False) == D("0.10")
+    assert policy.buffer(one_tick, spread, entry, D(1), p, range_estimable=False) == D("0.10")
 
 
 def test_gain_lock_gives_back_the_larger_of_noise_and_its_fraction() -> None:
@@ -106,6 +125,23 @@ def test_the_fast_sell_never_goes_below_the_bid() -> None:
     assert policy.chase_limit(D("9.98"), D(10), FIXTURE) == D("9.990")
     assert policy.chase_limit(D("9.995"), D(10), FIXTURE) == D("9.995")
     assert policy.chase_limit(D("9.98"), None, FIXTURE) == D("9.98")
+
+
+def test_with_no_chase_interval_the_fast_sell_rests_at_the_bid(tmp_path: Path) -> None:
+    p = dataclasses.replace(FIXTURE, chase_min_interval_s=None)
+    assert policy.chase_limit(D("9.98"), D(10), p) == D("9.98")
+    _m, _c, events = run(tmp_path, p)
+    sell = next(e for e in events if e["event"].startswith("breach_sell"))
+    assert "chase" not in [e["event"] for e in events]
+    assert D(sell["limit"]) <= D(sell["trigger"])
+
+
+def test_a_missing_chase_cap_alone_also_turns_the_chase_off(tmp_path: Path) -> None:
+    p = dataclasses.replace(FIXTURE, chase_cap_fraction=None)
+    assert not p.chase_on
+    assert policy.chase_limit(D("9.98"), D(10), p) == D("9.98")
+    _m, _c, events = run(tmp_path, p)
+    assert "chase" not in [e["event"] for e in events]
 
 
 def test_take_profit_rolls_up_with_h_after_a_step_and_never_down() -> None:

@@ -33,9 +33,9 @@ from nautilus_trader.config import (
 from nautilus_trader.execution import DefaultFillModel, MakerTakerFeeModel, StaticLatencyModel
 from nautilus_trader.model import AccountType, InstrumentId, NautilusDataType, OmsType
 
+from sextant.backtest.exit_inputs import DEFAULT_INPUTS, verify_inputs, write_catalog
 from sextant.backtest.exit_witness import FIXTURE, params_hash
 from sextant.exits.engine import ExitEngine, ExitEngineConfig
-from sextant.research.exit_study_41 import DEFAULT_INPUTS, verify_inputs, write_catalog
 
 REPOSITORY = Path(__file__).resolve().parents[3]
 ROOT = Path.home() / "sextant-data" / "replay-82"

@@ -1,6 +1,6 @@
 """Local replay viewer on the selected Lightweight Charts pin (ADR-0021); display only.
 
-Pure renderer: recorded minute-bar rows (the exit_study_41 t/o/h/l/c shape) plus recorded
+Pure renderer: recorded minute-bar rows (the t/o/h/l/c shape) plus recorded
 event dicts (ExitEngine `event` or entry ReplayResult `action`, ns `ts`, Decimal strings)
 become one self-contained HTML page. Candles come from the bars; the trail trigger is one
 stepped series over the recorded `trigger` values; recorded `entry`, `high`, `gain_lock` and
