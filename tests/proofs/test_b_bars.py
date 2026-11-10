@@ -195,7 +195,7 @@ def test_main_builds_the_tape_with_the_bars_row(tmp_path, monkeypatch):
     parameters.write_text(json.dumps(rows))
     argv = ["--config", str(config), "--parameters", str(parameters)]
     assert entry.main(argv, client_factory=lambda **_: MainClient(), on_page=lambda _: None) == 0
-    assert built == [(10_000, 500)]
+    assert built == [(10_000,), (10_000, 500)]  # the start read's tape, then the width's bars
 
 
 def test_the_bars_page_size_has_one_uncalibrated_registry_row_with_its_source():

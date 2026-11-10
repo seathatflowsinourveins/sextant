@@ -392,12 +392,22 @@ def _trial_config(spec: StudySpec, *, arm_id: str, sha: str) -> dict[str, Any]:
 
 _N = "northstar-trading@8256c16c31dc"
 _E = "lanes/sim/entry-parameters.json"
+_B = "lanes/paper/b-parameters.json"
 _PROPOSAL_ROWS = {
     "native_trail_fraction": (
         "src/sextant/paper/b_protector.py",
         "native_trail_fraction",
         "ADR-0025 B scope: the 2.5% cap",
     ),
+    **{
+        name: (_B, name, f"{_B} {name} (D-30 per-symbol width)")
+        for name in (
+            "alpaca_min_trail_fraction",
+            "trail_atr_period",
+            "trail_atr_bar_minutes",
+            "trail_atr_multiple",
+        )
+    },
     "first_leg_window_s": (_E, "first_leg_window_s", f"{_N} profiles.yaml:114"),
     "first_leg_trades_count": (_E, "first_leg_trades_count", f"{_N} profiles.yaml:126"),
     "first_leg_span_s": (_E, "first_leg_span_s", f"{_N} profiles.yaml:138"),

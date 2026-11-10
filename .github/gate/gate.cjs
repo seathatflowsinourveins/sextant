@@ -28,7 +28,7 @@ function route(body, files) {
   if (!needsQuality && selected && selected !== 'dsh') throw Error('API review is limited to dsh authors or risk paths');
   let quality = '';
   if (needsQuality) {
-    quality = selected && selected !== 'dsh' ? selected : author === 'codex' ? 'claude' : 'codex';
+    quality = selected && selected !== 'dsh' ? selected : author === 'codex' ? '' : 'codex';
   }
   return { author, risk, quality };
 }

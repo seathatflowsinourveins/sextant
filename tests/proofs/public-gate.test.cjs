@@ -21,13 +21,13 @@ test('dsh authors get Codex by default and Claude only when selected', () => {
   assert.throws(() => gate.route('Agent-Family dsh\nReview-Family dsh', []));
 });
 
-test('every owner-named risk prefix selects exactly one extra other-family review', () => {
+test('owner-named risk prefixes select one extra other-family review; Codex selects it', () => {
   for (const prefix of ['src/sextant/execution/', 'src/sextant/exits/', 'src/sextant/paper/',
     'src/sextant/risk/', 'src/sextant/alpaca/', 'lanes/paper/', 'lanes/live/', 'deploy/live/',
     'config/dsh/review-cmd/', '.github/']) {
     for (const field of ['filename', 'previous_filename']) {
       const files = [{filename: 'docs/moved.txt', [field]: `${prefix}example.py`}];
-      assert.equal(gate.route('Agent-Family codex', files).quality, 'claude', `${prefix}:${field}`);
+      assert.equal(gate.route('Agent-Family codex', files).quality, '', `${prefix}:${field}`);
       assert.equal(gate.route('Agent-Family claude', files).quality, 'codex', `${prefix}:${field}`);
       assert.equal(gate.route('Agent-Family dsh', files).quality, 'codex', `${prefix}:${field}`);
     }
@@ -35,6 +35,16 @@ test('every owner-named risk prefix selects exactly one extra other-family revie
   assert.equal(gate.route('Agent-Family codex', [{filename: 'src/sextant/riskier/example.py'}]).quality, '');
   assert.equal(gate.route('Agent-Family claude', [{filename: 'dangerfile.js'}]).quality, 'codex');
   assert.equal(gate.route('Agent-Family codex\nReview-Family claude', [{filename: '.github/workflows/ci.yml'}]).quality, 'claude');
+});
+
+test('a Codex author on a risk path adds no API reviewer unless it selects one (D-34)', () => {
+  const risk = [{filename: '.github/workflows/ci.yml'}];
+  assert.equal(gate.route('Agent-Family codex', risk).quality, '');
+  assert.equal(gate.route('Agent-Family codex\nReview-Family claude', risk).quality, 'claude');
+  for (const author of ['dsh', 'claude', 'muse', 'agy']) {
+    assert.equal(gate.route(`Agent-Family ${author}`, risk).quality, 'codex', author);
+  }
+  assert.throws(() => gate.route('Agent-Family codex\nReview-Family codex', risk));
 });
 
 test('ambiguous, malformed and conflicting markers fail closed', () => {
