@@ -1,5 +1,6 @@
 """B arms and re-arms its trail at the stored per-symbol width (D-30, consumer); fixture prices."""
 
+import contextlib
 import random
 from decimal import Decimal
 
@@ -16,7 +17,7 @@ from test_b_dynamic_width import (
     reasons,
     steady_bars,
 )
-from test_b_protector import api_position
+from test_b_protector import api_position, b_account
 
 from sextant.paper.b_width import MAX_TRAIL_FRACTION, trail_percent
 
@@ -129,3 +130,100 @@ def test_the_state_line_prints_the_width_and_its_source_and_reprints_when_it_cha
     p.watch(clock[0])
     assert len(p.states) == seen + 1
     assert "width=0.45 width_src=computed" in p.states[-1]
+
+
+# --- Codex max on 0cc47b7, P1: a failing page sink never stops the protective submit ----------
+
+
+def test_a_failing_page_sink_never_keeps_the_native_arm_from_being_sent(monkeypatch):
+    from test_b_dynamic_width import width_params
+
+    from sextant.paper import b_protector_main as entry
+    from sextant.paper.b_protector import Protector
+
+    def broken_print(*_args, **_kwargs):
+        raise BrokenPipeError("closed fixture page sink")
+
+    monkeypatch.setattr(entry, "print", broken_print, raising=False)
+    client = held("AAPL")
+    p = Protector(
+        client, b_account(), width_params(), now_ns=lambda: RTH_NS, on_page=entry._print_page
+    )
+    with contextlib.suppress(BrokenPipeError):
+        p.reconcile()
+    assert [request.qty for request in client.submitted] == [10]  # 10 shares, one trail
+
+
+def test_a_recovered_page_sink_neither_resubmits_nor_repeats_the_fallback_page():
+    from test_b_dynamic_width import width_params
+
+    from sextant.paper.b_protector import Protector
+
+    failed = []
+
+    def broken_page(page):
+        failed.append(page.reason)
+        raise BrokenPipeError("closed fixture page sink")
+
+    client = held("AAPL")
+    p = Protector(client, b_account(), width_params(), now_ns=lambda: RTH_NS, on_page=broken_page)
+    p.reconcile()  # the sink's failure is counted, never raised into the arm path
+    assert (len(client.submitted), p.page_sink_failures) == (1, 1)
+    p._on_page = None
+    p.reconcile()
+    assert len(client.submitted) == 1
+    assert failed == reasons(p) == [NATIVE]
+
+
+def cover_run(held_count: int, stored: int, lose: bool, add: bool, sink) -> list:
+    """Arms, a width refresh, a lost-trail re-arm and an owner add, with the given page sink."""
+
+    from test_b_dynamic_width import width_params
+
+    from sextant.paper.b_protector import Protector
+
+    symbols = ("AAPL", "MSFT", "AMD")[:held_count]
+    clock = [RTH_NS]
+    bars = FakeBars({s: steady_bars(RTH_NS) for s in symbols[:stored]})
+    quotes = FakeQuotes([quote("200.00", "200.01", RTH_NS, s) for s in symbols])
+    client = held(*symbols)
+    p = Protector(
+        client,
+        b_account(),
+        width_params(),
+        now_ns=lambda: clock[0],
+        bars=bars,
+        quotes=quotes,
+        on_page=sink,
+    )
+    covers = []
+
+    def step(action) -> None:
+        with contextlib.suppress(BrokenPipeError):  # a page outside the arm path may still raise
+            action()
+        covers.append(sorted((o.symbol, str(o.qty)) for o in client.orders))
+
+    step(p.reconcile)
+    step(p.refresh_widths_when_due)
+    if lose:
+        client.orders = []
+        step(p.reconcile)
+    if add:
+        client.positions = [api_position("15", s) for s in symbols]
+        step(p.reconcile)
+    return [*covers, [(r.symbol, r.qty) for r in client.submitted]]
+
+
+def test_with_a_page_sink_that_always_raises_every_cover_equals_the_normal_runs():
+    """The P1 rule as a property: no raising call between the chosen percent and the submit."""
+
+    def always_raises(page):
+        raise BrokenPipeError("closed fixture page sink")
+
+    for held_count in (1, 2, 3):
+        for stored in range(held_count + 1):
+            for lose in (False, True):
+                for add in (False, True):
+                    case = (held_count, stored, lose, add)
+                    normal = cover_run(*case, sink=None)
+                    assert cover_run(*case, sink=always_raises) == normal, case
