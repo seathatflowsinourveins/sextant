@@ -128,13 +128,21 @@ async function prompt({ github, context, core }, number, head, engine) {
 
 // "Update a pull request branch" merges the base branch into the previous head
 // (GitHub REST pulls#update-a-pull-request-branch, read 2026-11-09). That merge is
-// not an author change: its parents are the previous head and the current base
-// tip, and its tree is the merge result rather than the previous head's tree.
+// not an author change: its parents are the previous head and the base tip at
+// merge time, and its tree is the merge result rather than the previous head's
+// tree. The base advances after a merge, so that tip is the current base tip or an
+// ancestor of it (GitHub REST commits#compare-two-commits, read 2026-11-09).
 async function isBaseBranchUpdate(github, context, pr, sha, reviewed) {
   const { data: commit } = await github.rest.repos.getCommit({ ...context.repo, ref: sha });
   if (commit.parents?.length !== 2) return false;
   const [previous, base] = commit.parents;
-  if (base.sha !== pr.base.sha || !reviewed.has(previous.sha)) return false;
+  if (!reviewed.has(previous.sha)) return false;
+  if (base.sha !== pr.base.sha) {
+    const { data: comparison } = await github.rest.repos.compareCommitsWithBasehead({
+      ...context.repo, basehead: `${base.sha}...${pr.base.sha}`,
+    });
+    if (comparison.status !== 'ahead' && comparison.status !== 'identical') return false;
+  }
   const { data: prior } = await github.rest.repos.getCommit({ ...context.repo, ref: previous.sha });
   return commit.commit.tree.sha !== prior.commit.tree.sha;
 }

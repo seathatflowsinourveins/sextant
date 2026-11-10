@@ -242,7 +242,10 @@ test('review attempt repeats do not count as another reviewed commit', async () 
 // were updated by GitHub's "Update a pull request branch" endpoint, which merges
 // HEAD from the base branch into the pull request branch (read 2026-11-09).
 // The merge's parents and tree identify it: two parents, the previous head then
-// the base tip, and a tree different from the previous head's.
+// the base tip at merge time, and a tree different from the previous head's. The
+// base advances afterwards, so that tip is the current base tip or an ancestor
+// of it: 74c9e59 merged f7314de, which eb5236b later contains; 8457400 merged
+// eb5236b itself.
 function witness() {
   const sha = {
     ffb2f9a: 'ffb2f9afd6ccc39f69b24a7c11b9bf0acaf68cbd',
@@ -285,6 +288,13 @@ function witness() {
       assert.ok(commits[ref], `unexpected commit read: ${ref}`);
       return commits[ref];
     };
+    const ancestry = {[`${sha.f7314de}...${sha.eb5236b}`]: 'ahead'};
+    f.github.rest.repos.compareCommitsWithBasehead = async ({basehead}) => {
+      const [base, tip] = basehead.split('...');
+      const status = base === tip ? 'identical' : ancestry[basehead];
+      assert.ok(status, `unexpected base comparison: ${basehead}`);
+      return {data: {status}};
+    };
   };
   return {sha, install, reviews};
 }
@@ -299,12 +309,7 @@ test('the reviewed-head count takes only heads the author changed (#208, #201)',
   const at201 = fixture();
   install(at201, 'd8457400');
   at201.github.paginate = async () => reviews(['c39a8349', 'c74c9e59', 'd8457400']);
-  assert.equal(await gate.reviewedHeadCount(at201.github, at201.context, 7, sha.d8457400), 2);
-
-  const later = fixture();
-  install(later, 'later');
-  later.github.paginate = async () => reviews(['c39a8349', 'c74c9e59', 'd8457400']);
-  assert.equal(await gate.reviewedHeadCount(later.github, later.context, 7, sha.later), 3);
+  assert.equal(await gate.reviewedHeadCount(at201.github, at201.context, 7, sha.d8457400), 1);
 });
 
 test('a base-branch update merge keeps the P0/P1 bar for the next author head (#208, #201)', async () => {
@@ -322,5 +327,6 @@ test('a base-branch update merge keeps the P0/P1 bar for the next author head (#
   const later = fixture();
   install(later, 'later');
   later.github.paginate = async () => reviews(['c39a8349', 'c74c9e59', 'd8457400']);
-  assert.equal(await gate.blockingPriority(later.github, later.context, 7, sha.later), 0);
+  assert.equal(await gate.reviewedHeadCount(later.github, later.context, 7, sha.later), 2);
+  assert.equal(await gate.blockingPriority(later.github, later.context, 7, sha.later), 1);
 });
