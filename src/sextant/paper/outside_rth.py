@@ -14,6 +14,7 @@ here.
 from __future__ import annotations
 
 from collections.abc import Iterable
+from dataclasses import dataclass
 from decimal import ROUND_FLOOR, Decimal
 from enum import StrEnum
 from typing import Protocol
@@ -42,6 +43,21 @@ class OutsideRthState(StrEnum):
     RELEASED = "released"
 
 
+@dataclass(frozen=True)
+class TriggerQuote:
+    """The quote that raised a trail's trigger, with the level it produced.
+
+    ``level`` is that quote's own candidate, so the last source on a trail is the quote behind
+    the trigger the trail now rests at. A decision record names it instead of guessing why a
+    level was armed (B-EXIT-1959).
+    """
+
+    bid: Decimal
+    ask: Decimal
+    ts_ns: int
+    level: Decimal
+
+
 class OutsideRthTrail:
     """The emulated outside-RTH trigger and its one-shot breach release."""
 
@@ -64,8 +80,10 @@ class OutsideRthTrail:
         self._trigger: Decimal | None = None
         self._breach = BreachRun()
         self._bid: Decimal | None = None
+        self._ask: Decimal | None = None
         self._last: Decimal | None = None
         self._quote_ts_ns: int | None = None
+        self._source: TriggerQuote | None = None
         self._breached = False
         self._pending = False
         self._released = False
@@ -77,6 +95,40 @@ class OutsideRthTrail:
     @property
     def has_trigger(self) -> bool:
         return self._trigger is not None
+
+    @property
+    def source(self) -> TriggerQuote | None:
+        """The quote behind the current trigger; ``None`` when no quote raised it."""
+
+        return self._source
+
+    @property
+    def spread(self) -> Decimal | None:
+        """The last observed spread, the other half of the noise floor (ADR-0005 X2)."""
+
+        if self._bid is None or self._ask is None:
+            return None
+        return self._ask - self._bid
+
+    @property
+    def increment(self) -> Decimal:
+        """The tick the calculator used at the last quote (sub-dollar names its own)."""
+
+        if self._bid is not None and self._bid < 1:
+            return SUB_DOLLAR_INCREMENT
+        return self._increment
+
+    @property
+    def breach_observations(self) -> tuple[tuple[int, Decimal], ...]:
+        """The counted prints of the run in progress, oldest first, capped."""
+
+        return tuple(self._breach.seen)
+
+    @property
+    def breach_count(self) -> int:
+        """How many prints the run in progress has counted, including any capped tail."""
+
+        return self._breach.count
 
     @property
     def breached(self) -> bool:
@@ -96,11 +148,18 @@ class OutsideRthTrail:
             return OutsideRthState.RELEASED
         return OutsideRthState.ARMED if self._trigger is not None else OutsideRthState.WAITING
 
-    def adopt(self, trigger: Decimal | None, ts_ns: int) -> None:
-        """Seed the trigger from the resting native trail's stop price.
+    def adopt(
+        self,
+        trigger: Decimal | None,
+        ts_ns: int,
+        *,
+        source: TriggerQuote | None = None,
+    ) -> None:
+        """Seed the trigger from the resting native trail's stop price or a tape level.
 
         A raise keeps the breach run: a print under the lower trigger is under the higher one
-        too. Any other adoption restarts the run.
+        too. Any other adoption restarts the run. ``source`` names the row the level came from
+        and rides with the level, so a later decision record can say why it was armed.
         """
 
         if self._released:
@@ -110,6 +169,7 @@ class OutsideRthTrail:
         if trigger is None or self._trigger is None or trigger < self._trigger:
             self._breach = BreachRun()
             self._breached = False
+        self._source = source if trigger is not None else None
         self._trigger = trigger
 
     def observe_quote(
@@ -127,6 +187,7 @@ class OutsideRthTrail:
         if bid is None or ask is None or bid <= 0 or ask <= 0 or bid > ask:
             return None
         self._bid = bid
+        self._ask = ask
         self._last = last
         self._quote_ts_ns = ts_ns
         if self._pending:
@@ -156,6 +217,8 @@ class OutsideRthTrail:
             )
         if candidate is None:
             return None
+        if self._trigger is None or candidate > self._trigger:
+            self._source = TriggerQuote(bid=bid, ask=ask, ts_ns=ts_ns, level=candidate)
         self._trigger = candidate
         return candidate
 
@@ -244,13 +307,13 @@ class QuoteLike(Protocol):
     def ts_ns(self) -> int: ...
 
 
-def rebuild_trigger(
+def rebuild_trigger_with_source(
     observations: Iterable[QuoteLike],
     *,
     trail_fraction: Decimal,
     params: ExitParams,
-) -> Decimal | None:
-    """Replay a tape through the same BID_ASK trail and return its high-water trigger."""
+) -> TriggerQuote | None:
+    """Replay a tape through the same BID_ASK trail and name the quote that raised it."""
 
     trail = OutsideRthTrail(trail_fraction=trail_fraction, params=params)
     for observation in sorted(observations, key=lambda item: item.ts_ns):
@@ -260,4 +323,16 @@ def rebuild_trigger(
             last=None,
             ts_ns=observation.ts_ns,
         )
-    return trail.trigger
+    return trail.source
+
+
+def rebuild_trigger(
+    observations: Iterable[QuoteLike],
+    *,
+    trail_fraction: Decimal,
+    params: ExitParams,
+) -> Decimal | None:
+    """Replay a tape through the same BID_ASK trail and return its high-water trigger."""
+
+    source = rebuild_trigger_with_source(observations, trail_fraction=trail_fraction, params=params)
+    return None if source is None else source.level
