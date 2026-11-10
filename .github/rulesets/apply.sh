@@ -25,15 +25,16 @@ while IFS= read -r name; do
 
   branches=$(jq -r --arg name "$name" '.environments[] | select(.name == $name) | .branches[]' "$recipe")
   policies=$(gh api "repos/$repo/environments/$name/deployment-branch-policies")
-  while IFS=$'\t' read -r id branch; do
-    if ! grep -Fxq "$branch" <<<"$branches"; then
+  # A policy is reused only when both its name and its type match: a tag named like the branch is stale.
+  while IFS=$'\t' read -r id policy_name kind; do
+    if [[ $kind != branch ]] || ! grep -Fxq "$policy_name" <<<"$branches"; then
       gh api -X DELETE "repos/$repo/environments/$name/deployment-branch-policies/$id" >/dev/null
-      printf 'removed %s from %s\n' "$branch" "$name"
+      printf 'removed %s from %s\n' "$policy_name" "$name"
     fi
-  done < <(jq -r '.branch_policies[] | "\(.id)\t\(.name)"' <<<"$policies")
+  done < <(jq -r '.branch_policies[] | "\(.id)\t\(.name)\t\(.type)"' <<<"$policies")
 
   while IFS= read -r branch; do
-    if ! jq -e --arg branch "$branch" '.branch_policies | any(.name == $branch)' \
+    if ! jq -e --arg branch "$branch" '.branch_policies | any(.name == $branch and .type == "branch")' \
       <<<"$policies" >/dev/null; then
       gh api -X POST "repos/$repo/environments/$name/deployment-branch-policies" \
         -f name="$branch" -f type=branch >/dev/null
