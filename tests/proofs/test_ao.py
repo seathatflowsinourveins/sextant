@@ -10,7 +10,7 @@ import pytest
 ROOT = Path(__file__).parents[2]
 AO = ROOT / "deploy" / "wsl" / "ao.sh"
 PIN = "033d597032e448a0ea16c298350e36b099f74106"
-REPO = "https://github.com/seathatflowsinourveins/sextant-next"
+REPO = "https://github.com/seathatflowsinourveins/sextant"
 # Stand-ins: `gh` answers the PR view from $FAKE_PR and the repository's default branch from
 # $FAKE_DEFAULT_BRANCH; each gh and ao call is recorded.
 FAKE_GH = """#!/usr/bin/env bash
