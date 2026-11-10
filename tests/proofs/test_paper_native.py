@@ -1,6 +1,11 @@
-"""Inert rc7 assembly and native simulated execution; no adapter or reconciliation stand-in."""
+"""Native shell, ALPACA sandbox registration and the SIMULATED startup ledger."""
 
+import asyncio
+import json
+import re
+import time
 from dataclasses import replace
+from datetime import date
 from decimal import Decimal as D
 from types import SimpleNamespace as NS
 from typing import Any, cast
@@ -11,6 +16,7 @@ from nautilus_trader.common import Environment
 from nautilus_trader.config import BacktestEngineConfig, RiskEngineConfig
 from nautilus_trader.execution import MakerTakerFeeModel, StaticLatencyModel
 from nautilus_trader.model import (
+    AccountId,
     AccountType,
     ClientOrderId,
     Currency,
@@ -30,7 +36,16 @@ from test_paper_node import boundary as boundary
 from test_paper_node import intent
 from test_paper_row8 import row8 as row8
 
-from sextant.paper.native import PaperStrategy, PaperStrategyConfig, build_shell, node_config
+from sextant.paper.native import (
+    PaperStrategy,
+    PaperStrategyConfig,
+    build_shell,
+    node_config,
+    record_sandbox_run,
+    sandbox_client_config,
+)
+from sextant.ranking.engine import Segment
+from sextant.validation.trials import TrialLog, snapshot_hash
 
 
 def equity(**extra):
@@ -61,7 +76,12 @@ def test_risk_and_reconciliation_config_cannot_disable_the_shared_fences():
 
 def test_inert_live_node_has_the_account_namespace_and_no_connection(boundary):
     boundary.runtime.close()
-    built = build_shell(boundary.config, boundary.runtime.budget, boundary.services)
+    built = build_shell(
+        boundary.config,
+        boundary.runtime.budget,
+        boundary.services,
+        starting_balance="10000 USD",
+    )
     try:
         assert built.node.environment == Environment.SANDBOX
         assert not built.node.is_running
@@ -149,7 +169,12 @@ def test_live_or_wrong_account_services_fail_before_native_build(boundary):
     boundary.runtime.close()
     boundary.services.writer.scope.key = "ALPACA:different"
     with pytest.raises(ValueError, match="account mismatch"):
-        build_shell(boundary.config, boundary.runtime.budget, boundary.services)
+        build_shell(
+            boundary.config,
+            boundary.runtime.budget,
+            boundary.services,
+            starting_balance="10000 USD",
+        )
 
 
 @pytest.mark.parametrize("order_type", ["STOP_MARKET", "STOP_LIMIT"])
@@ -638,3 +663,190 @@ def test_a_rejected_then_lost_cancel_ages_from_the_lost_cancels_stamp(row8):
         assert kills and kills[0] - left[-1] >= row8.params.ns("cancel_timeout_s")
     finally:
         row8.runtime.close()
+
+
+def _sandbox_segment() -> Segment:
+    return Segment(
+        "OVERNIGHT",
+        date(2026, 11, 9),
+        1_700_000_000_000_000_000,
+        1_700_000_360_000_000_000,
+        "fixture receipt",
+    )
+
+
+async def _wait_for_sandbox_account(node, account_id):
+    portfolio, handle = node.portfolio, node.handle()
+    task = asyncio.create_task(node.run_async())
+    try:
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            account = portfolio.account(account_id=account_id)
+            if account is not None:
+                return account
+            await asyncio.sleep(0.01)
+        raise AssertionError("the sandbox client never registered its account")
+    finally:
+        handle.stop()
+        await asyncio.sleep(0.2)
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+def test_sandbox_client_config_binds_the_alpaca_venue_and_the_callers_balance():
+    config = sandbox_client_config(account(), "10000 USD")
+
+    assert str(config.venue) == "ALPACA"
+    assert str(config.account_id) == "SIM-A001"
+    assert [str(balance) for balance in config.starting_balances] == ["10000.00 USD"]
+    assert str(config.base_currency) == "USD"
+    assert type(config.fee_model).__name__ == "FixedFeeModel"
+    assert "Money(0.00, USD)" in repr(config.fee_model)
+
+
+@pytest.mark.parametrize("starting_balance", ["0 USD", "-10 USD", "10000 EUR", "not money"])
+def test_sandbox_client_config_refuses_a_balance_without_authority(starting_balance):
+    with pytest.raises(ValueError, match="starting balance"):
+        sandbox_client_config(account(), starting_balance)
+
+
+def test_build_shell_registers_the_sandbox_client_for_the_sandbox_account(boundary):
+    boundary.runtime.close()
+    built = build_shell(
+        boundary.config,
+        boundary.runtime.budget,
+        boundary.services,
+        starting_balance="10000 USD",
+    )
+    try:
+        assert not built.node.is_running
+        sandbox = asyncio.run(_wait_for_sandbox_account(built.node, AccountId.from_str("SIM-A001")))
+        assert sandbox.balances_total()[Currency.from_str("USD")] == Money.from_str("10000 USD")
+        assert not built.node.is_running
+    finally:
+        built.dispose()
+
+
+def test_record_sandbox_run_writes_one_receipt_and_one_simulated_row(tmp_path):
+    ledger = tmp_path / "reports" / "research" / "trials.parquet"
+    segment = _sandbox_segment()
+    receipt = record_sandbox_run(
+        account=account(),
+        run_id="sim-run-1",
+        symbols=("OMH.ALPACA",),
+        segment=segment,
+        started_ns=segment.start_ns,
+        starting_balance="10000 USD",
+        entry_params_hash="a" * 64,
+        ledger_path=ledger,
+        reports_dir=tmp_path / "reports" / "sim",
+    )
+
+    assert receipt == tmp_path / "reports" / "sim" / "sim-run-1" / "session.json"
+    payload = json.loads(receipt.read_text())
+    assert payload["tier"] == "SIMULATED"
+    assert payload["lane"] == "sim"
+    assert payload["account_suffix"] == "A001"
+    assert payload["receipt_id"] == "sim-run-1"
+    assert payload["symbols"] == ["OMH.ALPACA"]
+    assert payload["entry_params_hash"] == "a" * 64
+    assert payload["stopped_ns"] is None
+    assert payload["final_segment"] is None
+    assert payload["segment"] == {
+        "name": "OVERNIGHT",
+        "session_date": "2026-11-09",
+        "start_ns": segment.start_ns,
+        "end_ns": segment.end_ns,
+    }
+    sandbox = payload["sandbox_config"]
+    assert sandbox == {
+        "tier": "SIMULATED",
+        "venue": "ALPACA",
+        "account_id": "SIM-A001",
+        "starting_balance": "10000.00 USD",
+        "block_set_id": f"sim:2026-11-09:OVERNIGHT:{segment.start_ns}",
+    }
+    assert payload["sandbox_config_hash"] == snapshot_hash(sandbox)
+
+    rows = TrialLog(ledger).records
+    assert len(rows) == 1
+    row = rows[0]
+    config = json.loads(row["config"])
+    params = json.loads(row["params"])
+    assert row["strategy"] == "sim-sandbox"
+    assert row["state"] == "RUNNING"
+    assert row["n_trials"] == 1
+    assert row["effective_n"] is None
+    assert config["tier"] == "SIMULATED"
+    assert config["arm_id"] == "sim-sandbox"
+    assert config["arm_run_id"] == "sim-run-1"
+    assert config["block_set_id"] == sandbox["block_set_id"]
+    assert config["sandbox_config"] == sandbox
+    assert config["sandbox_config_hash"] == snapshot_hash(sandbox)
+    assert config["params_hash"] == snapshot_hash(params)
+    assert config["implementation_sha"] == payload["implementation_sha"]
+    assert re.fullmatch(r"[0-9a-f]{40}", config["implementation_sha"])
+    assert config["factor_mask"] == []
+    assert config["funding_divergent_session_count"] is None
+    assert config["funding_unverified_session_count"] is None
+    assert config["condition_returns"] == {}
+    assert params["symbols"] == ["OMH.ALPACA"]
+    assert params["segment"] == "OVERNIGHT"
+    assert params["session_date"] == "2026-11-09"
+    assert params["started_ns"] == segment.start_ns
+    assert params["entry_params_hash"] == "a" * 64
+
+
+def test_record_sandbox_run_refuses_a_reused_run_id(tmp_path):
+    ledger = tmp_path / "trials.parquet"
+    reports = tmp_path / "reports" / "sim"
+    kwargs: dict[str, Any] = dict(
+        account=account(),
+        run_id="sim-run-1",
+        symbols=("OMH.ALPACA",),
+        segment=_sandbox_segment(),
+        started_ns=_sandbox_segment().start_ns,
+        starting_balance="10000 USD",
+        entry_params_hash="a" * 64,
+        ledger_path=ledger,
+        reports_dir=reports,
+    )
+    record_sandbox_run(**kwargs)
+
+    with pytest.raises(ValueError, match="arm_run_id already logged"):
+        record_sandbox_run(**kwargs)
+    assert len(TrialLog(ledger).records) == 1
+
+
+@pytest.mark.parametrize("run_id", ["../escape", "a/b", "", "."])
+def test_record_sandbox_run_refuses_an_unsafe_run_id(tmp_path, run_id):
+    with pytest.raises(ValueError, match="run id"):
+        record_sandbox_run(
+            account=account(),
+            run_id=run_id,
+            symbols=("OMH.ALPACA",),
+            segment=_sandbox_segment(),
+            started_ns=_sandbox_segment().start_ns,
+            starting_balance="10000 USD",
+            entry_params_hash="a" * 64,
+            ledger_path=tmp_path / "trials.parquet",
+            reports_dir=tmp_path / "reports" / "sim",
+        )
+    assert not (tmp_path / "reports").exists()
+
+
+def test_record_sandbox_run_refuses_a_malformed_entry_parameter_hash(tmp_path):
+    with pytest.raises(ValueError, match="entry_params_hash"):
+        record_sandbox_run(
+            account=account(),
+            run_id="sim-run-1",
+            symbols=("OMH.ALPACA",),
+            segment=_sandbox_segment(),
+            started_ns=_sandbox_segment().start_ns,
+            starting_balance="10000 USD",
+            entry_params_hash="not-a-hash",
+            ledger_path=tmp_path / "trials.parquet",
+            reports_dir=tmp_path / "reports" / "sim",
+        )
+    assert not (tmp_path / "reports").exists()
