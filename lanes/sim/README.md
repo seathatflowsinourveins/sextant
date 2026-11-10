@@ -2,7 +2,7 @@
 
 **Charter.** Prove a rule before any broker sees it: replay recorded data as MODELED, then run the same strategy against a live feed as SIMULATED in a sandbox that owns its own socket, client, account id and namespace. Replay selects methods; the sandbox proves the stack survives live data. Neither proves live routing, borrow, margin or broker limits. ([ADR-0008](../../docs/adr/0008-broker-roles.md), [ADR-0002](../../docs/adr/0002-philosophy-and-lanes.md))
 
-**Hours.** Replay 24/7, on demand; the continuous coordinator that would keep it running is OFF (below). Sandbox 24/5, on the live feed, with LIMIT orders only outside regular hours.
+**Hours.** Replay 24/7, on demand, because recorded replay needs no live session ([ADR-0002](../../docs/adr/0002-philosophy-and-lanes.md)); the continuous coordinator that would keep it running is OFF (below). Sandbox 24/5, on the live feed, because Alpaca equities are closed on weekends ([Alpaca 24/5 trading](https://docs.alpaca.markets/us/docs/245-trading-for-trading-api.md), read 2026-11-09), with LIMIT orders only outside regular hours ([ADR-0005](../../docs/adr/0005-exit-engine.md)).
 
 **Limits.** No broker credentials and no submitted broker order in replay. One fresh arm-run per process, replay concurrency 1 rising only on measured peak RSS, costs at 1× and `cost_stress_multiple`. The sandbox sends `client_id` on every command and shares no account with paper or live ([ADR-0002](../../docs/adr/0002-philosophy-and-lanes.md)).
 

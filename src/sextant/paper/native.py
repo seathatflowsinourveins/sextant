@@ -1,29 +1,43 @@
-"""rc7 node/strategy composition adapted from the pinned node builders.
+"""rc7/rc8 node/strategy composition adapted from the pinned node builders.
 
-``build_shell`` is inert: no clients, sockets, key lookup or run entrypoint.
-PaperStrategy's hook counts native simulated commands, not broker wire sends.
-A broker account still owes adapter-level row-8 wiring and acceptance receipts.
+``build_shell`` registers the native ALPACA sandbox execution client, which fills
+every command in-process: no socket, key lookup or run entrypoint. PaperStrategy's
+hook counts native simulated commands, not broker wire sends. ``record_sandbox_run``
+writes one startup receipt and appends one SIMULATED row to the one trial ledger.
+A sandbox driver and live data client remain owed (#104).
 """
 
-from collections.abc import Callable
+import json
+import re
+import subprocess
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
+from pathlib import Path
 from typing import Any, cast
 
+from nautilus_trader.adapters.sandbox import (
+    SandboxExecutionClientConfig,
+    SandboxExecutionClientFactory,
+)
 from nautilus_trader.common import Environment
 from nautilus_trader.config import StrategyConfig
+from nautilus_trader.execution import FixedFeeModel
 from nautilus_trader.live import (
     LiveExecutionEngineConfig,
     LiveNode,
+    LiveNodeBuilder,
     LiveNodeConfig,
     LiveRiskEngineConfig,
     SubmissionRecoveryPolicy,
 )
 from nautilus_trader.model import (
+    AccountId,
     ClientId,
     ClientOrderId,
     Equity,
     InstrumentId,
+    Money,
     OrderPendingCancel,
     OrderSide,
     Price,
@@ -32,6 +46,7 @@ from nautilus_trader.model import (
     TimeInForce,
     TraderId,
     TrailingOffsetType,
+    Venue,
 )
 from nautilus_trader.trading import Strategy
 
@@ -44,6 +59,15 @@ from sextant.paper.runtime import (
     PendingCancel,
 )
 from sextant.paper.sessions import Session, session_at
+from sextant.ranking.engine import Segment
+from sextant.validation.trials import WITNESS_PATH, TrialLog, snapshot_hash
+
+ROOT = Path(__file__).resolve().parents[3]
+SIM_ARM_ID = "sim-sandbox"
+SIM_LANE = "sim"
+_RUN_ID = re.compile(r"[A-Za-z0-9._-]+")
+_SHA = re.compile(r"[0-9a-f]{40}")
+_SHA256 = re.compile(r"[0-9a-f]{64}")
 
 
 def node_config(account: PaperAccount) -> LiveNodeConfig:
@@ -58,6 +82,34 @@ def node_config(account: PaperAccount) -> LiveNodeConfig:
             inflight_check_interval_ms=0,
             submission_recovery_policy=SubmissionRecoveryPolicy.RETAIN_UNRESOLVED,
         ),
+    )
+
+
+def sandbox_client_config(
+    account: PaperAccount, starting_balance: str
+) -> SandboxExecutionClientConfig:
+    """Bind the native ALPACA sandbox client to its own account and the caller's balance.
+
+    The sandbox fills every command in-process and opens no wire, so it needs no key or
+    endpoint. The caller supplies the starting balance: no registry value exists, and a
+    fixture default would be authority this code does not have. Native SDK defaults remain
+    pinned starts; upstream northstar-trading@8256c16c31dc is the source for the explicit
+    zero-fee model, the ``SIM-<namespace>`` account id and the positive-USD check.
+    """
+    try:
+        balance = Money.from_str(starting_balance)
+    except ValueError as error:
+        raise ValueError(
+            f"sandbox starting balance is not a Money: {starting_balance!r}"
+        ) from error
+    if str(balance.currency) != "USD" or balance.as_decimal() <= 0:
+        raise ValueError(f"sandbox starting balance must be positive USD: {starting_balance!r}")
+    return SandboxExecutionClientConfig(
+        venue=Venue.from_str("ALPACA"),
+        starting_balances=[balance],
+        account_id=AccountId.from_str(f"SIM-{account.namespace}"),
+        base_currency=balance.currency,
+        fee_model=FixedFeeModel(Money.from_str("0 USD")),
     )
 
 
@@ -211,14 +263,122 @@ class BuiltPaperShell:
             self.runtime.close()
 
 
+def _head_sha() -> str:
+    """The ledger's implementation identity; mirrors the C lane's reader."""
+    try:
+        raw = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True, stderr=subprocess.DEVNULL
+        ).strip()
+    except (OSError, subprocess.SubprocessError) as error:
+        raise ValueError(f"cannot read HEAD for the trial ledger: {error}") from error
+    if _SHA.fullmatch(raw) is None:
+        raise ValueError(f"HEAD is not a 40-hex implementation sha: {raw!r}")
+    return raw
+
+
+def record_sandbox_run(
+    *,
+    account: PaperAccount,
+    run_id: str,
+    symbols: Sequence[str],
+    segment: Segment,
+    started_ns: int,
+    starting_balance: str,
+    entry_params_hash: str,
+    ledger_path: Path = WITNESS_PATH,
+    reports_dir: Path = Path("reports/sim"),
+) -> Path:
+    """Write one startup receipt and append exactly one SIMULATED row.
+
+    The run id is the receipt's name and the ledger's ``arm_run_id``: a retry with the
+    same id is refused by TrialLog, never silently counted twice. The receipt is written
+    first, so a ledger refusal leaves the run auditable instead of erasing its identity.
+    This records a start only; the sandbox driver and its stop receipt remain owed (#104).
+    """
+    if _RUN_ID.fullmatch(run_id) is None or run_id in {".", ".."}:
+        raise ValueError(f"sandbox run id is not a file-name-safe token: {run_id!r}")
+    if _SHA256.fullmatch(entry_params_hash) is None:
+        raise ValueError(f"entry_params_hash is not a sha256 hex digest: {entry_params_hash!r}")
+    client_config = sandbox_client_config(account, starting_balance)
+    block_set_id = f"sim:{segment.session_date.isoformat()}:{segment.name}:{started_ns}"
+    sandbox_config = {
+        "tier": "SIMULATED",
+        "venue": str(client_config.venue),
+        "account_id": str(client_config.account_id),
+        "starting_balance": str(client_config.starting_balances[0]),
+        "block_set_id": block_set_id,
+    }
+    symbol_list = [str(symbol) for symbol in symbols]
+    params = {
+        "symbols": symbol_list,
+        "segment": segment.name,
+        "session_date": segment.session_date.isoformat(),
+        "started_ns": started_ns,
+        "entry_params_hash": entry_params_hash,
+    }
+    identity = {
+        "arm_id": SIM_ARM_ID,
+        "arm_run_id": run_id,
+        "implementation_sha": _head_sha(),
+        "factor_mask": [],
+        "sandbox_config": sandbox_config,
+        "sandbox_config_hash": snapshot_hash(sandbox_config),
+        "evidence_weights": {},
+        "evidence_weights_hash": snapshot_hash({}),
+        "params_hash": snapshot_hash(params),
+        "tier": "SIMULATED",
+        "block_set_id": block_set_id,
+        "funding_divergent_session_count": None,
+        "funding_unverified_session_count": None,
+        "condition_returns": {},
+    }
+    payload = {
+        "tier": "SIMULATED",
+        "lane": SIM_LANE,
+        "account_suffix": account.namespace,
+        "receipt_id": run_id,
+        "symbols": symbol_list,
+        "entry_params_hash": entry_params_hash,
+        "sandbox_config": sandbox_config,
+        "sandbox_config_hash": identity["sandbox_config_hash"],
+        "params_hash": identity["params_hash"],
+        "implementation_sha": identity["implementation_sha"],
+        "started_ns": started_ns,
+        "stopped_ns": None,
+        "final_segment": None,
+        "segment": {
+            "name": segment.name,
+            "session_date": segment.session_date.isoformat(),
+            "start_ns": segment.start_ns,
+            "end_ns": segment.end_ns,
+        },
+    }
+    receipt = reports_dir / run_id / "session.json"
+    receipt.parent.mkdir(parents=True, exist_ok=True)
+    receipt.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    TrialLog(ledger_path).append(SIM_ARM_ID, params, identity, None, state="RUNNING")
+    return receipt
+
+
 def build_shell(
-    account: PaperAccount, budget: PaperBudget, services: PaperServices
+    account: PaperAccount,
+    budget: PaperBudget,
+    services: PaperServices,
+    *,
+    starting_balance: str,
 ) -> BuiltPaperShell:
+    client_config = sandbox_client_config(account, starting_balance)
     strategy = PaperStrategy(PaperStrategyConfig(account=account, budget=budget, services=services))
     strategy.runtime.open()
     node = None
     try:
-        node = LiveNode.build(f"paper-{account.namespace}", node_config(account))
+        node = (
+            LiveNodeBuilder.from_config(f"paper-{account.namespace}", node_config(account))
+            .add_simulated_exec_client(
+                account.client_id, SandboxExecutionClientFactory(), client_config
+            )
+            .build()
+        )
         node.add_strategy(strategy)
         return BuiltPaperShell(node, strategy, strategy.runtime)
     except Exception:
