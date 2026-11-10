@@ -20,7 +20,7 @@ from alpaca.trading.models import Order, Position, TradeAccount, TradeUpdate
 from alpaca.trading.requests import LimitOrderRequest, TrailingStopOrderRequest
 
 from sextant.paper.b_feed import QuoteObservation
-from sextant.paper.b_protector import BParameters, Protector
+from sextant.paper.b_protector import BParameters, HistoricalTape, Protector
 from sextant.paper.config import PaperAccount
 from sextant.paper.sessions import Session
 
@@ -50,6 +50,8 @@ def b_params() -> BParameters:
         reconcile_interval_s=Decimal("10"),
         feed_poll_interval_s=Decimal("1"),
         feed_silence_s=Decimal("5"),
+        tape_deadline_s=Decimal("10"),
+        tape_max_requests=Decimal("100"),
     )
 
 
@@ -230,7 +232,7 @@ class FakeHistory:
 def protector(
     client: FakeClient,
     *,
-    history: FakeHistory | None = None,
+    history: HistoricalTape | None = None,
     now_ns: int = NOW_NS,
 ) -> Protector:
     return Protector(
@@ -592,6 +594,7 @@ def quote_at(bid: str, at: datetime) -> QuoteObservation:
 
 CLAIM = datetime(2026, 11, 9, 12, 47, 18, tzinfo=ET)  # B's first house trail after the fill
 CLAIM_NS = ns(CLAIM)
+CLOSE_NS = ns(datetime(2026, 11, 9, 16, 0, tzinfo=ET))  # only outside-hours spans are read (G5)
 
 
 def tonight_client() -> FakeClient:
@@ -646,7 +649,7 @@ def test_a_start_rebuilds_the_after_hours_high_water_mark_from_the_tape() -> Non
     assert p.pages == []
     assert client.submitted == []
     assert p.emulated_trigger("AAPL") == Decimal("37.73")
-    assert history.requests == [("AAPL", CLAIM_NS, POST_NS, "sip")]
+    assert history.requests == [("AAPL", CLOSE_NS, POST_NS, "sip")]
     line = line_for(p, POST_NS, "36.60")
     assert "tape=ok" in line and "trigger=37.73" in line
 
@@ -734,7 +737,7 @@ def test_a_restart_at_nine_pm_reads_every_window_on_its_own_feed() -> None:
     assert p.pages == []
     sip_end_ns = ns(datetime(2026, 11, 9, 20, 0, tzinfo=ET))
     assert history.requests == [
-        ("AAPL", CLAIM_NS, sip_end_ns, "sip"),
+        ("AAPL", CLOSE_NS, sip_end_ns, "sip"),
         ("AAPL", sip_end_ns, at_ns, "boats"),
     ]
     line = line_for(p, at_ns, "37.00")
@@ -744,7 +747,7 @@ def test_a_restart_at_nine_pm_reads_every_window_on_its_own_feed() -> None:
 def down_window_client(*house: Order) -> FakeClient:
     client = FakeClient()
     client.positions = [api_position("100")]
-    client.orders = [api_order(qty="100", stop_price="36.075", submitted_at="2026-11-09T16:00:00Z")]
+    client.orders = [api_order(qty="100", stop_price="36.075", submitted_at="2026-11-09T23:00:00Z")]
     client.closed_orders = [
         api_order(
             client_order_id="owner-entry-1",
@@ -753,8 +756,8 @@ def down_window_client(*house: Order) -> FakeClient:
             side="buy",
             order_type="market",
             status="filled",
-            filled_at="2026-11-09T14:45:00Z",
-            submitted_at="2026-11-09T14:40:00Z",
+            filled_at="2026-11-09T21:45:00Z",
+            submitted_at="2026-11-09T21:40:00Z",
         ),
         *house,
     ]
@@ -765,8 +768,8 @@ def down_window_history() -> FakeHistory:
     return FakeHistory(
         by_feed={
             "sip": [
-                quote_at("40.00", datetime(2026, 11, 9, 10, 30, tzinfo=ET)),
-                quote_at("37.00", datetime(2026, 11, 9, 11, 10, tzinfo=ET)),
+                quote_at("40.00", datetime(2026, 11, 9, 17, 30, tzinfo=ET)),
+                quote_at("37.00", datetime(2026, 11, 9, 18, 10, tzinfo=ET)),
             ]
         }
     )
@@ -775,36 +778,36 @@ def down_window_history() -> FakeHistory:
 def test_an_owner_fill_while_b_is_down_is_adopted_at_bs_first_claim() -> None:
     client = down_window_client()
     history = down_window_history()
-    at_ns = ns(datetime(2026, 11, 9, 16, 0, 5, tzinfo=ET))
+    at_ns = ns(datetime(2026, 11, 9, 19, 30, tzinfo=ET))
     p = protector(client, history=history, now_ns=at_ns)
     start(p)
 
     assert p.emulated_trigger("AAPL") == Decimal("36.08")
     assert p.pages == []
-    claim_ns = ns(datetime(2026, 11, 9, 11, 0, tzinfo=ET))
+    claim_ns = ns(datetime(2026, 11, 9, 18, 0, tzinfo=ET))
     assert history.requests == [("AAPL", claim_ns, at_ns, "sip")]
 
 
 def test_a_house_trail_placed_while_the_owner_buy_rested_is_not_the_adoption() -> None:
-    # F3: a re-arm at 09:42 while the 09:40 buy rested; B was down at the 09:45 fill.
+    # F3: a re-arm at 16:42 while the 16:40 buy rested; B was down at the 16:45 fill.
     rearm = api_order(
-        qty="50", stop_price="35.00", status="canceled", submitted_at="2026-11-09T14:42:00Z"
+        qty="50", stop_price="35.00", status="canceled", submitted_at="2026-11-09T21:42:00Z"
     )
     client = down_window_client(rearm)
     history = down_window_history()
-    at_ns = ns(datetime(2026, 11, 9, 16, 0, 5, tzinfo=ET))
+    at_ns = ns(datetime(2026, 11, 9, 19, 30, tzinfo=ET))
     p = protector(client, history=history, now_ns=at_ns)
     start(p)
 
     assert p.emulated_trigger("AAPL") == Decimal("36.08")
-    claim_ns = ns(datetime(2026, 11, 9, 11, 0, tzinfo=ET))
+    claim_ns = ns(datetime(2026, 11, 9, 18, 0, tzinfo=ET))
     assert history.requests == [("AAPL", claim_ns, at_ns, "sip")]
 
 
 def test_an_owner_add_is_adopted_at_the_add_and_excludes_the_earlier_high() -> None:
     client = FakeClient()
     client.positions = [api_position("200")]
-    client.orders = [api_order(qty="200", stop_price="11.456", submitted_at="2026-11-09T16:30:01Z")]
+    client.orders = [api_order(qty="200", stop_price="11.456", submitted_at="2026-11-09T23:30:01Z")]
     client.closed_orders = [
         api_order(
             client_order_id="owner-entry-1",
@@ -813,8 +816,8 @@ def test_an_owner_add_is_adopted_at_the_add_and_excludes_the_earlier_high() -> N
             side="buy",
             order_type="market",
             status="filled",
-            filled_at="2026-11-09T15:00:00Z",
-            submitted_at="2026-11-09T14:55:00Z",
+            filled_at="2026-11-09T22:00:00Z",
+            submitted_at="2026-11-09T21:55:00Z",
         ),
         api_order(
             client_order_id="owner-add-1",
@@ -823,26 +826,26 @@ def test_an_owner_add_is_adopted_at_the_add_and_excludes_the_earlier_high() -> N
             side="buy",
             order_type="market",
             status="filled",
-            filled_at="2026-11-09T16:30:00Z",
-            submitted_at="2026-11-09T16:25:00Z",
+            filled_at="2026-11-09T23:30:00Z",
+            submitted_at="2026-11-09T23:25:00Z",
         ),
     ]
     history = FakeHistory(
         by_feed={
             "sip": [
-                quote_at("12.00", datetime(2026, 11, 9, 11, 0, tzinfo=ET)),
-                quote_at("11.60", datetime(2026, 11, 9, 11, 45, tzinfo=ET)),
-                quote_at("11.70", datetime(2026, 11, 9, 15, 0, tzinfo=ET)),
+                quote_at("12.00", datetime(2026, 11, 9, 18, 0, tzinfo=ET)),
+                quote_at("11.60", datetime(2026, 11, 9, 18, 45, tzinfo=ET)),
+                quote_at("11.70", datetime(2026, 11, 9, 19, 30, tzinfo=ET)),
             ]
         }
     )
-    at_ns = ns(datetime(2026, 11, 9, 16, 0, 5, tzinfo=ET))
+    at_ns = ns(datetime(2026, 11, 9, 19, 45, tzinfo=ET))
     p = protector(client, history=history, now_ns=at_ns)
     start(p)
 
     assert p.emulated_trigger("AAPL") == Decimal("11.456")
     assert p.pages == []
-    add_claim_ns = ns(datetime(2026, 11, 9, 11, 30, 1, tzinfo=ET))
+    add_claim_ns = ns(datetime(2026, 11, 9, 18, 30, 1, tzinfo=ET))
     assert history.requests == [("AAPL", add_claim_ns, at_ns, "sip")]
 
 
@@ -893,7 +896,7 @@ def test_a_failed_tape_window_reports_partial_keeps_the_stop_and_is_not_reread()
     history.fail_feeds.clear()
     p.reconcile()
     assert p.emulated_trigger("AAPL") == Decimal("36.465")
-    assert len(history.requests) == 2
+    assert len(history.requests) == 1  # G1: the symbol stops at its first failure
 
 
 def test_without_a_house_trail_after_the_fill_b_adopts_now_and_claims_no_tape() -> None:
@@ -910,3 +913,260 @@ def test_without_a_house_trail_after_the_fill_b_adopts_now_and_claims_no_tape() 
     p.reconcile()
     line = line_for(p, POST_NS, "36.60")
     assert "tape=" not in line and "trigger=36.465" in line, line
+
+
+def test_a_partially_filled_add_without_a_fill_time_makes_the_entry_unknown() -> None:
+    # G2: Alpaca documents no fill time for a partial fill, so a later partial add is unknown.
+    client = FakeClient()
+    client.positions = [api_position("160")]
+    client.orders = [api_order(qty="160", stop_price="35.10", submitted_at="2026-11-09T15:30:01Z")]
+    client.closed_orders = [
+        api_order(
+            client_order_id="owner-entry-1",
+            qty="100",
+            filled_qty="100",
+            side="buy",
+            order_type="market",
+            status="filled",
+            filled_at="2026-11-09T14:30:00Z",
+            submitted_at="2026-11-09T14:29:59Z",
+        ),
+        api_order(
+            client_order_id="B001-trail-old",
+            qty="100",
+            status="canceled",
+            submitted_at="2026-11-09T14:30:01Z",
+        ),
+        api_order(
+            client_order_id="owner-add-1",
+            qty="100",
+            filled_qty="60",
+            side="buy",
+            order_type="limit",
+            limit_price="36.00",
+            status="expired",
+            submitted_at="2026-11-09T15:30:00Z",
+        ),
+    ]
+    history = FakeHistory(
+        by_feed={"sip": [quote_at("40.00", datetime(2026, 11, 9, 10, 0, tzinfo=ET))]}
+    )
+    at_ns = ns(datetime(2026, 11, 9, 17, 0, tzinfo=ET))
+    p = protector(client, history=history, now_ns=at_ns)
+    start(p)
+
+    assert history.requests == []
+    assert [page.reason for page in p.pages] == ["outside_rth_entry_unknown"]
+    assert p.emulated_trigger("AAPL") == Decimal("35.10")
+
+
+def test_a_partial_buy_last_updated_before_the_latest_fill_keeps_that_fill() -> None:
+    old_partial = api_order(
+        client_order_id="owner-old-partial",
+        qty="100",
+        filled_qty="50",
+        side="buy",
+        order_type="limit",
+        limit_price="30.00",
+        status="canceled",
+        submitted_at="2026-11-06T15:00:00Z",
+    )
+    client = tonight_client()
+    client.closed_orders.append(old_partial)
+    history = tonight_history()
+    p = protector(client, history=history, now_ns=POST_NS)
+    start(p)
+
+    assert p.pages == []
+    assert p.emulated_trigger("AAPL") == Decimal("37.73")
+
+
+def test_an_add_in_regular_hours_drops_the_start_reads_tape_status() -> None:
+    # G8: the start read covered 55 shares; nothing was read for 110.
+    client = tonight_client()
+    clock = [POST_NS]
+    p = Protector(
+        client,
+        b_account(),
+        b_params(),
+        now_ns=lambda: clock[0],
+        feed="sip",
+        history=tonight_history(),
+    )
+    start(p)
+    assert "tape=ok" in line_for(p, POST_NS, "36.60")
+
+    clock[0] = ns(datetime(2026, 11, 10, 10, 0, tzinfo=ET))
+    client.positions = [api_position("110")]
+    seen = len(p.states)
+    p.reconcile()
+    assert p.states[seen:]
+    assert not any("tape=ok" in line for line in p.states[seen:])
+
+
+def test_a_missing_native_stop_seeds_the_trigger_from_an_ok_tape() -> None:
+    # G3: the tape is the only record of the earlier high when the broker shows no stop.
+    client = tonight_client()
+    client.orders = [api_order(qty="55", submitted_at="2026-11-09T17:47:18Z")]
+    p = protector(client, history=tonight_history(), now_ns=POST_NS)
+    start(p)
+
+    assert p.emulated_trigger("AAPL") == Decimal("37.73")
+
+
+class StalledHistory(FakeHistory):
+    """A data API whose every request waits out its transport timeout, then fails."""
+
+    def __init__(self, clock: list[float], wait_s: float) -> None:
+        super().__init__()
+        self.clock, self.wait_s = clock, wait_s
+
+    def quotes(
+        self, symbol: str, start_ns: int, end_ns: int, feed: str
+    ) -> tuple[QuoteObservation, ...]:
+        self.requests.append((symbol, start_ns, end_ns, feed))
+        self.clock[0] += self.wait_s
+        raise TimeoutError("read timed out")
+
+
+def five_held(clock: list[float], trading_s: float) -> FakeClient:
+    symbols = ("AAPL", "MSFT", "NVDA", "ASTS", "TSLA")
+
+    class Slow(FakeClient):
+        def get_orders(self, filter=None) -> list[Order]:
+            clock[0] += trading_s
+            wanted = getattr(filter, "symbols", None)
+            return [o for o in super().get_orders(filter) if wanted is None or o.symbol in wanted]
+
+    client = Slow()
+    client.positions = [api_position("55", symbol) for symbol in symbols]
+    for symbol in symbols:
+        client.orders.append(
+            api_order(
+                symbol=symbol, qty="55", stop_price="36.465", submitted_at="2026-11-06T21:10:01Z"
+            )
+        )
+        client.closed_orders.append(
+            api_order(
+                client_order_id=f"owner-{symbol}",
+                symbol=symbol,
+                qty="55",
+                filled_qty="55",
+                side="buy",
+                order_type="market",
+                status="filled",
+                filled_at="2026-11-06T21:10:00Z",
+            )
+        )
+    return client
+
+
+def test_five_positions_against_a_stalled_data_api_are_protected_inside_the_deadline() -> None:
+    # G1: one monotonic deadline over the whole start read; each symbol stops at its first failure.
+    clock = [0.0]
+    client = five_held(clock, trading_s=1.0)
+    history = StalledHistory(clock, wait_s=3.05)
+    at_ns = ns(datetime(2026, 11, 9, 18, 0, tzinfo=ET))  # Monday post, held since Friday post
+    p = Protector(
+        client,
+        b_account(),
+        b_params(),
+        now_ns=lambda: at_ns,
+        feed="sip",
+        history=history,
+        monotonic=lambda: clock[0],
+    )
+    p.rebuild_tapes()
+
+    assert clock[0] <= 10 + 3.05  # tape_deadline_s plus one transport timeout
+    assert len({request[0] for request in history.requests}) == len(history.requests) <= 3
+    assert all(status == "partial" for status in (p._tapes[s].status for s in p._tapes))
+    assert len(p._tapes) == 5
+    p.reconcile()
+    for symbol in ("AAPL", "MSFT", "NVDA", "ASTS", "TSLA"):
+        assert p.emulated_trigger(symbol) == Decimal("36.465")
+
+
+def test_the_start_read_stops_at_its_request_budget() -> None:
+    # G6: the start read spends at most tape_max_requests, leaving the rest to the reconcile.
+    clock = [0.0]
+    client = five_held(clock, trading_s=0.0)
+    history = FakeHistory(error=None)
+    at_ns = ns(datetime(2026, 11, 9, 18, 0, tzinfo=ET))
+    params = BParameters(
+        native_trail_fraction=Decimal("0.025"),
+        reconcile_interval_s=Decimal("10"),
+        feed_poll_interval_s=Decimal("1"),
+        feed_silence_s=Decimal("5"),
+        tape_deadline_s=Decimal("10"),
+        tape_max_requests=Decimal("8"),
+    )
+    p = Protector(client, b_account(), params, now_ns=lambda: at_ns, feed="sip", history=history)
+    p.rebuild_tapes()
+
+    # Held since Friday post: four outside-hours windows each, so one order read and four
+    # windows per symbol; the eighth request is the second symbol's first window.
+    assert len(client.calls) + len(history.requests) == 8
+    assert [tape.status for tape in p._tapes.values()] == ["ok"] + ["partial"] * 4
+    assert p._tapes["MSFT"].detail == "start read over its deadline or budget"
+    assert history.requests[0][3] == "sip" and len(history.requests) == 5
+
+
+def test_only_the_outside_hours_spans_since_adoption_are_read() -> None:
+    # G5: regular-hours and closed spans are never requested; the native stop carries RTH.
+    from sextant.paper.b_protector import tape_windows
+
+    friday_post = ns(datetime(2026, 11, 6, 16, 10, tzinfo=ET))
+    monday_post = ns(datetime(2026, 11, 9, 18, 0, tzinfo=ET))
+    at = [ns(datetime(2026, 11, d, h, m, tzinfo=ET)) for d, h, m in ((6, 20, 0), (8, 20, 0))]
+    monday = [ns(datetime(2026, 11, 9, h, m, tzinfo=ET)) for h, m in ((4, 0), (9, 30), (16, 0))]
+    assert tape_windows(friday_post, monday_post) == (
+        (friday_post, at[0], "sip"),
+        (at[1], monday[0], "boats"),
+        (monday[0], monday[1], "sip"),
+        (monday[2], monday_post, "sip"),
+    )
+
+
+def test_a_start_in_regular_hours_reads_and_applies_at_the_first_outside_adoption() -> None:
+    # G7: B restarted at 10:00 Tuesday holds a position whose post-market high it saw Monday.
+    client = tonight_client()
+    history = tonight_history()
+    clock = [ns(datetime(2026, 11, 10, 10, 0, tzinfo=ET))]
+    p = Protector(
+        client, b_account(), b_params(), now_ns=lambda: clock[0], feed="sip", history=history
+    )
+    start(p)
+    assert history.requests[0][1] == CLOSE_NS
+    assert p.emulated_trigger("AAPL") is None
+
+    clock[0] = ns(datetime(2026, 11, 10, 16, 0, 1, tzinfo=ET))
+    p.reconcile()
+    assert p.emulated_trigger("AAPL") == Decimal("37.73")
+
+
+def test_a_start_in_a_closed_session_still_reads_the_tape() -> None:
+    # G7: a Saturday restart reads Friday's outside-hours spans, applied at Sunday 20:00.
+    client = tonight_client()
+    client.orders = [api_order(qty="55", stop_price="36.465", submitted_at="2026-11-06T21:00:01Z")]
+    client.closed_orders[0] = api_order(
+        client_order_id="owner-entry-1",
+        qty="55",
+        filled_qty="55",
+        side="buy",
+        order_type="market",
+        status="filled",
+        filled_at="2026-11-06T21:00:00Z",
+    )
+    history = FakeHistory([quote_at("38.70", datetime(2026, 11, 6, 17, 0, tzinfo=ET))])
+    clock = [ns(datetime(2026, 11, 7, 11, 0, tzinfo=ET))]
+    p = Protector(
+        client, b_account(), b_params(), now_ns=lambda: clock[0], feed="sip", history=history
+    )
+    start(p)
+    assert history.requests
+    assert [page.reason for page in p.pages] == ["market_closed"]
+
+    clock[0] = ns(datetime(2026, 11, 8, 20, 0, 1, tzinfo=ET))
+    p.reconcile()
+    assert p.emulated_trigger("AAPL") == Decimal("37.73")

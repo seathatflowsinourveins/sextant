@@ -67,15 +67,13 @@ class PacedTradingClient:
         self._client = client
         self._pacer = pacer
 
-    def _call(
-        self,
-        kind: ActionKind,
-        method: Callable[..., Any],
-        *args: Any,
-        withdraw: bool = False,
-    ) -> Any:
-        """One paced call; ``withdraw`` removes a refused request so it never runs later."""
+    def _call(self, kind: ActionKind, method: Callable[..., Any], *args: Any) -> Any:
+        """One paced call; a refused read is withdrawn so it never runs later (G6).
 
+        A refused write stays queued and is sent by the next drain, as before.
+        """
+
+        withdraw = kind is ActionKind.QUERY
         results: list[Any] = []
         state = {"cancelled": False}
 
@@ -114,11 +112,11 @@ class PacedTradingClient:
 
 
 class PacedHistoricalDataClient(PacedTradingClient):
-    """The start tape read waits on the account pacer; a refused read is withdrawn."""
+    """Each tape request is one HTTP GET and one pacer admission (N1); a refusal is withdrawn."""
 
-    def get_stock_quotes(self, request: Any) -> Any:
+    def get(self, path: str, data: Any) -> Any:
         client: Any = self._client
-        return self._call(ActionKind.QUERY, client.get_stock_quotes, request, withdraw=True)
+        return self._call(ActionKind.QUERY, client.get, path, data)
 
 
 class BudgetControls:
@@ -270,11 +268,16 @@ def main(
             on_page(Page(reason="feed_client_failed", detail=type(exc).__name__))
             data_client = None
         history: BHistoricalTape | None = None
+        start_client: TradingClientLike | None = None
         timeout_s, max_quotes = parameters.tape_read_timeout_s, parameters.tape_max_quotes
         if data_client is not None and timeout_s is not None and max_quotes is not None:
             try:
                 tape_client = data_client_factory(api_key=api_key, secret_key=secret_key)
                 bound_transport(tape_client, timeout_s)
+                # G1: the start read's own trading reads are bounded and never retried.
+                bounded = client_factory(api_key=api_key, secret_key=secret_key, paper=True)
+                bound_transport(bounded, timeout_s)
+                start_client = PacedTradingClient(bounded, pacer)
                 paced = PacedHistoricalDataClient(cast(TradingClientLike, tape_client), pacer)
                 history = BHistoricalTape(paced, int(max_quotes))
             except Exception as exc:
@@ -290,6 +293,7 @@ def main(
             on_state=on_state,
             data_client=data_client,
             history=history,
+            start_client=start_client,
         )
         _check_expected_account(client, on_page)
         previous = signal.signal(signal.SIGTERM, _sigterm_handler(stream))

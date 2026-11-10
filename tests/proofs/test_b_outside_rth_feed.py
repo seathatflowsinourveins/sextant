@@ -21,11 +21,9 @@ import pytest
 from alpaca.common.enums import Sort
 from alpaca.data.enums import DataFeed
 from alpaca.data.models import Quote, Trade
-from alpaca.data.models.quotes import QuoteSet
 from alpaca.data.requests import (
     StockLatestQuoteRequest,
     StockLatestTradeRequest,
-    StockQuotesRequest,
 )
 from alpaca.trading.enums import QueryOrderStatus
 from alpaca.trading.models import Order, Position, TradeAccount, TradeUpdate
@@ -69,6 +67,8 @@ def b_params() -> BParameters:
         reconcile_interval_s=Decimal("10"),
         feed_poll_interval_s=Decimal("1"),
         feed_silence_s=Decimal("5"),
+        tape_deadline_s=Decimal("10"),
+        tape_max_requests=Decimal("100"),
     )
 
 
@@ -709,11 +709,11 @@ def test_the_silence_registry_row_says_what_is_measured() -> None:
 class FakeHistoricalClient:
     def __init__(self, rows: dict[str, list[dict[str, object]]]) -> None:
         self.rows = rows
-        self.requests: list[StockQuotesRequest] = []
+        self.requests: list[tuple[str, dict[str, object]]] = []
 
-    def get_stock_quotes(self, request: StockQuotesRequest) -> QuoteSet:
-        self.requests.append(request)
-        return QuoteSet(self.rows)
+    def get(self, path: str, data: dict[str, object]) -> dict[str, object]:
+        self.requests.append((path, data))
+        return {"quotes": self.rows, "next_page_token": None}
 
 
 def historical_rows() -> dict[str, list[dict[str, object]]]:
@@ -735,14 +735,14 @@ def test_the_historical_tape_requests_the_session_feed_in_time_order() -> None:
 
     assert [item.bid for item in observations] == [Decimal("36.99"), Decimal("38.70")]
     assert [item.ts_ns for item in observations] == sorted(item.ts_ns for item in observations)
-    request = client.requests[0]
-    assert request.symbol_or_symbols == "AAPL"
-    assert request.feed is DataFeed.SIP
-    assert request.sort is Sort.ASC
-    assert request.limit == 10_000
-    # alpaca-py converts the aware bounds to naive UTC before it sends them.
-    assert request.start == datetime(2026, 11, 9, 17, 47)
-    assert request.end == datetime(2026, 11, 9, 23, 10)
+    path, request = client.requests[0]
+    assert path == "/stocks/quotes"
+    assert request["symbols"] == "AAPL"
+    assert request["feed"] is DataFeed.SIP
+    assert request["sort"] is Sort.ASC
+    assert request["limit"] == 10_000
+    assert request["start"] == "2026-11-09T17:47:00+00:00"
+    assert request["end"] == "2026-11-09T23:10:00+00:00"
 
 
 @pytest.mark.parametrize(("feed", "expected"), [("sip", DataFeed.SIP), ("boats", DataFeed.BOATS)])
@@ -752,7 +752,7 @@ def test_the_historical_tape_uses_the_sessions_feed(feed: str, expected: DataFee
 
     tape.quotes("AAPL", 0, 1, feed)
 
-    assert client.requests[0].feed is expected
+    assert client.requests[0][1]["feed"] is expected
 
 
 def test_the_tape_windows_split_at_the_feed_boundaries() -> None:
@@ -804,16 +804,11 @@ def started_line(client: FakeClient, history: object, at_ns: int) -> tuple[Prote
     return p, p.states[-1]
 
 
-class Shaped:
-    def __init__(self, data: object) -> None:
-        self.data = data
-
-
 class ShapeClient:
     def __init__(self, response: object) -> None:
         self.response = response
 
-    def get_stock_quotes(self, request: StockQuotesRequest) -> object:
+    def get(self, path: str, data: dict[str, object]) -> object:
         return self.response
 
 
@@ -822,8 +817,14 @@ POST_AT_NS = ns(datetime(2026, 11, 9, 18, 10, tzinfo=ET))
 
 @pytest.mark.parametrize(
     "response",
-    [Shaped({"aapl": []}), Shaped([]), {"AAPL": []}],
-    ids=["other-symbol-key", "non-mapping", "no-data-attribute"],
+    [
+        {"quotes": {"aapl": []}},
+        {"quotes": []},
+        {"AAPL": []},
+        {"quotes": {"AAPL": [None]}},
+        {"quotes": {"AAPL": []}, "next_page_token": "unread"},
+    ],
+    ids=["other-symbol-key", "non-mapping", "no-quotes-key", "null-row", "unread-page"],
 )
 def test_a_malformed_tape_response_is_partial_never_ok(response: object) -> None:
     # F6: an unexpected shape is not an empty window.
@@ -959,3 +960,69 @@ def test_the_stream_reads_the_tape_once_before_its_loop_and_never_inside_it(monk
 
     assert reads == [False]
     assert stream.protector.emulated_trigger("AAPL") == Decimal("36.465")
+
+
+def test_a_one_sided_historical_quote_is_skipped_not_a_malformed_window() -> None:
+    # G4: a zero bid or ask is an ordinary thin-tape row, as the live poller treats it.
+    rows = historical_rows()
+    rows["AAPL"].insert(1, {"t": "2026-11-09T20:00:00Z", "bp": 0, "ap": 38.80, "bs": 0, "as": 1})
+    tape = BHistoricalTape(FakeHistoricalClient(rows), 10_000)
+    observations = tape.quotes("AAPL", 0, POST_AT_NS, "sip")
+
+    assert [item.bid for item in observations] == [Decimal("36.99"), Decimal("38.70")]
+
+
+def test_the_bounded_tape_client_makes_no_internal_retries() -> None:
+    # G1: alpaca-py retries a 429 or 504 three times with a 3 s sleep (common/rest.py:127-134).
+    from alpaca.common.exceptions import APIError
+    from alpaca.data.historical.stock import StockHistoricalDataClient
+
+    from sextant.paper.b_feed import bound_transport
+
+    data = StockHistoricalDataClient("fixture-key", "fixture-secret")
+    bound_transport(data, Decimal("0.2"))
+    sent: list[str] = []
+
+    class Answer:
+        status_code = 429
+        text = "rate limited"
+
+        def raise_for_status(self) -> None:
+            import requests
+
+            raise requests.HTTPError("429")
+
+    def request(method: str, url: str, **opts: object) -> Answer:
+        sent.append(url)
+        return Answer()
+
+    data._session.request = request  # type: ignore[method-assign]
+    with pytest.raises(APIError):
+        BHistoricalTape(data, 10_000).quotes("AAPL", 0, 1, "sip")
+    assert len(sent) == 1
+
+
+def test_every_refused_start_read_is_withdrawn_from_the_pacer() -> None:
+    # G6: a refused order or position read must not run inside a later drain.
+    from sextant.execution.pacer import PacerRefused
+    from sextant.paper.b_protector_main import PacedTradingClient
+
+    sent: list[str] = []
+
+    class Counted(FakeClient):
+        def get_all_positions(self) -> list[Position]:
+            sent.append("get_all_positions")
+            return super().get_all_positions()
+
+        def get_orders(self, filter=None) -> list[Order]:
+            sent.append("get_orders")
+            return super().get_orders(filter)
+
+    pacer = paced(0)
+    trading = PacedTradingClient(Counted(), pacer)  # type: ignore[arg-type]
+    for read in (trading.get_all_positions, trading.get_orders):
+        with pytest.raises(PacerRefused):
+            read()
+    pacer.bucket.tokens = 5
+    pacer.drain()
+    assert sent == []

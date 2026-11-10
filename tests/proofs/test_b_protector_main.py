@@ -7,6 +7,7 @@ from typing import cast
 from uuid import uuid4
 
 import pytest
+import requests
 from alpaca.trading.enums import OrderSide, TimeInForce
 from alpaca.trading.models import TradeAccount
 from alpaca.trading.requests import TrailingStopOrderRequest
@@ -48,6 +49,9 @@ class FakeTradingClient:
     def __init__(self, number: str = "paper-fixture") -> None:
         self.account = api_account(number)
         self.calls: list[str] = []
+        # alpaca-py RESTClient's session and retry count (common/rest.py:69,72), never used.
+        self._session = requests.Session()
+        self._retry = 3
 
     def get_account(self) -> TradeAccount:
         self.calls.append("get_account")
