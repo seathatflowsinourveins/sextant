@@ -67,6 +67,7 @@ class Queued:
     position_counts: Callable[[], tuple[int, int]] | None = field(compare=False)
     refuse: Callable[[str], None] | None = field(compare=False, default=None)
     snapshot_reads: int = field(compare=False, default=0)
+    entry_positions: Callable[[], int] | None = field(compare=False, default=None)
 
 
 class AccountPacer:
@@ -95,6 +96,7 @@ class AccountPacer:
         position_counts: Callable[[], tuple[int, int]] | None = None,
         refuse: Callable[[str], None] | None = None,
         snapshot_reads: int = 0,
+        entry_positions: Callable[[], int] | None = None,
     ):
         item = Queued(
             int(kind),
@@ -106,6 +108,7 @@ class AccountPacer:
             position_counts,
             refuse,
             snapshot_reads,
+            entry_positions,
         )
         if item.kind == ActionKind.SUBMIT:
             reserve = self._entry_reserve(item)
@@ -130,16 +133,24 @@ class AccountPacer:
             if item.position_counts
             else (item.open_positions, item.exiting_positions)
         )
+        pending = item.entry_positions() if item.entry_positions else 0
         if any(
-            type(count) is not int or count < 0 for count in (opened, exiting, item.snapshot_reads)
+            type(count) is not int or count < 0
+            for count in (opened, exiting, item.snapshot_reads, pending)
         ):
             return None
-        if per_open is None or (exiting and per_exit is None):
+        if per_open is None or ((exiting or item.snapshot_reads) and per_exit is None):
             return None
+        # The new/pending entry's partial-fill and full-fill handovers add two
+        # snapshot pairs and one write to the existing open-position floor.
+        partial_resize = (
+            per_exit + item.snapshot_reads + item.snapshot_reads if item.snapshot_reads else 0
+        )
         return (
             per_open * (opened + 1)
             + (per_exit or 0) * exiting
             + item.snapshot_reads * (opened + exiting + 1)
+            + partial_resize * (pending + 1)
         )
 
     def drain(self):
