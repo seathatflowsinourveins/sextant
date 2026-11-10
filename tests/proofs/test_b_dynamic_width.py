@@ -13,10 +13,11 @@ from test_b_protector import FakeTradingClient, api_position, api_update, b_acco
 from test_b_protector import api_order as rth_order
 from test_b_width import MINUTE_NS
 
-from sextant.paper.b_feed import QuoteObservation
-from sextant.paper.b_protector import BParameters, Protector, ProtectorStream
+from sextant.paper.b_feed import BHistoricalTape, QuoteObservation
+from sextant.paper.b_protector import BParameters, Protector, ProtectorStream, load_b_parameters
 from sextant.paper.b_width import BarRow
 from sextant.paper.sessions import ET
+from sextant.validation.tuning import _PROPOSAL_ROWS
 
 ROOT = Path(__file__).parents[2]
 SEC = 1_000_000_000
@@ -118,6 +119,27 @@ def calm(now_ns: int, *symbols: str) -> tuple[FakeBars, FakeQuotes]:
     return bars, quotes
 
 
+def test_the_registry_carries_the_width_rows_uncalibrated_and_never_cited_to_alpaca():
+    path = ROOT / "lanes/paper/b-parameters.json"
+    rows = {row["name"]: row for row in json.loads(path.read_text())}
+    params = load_b_parameters(path)
+    assert params.alpaca_min_trail_fraction == Decimal("0.001")
+    assert params.trail_atr_period == Decimal("22")
+    assert params.trail_atr_bar_minutes == Decimal("5")
+    assert params.trail_atr_multiple == Decimal("3")
+    assert not {"trail_min_fraction", "large_cap_symbols", "large_cap_trail_fraction"} & set(rows)
+    minimum = rows["alpaca_min_trail_fraction"]["source"]
+    assert "observed on paper, not documented" in minimum
+    assert "docs/handbook/lessons.jsonl:52" in minimum
+    assert "alpaca.markets" not in minimum
+    assert "rounded up" in minimum and "ours" in minimum
+    for name in WIDTH_ROWS:
+        assert rows[name]["calibration_state"] == "UNCALIBRATED"
+        assert rows[name]["last_change"] == "2026-11-10"
+        assert "UNCALIBRATED" in rows[name]["source"]
+        assert _PROPOSAL_ROWS[name][:2] == ("lanes/paper/b-parameters.json", name)
+
+
 def test_one_refresh_is_one_bars_and_one_quote_request_for_all_held_symbols():
     clock = [RTH_NS]
     bars, quotes = calm(RTH_NS, "AAPL", "MSFT")
@@ -134,6 +156,45 @@ def test_one_refresh_is_one_bars_and_one_quote_request_for_all_held_symbols():
     clock[0] = RTH_NS - RTH_NS % INTERVAL_NS + INTERVAL_NS  # the next bar completes
     assert p.refresh_widths_when_due() is True
     assert (len(bars.calls), len(quotes.calls)) == (2, 2)
+
+
+def test_a_newly_held_symbol_is_warmed_once_without_waiting_for_the_next_bar():
+    clock = [RTH_NS]
+    client = held("AAPL")
+    bars, quotes = calm(RTH_NS, "AAPL", "MSFT")
+    p = make(client, bars, quotes, clock)
+    p.reconcile()
+    p.refresh_widths_when_due()
+    client.positions.append(api_position("5", "MSFT"))
+    p.reconcile()
+    clock[0] += SEC
+    assert p.refresh_widths_when_due() is True
+    assert p.refresh_widths_when_due() is False
+    assert len(bars.calls) == 2
+    assert p.trail_width("MSFT") == Decimal("0.0018")
+
+
+def test_too_few_completed_bars_keeps_the_native_width_and_pages_once_per_episode():
+    clock = [RTH_NS]
+    bars = FakeBars({"AAPL": steady_bars(RTH_NS, count=2)})
+    quotes = FakeQuotes([quote("200.00", "200.01", RTH_NS)])
+    p = make(held("AAPL"), bars, quotes, clock)
+    p.reconcile()
+    p.refresh_widths_when_due()
+    clock[0] += INTERVAL_NS
+    p.refresh_widths_when_due()
+
+    assert p.trail_width("AAPL") == Decimal("0.025")
+    assert reasons(p) == ["dynamic_width_bars_unavailable"]
+
+    clock[0] += INTERVAL_NS
+    bars.rows["AAPL"] = steady_bars(clock[0])  # a computed width ends the episode
+    p.refresh_widths_when_due()
+    assert p.trail_width("AAPL") == Decimal("0.0018")
+    bars.error = TimeoutError("bars")
+    clock[0] += INTERVAL_NS
+    p.refresh_widths_when_due()
+    assert reasons(p) == ["dynamic_width_bars_unavailable"] * 2
 
 
 def test_a_failed_bars_request_keeps_the_last_width_and_pages_once():
@@ -166,6 +227,52 @@ def test_a_missing_invalid_or_failed_quote_keeps_the_last_width_and_pages_once()
 
     assert p.trail_width("AAPL") == Decimal("0.0018")
     assert reasons(p) == ["dynamic_width_quote_unavailable"]
+
+
+def test_with_no_width_ever_computed_a_missing_quote_keeps_the_native_width():
+    clock = [RTH_NS]
+    p = make(held("AAPL"), FakeBars({"AAPL": steady_bars(RTH_NS)}), FakeQuotes(), clock)
+    p.reconcile()
+    p.refresh_widths_when_due()
+    assert p.trail_width("AAPL") == Decimal("0.025")
+    assert reasons(p) == ["dynamic_width_quote_unavailable"]
+
+
+def test_main_gives_the_protector_bounded_width_reads_off_the_account_pacer(tmp_path, monkeypatch):
+    from test_b_protector_main import FakeTradingClient as MainClient
+    from test_b_protector_main import patch_stream, write_config
+
+    from sextant.paper.b_protector_main import PacedHistoricalDataClient, main
+
+    monkeypatch.setenv("ALPACA_PAPER_2_API_KEY", "test-key")
+    monkeypatch.setenv("ALPACA_PAPER_2_SECRET_KEY", "test-secret")
+    monkeypatch.setenv("B_EXPECTED_ACCOUNT_SUFFIX", "ture")
+    patch_stream(monkeypatch)
+    seen: list[Protector] = []
+    original = ProtectorStream.run
+
+    def record(self) -> None:
+        seen.append(self.protector)
+        original(self)
+
+    monkeypatch.setattr(ProtectorStream, "run", record)
+    config = write_config(tmp_path, "b-slot2.json")
+    assert (
+        main(
+            ["--config", str(config), "--parameters", str(ROOT / "lanes/paper/b-parameters.json")],
+            client_factory=lambda **_: MainClient(),
+            on_page=lambda page: None,
+        )
+        == 0
+    )
+
+    protector = seen[0]
+    assert isinstance(protector._bars, BHistoricalTape)
+    assert not isinstance(protector._bars._client, PacedHistoricalDataClient)  # LEAD-1445 item 1
+    assert getattr(protector._bars._client, "_retry", None) == 0  # bounded, no SDK retry (item 3)
+    assert getattr(protector, "_admit", None) is None  # nothing asks the account pacer
+    quotes = protector._quotes
+    assert quotes is not None and getattr(quotes, "__name__", "") == "latest_quotes"
 
 
 # --- The Codex max round on part 2 (bw2 f6d618b r1) -------------------------------------------
@@ -237,6 +344,54 @@ def test_a_width_quote_older_than_the_last_one_taken_is_rejected_as_on_quote_doe
     p.refresh_widths_when_due()
     assert p.trail_width("AAPL") == Decimal("0.0018")
     assert reasons(p) == ["dynamic_width_quote_unavailable"]
+
+
+class TapeData:
+    """The bounded tape client: alpaca-py's RESTClient.get and the latest-quote call."""
+
+    def __init__(self) -> None:
+        import requests
+
+        self._session, self._retry = requests.Session(), 3
+        self.requests: list[str] = []
+
+    def get(self, path, data):
+        self.requests.append(path)
+        return {"bars": {"AAPL": []}}
+
+    def get_stock_latest_quote(self, request):
+        self.requests.append("latest-quote")
+        return {}
+
+
+def test_main_counts_both_width_reads_as_data_requests_never_on_the_account_pacer(
+    tmp_path, monkeypatch
+):
+    from test_b_protector_main import FakeTradingClient as MainClient
+    from test_b_protector_main import write_config
+
+    from sextant.paper.b_protector_main import main
+
+    monkeypatch.setenv("ALPACA_PAPER_2_API_KEY", "test-key")
+    monkeypatch.setenv("ALPACA_PAPER_2_SECRET_KEY", "test-secret")
+    monkeypatch.setenv("B_EXPECTED_ACCOUNT_SUFFIX", "ture")
+    data: list[TapeData] = []
+    seen: list[tuple[int, int, bool]] = []
+
+    def run(stream) -> None:
+        protector = stream.protector
+        pacer = protector._start_client._pacer
+        before = (pacer.wire_requests, pacer.bucket.tokens, len(pacer.queue))
+        protector.read_widths(("AAPL",), RTH_NS)
+        after = (pacer.wire_requests, pacer.bucket.tokens, len(pacer.queue))
+        seen.append((len(data[-1].requests), protector.data_requests, after == before))
+
+    monkeypatch.setattr(ProtectorStream, "run", run)
+    config = write_config(tmp_path, "b-slot2.json")
+    argv = ["--config", str(config), "--parameters", str(ROOT / "lanes/paper/b-parameters.json")]
+    factory: Any = lambda **_: data.append(TapeData()) or data[-1]  # noqa: E731
+    assert main(argv, client_factory=lambda **_: MainClient(), data_client_factory=factory) == 0
+    assert seen == [(2, 2, True)]  # two data requests, counted as such; the pacer untouched
 
 
 # --- 2a computes the width and uses it nowhere: orders and triggers are those of 37bb20e -------
@@ -411,6 +566,19 @@ def test_three_owner_fills_during_a_held_bars_read_are_covered_5_5_5():
     finally:
         release.set()
     assert covers == [5, 5, 5]
+
+
+def test_two_queued_cancels_and_a_held_width_read_leave_the_owner_fill_covered():
+    """Codex max's probe test_review_scope.py:176, kept: five tokens, two queued cancels."""
+
+    import threading
+
+    release = threading.Event()
+    try:
+        _, covers = trading_run(5, 1, 2, ("w+", "fill"), True, hold=lambda: release.wait(3))
+    finally:
+        release.set()
+    assert covers == [5]
 
 
 @pytest.mark.parametrize("how", ["cancelled", "failed"])
