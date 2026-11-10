@@ -812,6 +812,28 @@ def test_the_installer_writes_each_user_layer_and_keeps_what_is_there(tmp_path: 
     assert again.returncode == 0 and (copy.read_bytes(), settings.read_bytes()) == before
 
 
+def test_the_installer_publishes_the_rules_into_the_lane_codex_home(tmp_path: Path) -> None:
+    """Orca copies ~/.codex/rules into only the Codex homes it manages, and the lane Codex home
+    is the launcher's own, from parity.json's spec. The installer publishes its copy there too."""
+    home = tmp_path / "home"
+    run, _ = _install(tmp_path, home)
+    assert run.returncode == 0, run.stderr
+
+    spec = json.loads((ROOT / "deploy/wsl/lane-runtimes/parity.json").read_text())
+    lane = home / spec["runtimes"]["codex"]["home"]
+    installed = lane / "rules" / "sextant-hard-lines.rules"
+    assert installed.is_file(), "the lane Codex home must carry the hard-line rules"
+    assert stat.S_ISREG(installed.lstat().st_mode)
+    assert installed.read_bytes() == RULES.read_bytes()
+    assert stat.S_IMODE(lane.stat().st_mode) == 0o700
+    assert not (lane / "rules" / "default.rules").exists(), "default.rules holds Codex's approvals"
+
+    before = (installed.read_bytes(), lane.stat().st_mode)
+    again, _ = _install(tmp_path, home)
+    assert again.returncode == 0
+    assert (installed.read_bytes(), lane.stat().st_mode) == before
+
+
 MATRIX = json.loads((KIT / "matrix.json").read_text())
 
 
