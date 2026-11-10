@@ -8,7 +8,9 @@
 #   its own approvals to default.rules (openai/codex@rust-v0.167.0 086ccc83: codex-rs/core/src/
 #   exec_policy.rs:490-504, :688-712, :904-906, :1177-1213). Orca copies each regular .rules file from
 #   ~/.codex/rules into the Codex homes it manages at launch (stablyai/orca@v1.4.251 a162e08b:
-#   src/main/codex/configuration/homes/codex-managed-home-rules.ts, codex-home-paths.ts:88-95).
+#   src/main/codex/configuration/homes/codex-managed-home-rules.ts, codex-home-paths.ts:88-95). The
+#   lane Codex home is not one of them: codex-launch.sh sets it from parity.json's `runtimes.codex.home`
+#   at 0700, so the same copy is published into that home's rules/ here.
 # - Antigravity: antigravity.json's deny rules joined to settings.json's own, every other key kept, 0600 as
 #   the CLI writes it (antigravity.google/docs/settings.md "How the CLI reads and saves", read 2026-11-08).
 # - dsh: config/dsh/hard-lines linked into the acp, headless and dsh-tui profiles with dsh's own
@@ -28,6 +30,18 @@ mkdir -p "$rules"
 temp+=("$(mktemp "$rules/.sextant-hard-lines.XXXXXX")")
 install -m 644 "$repo/.codex/rules/default.rules" "${temp[-1]}"
 mv -f -- "${temp[-1]}" "$rules/sextant-hard-lines.rules"
+
+# The lane Codex home from parity.json's spec, 0700 as codex-launch.sh makes it.
+lane=$(jq -er '.runtimes.codex.home' "$repo/deploy/wsl/lane-runtimes/parity.json") || {
+  echo "no Codex home spec in $repo/deploy/wsl/lane-runtimes/parity.json" >&2
+  exit 1
+}
+[[ "$lane" == /* ]] || lane="$HOME/$lane"
+mkdir -p "$lane/rules"
+chmod 700 "$lane"
+temp+=("$(mktemp "$lane/rules/.sextant-hard-lines.XXXXXX")")
+install -m 644 "$repo/.codex/rules/default.rules" "${temp[-1]}"
+mv -f -- "${temp[-1]}" "$lane/rules/sextant-hard-lines.rules"
 
 settings="$HOME/.gemini/antigravity-cli/settings.json"
 mkdir -p "$(dirname "$settings")"
