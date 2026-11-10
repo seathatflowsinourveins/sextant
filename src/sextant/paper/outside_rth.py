@@ -13,8 +13,10 @@ here.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from decimal import ROUND_FLOOR, Decimal
 from enum import StrEnum
+from typing import Protocol
 
 from sextant.exits.policy import BreachRun, ExitParams, chase_limit
 from sextant.paper.trailing import (
@@ -95,15 +97,20 @@ class OutsideRthTrail:
         return OutsideRthState.ARMED if self._trigger is not None else OutsideRthState.WAITING
 
     def adopt(self, trigger: Decimal | None, ts_ns: int) -> None:
-        """Seed the trigger from the resting native trail's stop price and restart the run."""
+        """Seed the trigger from the resting native trail's stop price.
+
+        A raise keeps the breach run: a print under the lower trigger is under the higher one
+        too. Any other adoption restarts the run.
+        """
 
         if self._released:
             raise OutsideRthError("cannot adopt a trigger while a release is outstanding")
         if trigger is not None and trigger <= 0:
             raise OutsideRthError("an adopted trigger must be positive")
+        if trigger is None or self._trigger is None or trigger < self._trigger:
+            self._breach = BreachRun()
+            self._breached = False
         self._trigger = trigger
-        self._breach = BreachRun()
-        self._breached = False
 
     def observe_quote(
         self,
@@ -222,3 +229,35 @@ class OutsideRthTrail:
         self._released = False
         self._breached = False
         self._breach = BreachRun()
+
+
+class QuoteLike(Protocol):
+    """One historical quote the tape adapter hands back."""
+
+    @property
+    def bid(self) -> Decimal: ...
+
+    @property
+    def ask(self) -> Decimal: ...
+
+    @property
+    def ts_ns(self) -> int: ...
+
+
+def rebuild_trigger(
+    observations: Iterable[QuoteLike],
+    *,
+    trail_fraction: Decimal,
+    params: ExitParams,
+) -> Decimal | None:
+    """Replay a tape through the same BID_ASK trail and return its high-water trigger."""
+
+    trail = OutsideRthTrail(trail_fraction=trail_fraction, params=params)
+    for observation in sorted(observations, key=lambda item: item.ts_ns):
+        trail.observe_quote(
+            bid=observation.bid,
+            ask=observation.ask,
+            last=None,
+            ts_ns=observation.ts_ns,
+        )
+    return trail.trigger

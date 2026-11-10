@@ -18,20 +18,35 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 import pytest
+from alpaca.common.enums import Sort
 from alpaca.data.enums import DataFeed
 from alpaca.data.models import Quote, Trade
-from alpaca.data.requests import StockLatestQuoteRequest, StockLatestTradeRequest
+from alpaca.data.requests import (
+    StockLatestQuoteRequest,
+    StockLatestTradeRequest,
+)
+from alpaca.trading.enums import QueryOrderStatus
 from alpaca.trading.models import Order, Position, TradeAccount, TradeUpdate
 from alpaca.trading.requests import LimitOrderRequest, TrailingStopOrderRequest
 from alpaca.trading.stream import TradingStream
 
-from sextant.paper.b_feed import BMarketDataFeed, feed_for
-from sextant.paper.b_protector import BParameters, Protector, ProtectorStream
+from sextant.paper.b_feed import BHistoricalTape, BMarketDataFeed, feed_for, timestamp_ns
+from sextant.paper.b_protector import (
+    BParameters,
+    Protector,
+    ProtectorStream,
+)
 from sextant.paper.config import PaperAccount
 from sextant.paper.sessions import Session
 
 ET = ZoneInfo("America/New_York")
 NOW = datetime(2026, 11, 9, 20, 30, tzinfo=ET)  # overnight, outside the regular session
+
+
+def ns(at: datetime) -> int:
+    return timestamp_ns(at)
+
+
 NOW_NS = int(NOW.timestamp()) * 1_000_000_000
 SEC = 1_000_000_000
 
@@ -52,6 +67,8 @@ def b_params() -> BParameters:
         reconcile_interval_s=Decimal("10"),
         feed_poll_interval_s=Decimal("1"),
         feed_silence_s=Decimal("5"),
+        tape_deadline_s=Decimal("10"),
+        tape_max_requests=Decimal("100"),
     )
 
 
@@ -98,13 +115,15 @@ def api_order(
     stop_price: str | None = None,
     limit_price: str | None = None,
     extended_hours: bool = False,
+    submitted_at: str = "2026-11-09T23:59:00Z",
+    filled_at: str | None = None,
 ) -> Order:
     payload = {
         "id": str(uuid4()),
         "client_order_id": client_order_id,
-        "created_at": "2026-11-09T23:59:00Z",
-        "updated_at": "2026-11-09T23:59:00Z",
-        "submitted_at": "2026-11-09T23:59:00Z",
+        "created_at": submitted_at,
+        "updated_at": submitted_at,
+        "submitted_at": submitted_at,
         "order_class": "simple",
         "time_in_force": "gtc",
         "status": status,
@@ -119,6 +138,8 @@ def api_order(
         payload["stop_price"] = stop_price
     if limit_price is not None:
         payload["limit_price"] = limit_price
+    if filled_at is not None:
+        payload["filled_at"] = filled_at
     return Order.model_validate(payload)
 
 
@@ -200,6 +221,7 @@ class FakeClient:
         self.account = api_account()
         self.positions: list[Position] = []
         self.orders: list[Order] = []
+        self.closed_orders: list[Order] = []
         self.submitted: list[TrailingStopOrderRequest | LimitOrderRequest] = []
         self.cancelled: list[str] = []
 
@@ -210,7 +232,12 @@ class FakeClient:
         return list(self.positions)
 
     def get_orders(self, filter=None) -> list[Order]:
-        return list(self.orders)
+        status = getattr(filter, "status", None)
+        if status == QueryOrderStatus.CLOSED:
+            return list(self.closed_orders)
+        if status == QueryOrderStatus.OPEN:
+            return list(self.orders)
+        return list(self.orders) + list(self.closed_orders)
 
     def get_order_by_client_id(self, client_id: str) -> Order:
         raise AssertionError("the feed proof never resolves a submit identity")
@@ -677,3 +704,325 @@ def test_the_silence_registry_row_says_what_is_measured() -> None:
     assert "UNCALIBRATED" in row["source"]
     assert "X4" not in row["source"]
     assert "docs/design.md" not in row["source"]
+
+
+class FakeHistoricalClient:
+    def __init__(self, rows: dict[str, list[dict[str, object]]]) -> None:
+        self.rows = rows
+        self.requests: list[tuple[str, dict[str, object]]] = []
+
+    def get(self, path: str, data: dict[str, object]) -> dict[str, object]:
+        self.requests.append((path, data))
+        return {"quotes": self.rows, "next_page_token": None}
+
+
+def historical_rows() -> dict[str, list[dict[str, object]]]:
+    return {
+        "AAPL": [
+            {"t": "2026-11-09T17:47:18Z", "bp": 36.99, "ap": 37.00, "bs": 1, "as": 1},
+            {"t": "2026-11-09T21:59:00Z", "bp": 38.70, "ap": 38.71, "bs": 1, "as": 1},
+        ]
+    }
+
+
+def test_the_historical_tape_requests_the_session_feed_in_time_order() -> None:
+    client = FakeHistoricalClient(historical_rows())
+    tape = BHistoricalTape(client, 10_000)
+    start = int(datetime(2026, 11, 9, 12, 47, tzinfo=ET).timestamp()) * SEC
+    end = int(datetime(2026, 11, 9, 18, 10, tzinfo=ET).timestamp()) * SEC
+
+    observations = tape.quotes("AAPL", start, end, "sip")
+
+    assert [item.bid for item in observations] == [Decimal("36.99"), Decimal("38.70")]
+    assert [item.ts_ns for item in observations] == sorted(item.ts_ns for item in observations)
+    path, request = client.requests[0]
+    assert path == "/stocks/quotes"
+    assert request["symbols"] == "AAPL"
+    assert request["feed"] is DataFeed.SIP
+    assert request["sort"] is Sort.ASC
+    assert request["limit"] == 10_000
+    assert request["start"] == "2026-11-09T17:47:00+00:00"
+    assert request["end"] == "2026-11-09T23:10:00+00:00"
+
+
+@pytest.mark.parametrize(("feed", "expected"), [("sip", DataFeed.SIP), ("boats", DataFeed.BOATS)])
+def test_the_historical_tape_uses_the_sessions_feed(feed: str, expected: DataFeed) -> None:
+    client = FakeHistoricalClient(historical_rows())
+    tape = BHistoricalTape(client, 10_000)
+
+    tape.quotes("AAPL", 0, 1, feed)
+
+    assert client.requests[0][1]["feed"] is expected
+
+
+def test_the_tape_windows_split_at_the_feed_boundaries() -> None:
+    from sextant.paper.b_protector import tape_windows
+
+    start = ns(datetime(2026, 11, 9, 18, 10, tzinfo=ET))
+    end = ns(datetime(2026, 11, 9, 21, 0, tzinfo=ET))
+    sip_end = ns(datetime(2026, 11, 9, 20, 0, tzinfo=ET))
+    assert tape_windows(start, end) == ((start, sip_end, "sip"), (sip_end, end, "boats"))
+
+    overnight = ns(datetime(2026, 11, 9, 3, 0, tzinfo=ET))
+    noon = ns(datetime(2026, 11, 9, 12, 0, tzinfo=ET))
+    feeds = [window[2] for window in tape_windows(overnight, noon)]
+    assert feeds == ["boats", "sip"]
+
+
+def tonight_client() -> FakeClient:
+    client = FakeClient()
+    client.positions = [api_position("55")]
+    client.orders = [api_order(qty="55", stop_price="36.465", submitted_at="2026-11-09T17:47:18Z")]
+    client.closed_orders = [
+        api_order(
+            client_order_id="owner-entry",
+            side="buy",
+            qty="55",
+            filled_qty="55",
+            status="filled",
+            submitted_at="2026-11-09T17:47:16Z",
+            filled_at="2026-11-09T17:47:17.479764Z",
+        )
+    ]
+    return client
+
+
+def started_line(client: FakeClient, history: object, at_ns: int) -> tuple[Protector, str]:
+    p = Protector(
+        client,
+        b_account(),
+        b_params(),
+        now_ns=lambda: at_ns,
+        feed="sip",
+        history=history,  # type: ignore[arg-type]
+    )
+    p.rebuild_tapes()
+    p.reconcile()
+    p.note_poll(at_ns)
+    p.on_quote("AAPL", bid=Decimal("36.60"), ask=Decimal("36.61"), last=None, ts_ns=at_ns)
+    p.watch()
+    return p, p.states[-1]
+
+
+class ShapeClient:
+    def __init__(self, response: object) -> None:
+        self.response = response
+
+    def get(self, path: str, data: dict[str, object]) -> object:
+        return self.response
+
+
+POST_AT_NS = ns(datetime(2026, 11, 9, 18, 10, tzinfo=ET))
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        {"quotes": {"aapl": []}},
+        {"quotes": []},
+        {"AAPL": []},
+        {"quotes": {"AAPL": [None]}},
+        {"quotes": {"AAPL": []}, "next_page_token": "unread"},
+    ],
+    ids=["other-symbol-key", "non-mapping", "no-quotes-key", "null-row", "unread-page"],
+)
+def test_a_malformed_tape_response_is_partial_never_ok(response: object) -> None:
+    # F6: an unexpected shape is not an empty window.
+    tape = BHistoricalTape(ShapeClient(response), 10_000)
+    p, line = started_line(tonight_client(), tape, POST_AT_NS)
+
+    assert "tape=partial" in line and "trigger=36.465" in line, line
+    assert [page.reason for page in p.pages] == ["outside_rth_tape_unreadable"]
+
+
+def test_a_window_that_reaches_the_quote_bound_is_partial() -> None:
+    rows = {
+        "AAPL": [
+            {"t": "2026-11-09T21:59:00Z", "bp": 38.70, "ap": 38.71, "bs": 1, "as": 1},
+            {"t": "2026-11-09T22:00:00Z", "bp": 38.60, "ap": 38.61, "bs": 1, "as": 1},
+        ]
+    }
+    tape = BHistoricalTape(FakeHistoricalClient(rows), 2)
+    _, line = started_line(tonight_client(), tape, POST_AT_NS)
+
+    assert "tape=partial" in line and "trigger=36.465" in line, line
+
+
+def test_a_read_that_hangs_at_start_reaches_its_bound_and_b_starts_protecting() -> None:
+    # Witness iv: a server that accepts and never answers; the transport timeout ends the read.
+    import socket
+    import threading
+    import time
+
+    from alpaca.data.historical.stock import StockHistoricalDataClient
+
+    from sextant.paper.b_feed import bound_transport
+
+    server = socket.socket()
+    server.bind(("127.0.0.1", 0))
+    server.listen(1)
+    hold = threading.Event()
+
+    def accept_and_hang() -> None:
+        connection, _ = server.accept()
+        hold.wait(3)  # the test's own hard bound: the RED side cannot hang past it
+        connection.close()
+
+    threading.Thread(target=accept_and_hang, daemon=True).start()
+    data = StockHistoricalDataClient(
+        "fixture-key", "fixture-secret", url_override=f"http://127.0.0.1:{server.getsockname()[1]}"
+    )
+    try:
+        bound_transport(data, Decimal("0.2"))
+        tape = BHistoricalTape(data, 10_000)
+        began = time.monotonic()
+        p, line = started_line(tonight_client(), tape, POST_AT_NS)
+        elapsed = time.monotonic() - began
+    finally:
+        hold.set()
+        server.close()
+
+    assert elapsed < 2, elapsed
+    assert "tape=partial" in line and "trigger=36.465" in line and "protected=55" in line, line
+    assert [page.reason for page in p.pages] == ["outside_rth_tape_unreadable"]
+
+
+def paced(tokens: int):
+    from sextant.execution.pacer import AccountPacer
+    from sextant.paper.b_protector_main import BudgetControls
+    from sextant.paper.config import PaperBudget
+
+    budget = PaperBudget(requests=180, window_s=60, broker_cap=200, external_reserve=20, source="t")
+    pacer = AccountPacer(BudgetControls(budget), now_ns=lambda: 0)  # type: ignore[arg-type]
+    pacer.bucket.tokens = tokens
+    return pacer
+
+
+def test_historical_quote_reads_wait_on_the_account_pacer() -> None:
+    from sextant.paper.b_protector_main import PacedHistoricalDataClient
+
+    pacer = paced(1)
+    client = FakeHistoricalClient(historical_rows())
+    tape = BHistoricalTape(PacedHistoricalDataClient(client, pacer), 10_000)  # type: ignore[arg-type]
+    tape.quotes("AAPL", 0, 1, "sip")
+    assert len(client.requests) == 1
+    assert pacer.bucket.tokens == 0
+
+
+def test_a_refused_historical_read_is_withdrawn_and_never_runs_later() -> None:
+    # R4 / F2: a refused read leaves the pacer's queue; a later drain must not send it.
+    from sextant.execution.pacer import PacerRefused
+    from sextant.paper.b_protector_main import PacedHistoricalDataClient
+
+    pacer = paced(0)
+    client = FakeHistoricalClient(historical_rows())
+    tape = BHistoricalTape(PacedHistoricalDataClient(client, pacer), 10_000)  # type: ignore[arg-type]
+    with pytest.raises(PacerRefused):
+        tape.quotes("AAPL", 0, 1, "sip")
+    assert pacer.queue == []
+    pacer.bucket.tokens = 5
+    pacer.drain()
+    assert client.requests == []
+
+
+def test_the_stream_reads_the_tape_once_before_its_loop_and_never_inside_it(monkeypatch) -> None:
+    # R1/R2: production's own path; the read runs before the loop exists, then never again.
+    reads: list[bool] = []
+
+    class LoopProbe:
+        def quotes(self, symbol: str, start_ns: int, end_ns: int, feed: str) -> tuple:
+            try:
+                asyncio.get_running_loop()
+                reads.append(True)
+            except RuntimeError:
+                reads.append(False)
+            return ()
+
+    async def no_connect(self) -> None:
+        return None
+
+    def loop_body(self) -> None:
+        asyncio.run(self._start_ws())
+
+    monkeypatch.setattr(TradingStream, "_start_ws", no_connect)
+    monkeypatch.setattr(TradingStream, "run", loop_body)
+    stream = ProtectorStream(
+        tonight_client(),
+        b_account(),
+        b_params(),
+        api_key="test-key",
+        secret_key="test-secret",  # noqa: S106 - fixture, never a real key
+        now_ns=lambda: POST_AT_NS,
+        history=LoopProbe(),  # type: ignore[arg-type]
+    )
+    stream.run()
+    stream.protector.reconcile()
+
+    assert reads == [False]
+    assert stream.protector.emulated_trigger("AAPL") == Decimal("36.465")
+
+
+def test_a_one_sided_historical_quote_is_skipped_not_a_malformed_window() -> None:
+    # G4: a zero bid or ask is an ordinary thin-tape row, as the live poller treats it.
+    rows = historical_rows()
+    rows["AAPL"].insert(1, {"t": "2026-11-09T20:00:00Z", "bp": 0, "ap": 38.80, "bs": 0, "as": 1})
+    tape = BHistoricalTape(FakeHistoricalClient(rows), 10_000)
+    observations = tape.quotes("AAPL", 0, POST_AT_NS, "sip")
+
+    assert [item.bid for item in observations] == [Decimal("36.99"), Decimal("38.70")]
+
+
+def test_the_bounded_tape_client_makes_no_internal_retries() -> None:
+    # G1: alpaca-py retries a 429 or 504 three times with a 3 s sleep (common/rest.py:127-134).
+    from alpaca.common.exceptions import APIError
+    from alpaca.data.historical.stock import StockHistoricalDataClient
+
+    from sextant.paper.b_feed import bound_transport
+
+    data = StockHistoricalDataClient("fixture-key", "fixture-secret")
+    bound_transport(data, Decimal("0.2"))
+    sent: list[str] = []
+
+    class Answer:
+        status_code = 429
+        text = "rate limited"
+
+        def raise_for_status(self) -> None:
+            import requests
+
+            raise requests.HTTPError("429")
+
+    def request(method: str, url: str, **opts: object) -> Answer:
+        sent.append(url)
+        return Answer()
+
+    data._session.request = request  # type: ignore[method-assign]
+    with pytest.raises(APIError):
+        BHistoricalTape(data, 10_000).quotes("AAPL", 0, 1, "sip")
+    assert len(sent) == 1
+
+
+def test_every_refused_start_read_is_withdrawn_from_the_pacer() -> None:
+    # G6: a refused order or position read must not run inside a later drain.
+    from sextant.execution.pacer import PacerRefused
+    from sextant.paper.b_protector_main import PacedTradingClient
+
+    sent: list[str] = []
+
+    class Counted(FakeClient):
+        def get_all_positions(self) -> list[Position]:
+            sent.append("get_all_positions")
+            return super().get_all_positions()
+
+        def get_orders(self, filter=None) -> list[Order]:
+            sent.append("get_orders")
+            return super().get_orders(filter)
+
+    pacer = paced(0)
+    trading = PacedTradingClient(Counted(), pacer)  # type: ignore[arg-type]
+    for read in (trading.get_all_positions, trading.get_orders):
+        with pytest.raises(PacerRefused):
+            read()
+    pacer.bucket.tokens = 5
+    pacer.drain()
+    assert sent == []

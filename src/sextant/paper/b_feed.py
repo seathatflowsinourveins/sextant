@@ -15,8 +15,15 @@ from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any, Protocol
 
+from alpaca.common.enums import Sort
 from alpaca.data.enums import DataFeed
-from alpaca.data.requests import StockLatestQuoteRequest, StockLatestTradeRequest
+from alpaca.data.models.quotes import Quote
+from alpaca.data.requests import (
+    StockLatestQuoteRequest,
+    StockLatestTradeRequest,
+    StockQuotesRequest,
+)
+from requests.adapters import HTTPAdapter
 
 from sextant.paper.sessions import Session
 
@@ -71,7 +78,7 @@ def feed_for(session: Session) -> str | None:
     return None
 
 
-def _ns(value: datetime) -> int:
+def timestamp_ns(value: datetime) -> int:
     if value.tzinfo is None:
         value = value.replace(tzinfo=UTC)
     return int(value.timestamp()) * NS_PER_SECOND + value.microsecond * 1_000
@@ -133,7 +140,7 @@ class BMarketDataFeed:
         if price is None or not isinstance(at, datetime):
             return
         self._trade_price[symbol] = price
-        ts_ns = _ns(at)
+        ts_ns = timestamp_ns(at)
         if ts_ns <= self._trade_ts.get(symbol, -1):
             return
         self._trade_ts[symbol] = ts_ns
@@ -145,4 +152,120 @@ class BMarketDataFeed:
         at = getattr(raw, "timestamp", None)
         if bid is None or ask is None or bid > ask or not isinstance(at, datetime):
             return
-        fresh.append(QuoteObservation(symbol, bid, ask, self._trade_price.get(symbol), _ns(at)))
+        fresh.append(
+            QuoteObservation(symbol, bid, ask, self._trade_price.get(symbol), timestamp_ns(at))
+        )
+
+
+class HistoricalQuoteClient(Protocol):
+    """One alpaca-py REST GET (common/rest.py:212); a fake implements this."""
+
+    def get(self, path: str, data: dict[str, Any], /) -> object: ...
+
+
+class TapeShapeError(ValueError):
+    """A historical response that is not the requested symbol's quotes, or one over its bound."""
+
+
+class BoundedAdapter(HTTPAdapter):
+    """requests' transport adapter with one connect and read timeout on every send."""
+
+    def __init__(self, timeout_s: float) -> None:
+        super().__init__()
+        self._timeout_s = timeout_s
+
+    def send(
+        self,
+        request: Any,
+        stream: bool = False,
+        timeout: Any = None,
+        verify: Any = True,
+        cert: Any = None,
+        proxies: Any = None,
+    ) -> Any:
+        return super().send(request, stream, self._timeout_s, verify, cert, proxies)
+
+
+def bound_transport(client: object, timeout_s: Decimal) -> None:
+    """Give an alpaca-py REST client a transport timeout and no internal retries.
+
+    alpaca-py v0.44.0 keeps its requests session in ``_session`` (common/rest.py:69) and
+    retries a 429 or 504 ``_retry`` times with a sleep (rest.py:72,127-134,201); its
+    constructor ignores ``retry_attempts=0``, so the start read sets ``_retry`` to zero.
+    """
+
+    session = getattr(client, "_session", None)
+    if session is None or not hasattr(client, "_retry"):
+        raise TypeError("the historical client exposes no requests session to bound")
+    client._retry = 0  # type: ignore[attr-defined]
+    adapter = BoundedAdapter(float(timeout_s))
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+
+
+def _datetime_at(ts_ns: int) -> datetime:
+    seconds, nanos = divmod(ts_ns, NS_PER_SECOND)
+    return datetime.fromtimestamp(seconds, tz=UTC).replace(microsecond=nanos // 1_000)
+
+
+class BHistoricalTape:
+    """Read one symbol's quotes between two instants: one page, one HTTP request.
+
+    The request is the one alpaca-py's ``get_stock_quotes`` sends first (``/stocks/quotes``
+    with ``StockQuotesRequest.to_request_fields()``, data/historical/stock.py:98-118), sent
+    once through ``RESTClient.get`` so that one pacer admission is one request (N1): the
+    SDK's page loop (common/rest.py:368-408) is not used. Completeness is judged on the raw
+    JSON before ``QuoteSet`` drops null rows (N3): a response without the symbol's
+    ``quotes``, a null or malformed row, a ``next_page_token`` or a page that reaches
+    ``max_quotes`` raises ``TapeShapeError``; the caller reports it as partial. A symbol
+    absent from ``quotes`` is an empty window.
+    """
+
+    def __init__(self, client: HistoricalQuoteClient, max_quotes: int) -> None:
+        if max_quotes < 1:
+            raise ValueError("the tape's quote bound must be positive")
+        self._client = client
+        self._max_quotes = max_quotes
+
+    def quotes(
+        self,
+        symbol: str,
+        start_ns: int,
+        end_ns: int,
+        feed: str,
+    ) -> tuple[QuoteObservation, ...]:
+        if feed not in FEEDS:
+            raise ValueError("B's historical tape feed must be sip or boats")
+        request = StockQuotesRequest(
+            symbol_or_symbols=symbol,
+            start=_datetime_at(start_ns),
+            end=_datetime_at(end_ns),
+            feed=DataFeed(feed),
+            sort=Sort.ASC,
+            limit=self._max_quotes,
+        )
+        response = self._client.get("/stocks/quotes", request.to_request_fields())
+        data = response.get("quotes") if isinstance(response, Mapping) else None
+        if (
+            not isinstance(response, Mapping)
+            or not isinstance(data, Mapping)
+            or set(data) - {symbol}
+        ):
+            raise TapeShapeError(f"the {feed} response is not {symbol}'s quotes")
+        rows = data.get(symbol, [])
+        if not isinstance(rows, Sequence) or len(rows) >= self._max_quotes:
+            raise TapeShapeError(f"the {feed} window is malformed or over its quote bound")
+        if response.get("next_page_token") is not None:
+            raise TapeShapeError(f"the {feed} window has an unread page")
+        observations: list[QuoteObservation] = []
+        for raw in rows:
+            if not isinstance(raw, Mapping) or not {"t", "bp", "ap"} <= set(raw):
+                raise TapeShapeError(f"a {feed} row has no bid, ask and timestamp")
+            row = Quote(symbol, dict(raw))
+            # A non-positive side is a one-sided quote; skip it as the live poller does.
+            bid, ask = _price(row.bid_price), _price(row.ask_price)
+            if bid is not None and ask is not None and bid <= ask:
+                observations.append(
+                    QuoteObservation(symbol, bid, ask, None, timestamp_ns(row.timestamp))
+                )
+        return tuple(observations)
