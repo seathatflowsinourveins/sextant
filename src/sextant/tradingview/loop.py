@@ -345,6 +345,7 @@ def run_loop(
             "for reviewed reconciliation."
         )
         return 130
-    except Exception:
-        print(_STOP)
+    except Exception as error:
+        safe = f" Safe diagnostic: {error.stop_tail()}." if isinstance(error, SyncError) else ""
+        print(f"{_STOP}{safe}")
         return 2

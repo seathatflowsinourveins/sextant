@@ -1,13 +1,21 @@
-"""Live Alpaca SIP trades and quotes as native ticks for the paper runner.
+"""Live Alpaca trades and quotes as native ticks for the paper runner: SIP streamed, BOATS polled.
 
 Source: https://docs.alpaca.markets/docs/real-time-stock-pricing-data (read 2026-11-09);
 alpaca-py==0.44.0 ``StockDataStream``. The conversion follows the pinned
 northstar-trading adapter registered in the manifest's "Live Alpaca SIP tick feed"
 row (``src/nautilus_alpaca/streams.py``).
 
+Overnight (20:00-04:00 ET) the C lane needs BOATS, which alpaca-py 0.44's ``StockDataStream``
+refuses, so ``feed="boats"`` polls REST ``get_stock_trades``/``get_stock_quotes`` with
+``DataFeed.BOATS`` (Alpaca 24/5 trading and Market Data docs, read 2026-11-09) in the merged
+``b_feed.py`` shape: one batched trades and one batched quotes request per poll over a
+``2 * overlap_s`` window, each re-fetched print dropped. ``poll_interval_s`` defaults to the
+registry's ``feed_poll_interval_s`` (``lanes/paper/b-parameters.json``, 1 s, UNCALIBRATED),
+the shared REST polling cadence, not a B-scoped strategy parameter.
+
 The feed only converts market data. It places no order, reads no key from the
-environment or a file (the injected stream factory receives the pair), and adds no
-reconnect or retry policy: the runner owns the stream's lifecycle. rc8's
+environment or a file (the injected factories receive the pair), and adds no
+reconnect or retry policy: the runner owns the feed's lifecycle. rc8's
 ``TradeTick`` has no conditions or tape field, so those vendor fields cannot ride the
 tick; the pinned adapter likewise keeps only exchange and trade id in its stable
 ``TradeId``. The C-lane reads conditions separately. ``ts_event`` keeps the vendor
@@ -17,6 +25,7 @@ timestamp; ``ts_init`` comes from the local receipt clock.
 from __future__ import annotations
 
 import contextlib
+import threading
 import time
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
@@ -24,9 +33,11 @@ from decimal import Decimal
 from typing import Any, Protocol
 
 from alpaca.data.enums import DataFeed
+from alpaca.data.historical.stock import StockHistoricalDataClient
 from alpaca.data.live import StockDataStream
 from alpaca.data.models.quotes import Quote
 from alpaca.data.models.trades import Trade
+from alpaca.data.requests import StockQuotesRequest, StockTradesRequest
 from nautilus_trader.model import (
     AggressorSide,
     InstrumentId,
@@ -41,6 +52,8 @@ __all__ = ["AlpacaTickFeed"]
 
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 _SIP = "sip"
+_BOATS = "boats"
+_NS_PER_S = 1_000_000_000
 _TRADE_ID_MAX = 36
 # Alpaca's SIP quote schema reports bid_size/ask_size in round lots, not shares:
 # https://docs.alpaca.markets/docs/real-time-stock-pricing-data (read 2026-11-09),
@@ -83,12 +96,17 @@ def _price(value: float, precision: int) -> Price:
     return Price.from_decimal_dp(_decimal(value), precision)
 
 
-class AlpacaTickFeed:
-    """Convert one SIP trade or quote stream into the C-lane's Nautilus ticks.
+def _rows(payload: Mapping[str, Any]) -> list[tuple[str, Any]]:
+    """Raw ``{symbol: [row, ...]}`` pairs, skipping null rows as alpaca-py's TradeSet does."""
+    return [(symbol, row) for symbol, rows in payload.items() for row in rows if row is not None]
 
-    The constructor validates credentials and the feed but performs no network I/O
-    and calls no stream factory. ``start()`` builds the stream, subscribes every
-    instrument's bare Alpaca symbol, and runs alpaca-py's blocking loop.
+
+class AlpacaTickFeed:
+    """Convert SIP stream or BOATS REST trades and quotes into the C-lane's Nautilus ticks.
+
+    The constructor validates credentials, the feed and the cadence but performs no network
+    I/O and calls no factory. ``start()`` either subscribes every instrument's bare Alpaca
+    symbol on a SIP stream and runs alpaca-py's blocking loop, or polls BOATS until ``stop()``.
     """
 
     def __init__(
@@ -101,11 +119,17 @@ class AlpacaTickFeed:
         secret_key: str = "",
         feed: str = _SIP,
         stream_factory: Callable[..., StockDataStream] = StockDataStream,
+        poll_interval_s: float = 1.0,  # registry feed_poll_interval_s, UNCALIBRATED
+        overlap_s: float = 5.0,
+        data_client_factory: Callable[..., Any] | None = None,
+        clock: Callable[[], float] = time.time,
     ) -> None:
         if not api_key or not secret_key:
             raise ValueError("Alpaca key and secret are required")
-        if feed != _SIP:
-            raise ValueError("paper arming uses the SIP feed only; iex is refused")
+        if feed not in (_SIP, _BOATS):
+            raise ValueError(f"paper arming uses SIP, or BOATS overnight; {feed!r} is refused")
+        if not 0 < poll_interval_s < 2 * overlap_s:
+            raise ValueError("poll_interval_s must be positive and inside the 2 * overlap_s window")
 
         by_symbol: dict[str, Instrument] = {}
         for key, instrument in instruments.items():
@@ -125,12 +149,24 @@ class AlpacaTickFeed:
         self._secret_key = secret_key
         self._stream_factory = stream_factory
         self._stream: StockDataStream | None = None
+        self._feed = feed
+        self._poll_interval_s = poll_interval_s
+        self._overlap_s = overlap_s
+        self._data_client_factory = data_client_factory or StockHistoricalDataClient
+        self._clock = clock
+        self._client: Any = None
+        self._stopped = threading.Event()
+        self._seen: dict[tuple[object, ...], int] = {}
+        self._horizon_ns = 0
         self.failure: Exception | None = None
 
     def start(self) -> None:
-        """Subscribe all instruments and run the stream's blocking loop."""
-        if self._stream is not None:
+        """Run the SIP stream's blocking loop, or poll BOATS until ``stop()``."""
+        if self._stream is not None or self._client is not None:
             raise RuntimeError("Alpaca tick feed already started")
+        if self._feed == _BOATS:
+            self._poll_until_stopped()
+            return
 
         stream = self._stream_factory(self._api_key, self._secret_key, feed=DataFeed.SIP)
         self._stream = stream
@@ -145,7 +181,8 @@ class AlpacaTickFeed:
             raise
 
     def stop(self) -> None:
-        """Delegate alpaca-py's cross-thread stop; the runner owns retries."""
+        """Wake the BOATS poll loop, or delegate alpaca-py's cross-thread stream stop."""
+        self._stopped.set()
         stream = self._stream
         if stream is None:
             return
@@ -155,13 +192,72 @@ class AlpacaTickFeed:
             # DataStream.stop() reads self._loop, which run() sets in _run_forever.
             return
 
+    def _poll_until_stopped(self) -> None:
+        client = self._data_client_factory(
+            api_key=self._api_key, secret_key=self._secret_key, raw_data=True
+        )
+        self._client = client
+        try:
+            while not self._stopped.is_set():
+                self._poll(client)
+                self._stopped.wait(self._poll_interval_s)
+        except Exception as exc:
+            if self.failure is None:
+                self.failure = exc
+            raise
+
+    def _poll(self, client: Any) -> None:
+        """One batched trades and one batched quotes request; deliver each new print once."""
+        now = self._clock()
+        start = datetime.fromtimestamp(now - 2 * self._overlap_s, UTC)
+        window: dict[str, Any] = {
+            "symbol_or_symbols": sorted(self._instruments),
+            "start": start,
+            "end": datetime.fromtimestamp(now, UTC),
+            "feed": DataFeed.BOATS,
+        }
+        trades = client.get_stock_trades(StockTradesRequest(**window))
+        quotes = client.get_stock_quotes(StockQuotesRequest(**window))
+        ts_init = int(_decimal(self._clock()) * _NS_PER_S)
+        # The window start bounds the dedupe memory; its high-water mark stops a clock step
+        # back from re-delivering a print whose key was already dropped.
+        self._horizon_ns = max(self._horizon_ns, _timestamp_ns(start))
+        self._seen = {key: ts for key, ts in self._seen.items() if ts >= self._horizon_ns}
+        fresh: list[tuple[int, int, tuple[object, ...], TradeTick | QuoteTick]] = []
+        for symbol, row in _rows(trades):
+            trade = Trade(symbol, row)
+            tick = self._trade_tick(trade, ts_init)
+            if trade.id is not None:
+                key = ("trade", symbol, trade.exchange, trade.id)
+            else:
+                key = ("trade", symbol, tick.ts_event, tick.price.raw, tick.size.raw)
+            fresh.append((tick.ts_event, 0, key, tick))
+        for symbol, row in _rows(quotes):
+            quote_tick = self._quote_tick(Quote(symbol, row), ts_init)
+            if quote_tick is not None:
+                prices = (quote_tick.bid_price.raw, quote_tick.ask_price.raw)
+                sizes = (quote_tick.bid_size.raw, quote_tick.ask_size.raw)
+                key = ("quote", symbol, quote_tick.ts_event, *prices, *sizes)
+                fresh.append((quote_tick.ts_event, 1, key, quote_tick))
+        # Vendor-time order, as a stream delivers; at one vendor time the trade goes first, so
+        # CSession.on_trade pairs it with the quote that prevailed before it.
+        fresh.sort(key=lambda item: item[:2])
+        for ts_event, _, key, tick in fresh:
+            if ts_event < self._horizon_ns or key in self._seen:
+                continue
+            self._seen[key] = ts_event
+            if isinstance(tick, TradeTick):
+                self._on_trade(tick)
+            else:
+                self._on_quote(tick)
+
     async def _handle_trade(self, trade: Trade | dict[str, Any]) -> None:
         if self.failure is not None:
             return
         try:
             if not isinstance(trade, Trade):
                 raise TypeError("StockDataStream must run with raw_data=False")
-            self._on_trade(self._trade_tick(trade))
+            self._on_trade(self._trade_tick(trade, time.time_ns()))
         except Exception as exc:
             await self._fail(exc)
 
@@ -171,13 +267,13 @@ class AlpacaTickFeed:
         try:
             if not isinstance(quote, Quote):
                 raise TypeError("StockDataStream must run with raw_data=False")
-            tick = self._quote_tick(quote)
+            tick = self._quote_tick(quote, time.time_ns())
             if tick is not None:
                 self._on_quote(tick)
         except Exception as exc:
             await self._fail(exc)
 
-    def _trade_tick(self, trade: Trade) -> TradeTick:
+    def _trade_tick(self, trade: Trade, ts_init: int) -> TradeTick:
         instrument = self._instrument_for(trade.symbol)
         ts_event = _timestamp_ns(trade.timestamp)
         return TradeTick(
@@ -187,10 +283,10 @@ class AlpacaTickFeed:
             AggressorSide.NO_AGGRESSOR,
             self._trade_id(trade, ts_event),
             ts_event,
-            time.time_ns(),
+            ts_init,
         )
 
-    def _quote_tick(self, quote: Quote) -> QuoteTick | None:
+    def _quote_tick(self, quote: Quote, ts_init: int) -> QuoteTick | None:
         instrument = self._instrument_for(quote.symbol)
         precision = instrument.price_precision
         bid_raw = _decimal(quote.bid_price)
@@ -213,7 +309,7 @@ class AlpacaTickFeed:
             _quantity(quote.bid_size, "bid size", lot_size=_ROUND_LOT_SHARES),
             _quantity(quote.ask_size, "ask size", lot_size=_ROUND_LOT_SHARES),
             ts_event,
-            time.time_ns(),
+            ts_init,
         )
 
     def _instrument_for(self, symbol: str) -> Instrument:
