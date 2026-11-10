@@ -81,17 +81,18 @@ def test_superseded_versions_and_legacy_aliases_are_unavailable(tmp_path: Path, 
     assert _superseded(tmp_path) == [f"config/dsh/profile.json: {model}"]
 
 
-def test_each_review_surface_requests_its_highest_supported_effort() -> None:
+def test_each_review_surface_requests_its_pinned_effort() -> None:
     import yaml
 
     gate = yaml.safe_load((ROOT / ".github/workflows/gate.yml").read_text())
     codex = next(s for s in gate["jobs"]["codex"]["steps"] if s.get("id") == "review")["with"]
     claude = next(s for s in gate["jobs"]["claude"]["steps"] if s.get("id") == "review")["with"]
     assert codex["effort"] == "max"
-    # The Claude reviewer's pin follows model-policy.json's reviewer entry (ADR-0030).
+    # The Claude reviewer's pin follows model-policy.json's reviewer entry (ADR-0030's
+    # 2026-11-09 second amendment: effort by role, high).
     reviewer = json.loads(POLICY.read_text())["claude_reviewer"]
-    assert reviewer["effort"] == "max"
-    assert f"--model {reviewer['model']} --effort max" in claude["claude_args"]
+    assert reviewer["effort"] == "high"
+    assert f"--model {reviewer['model']} --effort high" in claude["claude_args"]
     patch = (ROOT / "config/dsh/mcp/max-effort.cordis.yml").read_text()
     assert "reasoningEffort: max" in patch
     action = (ROOT / ".github/actions/dsh-github/action.yml").read_text()

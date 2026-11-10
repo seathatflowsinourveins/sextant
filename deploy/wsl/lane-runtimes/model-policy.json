@@ -5,47 +5,67 @@
   "gpt": {
     "model": "gpt-6.1-sol",
     "effort": "max",
+    "effort_by_task": {
+      "writer": "high",
+      "review_protected": "max",
+      "review_other": "xhigh",
+      "lookup": "medium"
+    },
+    "effort_calibration": "uncalibrated",
+    "effort_source": "https://developers.openai.com/api/docs/guides/reasoning, read 2026-11-09",
+    "effort_note": "the installed sextant-codex launcher reads effort; the dispatcher follows effort_by_task; no run of ours compares GPT effort levels (25 of 25 Codex gate reviews before 2026-11-09 23:31 ran at max), so every row is an uncalibrated starting value",
     "vendor_source": "https://developers.openai.com/api/docs/models/gpt-6.1-sol"
   },
   "claude": {
     "runtime": "native Claude Code",
     "model": "claude-opus-5-5",
-    "effort": "max",
+    "effort": "high",
     "read_date": "2026-11-09",
-    "pinned_in": ".claude/settings.json, Roster ops' launches and AO's host config: worker tabs and AO's default worker",
-    "authority": "The owner's named exception: Opus 5.5 is the Claude workhorse by the owner's words of 2026-11-09 and moves on the owner's word only (ADR-0030, 2026-11-09 amendment)",
+    "pinned_in": ".claude/settings.json (the model and the project effortLevel), Roster ops' launches and AO's host config: worker tabs and AO's default worker",
+    "authority": "The owner's named exception: Opus 5.5 is the Claude workhorse by the owner's words of 2026-11-09 and moves on the owner's word only (ADR-0030, 2026-11-09 amendment, effort by role)",
     "vendor_source": "https://platform.claude.com/docs/en/models/opus-5-5/overview",
     "effort_source": "https://platform.claude.com/docs/en/build-with-claude/effort"
   },
   "claude_lead": {
     "runtime": "native Claude Code",
     "model": "claude-fable-5-2",
-    "effort": "max",
+    "effort": "high",
     "read_date": "2026-11-09",
-    "launch": "claude --model fable --effort max",
+    "launch": "claude --model fable",
     "pinned_in": "the lead tab's launch",
-    "authority": "The owner's named assignment of the lead, 2026-11-09, and the lead's ruling 1 (ADR-0030, 2026-11-09 amendment)",
+    "authority": "The owner's named assignment of the lead, 2026-11-09, and the lead's ruling 1 as amended by the effort ruling (ADR-0030, 2026-11-09 amendment, effort by role)",
     "vendor_source": "https://platform.claude.com/docs/en/models/fable-5-2/overview",
     "alias_source": "https://code.claude.com/docs/en/model-config, read 2026-11-09: the fable alias resolves to Fable 5.2, which requires Claude Code 2.1.321 or later",
+    "effort_source": "https://platform.claude.com/docs/en/build-with-claude/effort"
+  },
+  "claude_roles": {
+    "runtime": "native Claude Code",
+    "model": "claude-sonnet-5-5",
+    "effort": "high",
+    "read_date": "2026-11-09",
+    "launch": "claude --model sonnet",
+    "pinned_in": "the dispatcher, lander and tracker tabs' launches",
+    "authority": "The owner's 2026-11-09 word moving the dispatcher, lander and tracker to Sonnet 5.5, and the lead's role table (ADR-0030, 2026-11-09 amendment, effort by role)",
+    "vendor_source": "https://code.claude.com/docs/en/model-config",
     "effort_source": "https://platform.claude.com/docs/en/build-with-claude/effort"
   },
   "claude_reviewer": {
     "runtime": "anthropics/claude-code-action v1.0.263 (8041f1d17e0e7d2f2cfe35002962e9f26237c0bb)",
     "model": "claude-fable-5-2",
-    "effort": "max",
+    "effort": "high",
     "read_date": "2026-11-09",
     "pinned_in": ".github/workflows/gate.yml, the claude job: the Claude API reviewer",
-    "authority": "ADR-0030 Decision 1, applied by the daily detector's #168 on 2026-11-09 (ADR-0030, 2026-11-09 amendment)",
+    "authority": "ADR-0030 Decision 1, applied by the daily detector's #168 on 2026-11-09; effort high under the lead's role table (ADR-0030, 2026-11-09 amendment, effort by role)",
     "vendor_source": "https://platform.claude.com/docs/en/models/fable-5-2/overview",
     "effort_source": "https://platform.claude.com/docs/en/build-with-claude/effort"
   },
   "claude_reflection": {
     "runtime": "native Claude Code, run by an Orca automation (orca-ide 1.4.251)",
     "model": "claude-fable-5-2",
-    "effort": "max",
+    "effort": "high",
     "read_date": "2026-11-09",
     "pinned_in": "deploy/wsl/reflection.sh, the agent args of both its create and edit paths: the reflection automation",
-    "authority": "ADR-0030 Decision 1, applied by the daily detector's #168 on 2026-11-09 (ADR-0030, 2026-11-09 amendment)",
+    "authority": "ADR-0030 Decision 1 as amended: a long unattended Claude run at the Claude-worker level, high; the daily detector's #168 on 2026-11-09 (ADR-0030, 2026-11-09 amendment, effort by role)",
     "vendor_source": "https://platform.claude.com/docs/en/models/fable-5-2/overview",
     "effort_source": "https://platform.claude.com/docs/en/build-with-claude/effort"
   },

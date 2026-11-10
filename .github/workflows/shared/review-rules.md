@@ -37,3 +37,9 @@ Use only the upstream GitHub review tools and the supplied API snapshot. Never e
 If a PR is a pin bump from Dependabot, check the upstream's release notes it carries for a breaking change that affects this repo. It needs no manifest row.
 
 The workflow supplies `.github/review/rubric.md` from the trusted default-branch checkout.
+
+## Two author families
+
+A branch whose commits come from two author families takes the author-family marker of the family that wrote most of the diff when that family's review route is the stricter one, and its Harness section names every writer.
+
+Authority: LEAD-1630-lessons-addendum.md item 3, SHA-256 `b86cb3b322318895573afa3bdef3d7991db77b8258fb06002b7f777ff5e2bbd8`.
