@@ -30,6 +30,12 @@ LIFECYCLE = "# Lifecycle sweep\n\nSweep the merged worktrees.\n"
 REFLECTION = "# Verified reflection\n\nReflect on the session.\n"
 
 
+@pytest.fixture(autouse=True)
+def _isolate_dsh_home(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The doctor honors DSH_HOME; each fixture supplies its own ~/.dsh."""
+    monkeypatch.delenv("DSH_HOME", raising=False)
+
+
 def _write(path: Path, text: str, mode: int = 0o644) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text)
@@ -211,7 +217,20 @@ class World:
             },
             "runtimes": {
                 "codex": {"home": ".local/share/sextant-lane-runtimes/codex-home"},
-                "dsh": {"profiles": ["acp", "headless"]},
+                "dsh": {
+                    "profiles": ["acp", "headless"],
+                    "quality": {
+                        "profiles": ["dsh-tui", "acp", "headless"],
+                        "plugins": [
+                            {
+                                "package": "dsh-goalloop-agentteams",
+                                "spec": "github:samirliu/dsh-goalloop-agentteams#6b4b1fad",
+                            },
+                            {"package": "sextant-dsh-review-cmd", "spec": "config/dsh/review-cmd"},
+                        ],
+                    },
+                    "mcp_bundle": "config/dsh/mcp",
+                },
                 "muse": {"shelf_and_mcp": "blocked on issue #256; one user config root"},
             },
         }
@@ -258,6 +277,11 @@ class World:
         )
         _write(repo / "scripts/omni_keys.py", "")
         _write(repo / "config/dsh/profile.lock.json", json.dumps({"engine": "0.2.2-rc.1"}))
+        _write(
+            repo / "config/dsh/hard-lines/package.json",
+            json.dumps({"name": "sextant-dsh-hard-lines"}),
+        )
+        _write(repo / "config/dsh/mcp/package.json", json.dumps({"name": "sextant-dsh-mcp"}))
         _write(
             repo / "config/dsh/mcp/max-effort.cordis.yml",
             "\n".join(
@@ -395,10 +419,14 @@ class World:
         for profile in ("acp", "headless", "dsh-tui"):
             deps = {
                 "sextant-dsh-hard-lines": "link:../src/dsh/hard-lines",
-                "sextant-dsh-quality": "link:../src/dsh/quality",
+                "dsh-goalloop-agentteams": "github:samirliu/dsh-goalloop-agentteams#6b4b1fad",
                 "sextant-dsh-review-cmd": "link:../local/review-cmd",
             }
-            bundles = ["sextant-dsh-hard-lines", "sextant-dsh-quality", "sextant-dsh-review-cmd"]
+            bundles = [
+                "sextant-dsh-hard-lines",
+                "dsh-goalloop-agentteams",
+                "sextant-dsh-review-cmd",
+            ]
             if profile != "dsh-tui":
                 deps["sextant-dsh-mcp"] = "link:../src/dsh/mcp"
                 bundles.append("sextant-dsh-mcp")
@@ -555,11 +583,12 @@ class Fake:
         self.w = world
         self.Result = _load_doctor(world.repo).Result
         self.calls: list[list[str]] = []
+        self.kwargs: list[dict] = []
 
     def __call__(self, command, **kwargs):
-        del kwargs
         cmd = [str(part) for part in command]
         self.calls.append(cmd)
+        self.kwargs.append(kwargs)
         w = self.w
         text = " ".join(cmd)
 
@@ -720,6 +749,63 @@ def test_main_checkout_is_the_first_worktree(tmp_path):
     assert doctor._main_checkout(host) == world.repo
     assert doctor._current_repository(host, str(world.repo / ".claude"))
     assert not doctor._current_repository(host, "/srv/old-sextant")
+
+
+def test_router_reply_is_read_after_a_bracketed_banner(tmp_path):
+    doctor = _load_doctor(ROOT)
+    banner = "[dotenv@17.2.1] injecting env (0) from .env -- tip: set override\n"
+    reply = {"combos": [{"id": "sextant-gpt", "models": ["codex/gpt-6.1-sol-max"]}]}
+    assert doctor._json_text(banner + json.dumps(reply, indent=2)) == reply
+
+
+def test_main_checkout_survives_an_ao_clone(tmp_path):
+    world = World(tmp_path)
+    doctor = _load_doctor(world.repo)
+    clone = tmp_path / "ao-clone"
+    clone.mkdir()
+
+    class CloneRunner:
+        def __call__(self, command, **kwargs):
+            del kwargs
+            if command[:2] == ["git", "-C"] and "remote" in command:
+                return doctor.Result(0, REMOTE + "\n", "")
+            if "worktree" in command:
+                return doctor.Result(0, f"worktree {clone}\n", "")
+            return doctor.Result(1, "", "")
+
+    host = doctor.Host(world.home, clone, world.prefix, CloneRunner())
+    assert doctor._main_checkout(host) == world.repo
+
+
+def test_dsh_probes_the_home_whose_manifests_it_reads(tmp_path):
+    world = World(tmp_path)
+    _write(world.home / ".dsh-full/profiles/acp/package.json", "{}")
+    doctor = _load_doctor(world.repo)
+    fake = Fake(world)
+    report = doctor.inspect_host(doctor.Host(world.home, world.repo, world.prefix, fake))
+    assert "dsh.parity" not in codes(report), [
+        f.message for f in report.findings if f.code == "dsh.parity"
+    ]
+    probes = [
+        (call, kwargs)
+        for call, kwargs in zip(fake.calls, fake.kwargs, strict=True)
+        if call[:2] == ["dsh", "--profile"] and call[-1] == "--dump-config"
+    ]
+    expected = {"DSH_HOME": str(world.home / ".dsh")}
+    assert probes and all(kwargs.get("env") == expected for _, kwargs in probes)
+
+
+def test_renewal_checks_only_retained_router_runtimes(tmp_path):
+    world = World(tmp_path)
+    doctor = _load_doctor(world.repo)
+    fake = Fake(world)
+    doctor.check_omniroute(doctor.Host(world.home, world.repo, world.prefix, fake))
+    due = [
+        call
+        for call in fake.calls
+        if call[:3] == ["python3", "-I", str(world.repo / "scripts" / "omni_keys.py")]
+    ]
+    assert due and due[0][-2:] == ["due", "codex"], due
 
 
 def test_ao_guard_reads_the_tracked_parameterized_script(tmp_path):

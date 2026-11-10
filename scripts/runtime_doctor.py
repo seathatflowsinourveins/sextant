@@ -151,14 +151,22 @@ def _json_file(path: Path) -> Any:
 
 
 def _json_text(text: str) -> Any:
-    lines = text.splitlines()
-    start = next((i for i, line in enumerate(lines) if line.lstrip()[:1] in ("{", "[")), None)
-    if start is None:
-        return None
-    try:
-        return json.JSONDecoder().raw_decode(text[text.find(lines[start].lstrip()) :])[0]
-    except (json.JSONDecodeError, ValueError):
-        return None
+    """Decode the first complete JSON value after any CLI banner.
+
+    A line that merely starts with "[" can be a bracketed banner such as
+    "[dotenv@17.2.1] ..."; only a line whose raw decode succeeds is the reply.
+    """
+    decoder = json.JSONDecoder()
+    offset = 0
+    for line in text.splitlines(keepends=True):
+        stripped = line.lstrip()
+        if stripped[:1] in ("{", "["):
+            try:
+                return decoder.raw_decode(text[offset + len(line) - len(stripped) :])[0]
+            except (json.JSONDecodeError, ValueError):
+                pass
+        offset += len(line)
+    return None
 
 
 def _json_command(host: Host, command: list[str], **kwargs: object) -> Any:
@@ -242,7 +250,22 @@ def _slug(url: str) -> str:
 
 
 def _main_checkout(host: Host) -> Path:
-    """The first checkout in the worktree list is the repository's main checkout."""
+    """The canonical host checkout, even when the doctor runs from an AO clone.
+
+    The installer records the host checkout in prefix/repository-path. Trust it only
+    when it is a checkout of the same repository; otherwise fall back to the first
+    worktree entry, which is the main checkout of a normal worktree setup.
+    """
+    declared = _read(host.prefix / "repository-path")
+    if declared:
+        candidate = Path(declared.strip()).expanduser()
+        if candidate.is_dir():
+            if candidate.resolve() == host.repo.resolve():
+                return candidate.resolve()
+            want = _slug(_remote(host))
+            got = _slug(host.run(["git", "-C", str(candidate), "remote", "get-url", "origin"]).out)
+            if want and got == want:
+                return candidate.resolve()
     result = host.run(["git", "-C", str(host.repo), "worktree", "list", "--porcelain"])
     if result.code == 0:
         for line in result.out.splitlines():
@@ -536,8 +559,18 @@ def _yaml_field(block: str | None, key: str) -> str | None:
     return found.group(1).strip("'\"") if found else None
 
 
-def _dsh_profile(host: Host, profile: str) -> tuple[Result, str]:
-    result = host.run(["dsh", "--profile", profile, "--dump-config"])
+def _dsh_home(host: Host) -> Path:
+    """The one dsh home the command, manifests and skills must share.
+
+    DSH_HOME wins when the caller set it; otherwise dsh's own default is ~/.dsh.
+    A leftover ~/.dsh-full profile tree must never redirect only the manifest reads.
+    """
+    configured = os.environ.get("DSH_HOME")
+    return Path(configured).expanduser() if configured else host.home / ".dsh"
+
+
+def _dsh_profile(host: Host, profile: str, home: Path) -> tuple[Result, str]:
+    result = host.run(["dsh", "--profile", profile, "--dump-config"], env={"DSH_HOME": str(home)})
     return result, result.text
 
 
@@ -560,9 +593,10 @@ def check_dsh(host: Host) -> dict[str, list[Finding]]:
     want_model = _yaml_field(_yaml_block(patch, "agent-default-model"), "model")
     want_effort = _yaml_field(_yaml_block(patch, "agent-default-model"), "reasoningEffort")
     want_thinking = _yaml_field(_yaml_block(patch, "llm-deepseek"), "thinking")
+    dsh_home = _dsh_home(host)
     profiles = ["acp", "headless", "dsh-tui"]
     for profile in profiles:
-        run, text = _dsh_profile(host, profile)
+        run, text = _dsh_profile(host, profile, dsh_home)
         if run.code != 0:
             _fail(out, "dsh", "model_effort", f"dsh --profile {profile} --dump-config failed")
             continue
@@ -586,16 +620,31 @@ def check_dsh(host: Host) -> dict[str, list[Finding]]:
         if guard is None or "hard-lines.mjs" not in guard:
             _fail(out, "dsh", "guard", f"profile {profile} has no sextant-hard-lines guard")
 
-    dsh_home = host.home / ".dsh"
-    profiles_home = (
-        host.home / ".dsh-full" if (host.home / ".dsh-full/profiles").is_dir() else dsh_home
-    )
     for name in _shelf(host):
         if not (dsh_home / "skills" / name / "SKILL.md").is_file():
             _fail(out, "dsh", "parity", f"~/.dsh/skills/{name} is missing")
             break
+    spec = _parity(host).SPEC["runtimes"]["dsh"]
+    mcp_bundle = host.repo / spec["mcp_bundle"]
+    mcp_package = _json_file(mcp_bundle / "package.json")
+    mcp_name = str(mcp_package.get("name")) if isinstance(mcp_package, dict) else ""
+    hard = _json_file(host.repo / "config" / "dsh" / "hard-lines" / "package.json")
+    hard_name = str(hard.get("name")) if isinstance(hard, dict) else "sextant-dsh-hard-lines"
+    quality = spec["quality"]
+    quality_profiles = quality["profiles"]
+    link_packages = {hard_name}
     for profile in profiles:
-        manifest = _json_file(profiles_home / "profiles" / profile / "package.json")
+        required = [hard_name]
+        if profile in quality_profiles:
+            for entry in quality["plugins"]:
+                if profile in entry.get("profiles", quality_profiles):
+                    required.append(entry["package"])
+                    if entry["spec"].startswith(("config/", ".github/")):
+                        link_packages.add(entry["package"])
+        if profile != "dsh-tui" and mcp_name:
+            required.append(mcp_name)
+            link_packages.add(mcp_name)
+        manifest = _json_file(dsh_home / "profiles" / profile / "package.json")
         if not isinstance(manifest, dict):
             _fail(out, "dsh", "parity", f"profile {profile} has no package.json")
             continue
@@ -608,13 +657,14 @@ def check_dsh(host: Host) -> dict[str, list[Finding]]:
         bundles = profile_row.get("bundles", [])
         if not isinstance(bundles, list):
             bundles = []
-        for package in ("sextant-dsh-hard-lines", "sextant-dsh-quality", "sextant-dsh-review-cmd"):
-            if package not in dependencies or not str(dependencies[package]).startswith("link:"):
+        for package in dict.fromkeys(required):
+            recorded = dependencies.get(package)
+            if recorded is None or (
+                package in link_packages and not str(recorded).startswith("link:")
+            ):
                 _fail(out, "dsh", "parity", f"profile {profile} does not record {package}")
             if package not in bundles:
                 _fail(out, "dsh", "parity", f"profile {profile} does not enable {package}")
-        if profile != "dsh-tui" and "sextant-dsh-mcp" not in dependencies:
-            _fail(out, "dsh", "parity", f"profile {profile} does not record sextant-dsh-mcp")
     installed = host.prefix / "dsh-launch.sh"
     if _sha_file(installed) != _sha_file(host.repo / RUNTIMES.relative_to(ROOT) / "dsh-launch.sh"):
         _fail(out, "dsh", "repository", "installed dsh-launch.sh differs from the tracked launcher")
@@ -960,14 +1010,25 @@ def check_omniroute(host: Host) -> dict[str, list[Finding]]:
             )
         if "EnvironmentFiles=" in unit.out and "EnvironmentFiles=\n" not in unit.out + "\n":
             _fail(out, "omniroute", "parity", "omniroute.service loads an EnvironmentFile")
-    due = host.run(
-        ["python3", "-I", str(host.repo / "scripts" / "omni_keys.py"), "due"],
-        env={"SEXTANT_LANE_RUNTIMES": str(host.prefix)},
+    routing = _json_file(host.prefix / "routing.json") or _json_file(
+        host.repo / RUNTIMES.relative_to(ROOT) / "routing.json"
     )
-    if due.code == 0:
-        _fail(out, "omniroute", "parity", "a runtime key is due for renewal")
-    elif due.code != 1:
-        _fail(out, "omniroute", "parity", f"omni_keys.py due failed (exit {due.code})")
+    routing = routing if isinstance(routing, dict) else {}
+    models = routing.get("models", [])
+    retained = sorted(
+        {str(model).split("/", 1)[0] for model in models if isinstance(model, str) and "/" in model}
+    )
+    if not retained:
+        _fail(out, "omniroute", "parity", "routing.json names no retained runtime for key renewal")
+    else:
+        due = host.run(
+            ["python3", "-I", str(host.repo / "scripts" / "omni_keys.py"), "due", *retained],
+            env={"SEXTANT_LANE_RUNTIMES": str(host.prefix)},
+        )
+        if due.code == 0:
+            _fail(out, "omniroute", "parity", "a runtime key is due for renewal")
+        elif due.code != 1:
+            _fail(out, "omniroute", "parity", f"omni_keys.py due failed (exit {due.code})")
 
     binds = host.run(["ss", "-ltnp"])
     if binds.code == 0:
