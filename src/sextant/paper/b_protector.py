@@ -81,7 +81,14 @@ TAPE_TIMEOUT_NAME = "tape_read_timeout_s"
 TAPE_QUOTES_NAME = "tape_max_quotes"
 TAPE_DEADLINE_NAME = "tape_deadline_s"
 TAPE_REQUESTS_NAME = "tape_max_requests"
-TAPE_NAMES = (TAPE_TIMEOUT_NAME, TAPE_QUOTES_NAME, TAPE_DEADLINE_NAME, TAPE_REQUESTS_NAME)
+TAPE_BARS_NAME = "tape_max_bars"
+TAPE_NAMES = (
+    TAPE_TIMEOUT_NAME,
+    TAPE_QUOTES_NAME,
+    TAPE_DEADLINE_NAME,
+    TAPE_REQUESTS_NAME,
+    TAPE_BARS_NAME,
+)
 PARAMETER_NAMES = frozenset(
     {
         TRAIL_PERCENT_NAME,
@@ -184,6 +191,7 @@ class BParameters:
     tape_max_quotes: Decimal | None = None
     tape_deadline_s: Decimal | None = None
     tape_max_requests: Decimal | None = None
+    tape_max_bars: Decimal | None = None
 
     def __post_init__(self) -> None:
         fraction = _decimal(self.native_trail_fraction, TRAIL_PERCENT_NAME)
