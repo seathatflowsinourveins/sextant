@@ -28,6 +28,7 @@ from pathlib import Path
 from types import FrameType
 from typing import Any, cast
 
+from alpaca.common.exceptions import APIError
 from alpaca.data.historical.stock import StockHistoricalDataClient
 from alpaca.trading.client import TradingClient
 
@@ -38,6 +39,8 @@ from sextant.paper.b_feed import (
     BMarketDataFeed,
     LatestDataClient,
     bound_transport,
+    entry_wire,
+    no_retries,
 )
 from sextant.paper.b_protector import (
     BParameters,
@@ -45,6 +48,7 @@ from sextant.paper.b_protector import (
     ProtectorRefusal,
     ProtectorStream,
     TradingClientLike,
+    _event_name,
     load_b_parameters,
 )
 from sextant.paper.config import PaperAccount, PaperBudget, load_budget
@@ -69,28 +73,91 @@ DEFAULT_DATA_CLIENT_FACTORY: Callable[..., LatestDataClient] = cast(
 class PacedTradingClient:
     """Route every broker read and write through the repo's existing account pacer."""
 
-    def __init__(self, client: TradingClientLike, pacer: Any) -> None:
+    def __init__(self, client: TradingClientLike, pacer: Any, *, entry_client: Any = None) -> None:
         self._client = client
         self._pacer = pacer
+        self._entry_charges: dict[str, bool] = getattr(pacer, "entry_charges", {})
+        self._entry_client = None if entry_client is None else no_retries(entry_client, client)
 
-    def _call(self, kind: ActionKind, method: Callable[..., Any], *args: Any) -> Any:
+    @property
+    def _unsettled(self) -> set[str]:
+        return {cid for cid, active in self._entry_charges.items() if active}
+
+    def entry_settled(self, client_id: str | None) -> None:
+        if client_id in self._entry_charges:
+            self._entry_charges[client_id] = False
+
+    def entry_update(self, order: Any, event: str = "") -> None:
+        cid = getattr(order, "client_order_id", None)
+        if cid in self._entry_charges and _event_name(getattr(order, "side", "")) == "buy":
+            if event in {"fill", "canceled", "expired", "rejected"} or _event_name(
+                getattr(order, "status", "")
+            ) in {"filled", "canceled", "expired", "rejected"}:
+                self.entry_settled(cid)
+
+    def _call(
+        self,
+        kind: ActionKind,
+        method: Callable[..., Any],
+        *args: Any,
+        admission: Callable[[], bool] = lambda: True,
+        position_counts: Callable[[], tuple[int, int]] | None = None,
+    ) -> Any:
         """One paced call; a refused read is withdrawn so it never runs later (G6).
 
-        A refused write stays queued and is sent by the next drain, as before.
+        Unsent entries withdraw; protection writes stay queued.
         """
 
-        withdraw = kind is ActionKind.QUERY
+        withdraw = kind in {ActionKind.QUERY, ActionKind.SUBMIT}
         results: list[Any] = []
         state = {"cancelled": False}
+        cid = getattr(args[0], "client_order_id", None) if kind is ActionKind.SUBMIT else None
 
         def send(before_wire: Callable[[], None]) -> None:
-            before_wire()
-            results.append(method(*args))
+            def wire() -> None:
+                before_wire()
+                if cid:
+                    self._entry_charges[cid] = True
 
-        def admission() -> bool:
-            return not state["cancelled"]
+            try:
+                with entry_wire(self._entry_client if cid else None, wire):
+                    results.append(method(*args))
+            except APIError as exc:
+                if kind is ActionKind.SUBMIT and exc.status_code in {403, 422, 429}:
+                    self.entry_settled(cid)
+                if kind is ActionKind.SUBMIT and exc.status_code in {429, 504}:
+                    raise PacerRefused("entry_wait_for_generation") from exc
+                raise
 
-        self._pacer.request(kind, send, admission=admission)
+        def admitted() -> bool:
+            return (
+                not state["cancelled"]
+                and (
+                    kind is not ActionKind.SUBMIT
+                    or (
+                        isinstance(cid, str)
+                        and bool(cid.strip())
+                        and cid not in self._entry_charges
+                    )
+                )
+                and admission()
+            )
+
+        try:
+            if kind is ActionKind.SUBMIT:
+                self._pacer.request(
+                    kind,
+                    send,
+                    admission=admitted,
+                    position_counts=position_counts,
+                    snapshot_reads=2,
+                    entry_positions=lambda: len(self._unsettled),
+                )
+            else:
+                self._pacer.request(kind, send, admission=admitted)
+        except BaseException:
+            state["cancelled"] = withdraw
+            raise
         if not results:
             state["cancelled"] = withdraw
             if withdraw:
@@ -105,13 +172,40 @@ class PacedTradingClient:
         return self._call(ActionKind.QUERY, self._client.get_all_positions)
 
     def get_orders(self, filter: Any = None) -> Any:
-        return self._call(ActionKind.QUERY, self._client.get_orders, filter)
+        orders = self._call(ActionKind.QUERY, self._client.get_orders, filter)
+        for order in orders:
+            self.entry_update(order)
+        return orders
 
     def get_order_by_client_id(self, client_id: str) -> Any:
-        return self._call(ActionKind.QUERY, self._client.get_order_by_client_id, client_id)
+        order = self._call(ActionKind.QUERY, self._client.get_order_by_client_id, client_id)
+        self.entry_update(order)
+        return order
 
-    def submit_order(self, order_data: Any) -> Any:
-        return self._call(ActionKind.REDUCE, self._client.submit_order, order_data)
+    def submit_order(
+        self,
+        order_data: Any,
+        *,
+        kind: ActionKind = ActionKind.REDUCE,
+        admission: Callable[[], bool] = lambda: True,
+        position_counts: Callable[[], tuple[int, int]] | None = None,
+    ) -> Any:
+        client = self._entry_client if kind is ActionKind.SUBMIT else self._client
+        if client is None:
+            raise PacerRefused("entry_client_unavailable")
+        counts = position_counts
+
+        def charged_counts() -> tuple[int, int]:
+            opened, exiting = counts() if counts else (0, 0)
+            return (opened + len(self._unsettled) if type(opened) is int else opened, exiting)
+
+        return self._call(
+            kind,
+            client.submit_order,
+            order_data,
+            admission=admission,
+            position_counts=charged_counts,
+        )
 
     def cancel_order_by_id(self, order_id: object) -> None:
         self._call(ActionKind.CANCEL, self._client.cancel_order_by_id, order_id)
@@ -129,10 +223,25 @@ class BudgetControls:
     """The row-8 controls AccountPacer needs, from the existing paper budget row."""
 
     def __init__(self, budget: PaperBudget) -> None:
+        self.entry_reserves = None
+        try:
+            self.entry_reserves = Controls.from_rows(
+                json.loads(
+                    (
+                        Path(__file__).resolve().parents[3] / "lanes/custody-parameters.json"
+                    ).read_text()
+                )
+            )
+        except (OSError, ValueError, TypeError, KeyError, ArithmeticError):
+            pass
         self._values: dict[str, Any] = {
             "request_budget": budget.requests,
             "window_s": Decimal(budget.window_s),
             "burst": max(1, budget.requests // 10),
+            **{
+                name: self.entry_reserves[name] if self.entry_reserves is not None else None
+                for name in ("reserve_per_open_position", "reserve_per_exiting_position")
+            },
         }
 
     def __getitem__(self, name: str) -> Any:
@@ -220,6 +329,7 @@ def main(
     argv: Sequence[str] | None = None,
     *,
     client_factory: Callable[..., TradingClientLike] = DEFAULT_CLIENT_FACTORY,
+    entry_factory: Callable[..., TradingClientLike] = DEFAULT_CLIENT_FACTORY,
     on_page: Callable[[Page], None] = _print_page,
     on_state: Callable[[str], None] = _print_state,
     data_client_factory: Callable[..., LatestDataClient] = DEFAULT_DATA_CLIENT_FACTORY,
@@ -278,6 +388,12 @@ def main(
             client_factory(api_key=api_key, secret_key=secret_key, paper=True),
             pacer,
         )
+        try:
+            client._entry_client = no_retries(
+                entry_factory(api_key=api_key, secret_key=secret_key, paper=True), client._client
+            )
+        except Exception as exc:
+            on_page(Page(reason="entry_client_unavailable", detail=type(exc).__name__))
         try:
             data_client: LatestDataClient | None = data_client_factory(
                 api_key=api_key, secret_key=secret_key
