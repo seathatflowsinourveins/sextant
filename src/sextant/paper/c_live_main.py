@@ -103,6 +103,17 @@ _PROTECTION_ACKS = frozenset({"NEW", "ACCEPTED", "PENDING_NEW", "PARTIALLY_FILLE
 _PROTECTION_GONE = frozenset({"CANCELED", "CANCELLED", "REPLACED"})
 
 
+def _declared_slots(rows: Sequence[dict[str, Any]]) -> int | None:
+    """Return the lane's declared slot count, or None while it is UNAVAILABLE."""
+    row = next((item for item in rows if item.get("name") == "portfolio_slots"), None)
+    if row is None or row.get("value") is None:
+        return None
+    value = row["value"]
+    if type(value) is not int or value <= 0:
+        raise ValueError("portfolio_slots: positive integer required")
+    return value
+
+
 class LiveRefusal(RuntimeError):
     """The C runner will not act, or cannot know an order's state; it stops."""
 
@@ -897,7 +908,13 @@ def main(
         raise SystemExit("C live main refused: the open-order list may be truncated")
 
     try:
-        controls = Controls.from_rows(json.loads(DEFAULT_CONTROLS.read_text()))
+        entry_rows = json.loads(DEFAULT_ENTRY_PARAMETERS.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"C live main refused: entry parameters unavailable: {exc}") from exc
+    try:
+        controls = Controls.from_rows(
+            json.loads(DEFAULT_CONTROLS.read_text()), slots=_declared_slots(entry_rows)
+        )
         pacer = AccountPacer(controls, now_ns=now_ns)
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         raise SystemExit(f"C live main refused: custody controls unavailable: {exc}") from exc
@@ -938,11 +955,8 @@ def main(
         if first is None:
             raise SystemExit("C live main refused: the XNYS session is closed")
         try:
-            params = EntryParameters.from_rows(
-                json.loads(DEFAULT_ENTRY_PARAMETERS.read_text()),
-                first_leg_only=True,
-            )
-        except (OSError, ValueError, json.JSONDecodeError, KeyError) as exc:
+            params = EntryParameters.from_rows(entry_rows, first_leg_only=True)
+        except (ValueError, KeyError) as exc:
             raise SystemExit(f"C live main refused: entry parameters unavailable: {exc}") from exc
         try:
             current_baseline = _segment_baseline(args.baseline, args.baseline_dir, first)

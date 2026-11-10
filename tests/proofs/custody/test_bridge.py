@@ -5,8 +5,13 @@ from decimal import Decimal as D
 import pytest
 
 from sextant.execution.alpaca import AlpacaBridge, FillFact, OrderCommand, Outcome
-from sextant.execution.custody import CustodyError, WriterLease
-from sextant.execution.pacer import AccountPacer, ActionKind
+from sextant.execution.custody import (
+    AccountSnapshot,
+    CustodyError,
+    PositionAuthority,
+    WriterLease,
+)
+from sextant.execution.pacer import AccountPacer, ActionKind, PacerRefused
 
 from .conftest import IID, SCOPE, SEC, controls, custody, order, snapshot
 
@@ -393,6 +398,37 @@ def test_unavailable_entry_reserve_refuses_before_registering_a_phantom_order(tm
         with pytest.raises(CustodyError, match="reserve"):
             b.submit(command(side="BUY"))
         assert book.registrations == {}
+        assert sent == []
+    finally:
+        lease.close()
+
+
+def _flat_snapshot(count: int, *, epoch: int = 1):
+    positions = {IID: D("100")} | {f"S{index}.ALPACA": D("100") for index in range(count - 1)}
+    authority = {
+        iid: PositionAuthority(quantity, "TEST supplied prior custody; no native claim proof")
+        for iid, quantity in positions.items()
+    }
+    return AccountSnapshot(
+        SCOPE,
+        epoch,
+        positions,
+        authority,
+        (),
+        True,
+        SEC,
+        "TEST complete account observation",
+    )
+
+
+def test_refused_entry_releases_custody_and_reaches_its_caller(tmp_path):
+    b, book, lease, *_rest, sent = bridge(tmp_path, reserve=2)
+    try:
+        book.observe(_flat_snapshot(8), now=SEC)
+        with pytest.raises(PacerRefused, match="entry-reserve-exceeds-burst"):
+            b.submit(command(cid="refused-entry", side="BUY"))
+        assert book.registrations["refused-entry"].get("unsent") == ("entry-reserve-exceeds-burst")
+        assert book.submission_ready(IID)
         assert sent == []
     finally:
         lease.close()

@@ -1,7 +1,10 @@
 """Optuna's multivariate TPE over CPCV folds and one untouched holdout.
 
 Every study is a cumulative MODELED TrialLog arm. The objective is the lower-quartile Sharpe of
-the combinatorial purged folds; the search never reads a holdout session; a proposal is admissible
+the combinatorial purged folds; the search never reads a holdout session. While codex review
+5833241132's three holdout-custody findings are open, every supported, unconsumed run is
+NOT_ADMISSIBLE: it refuses after the DSR, PBO and merit gates and before the one-shot holdout is
+evaluated. PR 2 removes this stamp together with the three fixes; then a proposal is admissible
 only when the holdout confirms the sign and the deflated Sharpe and PBO gates pass. The registry
 is read-only; ``write_report`` writes proposals, never an adoption.
 
@@ -498,7 +501,11 @@ def run_study(
     holdout_days: Sequence[str],
     log_path: str | Path,
 ) -> StudyResult:
-    """Run one study: TPE over the folds, then one holdout evaluation of the best trial."""
+    """Run one study: TPE over the folds, then refuse before the holdout is evaluated.
+
+    PR 1 stamps every supported, unconsumed run NOT_ADMISSIBLE; the holdout is evaluated only
+    when PR 2 removes this stamp together with the three holdout-custody fixes.
+    """
     _validate(spec)
     eligibility = _eligibility(spec, sessions, holdout_days)
     if eligibility.reason:
@@ -600,62 +607,20 @@ def run_study(
     matrix = np.asarray(list(series.values()), dtype=float).T
     pbo = pbo_cscv(matrix, s=16) if matrix.shape[1] >= 32 else None
 
-    holdout_state, holdout_error, holdout_label = "COMPLETE", "", "MISSING"
-    try:
-        holdout_observations = evaluate(best_suggested, holdout)
-        holdout_days_used, holdout_returns = session_series(holdout_observations, holdout)
-        holdout_sharpe: float | None = sharpe(holdout_returns)
-        holdout_label = "PASS" if holdout_sharpe > 0 else "FAIL"
-    except Exception as error:
-        holdout_days_used, holdout_returns = [], []
-        holdout_sharpe, holdout_state = None, "FAIL"
-        holdout_error = f"{type(error).__name__}: {error}"
-
-    holdout_config = _trial_config(spec, arm_id=f"{spec.name}:{spec.arm}:holdout", sha=sha)
-    holdout_config["params_hash"] = snapshot_hash(best_logged)
-    log.append(
-        spec.name,
-        best_logged,
-        holdout_config,
-        spec.seed,
-        state=holdout_state,
-        days=holdout_days_used,
-        daily_net_returns=holdout_returns,
-        objective=holdout_sharpe,
-        error=holdout_error,
-    )
-
     n_trades = len(best_returns)
     merit = "OK" if n_trades >= 30 else "INSUFFICIENT_N"
-    admissible = (
-        best_objective is not None
-        and best_objective > 0
-        and holdout_label == "PASS"
-        and merit == "OK"
-        and dsr > 0.95
-        and pbo is not None
-        and pbo <= 0.05
+    reason = (
+        "codex review 5833241132 at b4e4822: the run refuses after the DSR, PBO and merit "
+        "gates and before the one-shot holdout is evaluated; PR 2 removes this stamp with "
+        "the three holdout-custody fixes"
     )
-    if admissible:
-        decision = "PROPOSED"
-        assert best_objective is not None
-        proposals = _proposals(
-            spec, best_suggested, objective=best_objective, holdout_sharpe=holdout_sharpe or 0.0
-        )
-        reason = "CPCV, holdout, DSR and PBO gates pass; the proposal is for review, never adoption"
-    else:
-        decision, proposals = "NO_PROPOSAL", ()
-        reason = (
-            f"best objective {best_objective}, holdout {holdout_label}, "
-            f"DSR {dsr:.3f}, PBO {pbo}, merit {merit}"
-        )
     return StudyResult(
         spec=spec,
-        decision=decision,
+        decision="NOT_ADMISSIBLE",
         reason=reason,
         merit=merit,
-        holdout=holdout_label,
-        holdout_sharpe=holdout_sharpe,
+        holdout="MISSING",
+        holdout_sharpe=None,
         n_sessions=len(sessions),
         n_train_sessions=len(train),
         n_holdout_sessions=len(holdout),
@@ -668,7 +633,7 @@ def run_study(
         best_objective=best_objective,
         dsr=dsr,
         pbo=pbo,
-        proposals=proposals,
+        proposals=(),
     )
 
 

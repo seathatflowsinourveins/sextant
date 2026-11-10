@@ -41,6 +41,8 @@ def b_params() -> BParameters:
     return BParameters(
         native_trail_fraction=Decimal("0.025"),
         reconcile_interval_s=Decimal("10"),
+        feed_poll_interval_s=Decimal("1"),
+        feed_silence_s=Decimal("5"),
     )
 
 
@@ -264,7 +266,14 @@ def test_a_custody_change_writes_the_cancel_then_the_rearmed_line() -> None:
     client = FakeClient()
     client.positions = [api_position("10")]
     client.orders = [api_order(stop_price="97.50")]
-    p = protector(client)
+    p = protector(client, feed="sip")
+    p.on_quote(
+        "AAPL",
+        bid=Decimal("99.50"),
+        ask=Decimal("99.51"),
+        last=Decimal("99.50"),
+        ts_ns=NOW_NS,
+    )
     p.reconcile()
     trail = client.orders[0]
     assert "protected=10" in p.states[-1]

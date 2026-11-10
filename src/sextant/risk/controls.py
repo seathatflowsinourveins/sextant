@@ -13,6 +13,7 @@ from types import MappingProxyType
 from typing import Any
 
 SEC = 1_000_000_000
+ENTRY_RESERVE_EXCEEDS_BURST = "entry-reserve-exceeds-burst"
 COUNTS = frozenset(
     {
         "request_budget",
@@ -47,7 +48,13 @@ class Controls:
     fixture: bool
 
     @classmethod
-    def from_rows(cls, rows: Sequence[Mapping[str, Any]], *, fixture=False):
+    def from_rows(
+        cls,
+        rows: Sequence[Mapping[str, Any]],
+        *,
+        fixture=False,
+        slots: int | None = None,
+    ):
         names = [r["name"] for r in rows]
         if set(names) != NAMES or len(names) != len(NAMES):
             raise ValueError("missing, duplicate or unknown custody control")
@@ -93,6 +100,14 @@ class Controls:
         burst = int(values["request_budget"] * values["burst_fraction"])
         if not 1 <= burst < values["request_budget"]:
             raise ValueError("burst outside budget")
+        if slots is not None:
+            if type(slots) is not int or slots <= 0:
+                raise ValueError("slots: positive integer required")
+            if burst < 2 * slots + 1:
+                raise ValueError(
+                    f"{ENTRY_RESERVE_EXCEEDS_BURST}: {slots} slots need burst >= "
+                    f"{2 * slots + 1}, got {burst}"
+                )
         payload = json.dumps(
             sorted((dict(r) for r in rows), key=lambda r: r["name"]), sort_keys=True, default=str
         )

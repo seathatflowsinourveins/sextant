@@ -9,6 +9,7 @@ Everything here comes from a SOTA source: a maintained repo or framework at a pi
 - If no source exists, do not build it. Say so and stop. Only the owner can make an exception, and its manifest row says where you looked.
 
 ## Rule 2: compound and self-maintain
+- The lead decides without asking on a pinned upstream source, measurement or converged screen and records the decision with its sources; the owner can overrule. The owner's sign-ins and stored keys, live actions, owner-order and Peregrine custody, Rule 1 exceptions, named workhorse pins, TradingView consent, IBKR login and unrequested destructive actions remain owner-only. [Standing delegation, owner, 2026-11-09](docs/handbook/lifecycle.md#standing-authority)
 - Every run leaves the next one better: a lesson from a session, a review or a trade goes into `docs/handbook/` and into the skill or rule it changes, through a PR.
 - Each tunable value has a registry row and source. A sourced value without calibration is an uncalibrated starting value, never measured success. If the value or its authority is missing, keep it unavailable; fixtures supply no default authority. Reviewed changes occur between sessions, and nightly tuning only proposes. [ADR-0018](docs/adr/0018-evidence-and-learning-loop.md)
 - Every arm and run counts in one cumulative trial ledger, across replay, sim and paper, including rejected alternatives. Tiers are never pooled and history is never reset.
@@ -24,6 +25,7 @@ Everything here comes from a SOTA source: a maintained repo or framework at a pi
 - [TradingView](lanes/tradingview/README.md): display and owner-manual tickets; never a machine signal. Managed-paper entries use plain LIMIT, no bracket.
 
 ## Landing
+- A draft is a hold: only its drafting session, the lead or the owner runs `gh pr ready`; only Landing runs `gh pr merge`; everyone else arms auto-merge through `just pr`. [Owner ruling and GitHub draft PRs, read 2026-11-09](docs/handbook/lifecycle.md#standing-authority)
 - Work on a branch. `just pr "title" body.md` opens the PR from the template and turns on auto-merge. Squash auto-merge requires `ci`, `source` and `review`. CI runs on `pull_request` on hosted runners; the default-branch `workflow_run` gate runs Danger API-only and dsh-github, then posts the head's statuses. A PR cannot edit its own gate. [ADR-0001, 2026-11-09 amendment](docs/adr/0001-sextant-foundation.md)
 - dsh-github reviews every PR. API-key reviews run only for dsh authors (Codex by default; `Review-Family claude` selects Claude), or as one extra review of a risk or gate path (.github/**, dangerfile.js, review prompts/rubric). Use the literal markers below; malformed, conflicting or self-review selections block. Other changes use dsh alone. Local Codex uses the subscription pool, never OPENAI_API_KEY. Live promotion keeps its separate two-family exact-SHA requirement.
 - Follow the [landing verdict rule](.github/workflows/shared/review-rules.md#report): only Always P0 or a concrete exact-head failing witness blocks; other findings share one follow-up issue. From the third reviewed head, only P0 blocks.
