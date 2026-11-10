@@ -306,4 +306,4 @@ def test_the_review_spill_root_is_the_gates_known_output_dir() -> None:
     assert "DSH_GITHUB_CI_OUTPUT_DIR: ${{ inputs.output-dir }}" in action
     bundle = (ROOT / ".github/gate/bundles/api-only/index.mjs").read_text()
     assert "DSH_GITHUB_CI_OUTPUT_DIR" in bundle
-    assert "spillReads = new Set(['read', 'grep'])" in bundle
+    assert "const spillPathFields = new Map([['read', 'file_path'], ['grep', 'path']]);" in bundle
