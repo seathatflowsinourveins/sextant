@@ -8,7 +8,11 @@ Alpaca orders page read 2026-11-09).
 
 from __future__ import annotations
 
+import signal
+import threading
+import time
 from collections.abc import Sequence
+from dataclasses import replace
 from datetime import datetime
 from decimal import Decimal
 from uuid import uuid4
@@ -1012,6 +1016,22 @@ def test_a_missing_native_stop_seeds_the_trigger_from_an_ok_tape() -> None:
     start(p)
 
     assert p.emulated_trigger("AAPL") == Decimal("37.73")
+    assert "outside_rth_trigger_missing" in [page.reason for page in p.pages]
+
+
+def test_a_missing_native_stop_keeps_the_brokers_own_high_water_mark() -> None:
+    # G3 (turn 3): the maximum over every valid source; hwm 40.00 at 2.5% implies 39.00.
+    client = tonight_client()
+    client.orders = [
+        api_order(qty="55", submitted_at="2026-11-09T17:47:18Z").model_copy(
+            update={"hwm": "40.00", "trail_percent": "2.5"}
+        )
+    ]
+    p = protector(client, history=tonight_history(), now_ns=POST_NS)
+    start(p)
+
+    assert p.emulated_trigger("AAPL") == Decimal("39.00")
+    assert "outside_rth_trigger_missing" in [page.reason for page in p.pages]
 
 
 class StalledHistory(FakeHistory):
@@ -1067,10 +1087,11 @@ def test_five_positions_against_a_stalled_data_api_are_protected_inside_the_dead
     client = five_held(clock, trading_s=1.0)
     history = StalledHistory(clock, wait_s=3.05)
     at_ns = ns(datetime(2026, 11, 9, 18, 0, tzinfo=ET))  # Monday post, held since Friday post
+    params = replace(b_params(), tape_read_timeout_s=Decimal("3.05"))
     p = Protector(
         client,
         b_account(),
-        b_params(),
+        params,
         now_ns=lambda: at_ns,
         feed="sip",
         history=history,
@@ -1078,13 +1099,71 @@ def test_five_positions_against_a_stalled_data_api_are_protected_inside_the_dead
     )
     p.rebuild_tapes()
 
-    assert clock[0] <= 10 + 3.05  # tape_deadline_s plus one transport timeout
+    assert clock[0] <= 10  # a call starts only while one timeout fits before the deadline
     assert len({request[0] for request in history.requests}) == len(history.requests) <= 3
     assert all(status == "partial" for status in (p._tapes[s].status for s in p._tapes))
     assert len(p._tapes) == 5
     p.reconcile()
     for symbol in ("AAPL", "MSFT", "NVDA", "ASTS", "TSLA"):
         assert p.emulated_trigger(symbol) == Decimal("36.465")
+    assert clock[0] <= 10 + 3.05  # turn 3: protecting through the first reconcile
+
+
+class SleepingHistory(FakeHistory):
+    """A data API that keeps the socket busy in real time, longer than any deadline."""
+
+    def quotes(
+        self, symbol: str, start_ns: int, end_ns: int, feed: str
+    ) -> tuple[QuoteObservation, ...]:
+        self.requests.append((symbol, start_ns, end_ns, feed))
+        for _ in range(500):
+            time.sleep(0.01)  # each wait inside any read timeout; only an elapsed bound ends it
+        return ()
+
+
+def test_the_interval_timer_ends_a_progressing_start_read_at_its_deadline() -> None:
+    # G1 (turn 3): signal.setitimer(ITIMER_REAL) bounds the whole read in real time.
+    client = five_held([0.0], trading_s=0.0)
+    params = replace(b_params(), tape_deadline_s=Decimal("0.2"))
+    at_ns = ns(datetime(2026, 11, 9, 18, 0, tzinfo=ET))
+    p = Protector(
+        client, b_account(), params, now_ns=lambda: at_ns, feed="sip", history=SleepingHistory()
+    )
+
+    def outer(signum: int, frame: object) -> None:
+        raise AssertionError("the outer alarm fired")
+
+    previous = signal.signal(signal.SIGALRM, outer)
+    prior = signal.setitimer(signal.ITIMER_REAL, 30)
+    try:
+        began = time.monotonic()
+        p.rebuild_tapes()
+        elapsed = time.monotonic() - began
+        restored = signal.getsignal(signal.SIGALRM), signal.getitimer(signal.ITIMER_REAL)[0]
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, *prior)
+        signal.signal(signal.SIGALRM, previous)
+
+    assert elapsed < 1.0
+    assert restored[0] is outer and 28 < restored[1] <= 30  # handler and timer restored
+    assert [p._tapes[s].status for s in sorted(p._tapes)] == ["partial"] * 5
+    assert [page.reason for page in p.pages] == ["outside_rth_tape_unreadable"] * 5
+    p.reconcile()
+    assert p.emulated_trigger("AAPL") == Decimal("36.465")
+
+
+def test_off_the_main_thread_the_start_read_reads_nothing_and_pages_once() -> None:
+    client = five_held([0.0], trading_s=0.0)
+    history = FakeHistory()
+    p = Protector(
+        client, b_account(), b_params(), now_ns=lambda: POST_NS, feed="sip", history=history
+    )
+    worker = threading.Thread(target=p.rebuild_tapes)
+    worker.start()
+    worker.join(5)
+
+    assert not history.requests and not client.calls and not p._tapes
+    assert [page.reason for page in p.pages] == ["outside_rth_tape_unreadable"]
 
 
 def test_the_start_read_stops_at_its_request_budget() -> None:

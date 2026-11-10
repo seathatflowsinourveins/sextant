@@ -49,9 +49,9 @@
   },
   {
     "name": "tape_deadline_s",
-    "unit": "seconds of one monotonic deadline over the whole start read, trading calls included; no request starts after it, so the read ends by the deadline plus one tape_read_timeout_s",
+    "unit": "seconds of one hard elapsed deadline over the whole start read, trading calls included: a request starts only while one tape_read_timeout_s still fits before it, and a main-thread ITIMER_REAL interval timer ends the read at it, so B's first reconcile begins within this many seconds of the read's start (that reconcile then runs under the trading clients' own transport timeouts)",
     "value": "10",
-    "source": "the reconcile_interval_s row (10 s): B starts protecting no later than one reconcile interval after start; Python time.monotonic docs (read 2026-11-10); lead ruling LEAD-0041 G1; UNCALIBRATED",
+    "source": "the reconcile_interval_s row (10 s): B starts protecting no later than one reconcile interval after start; Python time.monotonic docs and the signal module's setitimer example (docs.python.org/3/library/signal.html, read 2026-11-10; PEP 475: a call interrupted by a handler that raises is not retried); lead rulings LEAD-0041 G1 and LEAD-0079; UNCALIBRATED",
     "calibration_state": "UNCALIBRATED",
     "last_change": "2026-11-10"
   },

@@ -18,6 +18,8 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import signal
+import threading
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -86,6 +88,42 @@ NS_PER_SECOND = Decimal(1_000_000_000)
 
 class ProtectorRefusal(RuntimeError):
     """The protector will not act on this account or order."""
+
+
+class _StartReadExpired(BaseException):
+    """The start read's interval timer fired; no library handler may swallow it."""
+
+
+def _bounded(seconds: float, body: Callable[[], None]) -> str | None:
+    """Run ``body`` under a one-shot ITIMER_REAL alarm; return why it stopped early, or None.
+
+    The pattern of the signal module's documented example (docs.python.org/3/library/
+    signal.html): the handler raises, so a blocking call ends there (PEP 475). Always
+    disarmed, and the previous handler and timer restored, before it returns.
+    """
+
+    def expire(signum: int, frame: object) -> None:
+        raise _StartReadExpired
+
+    began = time.monotonic()
+    previous = signal.signal(signal.SIGALRM, expire)
+    prior = (0.0, 0.0)
+    try:
+        prior = signal.setitimer(signal.ITIMER_REAL, seconds)
+        try:
+            body()
+        finally:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+    except _StartReadExpired:
+        return "over its deadline"
+    except Exception as exc:
+        return type(exc).__name__
+    finally:
+        signal.signal(signal.SIGALRM, previous)
+        if prior[0] > 0:
+            left = max(prior[0] - (time.monotonic() - began), 1e-6)
+            signal.setitimer(signal.ITIMER_REAL, left, prior[1])
+    return None
 
 
 @dataclass(frozen=True)
@@ -667,9 +705,12 @@ class Protector:
         In any session, the outside-hours high since each position's adoption instant is
         rebuilt from the recorded quotes before the stream starts, on the loop's own thread,
         and applied at the first outside-hours adoption. A position adopted while B runs
-        needs no read: its high starts at the adoption mark. One monotonic deadline and one
-        request budget bound the whole read, trading calls included (G1, G6); a symbol stops
-        at its first failure.
+        needs no read: its high starts at the adoption mark. A symbol stops at its first
+        failure. G1: a call starts only while one tape_read_timeout_s still fits before
+        tape_deadline_s, and the standard library's interval timer on the main thread
+        (signal.setitimer, ITIMER_REAL; its handler raises, so PEP 475 does not retry the
+        call) ends the read at tape_deadline_s, so the first reconcile begins by then.
+        Off the main thread nothing is read. Every position not completed is partial.
         """
 
         history = self._history
@@ -677,35 +718,46 @@ class Protector:
         budget = self._parameters.tape_max_requests
         if history is None or deadline_s is None or budget is None:
             return
+        if threading.current_thread() is not threading.main_thread():
+            self.page("outside_rth_tape_unreadable", None, "start read off the main thread")
+            return
+        reserve = float(self._parameters.tape_read_timeout_s or 0)
         now_ns = self._now_ns()
         deadline = self._monotonic() + float(deadline_s)
         left = [int(budget)]
+        held: list[tuple[str, Decimal]] = []
+        done: set[str] = set()
 
         def spend() -> bool:
-            if left[0] < 1 or self._monotonic() >= deadline:
+            if left[0] < 1 or self._monotonic() + reserve > deadline:
                 return False
             left[0] -= 1
             return True
 
-        if not spend():
-            return
-        try:
-            positions = self._start_client.get_all_positions()
-        except Exception as exc:
-            self.page("outside_rth_tape_unreadable", None, f"positions: {type(exc).__name__}")
-            return
-        for position in positions:
-            try:
-                qty = _decimal(position.qty, "position.qty")
-            except ValueError:
-                continue
-            if qty <= 0:
-                continue
-            tape = self._read_tape(history, position.symbol, qty, now_ns, spend)
-            if tape is None:
-                continue
-            self._tapes[tape.symbol] = tape
-            if tape.status != "ok":
+        def read() -> None:
+            if not spend():
+                return
+            for position in self._start_client.get_all_positions():
+                try:
+                    qty = _decimal(position.qty, "position.qty")
+                except ValueError:
+                    continue
+                if qty > 0:
+                    held.append((position.symbol, qty))
+            for symbol, qty in held:
+                tape = self._read_tape(history, symbol, qty, now_ns, spend)
+                if tape is not None:
+                    self._tapes[symbol] = tape
+                done.add(symbol)
+
+        detail = _bounded(float(deadline_s), read)
+        if detail is not None and not held:
+            self.page("outside_rth_tape_unreadable", None, f"positions: {detail}")
+        for symbol, qty in held:
+            if symbol not in done:
+                self._tapes[symbol] = TapeRead(symbol, qty, None, "partial", f"read {detail}")
+            tape = self._tapes.get(symbol)
+            if tape is not None and tape.status != "ok":
                 reason = "outside_rth_entry_unknown"
                 if tape.status != "entry_unknown":
                     reason = "outside_rth_tape_unreadable"
@@ -724,9 +776,11 @@ class Protector:
         The adoption instant is B's first house trail submitted at or after the fill time
         of the latest quantity-increasing owner fill (ADR-0005: a restart is not an
         adoption; an owner add is). Without such a trail B adopts now: nothing is read and
-        no status is claimed (None). Alpaca documents ``filled_at`` with no meaning for a
-        partial fill, so a buy that is not fully filled has no fill time; if it was last
-        updated after the latest full fill, the entry is unknown (G2).
+        no status is claimed (None). alpaca-py 0.44.0 ``Order.filled_at`` is
+        ``Optional[datetime]``, "Timestamp when the order was filled" (alpaca/trading/
+        models.py:178,217), with no partial-fill meaning, so a buy that is not fully filled
+        has no fill time; if it was last updated after the latest full fill, the entry is
+        unknown (G2).
         """
 
         over = TapeRead(symbol, qty, None, "partial", "start read over its deadline or budget")
@@ -790,16 +844,24 @@ class Protector:
         return TapeRead(symbol, qty, level, "ok")
 
     def _adopt_outside(self, symbol: str, order: Order) -> None:
-        """Keep the higher of the native stop, the existing trigger and the rebuilt tape high."""
+        """Keep the highest of the native stop, the broker hwm's level, the trigger and tape."""
 
         state = self._outside_state(symbol)
         if state.released or state.pending:
             return
+        # G3: the maximum over every valid source, never below any of them.
         stop_price = getattr(order, "stop_price", None)
         seeds = [] if stop_price is None else [_decimal(str(stop_price), "order.stop_price")]
+        try:
+            percent = _decimal(str(getattr(order, "trail_percent", None)), "trail_percent")
+            implied = _decimal(str(getattr(order, "hwm", None)), "order.hwm") * (1 - percent / 100)
+        except ValueError:
+            percent = implied = Decimal(0)  # absent or malformed: not a valid source
+        if implied > 0 and percent > 0:
+            seeds.append(implied)
         tape = self._tapes.get(symbol)
-        if tape is not None and tape.level is not None:
-            seeds.append(tape.level)  # G3: without a native stop, the tape is the only record
+        if tape is not None and tape.status == "ok" and tape.level is not None:
+            seeds.append(tape.level)
         if stop_price is None:
             self.page(
                 "outside_rth_trigger_missing",
