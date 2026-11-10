@@ -17,9 +17,11 @@ import importlib.util
 import json
 import os
 import re
+import sqlite3
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +29,8 @@ ROOT = Path(__file__).resolve().parents[1]
 RUNTIMES = ROOT / "deploy" / "wsl" / "lane-runtimes"
 CHECKS = ("version", "model_effort", "parity", "guard", "repository")
 ROWS = ("claude", "dsh", "codex", "antigravity", "muse", "omniroute", "orca", "ao")
+WATCH_CHECK = ("watch", "turn_started")
+WATCH_BOUND_SOURCE = "orchestration.workerStart timeoutMs (Orca 1.4.251)"
 CLAUDE = re.compile(r"claude|anthropic|opus|sonnet|haiku", re.IGNORECASE)
 VERSION = re.compile(r"(\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?)")
 SHELF_PLUGINS = (
@@ -1235,6 +1239,108 @@ ROW_FUNCTIONS = {
 }
 
 
+def _age_seconds(text: object) -> float | None:
+    if not isinstance(text, str) or not text:
+        return None
+    try:
+        moment = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=UTC)
+    return max(0.0, (datetime.now(UTC) - moment).total_seconds())
+
+
+def check_watch(host: Host) -> list[Finding]:
+    """Alert when Orca accepted a prompt but no turn start followed its own dispatch bound."""
+    path = host.home / ".config" / "orca" / "orchestration.db"
+    if not path.is_file():
+        return [
+            _finding(
+                *WATCH_CHECK,
+                "orchestration database is missing at "
+                f"{path}; a dispatched prompt's turn start is unobserved",
+            )
+        ]
+    try:
+        connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        connection.row_factory = sqlite3.Row
+        try:
+            dispatches = connection.execute(
+                "select dispatch_id, state, stage, start_options, created_at, updated_at "
+                "from worker_dispatches"
+            ).fetchall()
+            receipts = connection.execute(
+                "select receipt, created_at from mutation_receipts "
+                "where method = 'orchestration.workerStart'"
+            ).fetchall()
+        finally:
+            connection.close()
+    except sqlite3.Error as error:
+        return [
+            _finding(
+                *WATCH_CHECK,
+                f"orchestration database is unreadable ({type(error).__name__}); "
+                "turn start is unobserved",
+            )
+        ]
+
+    latest: dict[str, tuple[float | None, dict[str, Any]]] = {}
+    for row in receipts:
+        try:
+            receipt = json.loads(row["receipt"])
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if not isinstance(receipt, dict):
+            continue
+        dispatch_id = receipt.get("dispatchId")
+        if not isinstance(dispatch_id, str):
+            continue
+        stamp = _age_seconds(row["created_at"])
+        previous = latest.get(dispatch_id)
+        if previous is None or (stamp is not None and (previous[0] is None or stamp < previous[0])):
+            latest[dispatch_id] = (stamp, receipt)
+
+    findings: list[Finding] = []
+    for row in dispatches:
+        dispatch_id = row["dispatch_id"]
+        state = row["state"]
+        if not isinstance(dispatch_id, str) or state not in (
+            "starting",
+            "ready",
+            "start_unknown",
+            "outcome_unknown",
+        ):
+            continue
+        receipt_row = latest.get(dispatch_id)
+        receipt = receipt_row[1] if receipt_row is not None else {}
+        turn_start = receipt.get("turnStart")
+        if turn_start == "observed":
+            continue
+        bound = receipt.get("timeoutMs")
+        if not isinstance(bound, (int, float)):
+            try:
+                options = json.loads(row["start_options"] or "{}")
+            except (TypeError, json.JSONDecodeError):
+                options = {}
+            milliseconds = options.get("timeoutMs") if isinstance(options, dict) else None
+            bound = milliseconds if isinstance(milliseconds, (int, float)) else None
+        if not isinstance(bound, (int, float)):
+            continue
+        age = receipt_row[0] if receipt_row is not None else _age_seconds(row["created_at"])
+        if age is None or age <= bound / 1000:
+            continue
+        findings.append(
+            _finding(
+                *WATCH_CHECK,
+                f"dispatch {dispatch_id} has no observed turn start after {age:.0f}s "
+                f"(turnStart={turn_start or 'missing'}; bound {bound / 1000:g}s from "
+                f"{WATCH_BOUND_SOURCE})",
+            )
+        )
+    return findings
+
+
 def inspect_host(host: Host) -> Report:
     """Run every row and every dimension; a crashed row is a finding, never a stopped doctor."""
     report = Report()
@@ -1251,6 +1357,16 @@ def inspect_host(host: Host) -> Report:
             report.checked.append((row, check))
             for finding in found.get(check, []):
                 report.add(finding)
+    report.checked.append(WATCH_CHECK)
+    try:
+        report.findings.extend(check_watch(host))
+    except Exception as error:
+        report.add(
+            _finding(
+                *WATCH_CHECK,
+                f"check crashed: {type(error).__name__}: {error}",
+            )
+        )
     return report
 
 

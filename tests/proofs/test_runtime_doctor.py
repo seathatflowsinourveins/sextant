@@ -135,6 +135,8 @@ class World:
         self.unit_exec = str(self.prefix / "router-start.sh")
         self.ao_state = "running"
         self.ao_doctor = {"failures": 0}
+        self.watch_turn_start = "observed"
+        self.watch_timeout_ms = 60_000
         self.omni_due = 1
         self.bind = 'LISTEN 0 4096 127.0.0.1:22128 0.0.0.0:* users:(("omniroute",pid=1,fd=1))'
         self.build()
@@ -448,6 +450,81 @@ class World:
         )
         connection.commit()
         connection.close()
+        (home / ".config/orca").mkdir(parents=True, exist_ok=True)
+        connection = sqlite3.connect(home / ".config/orca/orchestration.db")
+        connection.execute(
+            "create table worker_dispatches (dispatch_id text primary key, state text, stage text, "
+            "start_options text, created_at text, updated_at text)"
+        )
+        connection.execute(
+            "create table mutation_receipts (caller_fingerprint text, request_id text, "
+            "method text, payload_hash text, state text, receipt text, created_at text, "
+            "updated_at text, "
+            "primary key (caller_fingerprint, "
+            "request_id))"
+        )
+        started = "2026-11-01 00:00:00"
+        connection.execute(
+            "insert into worker_dispatches values (?,?,?,?,?,?)",
+            (
+                "ctx_fixture",
+                "ready",
+                "input_accepted",
+                json.dumps({"timeoutMs": 60_000}),
+                started,
+                started,
+            ),
+        )
+        receipt = {
+            "state": "ready",
+            "runId": "run_fixture",
+            "taskId": "task_fixture",
+            "dispatchId": "ctx_fixture",
+            "stage": "input_accepted",
+            "turnStart": self.watch_turn_start,
+            "timeoutMs": self.watch_timeout_ms,
+        }
+        connection.execute(
+            "insert into mutation_receipts values (?,?,?,?,?,?,?,?)",
+            (
+                "fixture",
+                "request_fixture",
+                "orchestration.workerStart",
+                "",
+                "completed",
+                json.dumps(receipt),
+                started,
+                started,
+            ),
+        )
+        connection.commit()
+        connection.close()
+
+    def set_watch_turn_start(self, value: str) -> None:
+        path = self.home / ".config/orca/orchestration.db"
+        connection = sqlite3.connect(path)
+        row = connection.execute(
+            "select caller_fingerprint, request_id, receipt from mutation_receipts "
+            "where method = 'orchestration.workerStart'"
+        ).fetchone()
+        receipt = json.loads(row[2])
+        receipt["turnStart"] = value
+        connection.execute(
+            "update mutation_receipts set receipt = ? "
+            "where caller_fingerprint = ? and request_id = ?",
+            (json.dumps(receipt), row[0], row[1]),
+        )
+        connection.commit()
+        connection.close()
+
+    def remove_worker_start_receipt(self) -> None:
+        path = self.home / ".config/orca/orchestration.db"
+        connection = sqlite3.connect(path)
+        connection.execute(
+            "delete from mutation_receipts where method = 'orchestration.workerStart'"
+        )
+        connection.commit()
+        connection.close()
 
 
 class Fake:
@@ -559,7 +636,29 @@ def test_good_fixture_is_green(tmp_path):
     world = World(tmp_path)
     report = inspect(world)
     assert report.findings == [], [f"{f.code}: {f.message}" for f in report.findings]
-    assert len(report.checked) == 40
+    assert len(report.checked) == 41
+
+
+def test_watch_alerts_when_a_dispatch_has_no_observed_turn_start(tmp_path):
+    world = World(tmp_path)
+    world.set_watch_turn_start("unsupported")
+    report = inspect(world)
+    assert "watch.turn_started" in codes(report)
+    message = next(f.message for f in report.findings if f.code == "watch.turn_started")
+    assert "ctx_fixture" in message
+    assert "unsupported" in message
+    assert "60" in message
+
+
+def test_watch_uses_the_dispatch_timeout_when_the_start_receipt_is_missing(tmp_path):
+    world = World(tmp_path)
+    world.remove_worker_start_receipt()
+    report = inspect(world)
+    assert "watch.turn_started" in codes(report)
+    message = next(f.message for f in report.findings if f.code == "watch.turn_started")
+    assert "ctx_fixture" in message
+    assert "missing" in message
+    assert "60s" in message
 
 
 def _set_settings(world: World, **changes) -> None:
@@ -750,11 +849,12 @@ def test_cli_prints_json_and_exits_two_on_drift(tmp_path, capsys, monkeypatch) -
 
     green = doctor.Report()
     green.checked = [(row, check) for row in doctor.ROWS for check in doctor.CHECKS]
+    green.checked.append(doctor.WATCH_CHECK)
     monkeypatch.setattr(doctor, "inspect_host", lambda host: green)
     assert doctor.main(["--home", str(world.home), "--repo", str(world.repo), "--json"]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["ok"] is True
-    assert len(payload["checked"]) == 40
+    assert len(payload["checked"]) == 41
     assert payload["findings"] == []
 
     green.add(doctor.Finding("codex", "guard", "the lane rules are missing"))
