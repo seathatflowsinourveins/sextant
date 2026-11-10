@@ -44,11 +44,11 @@ backend is loopback only: Grafana 3000, OTLP/gRPC 4317, OTLP/HTTP 4318 on
 `127.0.0.1`. Do not publish those ports on another interface.
 
 The metric contract comes from the other monitor writers. L5
-(`scripts/monitor_github.py`) emits the `sextant_gh_aw_*`, `sextant_pr_*` and
-`sextant_runner_*` families and the `sextant_monitor_last_success_timestamp_seconds`
-heartbeat; L6 (`scripts/monitor_evidence.py`) emits `sextant_manifest_*`,
-`sextant_budget_utilization`, `sextant_doc_age_days` and
-`sextant_trial_ledger_rows`. M1's pinned GenAI counters feed the three
+(`scripts/monitor_github.py`, manual only) emits the `sextant_gh_aw_*`,
+`sextant_pr_*` and `sextant_runner_*` families; scheduled L3/L4 and L6 emit
+the `sextant_monitor_last_success_timestamp_seconds` heartbeat, and L6 also
+emits `sextant_manifest_*`, `sextant_budget_utilization`, `sextant_doc_age_days`
+and `sextant_trial_ledger_rows`. M1's pinned GenAI counters feed the three
 normalization records once PR-M2 lands the runtime feed.
 
 Six series have no writer in this tree yet: context pressure, consecutive tool

@@ -1,5 +1,5 @@
 [Unit]
-Description=Sextant monitor bridges (L3/L4, L5, L6)
+Description=Sextant monitor bridges (L3/L4, L6)
 Documentation=https://github.com/seathatflowsinourveins/sextant/blob/main/deploy/monitor/systemd/README.md
 After=network.target
 
@@ -7,8 +7,7 @@ After=network.target
 Type=oneshot
 WorkingDirectory=%h/sextant
 # "-" records one bridge's failure without skipping the next; the timer retries.
-ExecStart=-/usr/bin/python3 -I %h/sextant/scripts/monitor_l3_l4.py --otlp --dsh-home %h/.dsh
-ExecStart=-/usr/bin/python3 -I %h/sextant/scripts/monitor_github.py
+ExecStart=-/usr/bin/python3 -I %h/sextant/scripts/monitor_l3_l4.py --otlp --dsh-home %h/.dsh-full
 ExecStart=-/usr/bin/python3 -I %h/sextant/scripts/monitor_evidence.py --otlp
 TimeoutStartSec=5min
 
