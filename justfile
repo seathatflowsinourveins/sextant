@@ -96,7 +96,6 @@ omc:
 # The trading path: research card, backtest, sim replay, ledger, merit page.
 slice:
     uv run --frozen python -m sextant.backtest.thin_slice
-
 # Push a branch and open its PR; pass false as the third argument to leave auto-merge off.
 pr title body_file automerge="true":
     git push -u origin HEAD
