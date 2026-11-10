@@ -209,3 +209,32 @@ def test_the_committed_exit_econ_evidence_stays_bound_to_its_inputs() -> None:
         "-46.24690588211056476522507862"
     )
     assert Decimal(later["arms"]["hold_flat/3"]["mean_bps"]) == hold_3
+
+
+def test_the_later_run_keeps_its_own_trials_on_committed_record() -> None:
+    """Lead ruling (a), 2026-11-07: PR 2's run sits beside the history with its own trial rows."""
+    run = ECON / "run-a8282a4"
+    assert _sha256(run / "report.json") == (
+        "aaba28d2a5d6ea7baa54255aabd5f613108033bd224572efc34345088b19ee71"
+    )
+    assert _sha256(run / "trials.jsonl") == (
+        "5abfba46363c74c57c5af47e73108b614efdae82f8fbc32c195d721aca6559de"
+    )
+    history = json.loads((ECON / "report.json").read_text())
+    later = json.loads((run / "report.json").read_text())
+    assert later["implementation"] == "a8282a4f11d69b2bd595d3035439f5edd64276be"
+    assert later["inputs"] == history["inputs"]
+    assert set(later["arms"]) == set(history["arms"])
+    rows = _jsonl(run / "trials.jsonl")
+    assert sorted(row["arm"] for row in rows) == sorted(
+        {key.rsplit("/", 1)[0] for key in later["arms"]}
+    )
+    for row in rows:
+        assert row["implementation"] == later["implementation"]
+        assert row["tier"] == "MODELED"
+        assert row["n"] == 1025
+        assert row["inputs"] == later["inputs"]
+        for cost in ("3", "6"):
+            assert Decimal(row[f"mean_bps_{cost}"]) == Decimal(
+                later["arms"][f"{row['arm']}/{cost}"]["mean_bps"]
+            )
