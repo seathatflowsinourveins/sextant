@@ -1815,5 +1815,3 @@ def test_a_ledger_failure_keeps_the_receipt_and_exits_non_zero(
     assert written["commands"]
     assert "trial ledger refused" in capsys.readouterr().err
     assert not (live_env / "reports/research/trials.parquet").exists()
-
-
