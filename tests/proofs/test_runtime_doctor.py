@@ -118,7 +118,7 @@ class World:
                 "Verified reflection",
                 REFLECTION,
                 "reflection-precheck.sh",
-                "--model claude-fable-5-2 --effort max",
+                "--model claude-fable-5-2 --effort high",
             ),
         ]
         self.agy_mcp = [
@@ -170,7 +170,8 @@ class World:
     def policy(self) -> dict:
         return {
             "gpt": {"model": "gpt-6.1-sol", "effort": "max"},
-            "claude": {"model": "claude-fable-5-2", "effort": "max"},
+            "claude": {"model": "claude-opus-5-5", "effort": "high"},
+            "claude_reflection": {"model": "claude-fable-5-2", "effort": "high"},
             "google": {"antigravity": "gemini-4-argon-high", "effort": "high"},
             "meta": {"model": "muse-wonder-full-1.0", "effort": "max", "contributor_mode": "off"},
         }
@@ -319,7 +320,7 @@ class World:
                     "deny_sha256": hashlib.sha256(json.dumps(deny).encode()).hexdigest(),
                     "permission_mode": "bypassPermissions",
                     "model": "claude-opus-5-5",
-                    "effort": "max",
+                    "effort": "high",
                 }
             ),
         )
@@ -328,7 +329,7 @@ class World:
             json.dumps(
                 {
                     "model": "claude-opus-5-5",
-                    "env": {"CLAUDE_CODE_EFFORT_LEVEL": "max"},
+                    "effortLevel": "high",
                     "enabledPlugins": {plugin: True for plugin in PLUGINS},
                     "permissions": {"defaultMode": "bypassPermissions", "deny": deny},
                     "extraKnownMarketplaces": {},
@@ -459,7 +460,7 @@ class World:
                 "",
                 json.dumps(
                     {
-                        "agentConfig": {"model": "claude-opus-5-5", "effort": "max"},
+                        "agentConfig": {"model": "claude-opus-5-5", "effort": "high"},
                         "worker": {"agent": "claude-code"},
                     }
                 ),
@@ -805,6 +806,28 @@ def test_claude_requires_the_fable_floor(tmp_path):
     assert "claude.version" in codes(report)
     message = next(f.message for f in report.findings if f.code == "claude.version")
     assert "2.1.321" in message
+
+
+def test_claude_project_effort_matches_the_policy(tmp_path):
+    world = World(tmp_path)
+    report = inspect(world)
+    assert "claude.model_effort" not in codes(report), [
+        f.message for f in report.findings if f.code == "claude.model_effort"
+    ]
+
+
+def test_claude_project_effort_mismatch_fails(tmp_path):
+    world = World(tmp_path)
+    _set_settings(world, effortLevel="max")
+    report = inspect(world)
+    assert "claude.model_effort" in codes(report)
+
+
+def test_claude_env_effort_pin_is_a_finding(tmp_path):
+    world = World(tmp_path)
+    _set_settings(world, env={"CLAUDE_CODE_EFFORT_LEVEL": "high"})
+    report = inspect(world)
+    assert "claude.model_effort" in codes(report)
 
 
 def test_dsh_compares_the_provider_effort(tmp_path):
