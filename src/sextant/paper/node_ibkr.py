@@ -15,9 +15,14 @@ Orders follow upstream's two opt-ins (``node_exec_tester.rs:181-186,257``): runn
 connects in dry run, and ``--send-orders`` is the second opt-in. Every start condition is a
 named refusal, in this order: the arguments, the lane registry (``lanes/paper/ibkr.toml``
 ``state`` must be ON, which only a reviewed change after the owner's login word sets), the
-account from its key NAME, the native configs, the main thread, the account's writer lease.
+tester SELL switches, the account from its key NAME, the native configs, the main thread,
+the account's writer lease.
 A refusal writes the receipt. The account code is never printed or written; the receipt keeps
 only the sha256 of the writer scope.
+
+Order-sending profiles with resting SELLs refuse: the pinned Python actor has no sourced
+continuous custody fence. Accepted order-sending starts force both tester SELL switches off
+(``exec/config.rs:98,104``), after refusing requested SELLs rather than masking them.
 """
 
 from __future__ import annotations
@@ -150,7 +155,16 @@ def parse(argv: list[str] | None = None) -> NodeArguments:
         ("--receipt-dir", Path),
         ("--lease-root", Path),
     ):
-        required.add_argument(flag, type=kind, required=True)
+        required.add_argument(
+            flag,
+            type=kind,
+            required=True,
+            help=(
+                "compatibility only; IBKR uses the shared account lock"
+                if flag == "--lease-root"
+                else None
+            ),
+        )
     required.add_argument("--profile", choices=sorted(PROFILES), required=True)
     parser.add_argument("--send-orders", action="store_true", help="upstream's second opt-in")
     parser.add_argument("--registry", type=Path, default=REGISTRY)
@@ -260,6 +274,19 @@ def client_configs(
 def tester_config(args: NodeArguments) -> ExecTesterConfig:
     """Upstream's tester in one profile; dry run unless the second opt-in is given."""
     profile = dict(PROFILES[args.profile])
+    if args.send_orders:
+        # BUILD ON config.rs:98,104,130,337-349: refuse requests before forcing SELLs off.
+        # NO SOURCE for continuous Python custody events; see the manifest custody row.
+        if (
+            profile.get("enable_limit_sells", True)
+            or profile.get("enable_stop_sells", False)
+            or profile.get("enable_brackets", False)
+        ):
+            raise IbkrNodeRefused(
+                "no sourced continuous custody fence",
+                f"{args.profile} requests resting SELL orders",
+            )
+        profile.update(enable_limit_sells=False, enable_stop_sells=False)
     if profile.pop("open_position_on_first_quote", False):
         profile.update(
             open_position_on_start_qty=args.order_qty.as_decimal(),
@@ -380,6 +407,7 @@ def run(
             registry = load_registry(args.registry)
             if registry.state != "ON":
                 raise IbkrNodeRefused("lane_off", f"{args.registry.name} state is {registry.state}")
+            tester_config(args)  # refuse resting SELLs before account access or node construction
             paper = account(args, environ)
             scope = AccountScope(paper.broker, paper.account_id).key
             configs = client_configs(args, paper, registry)
@@ -392,7 +420,7 @@ def run(
             )
             try:
                 lease.acquire()
-            except CustodyError as error:
+            except (CustodyError, OSError) as error:
                 raise IbkrNodeRefused("writer_lease", str(error)) from error
             held.callback(lease.close)
             node = builder(args, configs, registry)
