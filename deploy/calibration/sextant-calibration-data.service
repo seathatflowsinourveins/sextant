@@ -7,8 +7,8 @@ After=network-online.target
 Type=oneshot
 WorkingDirectory=%h/sextant
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
-# C's data credentials, injected for this command only; no B account or trading client.
-ExecStart=/usr/bin/bash %h/sextant/scripts/with-keys.sh --strict -k ALPACA_PAPER_3_API_KEY:APCA_API_KEY_ID -k ALPACA_PAPER_3_SECRET_KEY:APCA_API_SECRET_KEY -- /usr/bin/bash %h/sextant/scripts/calibration-data.sh %h/sextant-data/calibration
+# Slot 2 paper data credentials, injected for this command only; no trading client.
+ExecStart=/usr/bin/bash %h/sextant/scripts/with-keys.sh --strict -k ALPACA_PAPER_2_API_KEY:APCA_API_KEY_ID -k ALPACA_PAPER_2_SECRET_KEY:APCA_API_SECRET_KEY -- /usr/bin/bash %h/sextant/scripts/calibration-data.sh %h/sextant-data/calibration
 TimeoutStartSec=infinity
 MemoryMax=2G
 MemorySwapMax=0
