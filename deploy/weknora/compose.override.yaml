@@ -1,0 +1,47 @@
+# Over Tencent/WeKnora@f17ee8a8:docker-compose.yml, fetched by weknora.sh and checked against pins.json.
+# Compose merge (docs.docker.com/reference/compose-file/merge, read 2026-11-10): `image` replaces,
+# `environment` merges by key, `ports: !override` replaces the list. Upstream's own knobs only.
+services:
+  app:
+    image: wechatopenai/weknora-app:v0.9.0@sha256:25b20959b7456f7842ef55ed4feff3694dbd0c6f8af4117c1fb3c5dec6bdf14d
+    ports: !override ["127.0.0.1:21937:8080"]
+    environment:
+      # 04-configuration.md:247-253: whitelist the model endpoint and refuse every other host.
+      - SSRF_WHITELIST=embeddings,docreader
+      - SSRF_DNS_WHITELIST_ONLY=true
+    depends_on:
+      embeddings:
+        condition: service_healthy
+  frontend:
+    image: wechatopenai/weknora-ui:v0.9.0@sha256:df26705d866997db07f3da78dabedc4f594b383566a3996810c166a5c6bee393
+    ports: !override ["127.0.0.1:21938:80"]
+  docreader:
+    image: wechatopenai/weknora-docreader:v0.9.0@sha256:8c71ec3cc2e291829c3938d2c7dc5f921c1d10551c8774bf844c83bc4aa3cb84
+    environment:
+      - SSRF_WHITELIST=embeddings,docreader
+      - SSRF_DNS_WHITELIST_ONLY=true
+  postgres:
+    image: paradedb/paradedb:v0.25.11-pg17@sha256:78d65750f0f88a56548526201bcab9910f83b90fe929cdbf979890f3f80b0f95
+  # stdin, not upstream's argv --requirepass ("redis-server - (read config from stdin)", config.c:695);
+  # `$$` keeps argv to the name; the entrypoint still drops to the redis user, as PID 1.
+  redis:
+    image: redis:7.0-alpine@sha256:c9d92d840fd011c908f040592857c724ae6d877f2aba5c40ad963276507386b2
+    environment: [REDIS_PASSWORD]
+    command:
+      - sh
+      - -c
+      - |
+        exec docker-entrypoint.sh redis-server - <<EOF
+        appendonly yes
+        requirepass $$REDIS_PASSWORD
+        EOF
+  # Rootless Docker keeps the house server on 127.0.0.1:21934 out of reach, so this copy runs
+  # what pins.json's embedding entry names, unpublished.
+  embeddings:
+    image: ${WEKNORA_EMBEDDING_IMAGE:?}
+    volumes:
+      - ${HOME}/.local/share/sextant-openviking/models:/models:ro
+    command: -m /models/${WEKNORA_EMBEDDING_FILE:?} ${WEKNORA_EMBEDDING_ARGS:?} --host 0.0.0.0 --port 8080
+    networks:
+      - WeKnora-network
+    restart: unless-stopped
