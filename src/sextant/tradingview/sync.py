@@ -57,6 +57,36 @@ CREATE_MISSING = "Created watchlist missing from readback"
 AMBIGUOUS_REMOVAL = "Ambiguous corrective removal; no replay"
 READBACK_MISMATCH = "Readback mismatch after one corrective removal; no replay"
 REJECTED_TOO_MANY = "Readback rejected more than five distinct names; verified subsets retained"
+# The stored sign-in's stops (--keep-login, D-23). Each names the one owner step.
+LOGIN_REFUSED = (
+    "TradingView refused the stored sign-in and it was deleted; the owner runs "
+    "--authorize --keep-login"
+)
+LOGIN_UNAVAILABLE = (
+    "TradingView's sign-in service was unavailable; the stored sign-in is unchanged "
+    "and the next run retries it"
+)
+LOGIN_UNUSABLE = (
+    "TradingView's answer did not refresh the stored sign-in, which is unchanged; if this "
+    "repeats, the owner runs --forget-login, then --authorize --keep-login"
+)
+LOGIN_NEEDS_CONSENT = (
+    "No usable stored sign-in and no browser without --authorize; the owner runs "
+    "--authorize --keep-login"
+)
+LOGIN_UNREADABLE = (
+    "The stored sign-in cannot be read and is unchanged; the owner runs "
+    "--forget-login, then --authorize --keep-login"
+)
+LOGIN_STORE_UNAVAILABLE = "The encrypted sign-in store is unavailable; nothing was changed"
+LOGIN_STOPS = (
+    LOGIN_REFUSED,
+    LOGIN_UNAVAILABLE,
+    LOGIN_UNUSABLE,
+    LOGIN_NEEDS_CONSENT,
+    LOGIN_UNREADABLE,
+    LOGIN_STORE_UNAVAILABLE,
+)
 SAFE_STOP_MESSAGES = (
     INCOMPLETE_RESPONSE,
     AMBIGUOUS_TOOL_IDENTITY,
@@ -82,6 +112,7 @@ SAFE_STOP_MESSAGES = (
     AMBIGUOUS_REMOVAL,
     READBACK_MISMATCH,
     REJECTED_TOO_MANY,
+    *LOGIN_STOPS,
 )
 
 _JSON_TYPES = {
