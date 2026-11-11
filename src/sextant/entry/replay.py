@@ -60,7 +60,6 @@ class _ReplayEntry(Strategy):
         self.coverage: TradeCoverage | None = inputs["coverage"]
         self.commission_rate: Decimal | None = inputs["commission_rate"]
         self.ranking_consumer: RankingConsumer | None = inputs["ranking_consumer"]
-        self.rank_gate_enabled = ranking_registry.RANK_GATE_ENABLED.value
         self.quote: model.QuoteTick | None = None
         self.entry: Any = None
         self.first_limit: Decimal | None = None
@@ -197,13 +196,14 @@ class _ReplayEntry(Strategy):
             return
         # rc8 Strategy callbacks make the decision before OrderFactory/submit_order
         # (docs/concepts/strategies.md:130-136,540-569). OFF never reads the consumer.
-        if self.rank_gate_enabled is not False:
+        rank_gate_enabled = ranking_registry.RANK_GATE_ENABLED.value
+        if rank_gate_enabled is not False:
             rank, reason = None, None
-            if self.rank_gate_enabled is True and self.ranking_consumer is not None:
+            if rank_gate_enabled is True and self.ranking_consumer is not None:
                 rank = self.ranking_consumer.entry_rank(str(self.instrument.id.symbol), now=now)
                 reason = self.ranking_consumer.reason
             decision = decide_rank_gate(
-                enabled=self.rank_gate_enabled, rank=rank, consumer_reason=reason
+                enabled=rank_gate_enabled, rank=rank, consumer_reason=reason
             )
             if decision.status is RankGateStatus.REFUSE:
                 self._record("REFUSE", stage="RANK", reason=decision.reason)

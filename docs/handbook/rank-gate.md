@@ -10,7 +10,7 @@ A pass clears only ranking; setup, sizing, funding and native risk still decide.
 An existing entry's TTL cancellation continues when its rank becomes stale.
 
 The one `RANK_GATE_ENABLED` registry row remains OFF and UNCALIBRATED. The Strategy
-snapshots it at construction, so reviewed switch changes occur between runs. OFF
+reads and validates its current value at each decision, including after warm-up. OFF
 skips consumer access and leaves the decision journal byte-identical to the
 unwired starting head (`527340574e828fa3c646371d251355e5e3080373`). The two synthetic
 control tapes cover first-leg submit/amend/cancel and held-reclaim submission;
@@ -29,6 +29,9 @@ the raw symbol rather than the venue-qualified instrument identifier. Preserve t
 reader's exact refusal reasons and prove OFF parity against pre-change bytes,
 including a supplied consumer that raises if queried. Future native Strategy
 integration must preserve this same-call contract rather than cache a passing rank.
+Read the switch at that same seam too: a constructor snapshot bypasses a later
+enable or invalid setting and prevents a later disable from restoring OFF behavior.
+The transition proofs reproduce all three failures from review head `a714765`.
 
 Sources: [ADR-0003](../adr/0003-ranking-and-feeds.md):9,24,42;
 [ADR-0008](../adr/0008-broker-roles.md) B3/B6; nautechsystems/nautilus_trader

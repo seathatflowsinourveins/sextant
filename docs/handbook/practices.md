@@ -12,7 +12,7 @@
 
 ## Enter
 
-- Enter the first leg: a non-decreasing run of eligible trades inside `first_leg_window_s`, no more than `first_leg_max_move` above the quiet price; a lower trade restarts the run. [ADR-0004](../adr/0004-entry.md) Apply the [rank veto at the native Strategy decision](rank-gate.md), using the same-call consumer result, raw symbol and current clock; its OFF registry row preserves the original decision bytes.
+- Enter the first leg: a non-decreasing run of eligible trades inside `first_leg_window_s`, no more than `first_leg_max_move` above the quiet price; a lower trade restarts the run. [ADR-0004](../adr/0004-entry.md) Apply the [rank veto at the native Strategy decision](rank-gate.md), reading the current switch at that seam with the same-call consumer result, raw symbol and current clock; its OFF registry row preserves the original decision bytes.
 - A missing ATR or VWAP makes extension UNKNOWN, never "not extended"; a fresh spike high is never the entry. [ADR-0004](../adr/0004-entry.md)
 - Freeze the buying-power basis at segment start with the segment identity; no read of buying power means no entry. [ADR-0004](../adr/0004-entry.md)
 - Send LIMIT at the ask, `extended_hours` outside RTH with `time_in_force` `day` or `gtc`, reprice at most `entry_chase_bps`, cancel at `entry_ttl_s`, never market. [ADR-0004](../adr/0004-entry.md)
