@@ -18,6 +18,7 @@ values only.
 from __future__ import annotations
 
 import asyncio
+import gc
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -177,8 +178,13 @@ async def run_node(journal):
         try:
             await asyncio.wait_for(task, timeout=10)
         finally:
-            node.dispose()
-    return orders, history, strategy.asked_at_start
+            try:
+                node.dispose()
+            finally:
+                asked_at_start = strategy.asked_at_start
+                del node, strategy, task
+                gc.collect()
+    return orders, history, asked_at_start
 
 
 def test_a_quoted_name_without_a_print_is_seeded_and_gets_exactly_one_trail():

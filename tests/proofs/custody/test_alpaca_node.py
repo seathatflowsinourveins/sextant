@@ -1,6 +1,7 @@
 """Native reconciliation witness, adapted from NT d53849b template integration tests."""
 
 import asyncio
+import gc
 from decimal import Decimal
 from uuid import UUID
 
@@ -131,13 +132,23 @@ def test_engine_reconciles_owner_fills_and_adds_without_mutating_owner_orders():
     )
     node.add_strategy(strategy)
 
-    async def run():
-        await asyncio.wait_for(node.run_async(), 10)
+    async def run(owned):
+        await asyncio.wait_for(owned.run_async(), 10)
 
-    asyncio.run(run())
-    assert sum(p.quantity.as_decimal() for p in strategy.positions) == Decimal("12")
-    assert len(strategy.orders) == 2
-    assert {str(o.client_order_id) for o in strategy.orders} == {"owner-entry-0", "owner-entry-1"}
+    try:
+        asyncio.run(run(node))
+        positions, orders = strategy.positions, strategy.orders
+        wire_actions = clients[0].gateway.pacer.wire_actions
+    finally:
+        try:
+            node.dispose()
+        finally:
+            del node, strategy
+            clients.clear()
+            gc.collect()
+    assert sum(p.quantity.as_decimal() for p in positions) == Decimal("12")
+    assert len(orders) == 2
+    assert {str(o.client_order_id) for o in orders} == {"owner-entry-0", "owner-entry-1"}
     assert all(r[0] in ("POST", "GET") for r in venue.requests)
     assert len([r for r in venue.requests if r[0] == "POST"]) == 2  # Fixture seeding only.
-    assert not clients[0].gateway.pacer.wire_actions
+    assert not wire_actions

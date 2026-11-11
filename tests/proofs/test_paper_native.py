@@ -1,6 +1,7 @@
 """Native shell, ALPACA sandbox registration and the SIMULATED startup ledger."""
 
 import asyncio
+import gc
 import json
 import re
 import time
@@ -83,13 +84,20 @@ def test_inert_live_node_has_the_account_namespace_and_no_connection(boundary):
         starting_balance="10000 USD",
     )
     try:
-        assert built.node.environment == Environment.SANDBOX
-        assert not built.node.is_running
-        assert built.runtime.services.writer.held
-        assert built.strategy.config is not None
-        assert built.strategy.config.external_order_instrument_ids == []
+        environment, running = built.node.environment, built.node.is_running
+        held = built.runtime.services.writer.held
+        config = built.strategy.config
     finally:
-        built.dispose()
+        try:
+            built.dispose()
+        finally:
+            del built
+            gc.collect()
+    assert environment == Environment.SANDBOX
+    assert not running
+    assert held
+    assert config is not None
+    assert config.external_order_instrument_ids == []
     assert not boundary.services.writer.held
 
 
@@ -720,12 +728,19 @@ def test_build_shell_registers_the_sandbox_client_for_the_sandbox_account(bounda
         starting_balance="10000 USD",
     )
     try:
-        assert not built.node.is_running
+        running_before = built.node.is_running
         sandbox = asyncio.run(_wait_for_sandbox_account(built.node, AccountId.from_str("SIM-A001")))
-        assert sandbox.balances_total()[Currency.from_str("USD")] == Money.from_str("10000 USD")
-        assert not built.node.is_running
+        balance = sandbox.balances_total()[Currency.from_str("USD")]
+        running_after = built.node.is_running
     finally:
-        built.dispose()
+        try:
+            built.dispose()
+        finally:
+            del built
+            gc.collect()
+    assert not running_before
+    assert balance == Money.from_str("10000 USD")
+    assert not running_after
 
 
 def test_record_sandbox_run_writes_one_receipt_and_one_simulated_row(tmp_path):

@@ -9,6 +9,7 @@ A report equal to the order changes nothing (reconcile_order_report, 4414-4420).
 """
 
 import asyncio
+import gc
 import sys
 import threading
 
@@ -147,13 +148,21 @@ def _run(venue, lost):
         )
         node.add_strategy(Mutator(StrategyConfig()))
 
-        async def run():
-            await asyncio.wait_for(node.run_async(), 10)
+        async def run(owned):
+            await asyncio.wait_for(owned.run_async(), 10)
 
         try:
-            asyncio.run(run())
+            asyncio.run(run(node))
         except Exception as exc:
             seen["error"] = str(exc)
+        finally:
+            try:
+                node.dispose()
+            except Exception as exc:  # Keep failed cleanup in the caller's failure channel.
+                seen["error"] = str(exc)
+            finally:
+                del node
+                gc.collect()
 
     thread = threading.Thread(target=target)
     thread.start()

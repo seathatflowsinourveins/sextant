@@ -1,9 +1,33 @@
-"""Offline TradingView account authority; never supplies operating defaults."""
+"""Owner-thread native cleanup and offline TradingView account authority."""
 
+import gc
 import json
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from nautilus_trader.common import LogLevel, init_logging
+from nautilus_trader.core import UUID4
+from nautilus_trader.model import TraderId
+
+
+@pytest.fixture(scope="session", autouse=True)
+def proof_logging():
+    """NT d53849b python/tests/conftest.py:58-74; log assertions need INFO enabled."""
+    return init_logging(
+        trader_id=TraderId("TESTER-000"),
+        instance_id=UUID4(),
+        level_stdout=LogLevel.INFO,
+        is_bypassed=False,
+        print_config=False,
+    )
+
+
+@pytest.fixture(autouse=True)
+def owner_thread_gc():
+    """NT d53849b python/tests/conftest.py:148-154, before SDK workers start too."""
+    gc.collect()
+    yield gc.collect
+    gc.collect()
 
 
 @pytest.fixture(autouse=True)

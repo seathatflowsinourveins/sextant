@@ -158,3 +158,18 @@ has ended: inspect all recursive `Order.legs` (alpaca-py cc4cb3b7 `models.py:241
 skipping either its order or explained fills. All-terminal nests remain counted once
 per skipped parent or fill activity; loaded owner compound orders still refuse. It establishes
 no broker behavior or permission to trade (`test_alpaca_unloaded_history.py`).
+
+Native-node proofs release their node and strategy in `finally` before assertions can retain
+their traceback; `dispose()` alone does not drop the engine's per-thread ownership token.
+Collect cycles on the creating thread before SDK workers start and after each proof, and
+release worker-owned nodes in that worker before returning observations. Before checking
+captured native logs, initialize enabled session logging before an offline bypass-configured
+node can initialize the process-global logger, then call the shipped `logging_sync_to_disk`
+acknowledged barrier; retain
+the exact stop line and all stop-state assertions. Sources: the manifest's native-node proof
+lifetime row, NT d53849b `python/tests/conftest.py:58-74,148-154`, `node/mod.rs:345-355`, and
+`python/logging.rs:303-315` (custody flake, 2026-11-11).
+Worker disposal failures must enter the caller's failure channel too: joining a thread
+does not re-raise its exception, and pytest normally reports that exception as a warning.
+The native-node proof lifetime row cites the Python and pytest runtime paths; disposal-failure
+mutants cover both worker helpers and a synchronous control (8f4de96 max-gate P1).

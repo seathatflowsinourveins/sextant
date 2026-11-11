@@ -17,6 +17,8 @@ from types import SimpleNamespace as Fixture
 from typing import Any
 
 import pytest
+from nautilus_trader.common import logging_sync_to_disk
+from nautilus_trader.live import NodeState
 from nautilus_trader.live.clients import (
     DataClientFactory,
     ExecutionClientFactory,
@@ -204,14 +206,17 @@ def start(
     ranked = consumer(publisher()) if with_consumer else None
     stand = Stand(venue or AccountVenue())
     args = node_order.parse(argv(tmp_path, count=count, **kw))
-    receipt, code = node_order.run(
-        args,
-        consumer=ranked,
-        leases=leases or node_order.take_leases,
-        data_factory=stand.data,
-        exec_factory=exec_factory or stand.exec,
-        timing=TIMING,
-    )
+    try:
+        receipt, code = node_order.run(
+            args,
+            consumer=ranked,
+            leases=leases or node_order.take_leases,
+            data_factory=stand.data,
+            exec_factory=exec_factory or stand.exec,
+            timing=TIMING,
+        )
+    finally:
+        gc.collect()  # The command drops its node; collect cycles before any assertion.
     return json.loads(receipt.read_text()), code, stand
 
 
@@ -270,7 +275,7 @@ def test_a_gate_row_that_is_on_still_needs_the_consumer(tmp_path, monkeypatch, v
 def test_protection_only_starts_with_no_consumer_on_a_flat_account(tmp_path) -> None:
     venue = AccountVenue()
     body, code, stand = start(tmp_path, venue)
-    assert (code, body["phase"], body["reason"]) == (0, "stopped", None)
+    assert (code, body["phase"], body["reason"]) == (0, "stopped", None), body
     assert stand.subscribed == 3 and not writes(venue)  # the Strategy's own on_start ran
     assert body["steps"]["protect"].startswith("on:")
     entry = body["steps"]["entry"]  # the Strategy's own missing list, with the consumer named
@@ -312,8 +317,9 @@ def test_a_claim_list_over_one_startup_flush_is_refused_before_connect(tmp_path)
 def test_a_flat_account_starts_the_strategy_and_a_stop_releases_the_lease(tmp_path, capfd) -> None:
     venue = AccountVenue()
     body, code, stand = start(tmp_path, venue, count=node_order.QUEUE, with_consumer=True)
+    logging_sync_to_disk()
     out = capfd.readouterr()
-    assert (code, body["phase"], body["reason"]) == (0, "stopped", None)
+    assert (code, body["phase"], body["reason"]) == (0, "stopped", None), body
     assert body["gate"] == {
         "open_positions": 0,
         "open_house_orders": 0,
@@ -367,7 +373,7 @@ def test_a_terminal_old_writer_order_outside_the_claims_does_not_refuse(tmp_path
     _owner(venue, "BTEST-trail-OUTX-1-1", symbol="OUTX", side="sell", status=status)
     seeded = len(venue.requests)
     body, code, _ = start(tmp_path, venue)
-    assert (code, body["phase"], body["reason"]) == (0, "stopped", None)
+    assert (code, body["phase"], body["reason"]) == (0, "stopped", None), body
     assert body["gate"]["open_house_orders"] == 0
     assert all(r[0] == "GET" for r in venue.requests[seeded:]), "nothing was sent"
 
@@ -433,7 +439,7 @@ def test_a_chain_of_two_replacements_ending_terminal_starts(tmp_path) -> None:
     old_writer_chain(venue, 2)[-1]["status"] = "canceled"
     seeded = len(venue.requests)
     body, code, _ = start(tmp_path, venue)
-    assert (code, body["phase"], body["reason"]) == (0, "stopped", None)
+    assert (code, body["phase"], body["reason"]) == (0, "stopped", None), body
     assert all(r[0] == "GET" for r in venue.requests[seeded:]), "nothing was sent"
 
 
@@ -524,7 +530,9 @@ def test_a_canceled_middle_still_linked_to_a_working_successor_refuses_on_the_ve
     assert all(r[0] == "GET" for r in venue.requests[seeded:]), "nothing was sent"
 
 
-def test_the_unchunked_flush_at_the_directory_size_logs_a_full_queue_and_fails(tmp_path, capfd):
+def test_the_unchunked_flush_at_the_directory_size_logs_a_full_queue_and_fails(
+    tmp_path, capfd, owner_thread_gc
+):
     """The engine fact at LEAD-0336's 5,200, built past the refusal: the flush overflows the
     execution client's queue and shutdown_on_error aborts before the Strategy runs."""
     pub = publisher()
@@ -539,13 +547,22 @@ def test_the_unchunked_flush_at_the_directory_size_logs_a_full_queue_and_fails(t
         exec_factory=stand.exec,
         timing=TIMING,
     )
-    timer = threading.Timer(20, node.handle().stop)  # bounds the run if the start succeeds
+    handle = node.handle()
+    timer = threading.Timer(20, handle.stop)  # bounds the run if the start succeeds
     try:
         timer.start()
         node.run()
+        state, gate_checked = handle.state, strategy.gate.checked
     finally:
         timer.cancel()
-        node.dispose()
+        timer.join()
+        try:
+            node.dispose()
+        finally:
+            del node, strategy
+            owner_thread_gc()
+    # NT d53849b crates/common/src/python/logging.rs:303-315: acknowledged flush.
+    logging_sync_to_disk()
     out = capfd.readouterr()
     text = out.out + out.err
     full = sum(
@@ -554,8 +571,8 @@ def test_the_unchunked_flush_at_the_directory_size_logs_a_full_queue_and_fails(t
     )
     assert full == 5200 - node_order.QUEUE, full  # LEAD-0336 measured 4,176
     assert "Shutdown signal received during startup" in text
-    assert not strategy.gate.checked and stand.subscribed == 0
-    del node, strategy
+    assert not gate_checked and stand.subscribed == 0
+    assert state == NodeState.STOPPED
 
 
 def test_both_leases_are_held_for_the_run_and_a_second_holder_is_refused(tmp_path) -> None:
@@ -577,8 +594,9 @@ def test_an_account_other_than_the_expected_one_stops_before_any_command(
     monkeypatch.setenv(EXPECTED_FULL_ENV, "PAOTHER0002")
     venue = AccountVenue()
     body, code, stand = start(tmp_path, venue)
+    logging_sync_to_disk()
     out = capfd.readouterr()
-    assert (code, body["phase"], body["reason"]) == (2, "refused", "account_mismatch")
+    assert (code, body["phase"], body["reason"]) == (2, "refused", "account_mismatch"), body
     assert stand.subscribed == 0 and not writes(venue)
     assert ("GET", "/account", {}) in venue.requests  # the account it reached was read
     for text in (out.out + out.err, json.dumps(body)):  # neither number is printed or kept
@@ -599,12 +617,16 @@ def test_a_holding_outside_the_claims_while_running_is_paged_once_per_name(tmp_p
     (tmp_path / "b.json").write_text(json.dumps(rows))
     venue = AccountVenue()
     later = threading.Timer(0.5, lambda: [_holding(venue, s, "5") for s in ("OUTA", "OUTB")])
-    later.start()
-    body, code, _ = start(tmp_path, venue, b=tmp_path / "b.json", duration="4")
-    later.cancel()
+    try:
+        later.start()
+        body, code, _ = start(tmp_path, venue, b=tmp_path / "b.json", duration="4")
+    finally:
+        later.cancel()
+        later.join()
+    logging_sync_to_disk()
     err = capfd.readouterr().err.splitlines()
     lines = [line for line in err if "holding_outside_claims_running" in line]
-    assert (code, body["phase"]) == (0, "stopped")
+    assert (code, body["phase"]) == (0, "stopped"), body
     assert body["outside_holdings_paged"] == 2
     assert sorted(line.rsplit(" ", 1)[1] for line in lines) == ["OUTA", "OUTB"]  # once per name
     assert not writes(venue)
@@ -651,7 +673,7 @@ def test_one_shared_root_loses_the_stream_refusal(tmp_path) -> None:
     with ExitStack() as held:
         hold("stream", tmp_path, held)
         body, code, _ = start(tmp_path, venue, stream_root=tmp_path / "locks")
-    assert (code, body["phase"]) == (0, "stopped")  # the market_data_lease refusal is lost
+    assert (code, body["phase"]) == (0, "stopped"), body  # market_data_lease refusal is lost
 
 
 @pytest.mark.parametrize("flag", ["--writer-lease-root", "--stream-lease-root"])
@@ -691,7 +713,7 @@ def journal_rows(tmp_path: Path) -> list[dict[str, Any]]:
 
 def test_the_strategy_records_of_a_run_reach_the_journal_file(tmp_path) -> None:
     body, code, _ = start(tmp_path)
-    assert (code, body["phase"]) == (0, "stopped")
+    assert (code, body["phase"]) == (0, "stopped"), body
     refused = [row for row in journal_rows(tmp_path) if row["kind"] == "entry_refused"]
     assert len(refused) == 1 and "ranking_consumer" in refused[0]["missing"]
     assert body["journal"] == {"file": node_order.JOURNAL, "errors": 0}

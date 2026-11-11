@@ -1,6 +1,7 @@
 """Offline E4 witness through NautilusTrader's ALPACA sandbox shell."""
 
 import asyncio
+import gc
 import re
 import threading
 from datetime import UTC, datetime, timedelta
@@ -14,7 +15,7 @@ from alpaca.data.enums import DataFeed
 from alpaca.data.models import BarSet, QuoteSet, TradeSet
 from alpaca.data.requests import StockBarsRequest, StockQuotesRequest, StockTradesRequest
 from nautilus_trader.adapters.sandbox import SandboxExecutionClientFactory
-from nautilus_trader.common import DataResponse
+from nautilus_trader.common import DataResponse, logging_sync_to_disk
 from nautilus_trader.config import DataClientConfig
 from nautilus_trader.live import InstrumentProvider, InstrumentProviderConfig, LiveNodeBuilder
 from nautilus_trader.live.clients import DataClientFactory
@@ -292,7 +293,11 @@ async def run_shell(
         try:
             await asyncio.wait_for(task, timeout=10)
         finally:
-            node.dispose()
+            try:
+                node.dispose()
+            finally:
+                del node, task
+                gc.collect()
     return strategy, stream, history, clients[0]
 
 
@@ -480,7 +485,7 @@ def test_bad_stream_row_is_counted_and_later_quotes_reach_strategy(channel, capf
     assert client.dropped_trade_count == int(channel == "trades")
     assert client.dropped_bar_count == int(channel == "bars")
     assert stream.closed.is_set()
-    client._log.flush()
+    logging_sync_to_disk()
     captured = capfd.readouterr()
     text = re.sub(r"\x1b\[[0-9;]*m", "", captured.out + captured.err)
     errors = [line for line in text.splitlines() if f"Dropped Alpaca {channel} row" in line]

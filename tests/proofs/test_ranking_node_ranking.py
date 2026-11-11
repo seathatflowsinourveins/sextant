@@ -7,6 +7,7 @@ SDK's own ``_consume``) inside the mode's own data-only node.
 from __future__ import annotations
 
 import asyncio
+import gc
 import hashlib
 import json
 import time
@@ -208,7 +209,11 @@ def test_the_node_ranks_from_the_stream_and_writes_its_segment_receipt(tmp_path)
             try:
                 await asyncio.wait_for(task, timeout=10)
             finally:
-                node.dispose()
+                try:
+                    node.dispose()
+                finally:
+                    del node, task
+                    gc.collect()
         return actor
 
     actor = asyncio.run(drive())
