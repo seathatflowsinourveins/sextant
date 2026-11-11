@@ -4,6 +4,7 @@
 1. A cancel rejection that arrives after its retry is already due still leaves a retry on the
    engine's clock (review s1p2-de481ca), so a quiet feed cannot leave the trail unretried.
 2. The venue's client row is resolved before a command's bookkeeping (review s1p2b-eb33a6a).
+3. Only the bool False turns the rank gate off without a ranking consumer (node builder, n3).
 Fixture values only; the stand-in is test_b_protect_single's.
 """
 
@@ -140,3 +141,29 @@ def test_a_bad_client_row_refuses_the_entry_and_a_restored_row_enters(tmp_path):
     assert [o.ts_init for o in house(orders)] == [at("0.7")], "a restored row never entered"
     assert strategy.escaped == []
     assert [r["reason"] for r in journal if r.get("reason") == "client_id"] == ["client_id"]
+
+
+# 3. Only the bool False is the rank gate's off (ranking/registry.py:50-61): with no ranking
+# consumer, a gate row of 0, Decimal(0) or None is refused, never read as off.
+@pytest.mark.parametrize("value", [0, "Decimal0", None])
+def test_only_the_bool_false_gate_runs_without_a_ranking_consumer(value):
+    from dataclasses import replace
+    from decimal import Decimal
+
+    from test_b_lifecycle import GATE_ON
+    from test_b_lifecycle_protect import NATIVE
+
+    from sextant.paper.b_lifecycle import BLifecycleConfig
+
+    def config(gate):
+        return BLifecycleConfig(
+            namespace="BTEST",
+            instrument_ids=(PENNY,),
+            consumer=None,
+            rank_gate=replace(GATE_ON, value=gate),
+            native_trail_fraction=NATIVE,
+        )
+
+    config(False)  # the off row: protection only
+    with pytest.raises(ValueError, match="RankingConsumer"):
+        config(Decimal(0) if value == "Decimal0" else value)
