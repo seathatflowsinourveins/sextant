@@ -1,0 +1,534 @@
+"""Paper B's order-mode node entry (N3, #470 rows 10-11): DEFAULT-REFUSING until its parts land.
+
+One command builds the paper account's live node in the official engine's shape: the Alpaca data
+client, the Alpaca execution client and B's lifecycle Strategy through
+``LiveNodeBuilder.from_config(...).add_data_client(...).add_exec_client(...).build()``, then
+``node.add_strategy`` and ``node.run()`` on the main thread (nautilus_trader v2.0.0rc8
+``examples/live/interactive_brokers/exec_tester.py:82-135``, ``live/__init__.pyi:1147-1190``,
+``docs/concepts/live.md:119-121``). A timer stops it through ``LiveNodeHandle.stop()``
+(``live.md:186-189``). Every start condition is a named refusal, in this order: the rows, the
+leases, the paper-only client, the claim list; then, after connect and reconciliation and
+before the Strategy may send, the account must be FLAT (LEAD-0310 9). A refusal writes the receipt.
+
+Engine facts that set the shape (rc8; cited in the manifest row and the part note): the
+instruments a data client emits while connecting reach the execution client's 1,024-slot queue
+in one start-up flush (``crates/live/src/node/mod.rs:484-498``), so more than 1,024 names is
+refused and ``shutdown_on_error`` makes a logged full queue a failed start; custom Python
+clients run without a cache database (``docs/concepts/live.md:232-233``).
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import threading
+from collections.abc import Callable, Mapping
+from contextlib import ExitStack
+from dataclasses import dataclass, field, replace
+from decimal import Decimal
+from pathlib import Path
+from typing import Any
+
+from nautilus_trader.common import Environment
+from nautilus_trader.config import InstrumentProviderConfig
+from nautilus_trader.live import (
+    LiveNode,
+    LiveNodeBuilder,
+    LiveNodeConfig,
+    LiveRiskEngineConfig,
+    SubmissionRecoveryPolicy,
+)
+from nautilus_trader.live.clients import ExecutionClientFactory
+from nautilus_trader.model import InstrumentId, Symbol, TraderId
+
+from sextant.alpaca.config import AlpacaDataClientConfig, AlpacaExecutionClientConfig
+from sextant.alpaca.constants import DEFAULT_FEED, VENUE
+from sextant.alpaca.execution import execution_engine_config
+from sextant.alpaca.factories import AlpacaDataClientFactory, AlpacaExecutionClientFactory
+from sextant.entry.parameters import EntryParameters
+from sextant.execution.custody import AccountScope, CustodyError, WriterLease
+from sextant.execution.state import write_atomic
+from sextant.paper.b_lifecycle import BLifecycle, BLifecycleConfig
+from sextant.paper.b_protector import load_b_parameters
+from sextant.paper.b_protector_main import load_account_config
+from sextant.paper.config import PaperAccount
+from sextant.ranking.consumer import RankingConsumer
+from sextant.ranking.registry import RANK_GATE_ENABLED
+
+NODE_NAME = "paper-b-node"
+CLIENT_NAME = "ALPACA"
+WRITER = "b-node"
+HOUSE_PREFIX = "O-"  # rc8's generator O-{date}-{time}-{trader}-{tag}-{n} (b_lifecycle._house)
+QUEUE = 1024  # rc8 crates/live/src/python/runtime.rs:39 COMMAND_CAPACITY, an engine constant
+RECEIPT = "order-mode-receipt.json"
+WIDTH = ("alpaca_min_trail_fraction", "trail_atr_period", "trail_atr_bar_minutes")
+WIDTH += ("trail_atr_multiple",)
+TIMING = frozenset(f"timeout_{n}_secs" for n in ("connection", "reconciliation", "portfolio"))
+TIMING |= {"timeout_disconnection_secs", "delay_post_stop_secs"}
+RESTART = (
+    "no cache database: custom Python clients support none in either launch mode (rc8 "
+    "docs/concepts/live.md:232-233). A restart rebuilds orders and positions from the venue's "
+    "reports (startup reconciliation) and re-arms at the native width; the campaign record "
+    "(width and offsets in force, counts, re-entry state) is not recovered."
+)
+
+
+class OrderModeRefused(ValueError):
+    """A start condition failed; ``reason`` names it and the receipt records it."""
+
+    def __init__(self, reason: str, detail: str) -> None:
+        super().__init__(f"{reason}: {detail}")
+        self.reason, self.detail = reason, detail
+
+
+@dataclass(frozen=True)
+class Rows:
+    native: Decimal
+    width: dict[str, Decimal] | None
+    inflight_ms: int
+    commission: list[dict[str, Any]]
+    pacing: list[dict[str, Any]]
+    entry: EntryParameters | None
+    steps: dict[str, str]
+
+
+@dataclass(frozen=True)
+class OrderArguments:
+    account: PaperAccount
+    rows: Rows
+    listings_dir: Path
+    duration_s: int
+    receipt_dir: Path
+    api_key_env: str
+    api_secret_env: str
+    lease_root: Path
+    existing_streams: int
+    lease_source: str
+    universe: tuple[InstrumentId, ...] = ()  # the claim list, read after the leases
+    universe_source: str = "not read"
+
+
+def _rows(path: Path) -> list[dict[str, Any]]:
+    rows = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(rows, list) or not all(isinstance(r, dict) and "name" in r for r in rows):
+        raise ValueError(f"{Path(path).name} is not a row list")
+    return rows
+
+
+def _unavailable(rows: list[dict[str, Any]]) -> list[str]:
+    return sorted(row["name"] for row in rows if row.get("value") is None)
+
+
+def load_rows(raw: argparse.Namespace) -> Rows:
+    """Every registry through its existing loader; protection needs only the native row."""
+    try:
+        b = load_b_parameters(raw.b_parameters)
+        node = {row["name"]: row for row in _rows(raw.node_parameters)}
+        pacing = _rows(raw.custody_parameters)
+        entry_rows, exit_rows = _rows(raw.entry_parameters), _rows(raw.exit_parameters)
+        reentry_rows = _rows(raw.reentry_parameters)
+        inflight = node["native_inflight_check_interval_ms"]["value"]
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        raise OrderModeRefused("registries", f"{type(error).__name__}: {error}") from error
+    if type(inflight) is not int or inflight < 0:
+        raise OrderModeRefused("registries", "native_inflight_check_interval_ms is not an int")
+    steps: dict[str, str] = {"protect": f"on: native_trail_fraction {b.native_trail_fraction}"}
+    # The data client streams 1-minute bars only (alpaca/data.py _bar_timeframe); another width
+    # bar is refused there, and under shutdown_on_error that refusal would stop the node.
+    streamed = b.width_on and b.trail_atr_bar_minutes == 1
+    width = {n: getattr(b, n) for n in WIDTH} if streamed else None
+    steps["tighten"] = (
+        "on: width rows on the streamed 1-minute bar"
+        if streamed
+        else "off: width rows unavailable"
+        if not b.width_on
+        else "off: the width bar is not streamed; it needs the engine's own aggregation "
+        "(LEAD-0310 4, a Strategy part)"
+    )
+    entry: EntryParameters | None = None
+    try:
+        entry = EntryParameters.from_rows(entry_rows, sizing_only=True)
+        steps["entry"] = "rows available; the rank gate row is off (ranking/registry.py:50)"
+    except (ValueError, KeyError, TypeError) as error:
+        steps["entry"] = f"off: {error}"
+    steps["gain_lock"] = (
+        "off: no loader reads B's own exit file into ExitParams (LEAD-0310 6); unavailable "
+        f"rows {_unavailable(exit_rows)}"
+    )
+    steps["reentry"] = f"off: no re-entry part on main; unavailable {_unavailable(reentry_rows)}"
+    commission = [row for row in node.values() if row["name"].startswith("paper_us_equity_")]
+    return Rows(b.native_trail_fraction, width, inflight, commission, pacing, entry, steps)
+
+
+def read_directory(directory: Path) -> tuple[tuple[InstrumentId, ...], str]:
+    """Every listed common stock, only as the listings job's receipt and validator accept."""
+    from sextant.data.ranking_inputs import _listing_texts
+    from sextant.tradingview.bars import build_universe
+    from sextant.tradingview.listings import creation_time
+
+    try:
+        texts, staged_at = _listing_texts(Path(directory))
+        names = build_universe(*texts.values())
+    except (OSError, ValueError) as error:
+        raise OrderModeRefused("claim_list", f"{type(error).__name__}: {error}") from error
+    if not names:
+        raise OrderModeRefused("claim_list", "the listing directory has no common stock")
+    created = " / ".join(creation_time(text) for text in texts.values())
+    source = f"NASDAQ Trader directory, File Creation Time {created}, staged {staged_at}"
+    return tuple(InstrumentId(Symbol(name), VENUE) for name in names), source
+
+
+def parse(argv: list[str] | None = None) -> OrderArguments:
+    parser = argparse.ArgumentParser(prog="python -m sextant.paper.node_order", allow_abbrev=False)
+    required = parser.add_argument_group("required")
+    for flag, kind in (
+        ("--account-config", Path),
+        ("--listings-dir", Path),
+        ("--b-parameters", Path),
+        ("--entry-parameters", Path),
+        ("--exit-parameters", Path),
+        ("--reentry-parameters", Path),
+        ("--node-parameters", Path),
+        ("--custody-parameters", Path),
+        ("--receipt-dir", Path),
+        ("--duration-s", int),
+        ("--api-key-env", str),
+        ("--api-secret-env", str),
+        ("--paper-slot", int),
+        ("--lease-root", Path),
+        ("--existing-streams", int),
+        ("--lease-source", str),
+    ):
+        required.add_argument(flag, type=kind, required=True)
+    raw = parser.parse_args(argv)
+    if raw.paper_slot != 2:  # slot 1 is the owner's account, slot 3 is revoked (AGENTS.md)
+        raise OrderModeRefused("paper_slot", f"only paper slot 2, not {raw.paper_slot}")
+    if raw.duration_s <= 0:
+        raise OrderModeRefused("duration", "must be a positive number of seconds")
+    try:
+        account = load_account_config(raw.account_config)
+    except ValueError as error:
+        raise OrderModeRefused("registries", f"account config: {error}") from error
+    if account.lane != "alpaca-paper-b":
+        raise OrderModeRefused("registries", "the account config is not Paper B's")
+    rows = load_rows(raw)
+    return OrderArguments(
+        account,
+        rows,
+        raw.listings_dir,
+        raw.duration_s,
+        raw.receipt_dir,
+        raw.api_key_env,
+        raw.api_secret_env,
+        raw.lease_root,
+        raw.existing_streams,
+        raw.lease_source,
+    )
+
+
+def execution_config(args: OrderArguments) -> AlpacaExecutionClientConfig:
+    return AlpacaExecutionClientConfig(
+        api_key_env=args.api_key_env,
+        api_secret_env=args.api_secret_env,
+        account_id=f"ALPACA-{args.account.namespace}",  # native.py's SIM-{namespace} shape
+        house_prefix=HOUSE_PREFIX,
+        pacing_rows=args.rows.pacing,
+        commission_rows=args.rows.commission,
+    )
+
+
+def refuse_non_paper(clients: list[tuple[str, Any, Any]], config: LiveNodeConfig) -> None:
+    """One execution client, the Alpaca one: it connects with ``paper=True`` only
+    (execution.py ``_connect``), and alpaca-py then picks the paper host with no override
+    (alpaca-py v0.44.0 ``alpaca/trading/client.py:76-83``)."""
+    named = [f"{name}: {type(cfg).__name__}" for name, _, cfg in clients]
+    if config.exec_clients or len(clients) != 1:
+        raise OrderModeRefused("execution_client", f"exactly one Alpaca client, not {named}")
+    _, factory, cfg = clients[0]
+    kind = factory if isinstance(factory, type) else type(factory)
+    if not issubclass(kind, AlpacaExecutionClientFactory) or type(cfg) is not (
+        AlpacaExecutionClientConfig
+    ):
+        raise OrderModeRefused("execution_client", f"not the paper Alpaca client: {named}")
+
+
+def node_config(args: OrderArguments, **timing: Any) -> LiveNodeConfig:
+    unknown = sorted(set(timing) - TIMING)
+    if unknown:
+        raise TypeError(f"unknown timing fields {unknown}")
+    return LiveNodeConfig(
+        environment=Environment.LIVE,
+        trader_id=TraderId.from_str(f"PAPER{args.account.namespace}-001"),  # native.py:77
+        shutdown_on_error=True,
+        risk_engine=LiveRiskEngineConfig(bypass=False),
+        exec_engine=execution_engine_config(
+            universe=args.universe,
+            inflight_check_interval_ms=args.rows.inflight_ms,
+            submission_recovery_policy=SubmissionRecoveryPolicy.RETAIN_UNRESOLVED,
+        ),
+        **timing,
+    )
+
+
+@dataclass
+class Gate:
+    """The cutover rule (LEAD-0310 9): FLAT and no resting house order, or nothing is sent."""
+
+    old_prefix: str
+    clients: list[Any] = field(default_factory=list)
+    checked: bool = False
+    open: bool = False
+    reasons: list[str] = field(default_factory=list)
+    counts: dict[str, int] = field(default_factory=dict)
+    refused_sends: int = 0
+
+    def check(self, cache: Any) -> list[str]:
+        positions = list(cache.positions_open())
+        house = [
+            order
+            for order in cache.orders_open()
+            if str(order.client_order_id).startswith((HOUSE_PREFIX, self.old_prefix))
+        ]
+        withheld = [row for client in self.clients for row, _ in client.withheld_positions]
+        withheld_house = [
+            row
+            for client in self.clients
+            for row, _ in client.withheld
+            if str(row.get("client_order_id", "")).startswith((HOUSE_PREFIX, self.old_prefix))
+        ]
+        self.counts = {
+            "open_positions": len(positions),
+            "open_house_orders": len(house) + len(withheld_house),
+            "withheld_holdings": len(withheld),
+        }
+        names = ("not_flat", "house_order_open", "holding_outside_claims")
+        values = (len(positions), self.counts["open_house_orders"], len(withheld))
+        return [name for name, count in zip(names, values, strict=True) if count]
+
+
+class GatedBLifecycle(BLifecycle):
+    """B's Strategy, built from its own config, behind the cutover gate: ``on_start`` checks
+    the reconciled cache first, and every send is refused until the gate opens. A refused gate
+    asks the node to stop (``Strategy.shutdown_system``, rc8 trading stub :525)."""
+
+    gate: Gate
+
+    def on_start(self) -> None:
+        gate = self.gate
+        gate.reasons, gate.checked = gate.check(self.cache), True
+        if gate.reasons:
+            self.shutdown_system("order mode refused: " + ", ".join(gate.reasons))
+            return
+        gate.open = True
+        super().on_start()
+
+    def _allowed(self) -> bool:
+        if not self.gate.open:
+            self.gate.refused_sends += 1
+        return self.gate.open
+
+    def submit_order(self, *args: Any, **kwargs: Any) -> Any:
+        return super().submit_order(*args, **kwargs) if self._allowed() else None
+
+    def modify_order(self, *args: Any, **kwargs: Any) -> Any:
+        return super().modify_order(*args, **kwargs) if self._allowed() else None
+
+    def cancel_order(self, *args: Any, **kwargs: Any) -> Any:
+        return super().cancel_order(*args, **kwargs) if self._allowed() else None
+
+
+class _Retaining(ExecutionClientFactory):
+    """The factory, keeping each client it creates so the gate can read the withheld rows."""
+
+    def __init__(self, factory: Any, sink: list[Any]) -> None:
+        self.factory, self.sink = factory, sink
+
+    def create(self, **kwargs: Any) -> Any:  # type: ignore[override]
+        client = self.factory.create(**kwargs)
+        self.sink.append(client)
+        return client
+
+
+def build(
+    args: OrderArguments,
+    *,
+    consumer: RankingConsumer,
+    data_factory: Any = AlpacaDataClientFactory,
+    exec_factory: Any = AlpacaExecutionClientFactory,
+    timing: Mapping[str, float] | None = None,
+) -> tuple[LiveNode, GatedBLifecycle]:
+    config = node_config(args, **dict(timing or {}))
+    exec_config = execution_config(args)
+    refuse_non_paper([(CLIENT_NAME, exec_factory, exec_config)], config)
+    gate = Gate(args.account.house_prefix)
+    data = AlpacaDataClientConfig(
+        api_key_env=args.api_key_env,
+        api_secret_env=args.api_secret_env,
+        feed=DEFAULT_FEED,
+        instrument_provider=InstrumentProviderConfig(load_ids=[str(i) for i in args.universe]),
+    )
+    node = (
+        LiveNodeBuilder.from_config(NODE_NAME, config)
+        .add_data_client(CLIENT_NAME, data_factory, data)
+        .add_exec_client(CLIENT_NAME, _Retaining(exec_factory, gate.clients), exec_config)
+        .build()
+    )
+    strategy = GatedBLifecycle(
+        BLifecycleConfig(
+            namespace=args.account.namespace,
+            instrument_ids=args.universe,
+            consumer=consumer,
+            rank_gate=RANK_GATE_ENABLED,
+            entry_params=args.rows.entry,
+            native_trail_fraction=args.rows.native,
+            width_rows=args.rows.width,
+        )
+    )
+    strategy.gate = gate
+    node.add_strategy(strategy)
+    return node, strategy
+
+
+def write_receipt(args: OrderArguments, phase: str, **body: Any) -> Path:
+    scope = AccountScope(args.account.broker, args.account.account_id).key
+    write_atomic(
+        args.receipt_dir / RECEIPT,
+        {
+            "schema": "sextant.paper-order-node.receipt/1",
+            "phase": phase,
+            "steps": args.rows.steps,
+            "claims": {
+                "count": len(args.universe),
+                "source": args.universe_source,
+                "startup_flush": len(args.universe),
+                "queue_capacity": QUEUE,
+                "load_after_start": "not built: needs the data client and execution client parts",
+            },
+            "lease": {
+                "writer": WRITER,
+                "scope_sha256": hashlib.sha256(scope.encode()).hexdigest(),
+                "market_data": "rank-live",
+                "root": str(args.lease_root),
+            },
+            "engine": {
+                "environment": "LIVE",
+                "house_prefix": HOUSE_PREFIX,
+                "reconciliation": "startup, unbounded lookback, scoped to the claim list",
+                "filter_unclaimed_external_orders": True,
+                "generate_missing_orders": False,
+                "inflight_check_interval_ms": args.rows.inflight_ms,
+                "submission_recovery_policy": "RETAIN_UNRESOLVED",
+                "shutdown_on_error": True,
+                "cache_database": None,
+            },
+            "restart": RESTART,
+            **body,
+        },
+    )
+    return args.receipt_dir / RECEIPT
+
+
+def run(
+    args: OrderArguments,
+    *,
+    consumer: RankingConsumer | None,
+    leases: Callable[[ExitStack, OrderArguments], None],
+    data_factory: Any = AlpacaDataClientFactory,
+    exec_factory: Any = AlpacaExecutionClientFactory,
+    timing: Mapping[str, float] | None = None,
+) -> tuple[Path, int]:
+    """The remaining start conditions in order, then the node; (receipt, exit code)."""
+    if consumer is None:  # a registries-stage refusal, before any lease
+        detail = (
+            "BLifecycleConfig requires a RankingConsumer (b_lifecycle.py:109,130-131) and its "
+            "entry ages have no registry row (ranking/registry.py:42-46)"
+        )
+        return write_receipt(args, "refused", reason="ranking_consumer", detail=detail), 2
+    with ExitStack() as held:
+        try:
+            leases(held, args)
+            # Nothing but the one paper client may configure an execution client.
+            refuse_non_paper(
+                [(CLIENT_NAME, exec_factory, execution_config(args))], LiveNodeConfig()
+            )
+            old = args.account.house_prefix
+            if HOUSE_PREFIX.startswith(old) or old.startswith(HOUSE_PREFIX):
+                raise OrderModeRefused("house_prefix", "the old writer's prefix overlaps O-")
+            universe, source = read_directory(args.listings_dir)
+            if len(universe) > QUEUE:
+                raise OrderModeRefused(
+                    "claim_list",
+                    f"{len(universe)} names exceed one startup flush of the execution client's "
+                    f"{QUEUE}-slot queue; the chunked load after start is not built",
+                )
+            args = replace(args, universe=universe, universe_source=source)
+            node, strategy = build(
+                args,
+                consumer=consumer,
+                data_factory=data_factory,
+                exec_factory=exec_factory,
+                timing=timing,
+            )
+        except OrderModeRefused as refusal:
+            return write_receipt(args, "refused", reason=refusal.reason, detail=refusal.detail), 2
+        write_receipt(args, "starting")
+        timer = threading.Timer(args.duration_s, node.handle().stop)
+        timer.daemon = True
+        failure = None
+        try:
+            timer.start()
+            node.run()
+        except Exception as error:  # the run's own failure is recorded, then the exit is nonzero
+            failure = f"{type(error).__name__}: {error}"
+        finally:
+            timer.cancel()
+            node.dispose()
+        gate = strategy.gate
+        phase = "stopped" if gate.open else "refused" if gate.checked else "aborted_at_start"
+        phase = "failed" if failure else phase
+        reason = failure or (None if gate.open else ",".join(gate.reasons) or "startup_aborted")
+        del node, strategy  # rc8 allows one LiveNode per thread until it is released
+        receipt = write_receipt(
+            args, phase, reason=reason, gate=gate.counts, refused_sends=gate.refused_sends
+        )
+        return receipt, 0 if phase == "stopped" else 2
+
+
+def take_leases(held: ExitStack, args: OrderArguments) -> None:
+    """The account's one writer (custody.py ``WriterLease``, the old writer's scope) and the
+    key's one market-data stream (producer.py ``reserve_stream``), both for the whole run."""
+    from sextant.tradingview.producer import reserve_stream
+
+    scope = AccountScope(args.account.broker, args.account.account_id)
+    lease = WriterLease(scope, args.lease_root, WRITER)
+    try:
+        lease.acquire()
+    except CustodyError as error:
+        raise OrderModeRefused("writer_lease", str(error)) from error
+    held.callback(lease.close)
+    try:
+        held.enter_context(
+            reserve_stream(
+                args.lease_root,
+                paper_slot=2,
+                existing_streams=args.existing_streams,
+                source=args.lease_source,
+            )
+        )
+    except (ValueError, CustodyError) as error:
+        raise OrderModeRefused("market_data_lease", str(error)) from error
+
+
+def main(argv: list[str] | None = None) -> int:
+    try:
+        args = parse(argv)
+    except OrderModeRefused as refusal:
+        print(f"order mode refused: {refusal}", flush=True)
+        return 2
+    _, code = run(args, consumer=None, leases=take_leases)
+    return code
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
