@@ -16,11 +16,12 @@ from typing import Any
 
 import pytest
 from test_b_gain_lock import advance
-from test_b_lifecycle_entry import house, run_entry
+from test_b_lifecycle_entry import EQUITY, house, run_entry
 
 from sextant.entry.parameters import COUNTS, FIRST_LEG, NAMES, SIZING, EntryParameters
+from sextant.entry.sizing import size_entry
 from sextant.entry.surge import DEFAULT_CONFIG
-from sextant.exits.policy import CHASE, REGISTRY, ExitParams
+from sextant.exits.policy import CHASE, REGISTRY, ExitParams, chase_limit
 from sextant.reentry.policy import Params
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -108,23 +109,60 @@ def test_entry_file_loads_its_first_leg_rows_through_the_reader() -> None:
     assert all(type(params[name]) is int for name in FIRST_LEG & COUNTS)
 
 
-def test_the_strategy_load_refuses_on_chase_cap_fraction_alone() -> None:
-    rows = entry_rows()
-    with pytest.raises(ValueError, match=r"^chase_cap_fraction: unavailable"):
-        EntryParameters.from_rows(rows, sizing_only=True)
-    # the one gap: with only that row given a test value, the full B load passes
-    patched = [
-        row | {"value": "0.01", "scope": "FIXTURE_ONLY", "calibration": "UNCALIBRATED"}
-        if row["name"] == "chase_cap_fraction"
-        else row
-        for row in rows
-    ]
-    loaded = EntryParameters.from_rows(patched, fixture=True, sizing_only=True)
+def test_the_strategy_load_reads_the_reviewed_sizing_allowance() -> None:
+    loaded = EntryParameters.from_rows(entry_rows(), sizing_only=True)
+    assert not loaded.fixture
     assert set(loaded.values) == FIRST_LEG | SIZING
+    assert loaded["chase_cap_fraction"] == D("0.0020")
 
 
-def test_b_strategy_refuses_entry_with_the_files_rows(tmp_path) -> None:
-    """The host cannot build the sizing load, so the Strategy names the rows and sends nothing."""
+def test_b_chase_allowance_sizes_risk_without_enabling_exit_chase() -> None:
+    """LEAD-1501 V1: sizing reserves risk; B's independent exit authority stays off."""
+    rows = entry_rows()
+    params = EntryParameters.from_rows(rows, sizing_only=True)
+    assert params["chase_cap_fraction"] == D("0.0020")
+    larger = EntryParameters.from_rows(
+        [
+            row | {"value": "0.0040", "scope": "FIXTURE_ONLY"}
+            if row["name"] == "chase_cap_fraction"
+            else row
+            for row in rows
+        ],
+        sizing_only=True,
+        fixture=True,
+    )
+    inputs = dict(
+        instrument=EQUITY,
+        setup="FIRST_LEG",
+        entry=D("100"),
+        initial_trigger=D("99"),
+        equity=D("100000"),
+        basis=D("100000"),
+        buying_power=D("1000000"),
+        dollar_volume=D("1000000000"),
+        confidence=None,
+        prearm_stopouts=0,
+        commission_rate=D("0"),
+    )
+    sized = size_entry(params=params, **inputs)
+    conservative = size_entry(params=larger, **inputs)
+    assert sized.refusal is conservative.refusal is None
+    assert sized.binding_term == conservative.binding_term == "risk"
+    assert sized.planned_risk == conservative.planned_risk == D("200")
+    assert sized.stop_distance == D("1.2000")
+    assert conservative.stop_distance == D("1.4000")
+    assert sized.quantity.as_decimal() == D("166")
+    assert conservative.quantity.as_decimal() == D("142") < sized.quantity.as_decimal()
+    assert params.params_hash != larger.params_hash
+
+    exits = exit_params(load("b-gain-lock.params.json"))
+    assert exits.chase_cap_fraction is exits.chase_min_interval_s is None
+    assert not exits.chase_on
+    assert chase_limit(D("98"), D("100"), exits) == D("98")
+
+
+def test_b_strategy_refuses_entry_with_only_the_files_first_leg_rows(tmp_path) -> None:
+    """An intentionally incomplete load still names missing sizing rows and sends nothing."""
     narrow = EntryParameters.from_rows(entry_rows(), first_leg_only=True)
     journal, orders, strategy = run_entry(tmp_path, entry_params=narrow)
     (refusal,) = [row for row in journal if row["kind"] == "entry_refused"]
@@ -133,7 +171,7 @@ def test_b_strategy_refuses_entry_with_the_files_rows(tmp_path) -> None:
     assert house(orders) == [] and strategy.sent == []
 
 
-def test_entry_rows_are_the_sim_lanes_reviewed_rows_under_the_ruling() -> None:
+def test_entry_rows_keep_shared_starts_and_bs_own_sizing_allowance() -> None:
     rows = entry_rows()
     sim = {r["name"]: r for r in json.loads((ROOT / "lanes/sim/entry-parameters.json").read_text())}
     assert [r["name"] for r in rows] == list(sim) and set(sim) == NAMES
@@ -142,15 +180,19 @@ def test_entry_rows_are_the_sim_lanes_reviewed_rows_under_the_ruling() -> None:
         assert set(row) == ENTRY_KEYS and row["source"] and row["unit"] and row["last_change"]
         if row["scope"] == "REVIEWED":
             reviewed.add(row["name"])
-            base = sim[row["name"]]
-            assert base["scope"] == "REVIEWED" and row["value"] == base["value"]
-            assert type(row["value"]) is type(base["value"])
-            assert base["source"].rstrip(";. ") in row["source"] and RULING in row["source"]
             assert row["calibration"] == "UNCALIBRATED"
+            if row["name"] == "chase_cap_fraction":
+                assert row["value"] == "0.0020" and row["last_change"] == "2026-11-11"
+                assert "LEAD-1501" in row["source"] and "D-71" in row["source"]
+            else:
+                base = sim[row["name"]]
+                assert base["scope"] == "REVIEWED" and row["value"] == base["value"]
+                assert type(row["value"]) is type(base["value"])
+                assert base["source"].rstrip(";. ") in row["source"] and RULING in row["source"]
         else:
             assert row["value"] is None
             assert row["scope"] == row["calibration"] == "UNAVAILABLE"
-    assert reviewed == (FIRST_LEG | SIZING) - {"chase_cap_fraction"}
+    assert reviewed == FIRST_LEG | SIZING
 
 
 @pytest.mark.parametrize(
@@ -299,4 +341,4 @@ def test_every_b_row_has_a_reader_and_chase_cap_fraction_lives_once() -> None:
     for name, want in rows.items():
         assert {r["name"] for r in load(name)} == want
     chase = {row.name: row.start for row in REGISTRY}["chase_cap_fraction"]
-    assert chase is None  # the exit engine's own row agrees: no authority
+    assert chase is None  # the exit engine's independent row still has no authority

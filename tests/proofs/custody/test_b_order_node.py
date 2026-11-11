@@ -10,6 +10,7 @@ import json
 import threading
 from contextlib import ExitStack
 from dataclasses import replace
+from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace as Fixture
 from typing import Any
@@ -229,9 +230,11 @@ def test_rows_protection_needs_only_the_native_row_and_the_rest_are_named_off(tm
     assert rows.native > 0 and rows.inflight_ms == 0
     assert rows.steps["protect"].startswith("on:")
     assert rows.width is None and "not streamed" in rows.steps["tighten"]  # 5-minute rows today
-    for step in ("entry", "gain_lock", "reentry"):
+    for step in ("gain_lock", "reentry"):
         assert rows.steps[step].startswith("off:"), rows.steps[step]
-    assert "chase_cap_fraction" in rows.steps["entry"]
+    assert rows.entry is not None
+    assert rows.entry["chase_cap_fraction"] == Decimal("0.0020")
+    assert "rank gate row is off" in rows.steps["entry"]
     broken = [r for r in json.loads((ROOT / "lanes/paper/b-parameters.json").read_text())]
     broken = [r for r in broken if r["name"] != "native_trail_fraction"]
     (tmp_path / "b.json").write_text(json.dumps(broken))

@@ -200,10 +200,10 @@
   {
     "name": "chase_cap_fraction",
     "unit": "ratio",
-    "value": null,
-    "source": "UNAVAILABLE: no recorded start. northstar-trading@7c5f852a2816bbaa5896241a93bab9de7cf7bb4f:docs/adr/0019-managed-exits-and-ranked-reentry.md:296 only implies 0.01 in an arithmetic example (src/sextant/exits/policy.py records it as no authority); the sim lane's 0.03 (lanes/sim/entry-parameters.json) is taken from first_leg_max_move by analogy, which is not a source for a chase allowance, so it is not extended. What sets it: X5's tick-replay calibration of the chase cap (docs/adr/0005-exit-engine.md:31; src/sextant/exits/policy.py REGISTRY, lead ruling #98, after #130). Until then size_entry cannot compute stop_distance (docs/adr/0004-entry.md:21), so B sizes and enters nothing. The one B row; the exit engine's own copy is src/sextant/exits/policy.py REGISTRY.",
-    "calibration": "UNAVAILABLE",
-    "scope": "UNAVAILABLE",
+    "value": "0.0020",
+    "source": "LEAD-1501-b-entry-values.md section 1 (2026-11-11), under owner direction D-71: 0.0020 UNCALIBRATED sizing allowance from the historical Paper B residual exit's 20 basis points; northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:src/northstar_trading/strategies/exit_manager/strategy.py:1666-1675, src/northstar_trading/strategies/base.py:307-311, docs/adr/0015-owner-entry-paper-exit-manager.md:223,561-568. Candidate-class historical source, not measured success (ADR-0018). Read only by size_entry for stop_distance = entry - initial_trigger + chase_cap_fraction * entry (src/sextant/entry/sizing.py:107; ADR-0004:21); not an equivalence with B's exit collar and not a switch for exit chase: entry, last and bid fractions differ. B's ExitParams cap and interval stay unavailable until X5 tick-replay calibration; this allowance is replaced by that calibration and recorded in the first arm's params hash. KEEP OURS: no entry sizing allowance found in nautilus_trader v2.0.0rc8 risk/sizing or alpaca-py v0.44.0; the existing registry/size_entry mechanism is unchanged.",
+    "calibration": "UNCALIBRATED",
+    "scope": "REVIEWED",
     "last_change": "2026-11-11"
   },
   {
