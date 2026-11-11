@@ -389,6 +389,18 @@ def test_a_repeated_trade_generation_is_never_published_twice(tmp_path) -> None:
 
     out = run(tmp_path, host_cls=Repeating)
     sequences = [g.generation_id.sequence for g in out["receiver"].received]
-    assert all(later > earlier for earlier, later in zip(sequences, sequences[1:], strict=False))
+    assert sequences == sorted(set(sequences))  # strictly increasing
     assert out["actor"].errors.get("lineage") == 1
     assert ("lineage", "StaleGeneration") in out["pages"]
+
+
+def test_the_pager_key_set_is_bounded_by_stage(tmp_path) -> None:  # F6
+    class DistinctErrors(FakeHost):
+        def on_trade(self, tick):
+            self.calls += 1
+            raise type(f"ProviderFailure{self.calls}", (RuntimeError,), {})("fixture")
+
+    out = run(tmp_path, host_cls=DistinctErrors)
+    assert out["actor"].errors == {"on_trade": len(SECONDS)}
+    assert [stage for stage, _ in out["pages"]] == ["on_trade"]  # one page, not one per type
+    assert out["actor"]._paged <= {"on_trade"}
