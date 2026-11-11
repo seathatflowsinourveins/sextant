@@ -1,0 +1,11 @@
+[
+  {
+    "name": "prestage_request_budget",
+    "unit": "requests/minute",
+    "value": null,
+    "source": "MISSING authority: the 2026-11-10 C lane REST-rate measure found 0 REST-call records in 184 minutes, so no peak or median exists to derive a value; a measured peak and its authority must be recorded before prestage runs (AGENTS.md Rule 2, uncalibrated by absence)",
+    "calibration": "UNAVAILABLE",
+    "last_change": "2026-11-10",
+    "scope": "UNAVAILABLE"
+  }
+]

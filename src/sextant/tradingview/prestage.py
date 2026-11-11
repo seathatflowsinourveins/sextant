@@ -8,17 +8,19 @@ TradingView endpoint, and places no order.
 
 Source: the merged ``host.py``, ``bridge.py``, ``producer.py`` and
 ``baseline.py`` (alpaca-py 0.44.0 REST bars, ADR-0003, northstar-lanes
-registry). The producer supplies the operating clock and the slot-3 lease; it
+registry). The producer supplies the operating clock and the slot-2 lease; it
 adds no ranking, projection or clock rule of its own.
 """
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import os
+import time
 from array import array
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from datetime import time as clock_time
@@ -28,6 +30,7 @@ from typing import Any, Protocol, cast
 from zoneinfo import ZoneInfo
 
 from alpaca.common.enums import Sort
+from alpaca.common.exceptions import APIError
 from alpaca.data.enums import Adjustment, DataFeed
 from alpaca.data.models import BarSet
 from alpaca.data.requests import StockBarsRequest
@@ -36,7 +39,7 @@ from exchange_calendars import get_calendar
 from nautilus_trader.common import MessageBus
 from nautilus_trader.model import TraderId
 
-from sextant.data.alpaca_history import decimal_value
+from sextant.data.alpaca_history import Pacer, decimal_value
 from sextant.execution.state import write_atomic
 from sextant.ranking.baseline import BaselineTable, segment_start
 from sextant.ranking.engine import ReferencePrices, Segment
@@ -55,7 +58,7 @@ from sextant.tradingview.bridge import DisplayBounds, project_display_unit
 from sextant.tradingview.cadence import Cadence
 from sextant.tradingview.host import BarFidelityHost, load_symbol_map
 from sextant.tradingview.inputs import read_research_inputs
-from sextant.tradingview.producer import Clocks
+from sextant.tradingview.producer import Clocks, reserve_stream
 
 NS = 1_000_000_000
 MINUTE_NS = 60 * NS
@@ -65,8 +68,11 @@ SUPPORTED = frozenset({"PRE", "RTH", "POST"})
 ET = ZoneInfo("America/New_York")
 ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_CADENCE_REGISTRY = ROOT / "lanes/tradingview/j5-cadence.params.json"
+DEFAULT_K2_REGISTRY = ROOT / "lanes/tradingview/k2-ranking.params.json"
+DEFAULT_PRESTAGE_PARAMETERS = ROOT / "lanes/tradingview/prestage-parameters.json"
 DEFAULT_STATE_ROOT = Path.home() / "sextant-data" / "tradingview-prestage"
-SIP_AUTHORITY = "slot-3 SIP market-data entitlement; REST-only display host"
+STREAM_SOURCE = "REST-only bar-fidelity display host; zero streams opened on slot 2"
+SIP_AUTHORITY = "slot-2 SIP market-data entitlement; REST-only display host"
 MAPPING_SOURCE = "NASDAQ Trader nasdaqlisted.txt + otherlisted.txt read 2026-11-09"
 REFERENCE_SOURCE = "alpaca_sip_split_1day official split-adjusted close"
 ASSET_SOURCE = (
@@ -74,6 +80,8 @@ ASSET_SOURCE = (
     "halt status unknown (no status receipt)"
 )
 PROVENANCE = "alpaca_sip_raw_1min prior XNYS sessions; bar fidelity streaming one segment"
+KEY_NAMES = ("ALPACA_PAPER_2_API_KEY", "ALPACA_PAPER_2_SECRET_KEY")
+BUDGET_NAME = "prestage_request_budget"
 BOUNDS = frozenset({"gap_bound", "rvol_bound", "max_age_s"})
 
 
@@ -279,6 +287,52 @@ def _ns(at: datetime) -> int:
     return int(at.timestamp()) * NS
 
 
+def _credentials() -> tuple[str, str]:
+    """The same with-keys seam C uses: two environment names, never a file or a flag."""
+    api_key = os.environ.get(KEY_NAMES[0])
+    secret_key = os.environ.get(KEY_NAMES[1])
+    if not api_key or not secret_key:
+        raise PrestageError(f"{KEY_NAMES[0]} and {KEY_NAMES[1]} must be set by with-keys")
+    return api_key, secret_key
+
+
+def load_request_budget(path: Path = DEFAULT_PRESTAGE_PARAMETERS) -> int:
+    """Refuse until a measured request budget and its authority are on record (Rule 2)."""
+    raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    rows = raw if isinstance(raw, list) else raw.get("rows") or ()
+    matches = tuple(item for item in rows if item.get("name") == BUDGET_NAME)
+    if not matches:
+        raise PrestageError(f"the prestage request budget row is missing from {path}")
+    item = matches[0]
+    value = item.get("value")
+    source = item.get("source")
+    if (
+        type(value) is not int
+        or not 1 <= value <= 200
+        or item.get("scope") != "REVIEWED"
+        or item.get("calibration") not in {"UNCALIBRATED", "CALIBRATED"}
+        or not isinstance(source, str)
+        or not source.strip()
+    ):
+        raise PrestageError(
+            "the prestage request budget is unavailable: no measured value and authority "
+            "are on record; record both in lanes/tradingview/prestage-parameters.json (Rule 2)"
+        )
+    return value
+
+
+def operator_source(lease: Any, *, requests_per_minute: int) -> AlpacaSource:
+    """The default source, built from the with-keys environment as C builds its data client."""
+    api_key, secret_key = _credentials()
+    pacer = Pacer(Decimal(requests_per_minute))
+    lease.bind_pacer(pacer)
+    client = PacedStockBars(pacer=pacer, api_key=api_key, secret_key=secret_key)
+    return AlpacaSource(
+        AlpacaBarSource(client, batch=MAX_BATCH),
+        AlpacaDailyBars(client, batch=MAX_BATCH),
+    )
+
+
 class AlpacaDailyBars:
     """Daily official closes through the same paced transport as the minute bars."""
 
@@ -361,9 +415,14 @@ def publish_tick(
     j5_path: Path,
     bounds: DisplayBounds,
     max_age: int = 1_200,
+    clock: Callable[[], int] | None = None,
     feed: str = "sip",
 ) -> dict[str, Any]:
-    """Replay the current segment once and publish one complete unit."""
+    """Replay the current segment once and publish one complete unit.
+
+    When ``clock`` is supplied it is read again after the replay, so the unit is
+    stamped and validated with the time the fetch actually finished.
+    """
     if segment.name not in SUPPORTED:
         raise PrestageError(f"the producer does not write {segment.name} units")
     if not segment.start_ns <= now_ns < segment.end_ns:
@@ -419,7 +478,15 @@ def publish_tick(
             received_ns=close_ns,
         )
 
-    publish_clock_ns = max(latest_close_ns, min(now_ns, segment.end_ns - NS))
+    publication_ns = now_ns if clock is None else int(clock())
+    if not segment.start_ns <= publication_ns < segment.end_ns:
+        raise PrestageError(f"the {segment.name} segment closed before the tick could publish")
+    if publication_ns < latest_close_ns:
+        raise PrestageError(
+            "the publication clock moved behind the replayed bars: "
+            f"{publication_ns} < {latest_close_ns}"
+        )
+    publish_clock_ns = publication_ns
     max_age_ns = registry.seconds("input_max_age_s")
     for name, state in list(publisher.states.items()):
         if state.latest is None:
@@ -471,3 +538,200 @@ def publish_tick(
         "unit_dir": str(unit_dir),
         "generation_sha256": j5["generation_sha256"],
     }
+
+
+def _next_display_open(now_ns: int) -> int:
+    local = datetime.fromtimestamp(now_ns / NS, ET)
+    calendar = get_calendar("XNYS")
+    for offset in range(0, 9):
+        day = local.date() + timedelta(days=offset)
+        candidate = datetime.combine(day, clock_time(4, 0), tzinfo=ET)
+        if candidate <= local:
+            continue
+        if calendar.is_session(day.isoformat()):
+            return _ns(candidate)
+    raise PrestageError("no display session opens in the next eight days")
+
+
+def run(
+    *,
+    research_dir: Path,
+    nasdaq_listed: Path,
+    other_listed: Path,
+    symbol_map_path: Path,
+    bounds: DisplayBounds,
+    k2_registry: Path = DEFAULT_K2_REGISTRY,
+    cadence_registry: Path = DEFAULT_CADENCE_REGISTRY,
+    state_root: Path = DEFAULT_STATE_ROOT,
+    max_age: int = 1_200,
+    once: bool = False,
+    clock: Callable[[], int] = time.time_ns,
+    sleep: Callable[[float], None] = time.sleep,
+    source_factory: Callable[[Any], Source] | None = None,
+    page: Callable[[str], None] = print,
+) -> int:
+    """Refresh one segment's unit on the registry cadence until the display closes."""
+    if type(max_age) is not int or not 1 <= max_age <= 3_600:
+        raise PrestageError("max_age is 1..3600 seconds")
+    registry_path = Path(k2_registry)
+    registry = load_registry(registry_path)
+    universe, symbol_map = load_maps(Path(nasdaq_listed), Path(other_listed), Path(symbol_map_path))
+    state_root = Path(state_root)
+    Cadence(
+        state_root / "cadence-unused",
+        Path(cadence_registry),
+        page=lambda _: None,
+    )
+    refused: set[tuple[date, str]] = set()
+    while True:
+        now_ns = int(clock())
+        segment, _, _ = segment_start(now_ns)
+        if segment is None or segment.name not in SUPPORTED:
+            reason = (
+                "the exchange is closed"
+                if segment is None
+                else f"{segment.name} is not produced until #138 supplies a BOATS baseline"
+            )
+            page(f"TV producer idle: {reason}; no unit written.")
+            if once:
+                return 0
+            sleep(max(0.0, (_next_display_open(now_ns) - now_ns) / NS))
+            continue
+        segment_key = (segment.session_date, segment.name)
+        if segment_key in refused:
+            if once:
+                return 1
+            refused_ns = int(clock())
+            sleep(max(0.0, (segment.end_ns - refused_ns) / NS))
+            continue
+        with reserve_stream(
+            state_root / "leases",
+            paper_slot=2,
+            existing_streams=0,
+            source=STREAM_SOURCE,
+        ) as lease:
+            if source_factory is None:
+                rate = load_request_budget()
+                source = operator_source(lease, requests_per_minute=rate)
+            else:
+                source = source_factory(lease)
+            try:
+                sessions = baseline_sessions(segment.session_date, segment)
+                baseline = build_segment_baseline(
+                    source,
+                    segment=segment,
+                    symbols=universe,
+                    sessions=sessions,
+                    known_at=_at(sessions[-1], 20),
+                )
+                reference_day = (
+                    segment.session_date
+                    if segment.name == "POST"
+                    else prior_sessions(segment.session_date, 1)[-1]
+                )
+                available, closes = collect_references(source, day=reference_day, symbols=universe)
+                reference_ns = (
+                    segment.start_ns if segment.name == "POST" else _at(reference_day, 16)
+                )
+                universe_source = (
+                    "NASDAQ Trader nasdaqlisted.txt + otherlisted.txt read 2026-11-09; "
+                    f"{len(available)} of {len(universe)} directory symbols with a "
+                    f"{reference_day.isoformat()} SIP official close; NOT PIT membership"
+                )
+                epoch = f"tv-producer-{segment.name.lower()}-{segment.session_date:%Y%m%d}"
+            except (PrestageError, ValueError, APIError) as error:
+                refused.add(segment_key)
+                page(
+                    f"TV producer skipped the {segment.name} segment on "
+                    f"{segment.session_date.isoformat()}: {error}; no unit written."
+                )
+                if once:
+                    return 1
+                refused_ns = int(clock())
+                sleep(max(0.0, (segment.end_ns - refused_ns) / NS))
+                continue
+            last_start = int(clock())
+            while True:
+                now_ns = int(clock())
+                if now_ns >= segment.end_ns:
+                    break
+                try:
+                    registry = load_registry(registry_path)
+                    receipt = publish_tick(
+                        lease=lease,
+                        source=source,
+                        segment=segment,
+                        baseline=baseline,
+                        symbols=available,
+                        prior_closes=closes,
+                        prior_close_ns=reference_ns,
+                        symbol_map={name: symbol_map[name] for name in available},
+                        registry=registry,
+                        epoch=epoch,
+                        universe_source=universe_source,
+                        now_ns=now_ns,
+                        unit_dir=Path(research_dir),
+                        j5_path=state_root / "j5-unit.json",
+                        bounds=bounds,
+                        max_age=max_age,
+                        clock=clock,
+                    )
+                    page(json.dumps(receipt, sort_keys=True, default=str))
+                except (PrestageError, ValueError, APIError) as error:
+                    page(f"TV producer skipped a tick: {error}")
+                    if once:
+                        return 1
+                if once:
+                    return 0
+                delay = cadence_floor(
+                    datetime.fromtimestamp(int(clock()) / NS, UTC),
+                    registry=cadence_registry,
+                    state_root=state_root,
+                )
+                if delay is None:
+                    break
+                spent = max(0.0, (int(clock()) - last_start) / NS)
+                sleep(max(0.0, delay - spent))
+                last_start = int(clock())
+    return 0
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="python -m sextant.tradingview.prestage",
+        description="Keep the newest complete display unit fresh for PRE, RTH and POST.",
+    )
+    parser.add_argument("--research-dir", type=Path, required=True)
+    parser.add_argument("--nasdaq-listed", type=Path, required=True)
+    parser.add_argument("--other-listed", type=Path, required=True)
+    parser.add_argument("--symbol-map", type=Path, required=True, dest="symbol_map_path")
+    parser.add_argument("--gap-bound", type=Decimal, required=True)
+    parser.add_argument("--rvol-bound", type=Decimal, required=True)
+    parser.add_argument("--bounds-max-age-s", type=int, required=True)
+    parser.add_argument("--k2-registry", type=Path, default=DEFAULT_K2_REGISTRY)
+    parser.add_argument("--cadence-registry", type=Path, default=DEFAULT_CADENCE_REGISTRY)
+    parser.add_argument("--state-root", type=Path, default=DEFAULT_STATE_ROOT)
+    parser.add_argument("--max-age", type=int, default=1_200)
+    parser.add_argument("--once", action="store_true")
+    args = parser.parse_args(argv)
+    try:
+        bounds = DisplayBounds(args.gap_bound, args.rvol_bound, args.bounds_max_age_s)
+        return run(
+            research_dir=args.research_dir,
+            nasdaq_listed=args.nasdaq_listed,
+            other_listed=args.other_listed,
+            symbol_map_path=args.symbol_map_path,
+            bounds=bounds,
+            k2_registry=args.k2_registry,
+            cadence_registry=args.cadence_registry,
+            state_root=args.state_root,
+            max_age=args.max_age,
+            once=args.once,
+        )
+    except (PrestageError, ValueError) as error:
+        print(f"TV producer stopped: {error}")
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

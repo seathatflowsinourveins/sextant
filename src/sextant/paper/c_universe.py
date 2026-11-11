@@ -230,8 +230,11 @@ def _window(now: datetime) -> Window | None:
     return Window(start, end, opens, closes)
 
 
-def fetch_bars(data: MarketData, symbols: Sequence[str], window: Window) -> dict[str, list[Any]]:
-    result: dict[str, list[Any]] = {}
+def fetch_bars(
+    data: MarketData, symbols: Sequence[str], window: Window
+) -> dict[str, list[DailyBar] | None]:
+    """Reduce each SDK response before fetching another batch of minute bars."""
+    result: dict[str, list[DailyBar] | None] = {}
     for offset in range(0, len(symbols), BARS_BATCH):
         batch = list(symbols[offset : offset + BARS_BATCH])
         request = StockBarsRequest(
@@ -247,7 +250,9 @@ def fetch_bars(data: MarketData, symbols: Sequence[str], window: Window) -> dict
         body = getattr(response, "data", response)
         for symbol in batch:
             bars = body.get(symbol) if isinstance(body, Mapping) else None
-            result[symbol] = list(bars or ())
+            result[symbol] = _day_bars(bars or (), window)
+            del bars
+        del response, body  # No minute-bar payload survives the next request.
     return result
 
 
@@ -327,7 +332,7 @@ def rank_universe(
         return rows
     bars_by_symbol = fetch_bars(data, [row.symbol for row in universe], window)
     for symbol in universe:
-        bars = _day_bars(bars_by_symbol.get(symbol.symbol, ()), window)
+        bars = bars_by_symbol.get(symbol.symbol)
         if bars is None:
             continue
         level = _level(bars)

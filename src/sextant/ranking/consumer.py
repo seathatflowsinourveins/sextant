@@ -212,8 +212,16 @@ class RawBusHost:
         self.consumer.handle(envelope, now=self._clock())
 
 
+# DataActorConfig's own fields (common stub :132-151): the documented pattern takes **kwargs
+# only so these reach DataActorConfig.__new__ (docs/concepts/actors.md:15-21).
+ENGINE_FIELDS = frozenset({"actor_id", "log_events", "log_commands"})
+
+
 class RankingDataActorConfig(DataActorConfig):
-    def __init__(self, *, consumer: RankingConsumer, **_kwargs: object) -> None:
+    def __init__(self, *, consumer: RankingConsumer, **kwargs: object) -> None:
+        unknown = sorted(set(kwargs) - ENGINE_FIELDS)
+        if unknown:  # an unknown or misspelled key is refused by name, never swallowed
+            raise TypeError(f"{type(self).__name__}() got unexpected keyword arguments {unknown}")
         super().__init__()
         self.consumer = consumer
 
