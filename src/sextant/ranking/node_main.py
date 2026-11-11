@@ -82,7 +82,9 @@ def _positive(text: str) -> int:
 
 
 def parse(argv: list[str] | None = None) -> tuple[Arguments, LeaseArguments]:
-    parser = argparse.ArgumentParser(prog="python -m sextant.ranking.node_main")
+    # allow_abbrev=False: a prefix or misspelling is refused, never mapped to an option
+    # (https://docs.python.org/3.13/library/argparse.html#allow-abbrev, read 2026-11-11).
+    parser = argparse.ArgumentParser(prog="python -m sextant.ranking.node_main", allow_abbrev=False)
     required = parser.add_argument_group("required")
     required.add_argument("--universe", type=Path, required=True)
     required.add_argument("--duration-s", type=_positive, required=True)

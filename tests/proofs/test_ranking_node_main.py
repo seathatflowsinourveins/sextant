@@ -104,6 +104,13 @@ def test_every_argument_is_required(tmp_path, flag: str) -> None:
         node_main.parse(argv(tmp_path, flag))
 
 
+def test_an_unknown_or_misspelled_option_is_refused(tmp_path) -> None:
+    with pytest.raises(SystemExit):  # argparse refuses an unrecognized option, never swallows it
+        node_main.parse([*argv(tmp_path), "--duration", "600"])
+    with pytest.raises(SystemExit):
+        node_main.parse([*argv(tmp_path), "--universes", "x"])
+
+
 def test_the_command_takes_the_real_lease_which_refuses_slot_2_until_it_lands(tmp_path) -> None:
     with pytest.raises(ValueError, match="slot"):
         node_main.main(argv(tmp_path))
