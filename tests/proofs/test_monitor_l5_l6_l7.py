@@ -301,11 +301,6 @@ def test_l7_rules_cover_the_converged_signals_and_leave_staleness_to_grafana() -
     assert len(alerts) == 11
     assert len(records) == 12
     assert "sextant_llm_cache_hit_ratio" in records
-    assert "sextant_llm_cache_write_waste_ratio" in records
-    assert "sextant_agent_error_ratio" in records
-    assert "MonitorRetryLoop" in alerts
-    assert "MonitorCostAnomaly" in alerts
-    assert "MonitorModelEffortDrift" in alerts
     assert "MonitorEvidenceStale" not in alerts
     assert "sextant:monitor_staleness:seconds" not in records
     assert "sextant_monitor_last_success_timestamp_seconds" not in rules

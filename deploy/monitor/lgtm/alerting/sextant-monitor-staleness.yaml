@@ -1,5 +1,6 @@
-# Sources (read 2026-11-10): Grafana v13.2 file provisioning and alerting
-# provisioning API (Prometheus A range 600/0); grafana/grafana@v13.2.4 af4a33e...
+# Sources (read 2026-11-10): grafana.com/docs/grafana/v13.2 file and API
+# provisioning; prometheus.io/docs/prometheus/latest/querying/functions/#absent;
+# grafana/grafana@v13.2.4 af4a33e...
 apiVersion: 1
 groups:
   - orgId: 1
@@ -17,7 +18,7 @@ groups:
               from: 600
               to: 0
             model:
-              expr: absent(sextant_monitor_last_success_timestamp_seconds) or (time() - sextant_monitor_last_success_timestamp_seconds > 900) or on() vector(0)
+              expr: absent(sextant_monitor_last_success_timestamp_seconds{bridge="l3_l4"}) or absent(sextant_monitor_last_success_timestamp_seconds{bridge="evidence"}) or (time() - sextant_monitor_last_success_timestamp_seconds > 900) or on() vector(0)
               instant: true
           - refId: B
             datasourceUid: __expr__
