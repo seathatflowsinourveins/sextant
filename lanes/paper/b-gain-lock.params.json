@@ -35,8 +35,8 @@
     "name": "round_trip_cost",
     "unit": "expected per-share round-trip cost, including spread, size/session slippage and fees",
     "value": null,
-    "source": "docs/adr/0025-gain-protection-and-fast-exit.md, Expected fill; northstar-trading@paper 8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:docs/research/2026-11-03-b-gain-protection-replay.md, Sections 1 and 7; B cost awaits TCA",
-    "calibration_state": "UNCALIBRATED",
-    "last_change": "2026-11-10"
+    "source": "UNAVAILABLE until transaction-cost analysis sets it: docs/adr/0025-gain-protection-and-fast-exit.md:27 (Expected fill: B's level includes entry plus expected spread, size/session slippage and fees; TCA sets the cost rows); northstar-trading@paper 8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:docs/research/2026-11-03-b-gain-protection-replay.md, Sections 1 and 7. The fees-plus-one-tick formula at northstar-trading@7c5f852a2816bbaa5896241a93bab9de7cf7bb4f:docs/adr/0019-managed-exits-and-ranked-reentry.md:94 applies only while this row is unset and is not B's measured cost; one tick is instrument-dependent, so no literal stands in for it. While unset, B's gain lock never arms (src/sextant/paper/b_gain_lock.py) and the pre-arm trigger keeps protecting",
+    "calibration_state": "UNAVAILABLE",
+    "last_change": "2026-11-11"
   }
 ]
