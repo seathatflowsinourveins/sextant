@@ -1,4 +1,4 @@
-"""Bulk coverage refusals against a fake that honours GET /orders parameters.
+"""Bulk coverage against a fake that honours GET /orders parameters.
 
 alpaca-py cc4cb3b7 requests.py:202-213 (status, limit max 500, after, until,
 symbols); NT d53849b adapter guide 384-385: a propagated failure fails startup.
@@ -30,22 +30,16 @@ def _scan(open_only, start=None):
     return NS(open_only=open_only, instrument_id=None, start=start, end=None)
 
 
-@pytest.mark.parametrize("count,capped", [(499, False), (500, True)])
-def test_listing_at_the_venue_page_cap_is_incomplete_coverage(count, capped):
+@pytest.mark.parametrize("count", [499, 500])
+def test_listing_at_the_venue_page_cap_pages_on_instead_of_refusing(count):
+    # E5 u9: a full page is followed by the next page (test_alpaca_paging.py).
     async def run():
         node = client()
         venue = node.gateway.sdk
         for index in range(count):
             _house(venue, f"fixture-entry-{index}")
-        if not capped:
-            assert len(await node._generate_order_status_reports(_scan(True))) == count
-            assert node.coverage_complete
-            return
-        with pytest.raises(client_module().IncompleteCoverage) as failure:
-            await node._generate_order_status_reports(_scan(True))
-        assert len(failure.value.reports) == 500
-        assert "page cap" in str(failure.value.failures[-1][1])
-        assert not node.coverage_complete
+        assert len(await node._generate_order_status_reports(_scan(True))) == count
+        assert node.coverage_complete
 
     asyncio.run(run())
 
