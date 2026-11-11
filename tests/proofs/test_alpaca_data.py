@@ -600,8 +600,77 @@ def test_hosted_stream_skips_startup_after_disconnect():
         await client._disconnect()
         owner = asyncio.get_running_loop()
         ready = owner.create_future()
-        await asyncio.to_thread(client._run_stream, stream, owner, ready)
+        await asyncio.to_thread(client._run_stream, stream, owner, ready, client._stream_state)
+        # A completed executor future can return synchronously before queued callbacks.
+        await ready
         assert ready.done() and stream.closed
         assert not stream.started
+
+    asyncio.run(check())
+
+
+@pytest.mark.parametrize("handler_failure", [False, True])
+def test_disconnect_releases_client_on_owner_with_retained_sdk_callback(
+    monkeypatch, handler_failure
+):
+    import gc
+    import weakref
+    from unittest.mock import AsyncMock
+
+    from nautilus_trader.common import Clock
+
+    from sextant.alpaca import data
+
+    class Stream(data.AlpacaStockDataStream):
+        async def _run_forever(self):
+            await asyncio.Future()
+
+        async def close(self):
+            pass
+
+    async def check():
+        owner_thread = threading.get_ident()
+        released_on = []
+        submitted = []
+        to_thread = asyncio.to_thread
+
+        async def retaining_executor(function, *args, **kwargs):
+            # Executor completion can precede release of its callable and arguments.
+            submitted.append((function, args, kwargs))
+            return await to_thread(function, *args, **kwargs)
+
+        monkeypatch.setattr(asyncio, "to_thread", retaining_executor)
+        stream = Stream("fixture", "fixture")
+        client = offline_client(stream=stream)
+        client.clock = Clock.new_test()
+        client.create_task = lambda coroutine, name="background": asyncio.create_task(coroutine)
+        client._stock = AsyncMock(
+            return_value=data._Stock(INSTRUMENT_ID, INSTRUMENT_ID.symbol.value, 2, 0),
+        )
+        weakref.finalize(client, lambda: released_on.append(threading.get_ident()))
+        retained = weakref.ref(client)
+        await client._subscribe_channel("quotes", [INSTRUMENT_ID])
+        callback = stream._handlers["quotes"][INSTRUMENT_ID.symbol.value]
+        if handler_failure:
+            from alpaca.data.models import Quote
+
+            assert client._stream_ready is not None
+            loop, _ = await client._stream_ready
+            await asyncio.wrap_future(
+                asyncio.run_coroutine_threadsafe(callback(Quote("UNREGISTERED", QUOTE)), loop)
+            )
+            with pytest.raises(KeyError, match="UNREGISTERED"):
+                await client._disconnect()
+        else:
+            await client._disconnect()
+        await asyncio.sleep(0)  # Drain owner-loop task completion callbacks.
+        del client
+        gc.collect()
+        assert retained() is None, "executor payload or SDK callback retains the engine client"
+        assert released_on == [owner_thread]
+        assert all(not handlers for handlers in stream._handlers.values())
+        # An already-dispatched SDK callback can itself outlive disconnect.
+        await to_thread(lambda: asyncio.run(callback(QuoteSet({"AAPL": [QUOTE]}).data["AAPL"][0])))
+        assert submitted
 
     asyncio.run(check())

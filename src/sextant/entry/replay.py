@@ -15,6 +15,9 @@ from sextant.entry.orders import funding_unit_cost, limit_price, within_chase
 from sextant.entry.parameters import EntryParameters, number
 from sextant.entry.signals import EntryState, Surge, TradeCoverage
 from sextant.entry.sizing import SegmentBasis, Sizing, size_entry
+from sextant.ranking import registry as ranking_registry
+from sextant.ranking.consumer import RankingConsumer
+from sextant.ranking.rank_gate import RankGateStatus, decide_rank_gate
 
 ReplayResult = namedtuple(
     "ReplayResult",
@@ -56,6 +59,7 @@ class _ReplayEntry(Strategy):
         self.regular_hours, self.confidence = inputs["regular_hours"], inputs["confidence"]
         self.coverage: TradeCoverage | None = inputs["coverage"]
         self.commission_rate: Decimal | None = inputs["commission_rate"]
+        self.ranking_consumer: RankingConsumer | None = inputs["ranking_consumer"]
         self.quote: model.QuoteTick | None = None
         self.entry: Any = None
         self.first_limit: Decimal | None = None
@@ -190,6 +194,20 @@ class _ReplayEntry(Strategy):
             setup = "RECLAIM"
         else:
             return
+        # rc8 Strategy callbacks make the decision before OrderFactory/submit_order
+        # (docs/concepts/strategies.md:130-136,540-569). OFF never reads the consumer.
+        rank_gate_enabled = ranking_registry.RANK_GATE_ENABLED.value
+        if rank_gate_enabled is not False:
+            rank, reason = None, None
+            if rank_gate_enabled is True and self.ranking_consumer is not None:
+                rank = self.ranking_consumer.entry_rank(str(self.instrument.id.symbol), now=now)
+                reason = self.ranking_consumer.reason
+            decision = decide_rank_gate(
+                enabled=rank_gate_enabled, rank=rank, consumer_reason=reason
+            )
+            if decision.status is RankGateStatus.REFUSE:
+                self._record("REFUSE", stage="RANK", reason=decision.reason)
+                return
         expiry_ns: int | None = None
         if not modifying:
             ttl = self.parameters.ns("entry_ttl_s")
@@ -333,6 +351,7 @@ def run_replay(
     fill_model: Any = None,
     commission_rate: Decimal | None = None,
     tier: str = "MODELED",
+    ranking_consumer: RankingConsumer | None = None,
 ) -> ReplayResult:
     """Offline arm; an explicit per-fill fee bound is required (ADR-0004)."""
     inputs = locals()

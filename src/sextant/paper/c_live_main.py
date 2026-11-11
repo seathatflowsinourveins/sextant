@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import hashlib
 import json
 import os
 import re
@@ -66,7 +67,7 @@ from sextant.execution.custody import (
 from sextant.execution.pacer import AccountPacer, ActionKind
 from sextant.paper.alpaca_feed import AlpacaTickFeed
 from sextant.paper.c_session import CConfig, CSession
-from sextant.paper.c_universe import rank_universe
+from sextant.paper.c_universe import AssetSkips, rank_universe
 from sextant.paper.config import PaperAccount
 from sextant.paper.feed_tap import SIDECAR_NAME, FeedTap
 from sextant.paper.request_counter import CountingMarketData, RequestLog
@@ -162,7 +163,8 @@ class TradingClientLike(Protocol):
 class PacedTradingClient:
     """Route every broker read and write through the repo's existing account pacer."""
 
-    def __init__(self, client: TradingClientLike, pacer: Any) -> None:
+    def __init__(self, client: TradingClientLike, pacer: Any, assets_client: Any = None) -> None:
+        self._assets_client = assets_client if assets_client is not None else client
         self._client = client
         self._pacer = pacer
 
@@ -193,7 +195,7 @@ class PacedTradingClient:
         return self._call(ActionKind.QUERY, self._client.get_orders, filter)
 
     def get_all_assets(self, filter: Any = None) -> Any:
-        return self._call(ActionKind.QUERY, self._client.get_all_assets, filter)
+        return self._call(ActionKind.QUERY, self._assets_client.get_all_assets, filter)
 
     def get_asset(self, symbol_or_asset_id: object) -> Any:
         return self._call(ActionKind.QUERY, self._client.get_asset, symbol_or_asset_id)
@@ -228,6 +230,9 @@ class RunRecord:
     flags: int = 0
     receipt_id: str = ""
     armings: list[dict[str, Any]] = field(default_factory=list)
+    asset_skips: AssetSkips = field(default_factory=AssetSkips)
+    segment_snapshots: list[dict[str, Any]] = field(default_factory=list)
+    trial_file: dict[str, str] | None = None
 
 
 def load_account_config(path: Path) -> PaperAccount:
@@ -481,6 +486,11 @@ def _write_receipt(
         "receipt_id": run.receipt_id,
         "symbols": list(symbols),
         "arming": run.armings,
+        "asset_rows_skipped": run.asset_skips.count,
+        "snapshot": run.snapshot,
+        "segment_snapshots": run.segment_snapshots,
+        "flags": run.flags,
+        "trial_file": run.trial_file,
         "commands": run.commands,
         "protection_cid": run.protection_cid,
         "errors": run.errors,
@@ -609,12 +619,13 @@ def _arm_universe(
     retained: frozenset[str],
     mover_armed: frozenset[str],
     now: datetime,
+    asset_skips: AssetSkips | None = None,
 ) -> tuple[_Arming, str | None]:
     """Preserve the ranked universe and fill C's configured shared-pool capacity."""
 
     custody_open = len(retained)
     try:
-        ranked = rank_universe(client, data, segment.name.lower(), now=now)
+        ranked = rank_universe(client, data, segment.name.lower(), now=now, asset_skips=asset_skips)
     except Exception as exc:  # the broker/data surface must fail closed, not arm blindly
         retained_movers = frozenset(retained) & mover_armed
         return (
@@ -1080,7 +1091,14 @@ def main(
         pacer = AccountPacer(controls, now_ns=now_ns)
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         raise SystemExit(f"C live main refused: custody controls unavailable: {exc}") from exc
-    client = PacedTradingClient(raw_client, pacer)
+    # alpaca-py raw_data bypasses whole-list Asset enum validation. Keep it
+    # isolated from the typed account/order client; both use the same pacer.
+    assets_client = (
+        client_factory(api_key=api_key, secret_key=secret_key, paper=True, raw_data=True)
+        if args.universe
+        else None
+    )
+    client = PacedTradingClient(raw_client, pacer, assets_client)
 
     state = Path(args.state)
     state.mkdir(parents=True, exist_ok=True)
@@ -1156,6 +1174,7 @@ def main(
                         retained=retained,
                         mover_armed=current_mover_armed,
                         now=datetime.fromtimestamp(now_ns() / _NS_PER_S, tz=UTC),
+                        asset_skips=run.asset_skips,
                     )
                 except LiveRefusal as exc:
                     arming = _Arming(
@@ -1565,9 +1584,9 @@ def main(
                 for index, intent in enumerate(intents):
                     try:
                         current_equity, current_buying_power = _read_balance(client)
-                    except LiveRefusal:
+                    except LiveRefusal as exc:
                         for remaining in intents[index:]:
-                            session.refuse(remaining)
+                            session.refuse(remaining, f"balance_read_failed: {exc}")
                         return
                     session.enter(
                         intent,
@@ -1676,7 +1695,16 @@ def main(
                 snapshot, failure, stopped, boundary = run_segment(
                     current, current_baseline, current_instruments, final_config
                 )
-                run.snapshot = snapshot
+                run.snapshot = {
+                    key: {
+                        name: str(value) if isinstance(value, Decimal) else value
+                        for name, value in row.items()
+                    }
+                    if isinstance(row, dict)
+                    else row
+                    for key, row in snapshot.items()
+                }
+                run.segment_snapshots.append({"segment": current.name, "snapshot": run.snapshot})
                 run.flags += _flag_count(snapshot)
                 if failure is not None or stopped:
                     break
@@ -1723,6 +1751,7 @@ def main(
                             retained=retained,
                             mover_armed=current_mover_armed,
                             now=datetime.fromtimestamp(now_ns() / _NS_PER_S, tz=UTC),
+                            asset_skips=run.asset_skips,
                         )
                     except LiveRefusal as exc:
                         arming = _Arming(
@@ -1767,6 +1796,29 @@ def main(
         if failure is not None:
             run.errors.append(failure)
         run.stopped_ns = now_ns()
+        trial_written = False
+        try:
+            trial_path = Path(ledger_path) if ledger_path is not None else Path(WITNESS_PATH)
+            # TrialLog.append checkpoints through fsync, atomic replace and directory
+            # fsync before returning. A published receipt must already have its row.
+            _record_trial(
+                ledger_path=trial_path,
+                run=run,
+                baseline=final_baseline,
+                symbols=current_symbols,
+                segment=final_segment_obj,
+                entry_params_hash=params.params_hash,
+                failure=failure,
+            )
+            trial_written = True
+            run.trial_file = {
+                "path": str(trial_path.resolve()),
+                "sha256": hashlib.sha256(trial_path.read_bytes()).hexdigest(),
+            }
+        except Exception as exc:
+            run.errors.append(f"trial ledger refused: {type(exc).__name__}: {exc}")
+            print(run.errors[-1], file=sys.stderr)
+            trial_written = False
         stamp = tap_stamp or datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
         try:
             receipt = _write_receipt(
@@ -1789,23 +1841,7 @@ def main(
                 file=sys.stderr,
             )
 
-        try:
-            _record_trial(
-                ledger_path=Path(ledger_path) if ledger_path is not None else Path(WITNESS_PATH),
-                run=run,
-                baseline=final_baseline,
-                symbols=current_symbols,
-                segment=final_segment_obj,
-                entry_params_hash=params.params_hash,
-                failure=failure,
-            )
-        except Exception as exc:
-            print(
-                f"trial ledger refused: {type(exc).__name__}: {exc}",
-                file=sys.stderr,
-            )
-            return 1
-        return 0 if failure is None and receipt_written else 1
+        return 0 if failure is None and receipt_written and trial_written else 1
     finally:
         if session_tap is not None:
             session_tap.stop()
