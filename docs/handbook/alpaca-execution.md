@@ -18,3 +18,16 @@ Sources: NautilusTrader d53849b, `docs/developer_guide/python_adapters.md` and
 `alpaca/common/rest.py`, `alpaca/trading/requests.py`; Alpaca orders and replace
 references, read 2026-11-10; ADR-0007/0009. The execution-boundary proofs witness
 these constraints offline; broker qualification and economic merit remain open.
+
+The SDK omits fill commissions. Until an evidenced resolver or registry row
+exists, exact fill reports are UNAVAILABLE; never label an inferred fee as an
+observed fee. Nonempty historical activities also need an evidenced identity
+mapping to stream executions. The registry authority belongs with the shared
+node's rows (`lanes/paper/shared-node.params.json`), not in a fixture default.
+The native core can infer fills from cumulative status reports; that is inferred
+execution evidence, not an exact fee or stream/history identity proof.
+
+The native account balance follows rc8's IBKR mapping: net liquidation as total,
+available funds clamped to total for a nonnegative account, locked derived after
+currency rounding. Raw buying power remains separately identified in account
+info. Sources: IBKR `execution/account.rs:397-419`, `types/balance.rs:149-172`.
