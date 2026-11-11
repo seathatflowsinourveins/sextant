@@ -11,6 +11,7 @@ import threading
 from contextlib import ExitStack
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace as Fixture
 from typing import Any
 
 import pytest
@@ -307,7 +308,12 @@ def test_a_flat_account_starts_the_strategy_and_a_stop_releases_the_lease(tmp_pa
     body, code, stand = start(tmp_path, venue, count=node_order.QUEUE, with_consumer=True)
     out = capfd.readouterr()
     assert (code, body["phase"], body["reason"]) == (0, "stopped", None)
-    assert body["gate"] == {"open_positions": 0, "open_house_orders": 0, "withheld_holdings": 0}
+    assert body["gate"] == {
+        "open_positions": 0,
+        "open_house_orders": 0,
+        "withheld_holdings": 0,
+        "unresolved_replacements": 0,
+    }
     assert stand.subscribed == node_order.QUEUE  # the Strategy's own on_start ran
     assert body["claims"]["count"] == node_order.QUEUE
     assert "ranking_consumer" not in body["steps"]["entry"]  # the fixture consumer was passed
@@ -368,6 +374,72 @@ def test_a_working_old_writer_order_outside_the_claims_still_refuses(tmp_path, s
     assert (code, body["phase"], body["reason"]) == (2, "refused", "house_order_open")
     assert body["gate"]["open_house_orders"] == 1 and stand.subscribed == 0
     assert all(r[0] == "GET" for r in venue.requests[seeded:]), "nothing was sent"
+
+
+# A replaced row ends only its own order: Alpaca links the successor through replaced_by and
+# replaces (alpaca-py cc4cb3b7 alpaca/trading/models.py:223-224), and a replace may give the
+# successor a new client id (requests.py ReplaceOrderRequest.client_order_id, :300). The gate's
+# review W2 (cutterm-b73c48d-codex-r1): a working successor outside the old prefix went uncounted.
+
+
+def replace_on_venue(venue: FakeVenue, row: dict[str, Any], client_order_id: str) -> dict:
+    """The fake venue's own PATCH and confirm: the old row is replaced, the successor is new."""
+    venue.patch(f"/orders/{row['id']}", {"client_order_id": client_order_id, "trail": "1.5"})
+    return venue.rows[venue.confirm()["id"]]
+
+
+def old_writer_chain(venue: FakeVenue, ends: int) -> list[dict[str, Any]]:
+    rows = [_owner(venue, "BTEST-trail-OUTX-1-1", symbol="OUTX", side="sell", status="new")]
+    for n in range(ends):
+        rows.append(replace_on_venue(venue, rows[-1], f"replacement-outside-{n}"))
+    return rows
+
+
+def test_gate_w2_a_working_successor_outside_the_old_prefix_refuses() -> None:
+    parent = dict(id="p", client_order_id="BTEST-old-OUTX", status="replaced", replaced_by="c")
+    child = dict(id="c", client_order_id="replacement-outside-old-prefix", status="new")
+    client = Fixture(withheld=[(parent, "replaced"), (child, "unavailable")], withheld_positions=[])
+    gate = node_order.Gate("BTEST-", clients=[client])
+    reasons = gate.check(Fixture(positions_open=lambda: [], orders_open=lambda: []))
+    assert "house_order_open" in reasons and gate.counts["open_house_orders"] == 1
+
+
+@pytest.mark.parametrize("ends", [1, 2])
+def test_a_replaced_old_writer_order_with_a_working_successor_refuses(tmp_path, ends) -> None:
+    venue = AccountVenue()
+    old_writer_chain(venue, ends)
+    seeded = len(venue.requests)
+    body, code, stand = start(tmp_path, venue)
+    assert (code, body["phase"], body["reason"]) == (2, "refused", "house_order_open")
+    assert stand.subscribed == 0
+    assert all(r[0] == "GET" for r in venue.requests[seeded:]), "nothing was sent"
+
+
+def test_a_chain_of_two_replacements_ending_terminal_starts(tmp_path) -> None:
+    venue = AccountVenue()
+    old_writer_chain(venue, 2)[-1]["status"] = "canceled"
+    seeded = len(venue.requests)
+    body, code, _ = start(tmp_path, venue)
+    assert (code, body["phase"], body["reason"]) == (0, "stopped", None)
+    assert all(r[0] == "GET" for r in venue.requests[seeded:]), "nothing was sent"
+
+
+def test_a_successor_absent_from_the_listing_refuses(tmp_path) -> None:
+    venue = AccountVenue()
+    del venue.rows[old_writer_chain(venue, 1)[-1]["id"]]
+    body, code, stand = start(tmp_path, venue)
+    assert (code, body["phase"], body["reason"]) == (2, "refused", "replacement_unresolved")
+    assert body["gate"]["unresolved_replacements"] == 1 and stand.subscribed == 0
+
+
+def test_a_replacement_cycle_or_missing_link_refuses() -> None:
+    a = dict(id="a", client_order_id="BTEST-a", status="replaced", replaced_by="b")
+    b = dict(id="b", client_order_id="other-b", status="replaced", replaced_by="a")
+    lost = dict(id="x", client_order_id="BTEST-x", status="replaced")
+    rows = [(a, "replaced"), (b, "replaced"), (lost, "replaced")]
+    gate = node_order.Gate("BTEST-", clients=[Fixture(withheld=rows, withheld_positions=[])])
+    reasons = gate.check(Fixture(positions_open=lambda: [], orders_open=lambda: []))
+    assert reasons == ["replacement_unresolved"] and gate.counts["unresolved_replacements"] == 2
 
 
 def test_the_unchunked_flush_at_the_directory_size_logs_a_full_queue_and_fails(tmp_path, capfd):
