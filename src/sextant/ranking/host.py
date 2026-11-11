@@ -36,6 +36,7 @@ import os
 import threading
 import time
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 
 from nautilus_trader.common import MessageBus
@@ -173,23 +174,31 @@ class RankingHost:
     def set_symbol(
         self, name: str, *, references: ReferencePrices, asset: AssetState | None
     ) -> None:
-        self._require_thread()
-        self.publisher.set_symbol(name, references=references, asset=asset)
-        self._publish()  # a veto set here withdraws the rank at once
+        def update() -> None:
+            previous = self.publisher.references.get(name)
+            self.publisher.set_symbol(name, references=references, asset=asset)
+            if previous != references:
+                self.publisher.states[name] = replace(self.publisher.states[name], latest=None)
+
+        self._update(update)
 
     def set_coverage(self, coverage: Coverage) -> None:
-        self._require_thread()
-        self.publisher.set_coverage(coverage)
-        self._publish()  # same: the consumer never outlives its coverage
+        self._update(lambda: self.publisher.set_coverage(coverage))
 
     def on_trade(self, tick: TradeTick) -> RankingGeneration | None:
         """Advance one full-universe trade, then publish; a bad trade only degrades."""
+        return self._update(lambda: self.publisher.on_trade(tick))
+
+    def _update(self, update: Callable[[], None]) -> RankingGeneration | None:
         self._require_thread()
+        self.consumer.revoke()
         try:
-            self.publisher.on_trade(tick)
-        except (ValueError, KeyError, TypeError, ArithmeticError) as exc:
+            update()
+        except Exception as exc:
+            self.publisher.coverage = Coverage(CoverageState.DEGRADED, False)
             self.ingress_errors += 1
             self.last_error = type(exc).__name__
+            self._page("ingress_error")
         return self._publish()
 
     def entry_rank(self, symbol: str, *, now: int) -> int | None:
@@ -205,47 +214,60 @@ class RankingHost:
         self.intervals.close()
 
     def _publish(self) -> RankingGeneration | None:
-        publisher, now = self.publisher, self._clock()
-        ready = (
-            publisher.coverage.state is CoverageState.READY
-            and publisher.coverage.complete
-            and publisher.coverage.expected_symbols
-            == publisher.coverage.observed_symbols
-            == len(publisher.universe)
-            and publisher.coverage.missing_symbols
-            == publisher.coverage.invalid_symbols
-            == publisher.coverage.late_symbols
-            == 0
-            and all(publisher.states[name].latest is not None for name in publisher.universe)
-            and all(
-                (asset := publisher.assets.get(name)) is not None and asset.eligible(now)
-                for name in publisher.universe
-            )
-        )
+        self._require_thread()
+        self.consumer.revoke()
+        publisher = self.publisher
         supplied, published_at = publisher.coverage, publisher.published_at
-        if not ready:
-            publisher.set_coverage(Coverage(CoverageState.DEGRADED, False))
-            publisher.published_at = None  # a veto publication is never throttled
         try:
+            now = self._clock()
+            ready = (
+                supplied.state is CoverageState.READY
+                and supplied.complete is True
+                and supplied.expected_symbols
+                == supplied.observed_symbols
+                == len(publisher.universe)
+                and supplied.missing_symbols
+                == supplied.invalid_symbols
+                == supplied.late_symbols
+                == 0
+                and all(publisher.states[name].latest is not None for name in publisher.universe)
+                and all(
+                    (reference := publisher.references.get(name)) is not None
+                    and reference.prior_close is not None
+                    and type(reference.known_at) is int
+                    and isinstance(reference.source, str)
+                    and bool(reference.source)
+                    and 0 <= reference.known_at <= now
+                    for name in publisher.universe
+                )
+                and all(
+                    (asset := publisher.assets.get(name)) is not None
+                    and type(asset.known_at) is int
+                    and type(asset.expires_at) is int
+                    and isinstance(asset.source, str)
+                    and asset.eligible(now)
+                    for name in publisher.universe
+                )
+            )
+            if not ready:
+                publisher.set_coverage(Coverage(CoverageState.DEGRADED, False))
+                publisher.published_at = None  # a veto publication is never throttled
             generation = publisher.publish(now=now)
-        except (ValueError, KeyError, TypeError, ArithmeticError) as exc:
+        except Exception as exc:
+            self.consumer.revoke()  # even a bus failure after consumer delivery revokes it
             publisher.published_at = published_at
             self.publish_errors += 1
             self.last_error = type(exc).__name__
+            self._page("publish_error")
             return None
         finally:
-            publisher.set_coverage(supplied)
+            publisher.coverage = supplied
         if generation is None:
             return None
         self.intervals.generation(generation)
         emitted = generation.coverage
         if emitted.state is not CoverageState.READY or not emitted.complete:
-            if self._alarm is not None:
-                try:
-                    self._alarm("generation_degraded", None)
-                except Exception as exc:
-                    self.alarm_errors += 1
-                    self.last_error = type(exc).__name__
+            self._page("generation_degraded")
             return generation
         if self._heartbeat is not None:
             delivered, error = True, None
@@ -257,3 +279,11 @@ class RankingHost:
                 self.last_error = error
             self.intervals.heartbeat(generation, delivered=delivered, error=error)
         return generation
+
+    def _page(self, reason: str) -> None:
+        if self._alarm is not None:
+            try:
+                self._alarm(reason, None)
+            except Exception as exc:
+                self.alarm_errors += 1
+                self.last_error = type(exc).__name__

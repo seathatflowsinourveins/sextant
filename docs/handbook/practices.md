@@ -4,7 +4,7 @@
 
 ## Rank
 
-- Publish a full-market ranking generation at most once per `publish_min_interval_s`; a missing, stale or invalid generation means no entry, with no fallback. [ADR-0003](../adr/0003-ranking-and-feeds.md)
+- Publish a full-market ranking generation at most once per `publish_min_interval_s`; a missing, stale or invalid generation means no entry, with no fallback. Revoke cached host authority before changing a veto input: publishing its withdrawal can itself fail, and a changed reference invalidates the old mover. [Host veto proofs](../../tests/proofs/test_ranking_host_veto.py); [ADR-0003](../adr/0003-ranking-and-feeds.md)
 - Score `move × dvol_ratio` against the symbol's own time-matched segment baseline, ties by `trades_accel`; dollar volume, share count, price and trade rate never form the score. [ADR-0003](../adr/0003-ranking-and-feeds.md)
 - Measure the move from the latest completed, split-adjusted official regular-session close, and record the RTH open-based move separately. [ADR-0003](../adr/0003-ranking-and-feeds.md)
 - Keep SIP and BOATS denominators, source identity and coverage separate; an unknown coverage is unknown, not zero. [ADR-0013](../adr/0013-us-equity-data-stack.md)
