@@ -283,7 +283,7 @@ def test_trial_rows_keep_every_arm_and_both_cost_conditions(tmp_path: Path) -> N
     )
     assert states["cash"] == "COMPLETE"
     assert states["k2_exact"] == "FAIL"
-    assert set(table.column("effective_n").to_pylist()) == {None}
+    assert set(table.column("effective_n").to_pylist()) == {float(len(fs.ARMS))}
     config = json.loads(table.column("config").to_pylist()[0])
     assert config["tier"] == "MODELED"
     assert set(config["condition_returns"]) == {"cost_1x", "cost_2x"}
