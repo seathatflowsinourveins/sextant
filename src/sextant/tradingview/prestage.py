@@ -58,6 +58,7 @@ from sextant.tradingview.bridge import DisplayBounds, project_display_unit
 from sextant.tradingview.cadence import Cadence
 from sextant.tradingview.host import BarFidelityHost, load_symbol_map
 from sextant.tradingview.inputs import read_research_inputs
+from sextant.tradingview.listings import creation_time
 from sextant.tradingview.producer import Clocks, reserve_stream
 
 NS = 1_000_000_000
@@ -135,19 +136,26 @@ def load_registry(path: Path) -> Registry:
 
 def load_maps(
     nasdaq_listed: Path, other_listed: Path, symbol_map: Path
-) -> tuple[tuple[str, ...], dict[str, str]]:
-    """Public directory texts plus the operator's exact TradingView map."""
-    universe = build_universe(
-        Path(nasdaq_listed).read_text(encoding="utf-8"),
-        Path(other_listed).read_text(encoding="utf-8"),
-    )
+) -> tuple[tuple[str, ...], dict[str, str], str]:
+    """Public directory texts plus the exact TradingView map, and their provenance.
+
+    A directory name with no exact mapping is omitted from the display universe and
+    counted, never guessed (ADR-0021 Disagreements: the pinned consumer omits unmapped
+    rows). Each file's File Creation Time is carried so a stale listing is visible.
+    """
+    texts = [Path(path).read_text(encoding="utf-8") for path in (nasdaq_listed, other_listed)]
+    directory = build_universe(*texts)
     raw = load_symbol_map(Path(symbol_map))
-    missing = tuple(name for name in universe if not raw.get(name))
-    if missing:
-        raise PrestageError(
-            f"The symbol map misses {len(missing)} of {len(universe)} directory symbols"
-        )
-    return universe, {name: str(raw[name]) for name in universe}
+    universe = tuple(name for name in directory if raw.get(name))
+    if not universe:
+        raise PrestageError(f"The symbol map maps none of {len(directory)} directory symbols")
+    created = " / ".join(creation_time(text) for text in texts)
+    provenance = (
+        f"NASDAQ Trader nasdaqlisted.txt + otherlisted.txt, File Creation Time {created}; "
+        f"{len(universe)} of {len(directory)} directory symbols mapped, "
+        f"{len(directory) - len(universe)} unmapped omitted"
+    )
+    return universe, {name: str(raw[name]) for name in universe}, provenance
 
 
 def cadence_floor(
@@ -576,6 +584,7 @@ def publish_tick(
         "expires_at_ns": _ns(validated.expires_at),
         "unit_dir": str(unit_dir),
         "generation_sha256": j5["generation_sha256"],
+        "universe_source": universe_source,
     }
 
 
@@ -614,7 +623,9 @@ def run(
         raise PrestageError("max_age is 1..3600 seconds")
     registry_path = Path(k2_registry)
     registry = load_registry(registry_path)
-    universe, symbol_map = load_maps(Path(nasdaq_listed), Path(other_listed), Path(symbol_map_path))
+    universe, symbol_map, listing = load_maps(
+        Path(nasdaq_listed), Path(other_listed), Path(symbol_map_path)
+    )
     state_root = Path(state_root)
     Cadence(
         state_root / "cadence-unused",
@@ -673,8 +684,7 @@ def run(
                     segment.start_ns if segment.name == "POST" else _at(reference_day, 16)
                 )
                 universe_source = (
-                    "NASDAQ Trader nasdaqlisted.txt + otherlisted.txt read 2026-11-09; "
-                    f"{len(available)} of {len(universe)} directory symbols with a "
+                    f"{listing}; {len(available)} of {len(universe)} mapped symbols with a "
                     f"{reference_day.isoformat()} SIP official close; NOT PIT membership"
                 )
                 epoch = f"tv-producer-{segment.name.lower()}-{segment.session_date:%Y%m%d}"

@@ -790,13 +790,18 @@ def test_prestage_validation_failure_keeps_the_previous_unit(
     assert {name: (unit / name).read_bytes() for name in before} == before
 
 
-def test_prestage_refuses_an_incomplete_symbol_map(tmp_path: Path) -> None:
+def test_prestage_omits_and_counts_unmapped_names(tmp_path: Path) -> None:
+    """An unmapped or null name leaves the display universe, counted; an empty map refuses."""
     from sextant.tradingview.prestage import PrestageError, load_maps
 
     nasdaq, other = directory_texts(tmp_path)
     symbol_map = tmp_path / "map.json"
-    symbol_map.write_text(json.dumps({"AAA": "NASDAQ:AAA"}), encoding="utf-8")
-    with pytest.raises(PrestageError, match="symbol map"):
+    symbol_map.write_text(json.dumps({"AAA": "NASDAQ:AAA", "BBB": None}), encoding="utf-8")
+    universe, mapping, provenance = load_maps(nasdaq, other, symbol_map)
+    assert universe == ("AAA",) and mapping == {"AAA": "NASDAQ:AAA"}
+    assert "1 of 3 directory symbols mapped, 2 unmapped omitted" in provenance
+    symbol_map.write_text(json.dumps({"BBB": None}), encoding="utf-8")
+    with pytest.raises(PrestageError, match="symbol map maps none"):
         load_maps(nasdaq, other, symbol_map)
 
 
