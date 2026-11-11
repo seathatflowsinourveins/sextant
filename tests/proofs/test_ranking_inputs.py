@@ -118,7 +118,7 @@ def test_every_argument_is_required(tmp_path, flag: str) -> None:
 ROOT = Path(__file__).parents[2]
 
 
-def test_the_unit_runs_the_step_after_its_job_with_slot_2_names_only(tmp_path) -> None:
+def test_the_unit_runs_the_step_after_its_job_with_key_names_only(tmp_path) -> None:
     import configparser
     import shlex
     import subprocess
@@ -156,3 +156,15 @@ def test_the_unit_runs_the_step_after_its_job_with_slot_2_names_only(tmp_path) -
     assert argv[argv.index("--api-key-env") + 1] == "APCA_API_KEY_ID"  # a name, never a value
     assert argv[argv.index("--out") + 1] == str(tmp_path / "data/ranking-inputs")
     assert argv[argv.index("--listings-dir") + 1] == "/listings"
+
+
+def test_the_listings_receipt_time_is_recorded_and_the_unit_runs_after_listings(tmp_path) -> None:
+    import configparser
+
+    out = produce(tmp_path)
+    receipt = json.loads((tmp_path / "listings" / listings.RECEIPT).read_text())
+    manifest = json.loads((out / "manifest.json").read_text())
+    assert manifest["listings_staged_at"] == receipt["staged_at"]  # the bound is a row to source
+    service = configparser.ConfigParser(interpolation=None)
+    service.read(ROOT / "deploy/calibration/sextant-calibration-data.service")
+    assert "sextant-tradingview-listings.service" in service["Unit"]["After"].split()

@@ -1,7 +1,7 @@
 [Unit]
 Description=Sextant morning calibration inputs and C baselines
 Documentation=https://github.com/seathatflowsinourveins/sextant/blob/main/deploy/calibration/README.md
-After=network-online.target
+After=network-online.target sextant-tradingview-listings.service
 
 [Service]
 Type=oneshot

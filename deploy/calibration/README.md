@@ -12,6 +12,8 @@ Before enabling, stage the reviewed K2 universe artifact as `$HOME/sextant-data/
 
 The job first calls `baseline_recipe.run` for the four verified files and manifest. A flagged baseline preserves the previous active bytes and stops collection. After a baseline succeeds, collection iterates the same prior XNYS sessions and universe, requesting raw minute bars and quotes for SIP's 04:00–20:00 daytime window and BOATS' preceding 20:00–04:00 overnight window. Both feeds and dated `asof` identities stay separate. As in the existing historical fetcher, inclusive request ends are one microsecond before the next boundary; the last submicrosecond of a window is not requested. All received timestamp text, including nanoseconds, remains unchanged. Early-close sessions retain their full extended-hours window.
 
+`ExecStartPost` then writes the ranking inputs (N2b-3). The unit runs `After=` the listings unit (systemd.unit(5): the listed unit is "fully started up" first when "both units are being started"; a oneshot is up "after the main process exits", systemd.service(5); both read 2026-11-11).
+
 Outputs, relative to the data directory:
 
 - `baselines/{overnight,pre,rth,post}.json` and `baselines/manifest.json`: the existing schema and manifest-last publication.

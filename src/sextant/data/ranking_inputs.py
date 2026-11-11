@@ -47,11 +47,12 @@ class Daily(Protocol):
     def daily_closes(self, symbols: Any, *, day: date) -> dict[str, Decimal]: ...
 
 
-def _listing_texts(directory: Path) -> dict[str, str]:
+def _listing_texts(directory: Path) -> tuple[dict[str, str], str]:
     """Both directory files, only as the listings job's receipt and validator accept them."""
     try:
         receipt = json.loads((directory / listings.RECEIPT).read_text(encoding="utf-8"))
         expected = {row["file"]: row["sha256"] for row in receipt["files"]}
+        staged_at = str(receipt["staged_at"])
     except (OSError, ValueError, KeyError, TypeError) as exc:
         raise InputsRefused(f"listings receipt unreadable in {directory}: {exc}") from exc
     texts = {}
@@ -61,7 +62,7 @@ def _listing_texts(directory: Path) -> dict[str, str]:
             raise InputsRefused(f"{name} does not match the listings receipt")
         listings.validate(name, data)
         texts[name] = data.decode("utf-8")
-    return texts
+    return texts, staged_at
 
 
 def _types(texts: dict[str, str], symbols: tuple[str, ...]) -> dict[str, dict[str, str]]:
@@ -100,7 +101,7 @@ def produce(
     out: Path, *, universe_artifact: Path, listings_dir: Path, session: date, daily: Daily
 ) -> dict[str, Any]:
     symbols, digest = load_universe(Path(universe_artifact))
-    texts = _listing_texts(Path(listings_dir))
+    texts, staged_at = _listing_texts(Path(listings_dir))
     reference_day = prior_sessions(session, 1)[-1]  # PRE and RTH (prestage.py)
     names, closes = collect_references(daily, day=reference_day, symbols=symbols)  # type: ignore[arg-type]
     known_at = _at(reference_day, 16)
@@ -124,7 +125,12 @@ def produce(
         },
     }
     out = Path(out)
-    manifest: dict[str, Any] = {"session": session.isoformat(), "files": {}}
+    # No row bounds a listings receipt's age yet; its time is recorded (lead ruling 03:08).
+    manifest: dict[str, Any] = {
+        "session": session.isoformat(),
+        "listings_staged_at": staged_at,
+        "files": {},
+    }
     for name in FILES:
         write_atomic(out / name, bodies[name])
         raw = (out / name).read_bytes()
