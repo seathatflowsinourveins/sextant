@@ -28,6 +28,7 @@ timestamp; ``ts_init`` comes from the local receipt clock.
 from __future__ import annotations
 
 import contextlib
+import logging
 import sys
 import threading
 import time
@@ -70,6 +71,7 @@ _ROUND_LOT_SHARES = 100
 # receipt lag under 1 s and handler service max under 50 ms.  Criteria, not tunables.
 _MAX_RECEIPT_LAG_NS = 1_000_000_000
 _MAX_SERVICE_NS = 50_000_000
+_LOG = logging.getLogger(__name__)
 
 
 class Instrument(Protocol):
@@ -191,6 +193,11 @@ class AlpacaTickFeed:
         self._guard_thread: threading.Thread | None = None
         self._guard_stopped = False
         self.failure: Exception | None = None
+        self._dropped_trade_count = 0
+
+    @property
+    def dropped_trade_count(self) -> int:
+        return self._dropped_trade_count
 
     def start(self) -> None:
         """Run the SIP stream's blocking loop, or poll BOATS until ``stop()``."""
@@ -315,7 +322,14 @@ class AlpacaTickFeed:
                 raise TypeError("StockDataStream must run with raw_data=False")
             if tap is not None:
                 token = tap.trade_entry(trade.symbol, _timestamp_ns(trade.timestamp))
-            self._on_trade(self._trade_tick(trade, time.time_ns()))
+            try:
+                tick = self._trade_tick(trade, time.time_ns())
+            except Exception as exc:
+                self._dropped_trade_count += 1
+                self._observe_failure()
+                _LOG.error("Dropped Alpaca trades row for %s: %s", trade.symbol, exc)
+                return
+            self._on_trade(tick)
         except Exception as exc:
             await self._fail(exc)
         finally:

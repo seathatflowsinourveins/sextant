@@ -176,12 +176,20 @@ class AlpacaDataClient(MarketDataClient):
         self._stream_task: asyncio.Task[object] | None = None
         self._closing = False
         self._handler_failure: Exception | None = None
-        self._dropped_quote_count = 0
+        self._dropped_counts = dict.fromkeys(self._active, 0)
 
     @property
     def dropped_quote_count(self) -> int:
         """Rejected spreads from streaming and history, counted on the node loop."""
-        return self._dropped_quote_count
+        return self._dropped_counts["quotes"]
+
+    @property
+    def dropped_trade_count(self) -> int:
+        return self._dropped_counts["trades"]
+
+    @property
+    def dropped_bar_count(self) -> int:
+        return self._dropped_counts["bars"]
 
     async def _connect(self) -> None:
         if self.instrument_provider is None:
@@ -339,21 +347,35 @@ class AlpacaDataClient(MarketDataClient):
             if self._handler_failure is not None:
                 return
             receipt = time.time_ns()
+            tick: _Tick | None = None
+            conversion_error: Exception | None = None
             try:
                 stock, key = stocks[row.symbol]
                 if channel == "quotes" and isinstance(row, Quote):
-                    tick = _quote_tick(row, stock, receipt)
+                    try:
+                        tick = _quote_tick(row, stock, receipt)
+                    except Exception as error:
+                        conversion_error = error
                 elif channel == "trades" and isinstance(row, Trade):
-                    tick = _trade_tick(row, stock, receipt)
+                    # rc8 Architect AX handles trade and candle parse errors per row.
+                    try:
+                        tick = _trade_tick(row, stock, receipt)
+                    except Exception as error:
+                        conversion_error = error
                 elif isinstance(key, BarType) and isinstance(row, StockBar):
-                    tick = _bar(row, stock, key, receipt)
+                    try:
+                        tick = _bar(row, stock, key, receipt)
+                    except Exception as error:
+                        conversion_error = error
                 else:
                     raise TypeError("Unexpected Alpaca market data model")
             except Exception as error:
                 self._handler_failure = error
                 await stream.stop_ws()
                 return
-            owner.call_soon_threadsafe(self._publish, channel, stock.symbol, key, tick)
+            owner.call_soon_threadsafe(
+                self._publish, channel, stock.symbol, key, tick, conversion_error
+            )
 
         # alpaca-py installs these handlers before its wire send and retains
         # them for reconnect. Accept the earliest queued tick from each handler.
@@ -361,10 +383,17 @@ class AlpacaDataClient(MarketDataClient):
         await self._change_subscription(stream, stream.register, channel, tuple(stocks), receive)
 
     def _publish(
-        self, channel: str, symbol: str, key: InstrumentId | BarType, tick: _Tick | None
+        self,
+        channel: str,
+        symbol: str,
+        key: InstrumentId | BarType,
+        tick: _Tick | None,
+        conversion_error: Exception | None = None,
     ) -> None:
         if tick is None:
-            self._dropped_quote_count += 1
+            self._dropped_counts[channel] += 1
+            if conversion_error is not None:
+                self._log.error(f"Dropped Alpaca {channel} row for {symbol}: {conversion_error}")
         elif not self._closing and self._active[channel].get(symbol) == key:
             self._handle_data(tick)
 
@@ -406,7 +435,7 @@ class AlpacaDataClient(MarketDataClient):
             for row in result.data.get(stock.symbol, ()):
                 tick = _quote_tick(row, stock)
                 if tick is None:
-                    self._dropped_quote_count += 1
+                    self._dropped_counts["quotes"] += 1
                 else:
                     ticks.append(tick)
         self._handle_response(
