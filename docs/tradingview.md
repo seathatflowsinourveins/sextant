@@ -344,10 +344,6 @@ enablement.
 
 ## Segment unit producer for the display directory
 
-This part ships the unit publication step (`publish_tick`, whose clock is read
-again after the replay). The command line, the cadence loop and the request
-budget's consumer below arrive with the next part and are documented ahead of
-it: until then the command is not runnable and no keyed job is started.
 
 `tradingview/prestage.py` is the repo entry point that keeps the newest
 complete display unit fresh for the current PRE, RTH or POST segment, so the
