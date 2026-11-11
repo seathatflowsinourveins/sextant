@@ -3,6 +3,7 @@ committed unchanged as failing proofs before their fixes."""
 
 from dataclasses import replace
 from decimal import Decimal as D
+from typing import cast
 
 import pytest
 import test_b_lifecycle_width as W
@@ -155,7 +156,9 @@ def test_recovered_width_rows_replay_the_bars_received_while_invalid(tmp_path):
             self.clock.set_time_alert_ns(
                 "restore-period",
                 OPEN + 4 * W.MINUTE + NS // 4,
-                callback=lambda _event: self._config.width_rows.update(trail_atr_period=D(3)),
+                callback=lambda _event: cast(dict, self._config.width_rows).update(
+                    trail_atr_period=D(3)
+                ),
             )
 
     journal, *_ = R.run_rows(tmp_path, lambda rows: rows.pop("trail_atr_period"), cls=Recover)

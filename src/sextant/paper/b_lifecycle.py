@@ -499,7 +499,12 @@ class BLifecycle(Strategy):
             return self._page(book, now, "native_trail_fraction_missing")
         if not isinstance(native, Decimal) or not 0 < native <= MAX_TRAIL_FRACTION:
             return self._page(book, now, "native_trail_fraction_invalid")  # ADR-0025's cap
-        width = book.width
+        width = book.width  # revalidated at each arm: the rows in force and the native cap
+        bar = book.width_bar
+        if width is not None and (
+            bar is None or _width_period(self.width_rows, bar) is None or width > native
+        ):
+            width = None  # the native row, never a width the current authority does not give
         if width is None and self.width_rows is not None:
             self._page(book, now, "width_unavailable")  # Q4: arm at the native row and page
         bps = trail_percent(native if width is None else width) * 100  # rounded wider
@@ -541,11 +546,11 @@ class BLifecycle(Strategy):
         if period is None:
             book.width = None
             return self._page(book, now, "width_rows_invalid")
-        if book.atr is None or book.atr.period != period:  # rebuilt over this session's bars
-            book.atr = DecimalATR(period)
-            for completed in book.session_bars[:-1]:
-                book.atr.handle_bar(completed)
-        book.atr.handle_bar(bar)
+        # b_width.completed_atr: Wilder ATR over all of this RTH session's completed bars,
+        # computed afresh, so a new session, a new period or a recovered row replays them all.
+        book.atr = DecimalATR(period)
+        for completed in book.session_bars:
+            book.atr.handle_bar(completed)
         quote = book.quote
         if book.atr.value is None or quote is None:
             return
