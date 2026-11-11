@@ -7,7 +7,8 @@ fresh ``RankingPublisher`` and ``NodeRankingHost`` primed from that segment's in
 
 A segment's prefix counts as covered by observation only when this host, built in the same
 Actor ``on_start`` callback that subscribes statuses and trades, existed before the segment's
-start and no stream gap arrived since; then the new publisher's states are marked covered
+start and no stream gap arrived since (a gap is timed by the node clock and belongs to the
+segment that time falls in); then the new publisher's states are marked covered
 (the ``replace`` precedent of tradingview/host.py) and its coverage is READY over the
 universe. Otherwise, or after a gap inside the segment, the segment is DEGRADED for the rest
 of it and withholds every rank. No replay is attempted. The Actor's halt evidence crosses a
@@ -77,6 +78,7 @@ class SegmentedHost:
         self.host: NodeRankingHost | None = None
         self._current: SegmentInputs | None = None
         self.unrouted = 0
+        self._pending_gaps: list[int] = []  # node-clock times of gaps no entered segment holds
         self._reset_counts()
 
     def _reset_counts(self) -> None:
@@ -128,8 +130,16 @@ class SegmentedHost:
         )
 
     def set_coverage(self, coverage: Coverage) -> RankingGeneration | None:
-        """Coverage is this host's observation; a non-READY word from the Actor is a gap."""
+        """Coverage is this host's observation; a non-READY word from the Actor is a gap.
+
+        A gap belongs to the segment its node-clock time falls in, whatever the callback order:
+        one at or after the current segment's end waits for the next segment's entry, which
+        counts it if it is at or after that segment's start (Codex r1 P1)."""
         if coverage.state is CoverageState.READY:
+            return None
+        at = self._clock()
+        if self.segment is None or at >= self.segment.end_ns:
+            self._pending_gaps.append(at)
             return None
         self.gaps += 1
         self.observed = False
@@ -145,6 +155,8 @@ class SegmentedHost:
             self._write()
         self.segment, self.host, self._current = segment, None, None
         self._reset_counts()
+        self.gaps = sum(at >= segment.start_ns for at in self._pending_gaps)
+        self._pending_gaps.clear()  # an earlier one fell before this start: resubscribed since
         inputs = self._inputs(segment)
         if inputs is None:
             return None
@@ -158,7 +170,7 @@ class SegmentedHost:
             universe_source=self._source,
             baseline=inputs.baseline,
         )
-        self.observed = self.observing_since < segment.start_ns
+        self.observed = self.observing_since < segment.start_ns and self.gaps == 0
         if self.observed:  # covered by observation (LEAD-0115 6a)
             for name, state in publisher.states.items():
                 publisher.states[name] = replace(state, segment_covered=True)
