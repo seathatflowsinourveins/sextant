@@ -32,6 +32,16 @@ available funds clamped to total for a nonnegative account, locked derived after
 currency rounding. Raw buying power remains separately identified in account
 info. Sources: IBKR `execution/account.rs:397-419`, `types/balance.rs:149-172`.
 
+Nautilus's client command FIFO must not await a paced wire receipt. Schedule
+owned command tasks through `create_task`, as the pinned AX adapter does, and
+let the account gateway choose among ready requests. Shutdown cancels and joins
+those tasks before joining wire work. A house entry cancelled while still queued
+is withdrawn using the gateway's positive not-sent fact, without an absence query
+or a later submission; once sent, its outcome remains a reconciliation question.
+Only gateway transmission facts are retained here, not a second order reducer.
+Sources: Python adapter guide, “Process commands in order”; AX `execution.rs`;
+the existing bridge's `_unsent`/`cancel` admission rule from its pinned source.
+
 An unavailable fill-report capability also keeps the writer unavailable at
 startup. Without an evidenced commission resolver, connect refuses before
 credential lookup or SDK construction; a running writer must not discard its
