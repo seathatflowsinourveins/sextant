@@ -123,10 +123,10 @@ def test_model_policy_keeps_the_approved_google_interim_and_native_claude() -> N
     assert (roles["model"], roles["effort"]) == ("claude-sonnet-5-5", "high")
     assert roles["launch"] == "python3 scripts/role_launch.py <dispatcher|lander|tracker>"
     assert "tracker" in roles["pinned_in"]
-    assert (lead["model"], lead["effort"]) == ("claude-fable-5-2", "high")
+    assert (lead["model"], lead["effort"]) == ("fable", "high")
     assert lead["launch"] == "python3 scripts/role_launch.py lead"
     assert (reviewer["model"], reviewer["effort"]) == ("claude-fable-5-2", "high")
-    assert (reflection["model"], reflection["effort"]) == ("claude-fable-5-2", "high")
+    assert (reflection["model"], reflection["effort"]) == ("fable", "high")
     for entry in (worker, roles, lead, reviewer, reflection):
         assert "ADR-0030, 2026-11-09 amendment" in entry["authority"]
     claude = json.loads((ROOT / ".claude/settings.json").read_text())
@@ -161,7 +161,7 @@ def test_the_model_mix_table_matches_the_settings_and_launches() -> None:
     lead = rows["Lead: orchestration, rulings"]
     assert lead == ["Claude Fable 5.2", "high"]
     assert (policy["claude_lead"]["model"], policy["claude_lead"]["effort"]) == (
-        "claude-fable-5-2",
+        "fable",
         "high",
     )
     assert policy["claude_lead"]["launch"] == "python3 scripts/role_launch.py lead"
