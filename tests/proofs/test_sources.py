@@ -143,6 +143,23 @@ def test_an_ao_fork_on_the_claim_path_fails_the_gate() -> None:
     assert any("harness" in failure and "authority" in failure.lower() for failure in found)
 
 
+def test_each_retrieval_upstream_alone_owns_the_setup_path() -> None:
+    # setup.sh installs the OpenViking wheel and the llama.cpp server's model.
+    for cited in (
+        "volcengine/OpenViking@v0.5.3 178a8cdfb41b51e7d24c4bf79a13cc54981e0ee8",
+        "ggml-org/llama.cpp@b11960 8642541b255bfb5dc39cd351a178be09013a55d6",
+    ):
+        assert _failures(cited, ("deploy/wsl/setup.sh",)) == [], cited
+
+
+def test_the_alpaca_adapter_is_broker_code() -> None:
+    path = ("src/sextant/alpaca/data.py",)
+    found = _failures(f"example/fork@v1 {SHA}", path)
+    assert any("broker" in failure and "authority" in failure.lower() for failure in found)
+    for owner in ("nautechsystems/nautilus_trader", "alpacahq/alpaca-py"):
+        assert _failures(_cite(owner), path) == [], owner
+
+
 def test_a_pinned_blob_url_cites_its_owner() -> None:
     sources = (
         f"https://github.com/nautechsystems/nautilus_trader/blob/{SHA}/engine.py, read 2026-11-09"

@@ -24,6 +24,11 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[2]
 SPEC = json.loads((HERE / "parity.json").read_text())
 LOCK = json.loads((REPO / SPEC["lock"]).read_text())
+# dsh-v0.2.2-rc.1 apps/cli/README.md:46 (in-box bundles resolve from the dsh installation) and
+# apps/cli/reference/README.md:15 (the shipped template that carries each app bundle).
+TEMPLATES = {"@deepseek-ai/dsh-headless": "headless", "@deepseek-ai/dsh-acp-app": "acp"}
+IN_BOX = {"@deepseek-ai/dsh-base", *TEMPLATES}
+FULL_MARKER = ".sextant-dsh-full"  # written into an enhanced home this installer creates
 GIT = (
     "git",
     "--no-replace-objects",
@@ -38,9 +43,9 @@ NATIVE_TIMEOUT = 600  # seconds per native dsh or agy call; a stall is reported,
 LOGIN_HOMES = (".codex", ".config/orca", ".local/share/orca")
 
 
-def _native(command: list[str]) -> None:
+def _native(command: list[str], **options: object) -> None:
     """One native install call, stdin closed so no prompt can wait on the terminal."""
-    subprocess.run(command, check=True, stdin=subprocess.DEVNULL, timeout=NATIVE_TIMEOUT)
+    subprocess.run(command, check=True, stdin=subprocess.DEVNULL, timeout=NATIVE_TIMEOUT, **options)
 
 
 class Refused(Exception):
@@ -90,9 +95,9 @@ def _dsh_tui_destinations(home: Path, prefix: Path) -> None:
         )
 
 
-def _dsh_roots(dsh_home: Path) -> None:
+def _dsh_roots(dsh_home: Path, *locked: str) -> None:
     roots = [dsh_home / "skills", dsh_home / "profiles"]
-    for name in ("dsh-tui", *SPEC["runtimes"]["dsh"]["profiles"]):
+    for name in dict.fromkeys(["dsh-tui", *SPEC["runtimes"]["dsh"]["profiles"], *locked]):
         profile = dsh_home / "profiles" / name
         roots.extend([profile, profile / "node_modules", profile / "package.json"])
         if profile.is_dir():
@@ -607,6 +612,8 @@ def install_dsh(
     quality_profiles = SPEC["runtimes"]["dsh"]["quality"]["profiles"]
     profiles = [*SPEC["runtimes"]["dsh"]["profiles"]]
     profiles += [name for name in quality_profiles if name not in profiles]
+    for name in profiles:  # before any skill copy or plugin add
+        _bare(dsh_home / "profiles" / name)
     states = [copy_skill(path, dsh_home / "skills") for path in skills.values()]
     for name in profiles:
         missing = dsh_missing(dsh_home / "profiles" / name, repository)
@@ -621,6 +628,191 @@ def install_dsh(
             states.extend(_install_bundle_dependencies(missing))
             _native([*dsh, "plugin", "--profile", name, "add", "--save-exact", *missing])
             states.append(f"{name}: added {' '.join(missing)}")
+    return states
+
+
+def _profile_lock(repository: Path) -> tuple[str, dict]:
+    """The enhanced home's lock (parity.json dsh.full), read where its links point."""
+    path = SPEC["runtimes"]["dsh"]["full"]["lock"]
+    return path, json.loads((repository / path).read_text())
+
+
+def _lock_rows(lock: dict) -> tuple[list[dict], list[str]]:
+    """A lock profile's rows and its bundle stack (interactive lists both; headless, bundles)."""
+    if "dependencies" in lock:
+        return lock["dependencies"], lock["bundles"]
+    return lock["bundles"], [row["package"] for row in lock["bundles"]]
+
+
+def _lock_target(repository: Path, row: dict) -> tuple[str, str]:
+    """A lock row's `dsh plugin add` argument and recorded value: a link adds this repository's
+    path, as setup.sh adds config/dsh; an npm pin adds name@version; github: stays verbatim."""
+    spec = row["spec"]
+    if spec.startswith("link:"):
+        return _quality_target(repository, row["link"])
+    if not spec.startswith(("github:", row["package"] + "@")):
+        spec = f"{row['package']}@{spec}"
+    return _quality_target(repository, spec)
+
+
+def _bare(profile: Path, resume: bool = False) -> None:
+    """dsh adopts (operations.js:616-626) or replaces (profile-boot-*.js:156-185) a bare profile."""
+    if not os.path.lexists(profile) or (profile / "package.json").is_file():
+        return
+    entries = sorted(profile.iterdir()) if profile.is_dir() else None
+    ours = REPO / "deploy/wsl/dsh/pnpm-workspace.yaml"
+    mine = profile / ours.name
+    if resume and entries == [mine] and mine.read_bytes() == ours.read_bytes():
+        return
+    found = "a file" if entries is None else "a directory without package.json"
+    raise Refused(f"{profile}: {found}; no change made")
+
+
+def _recognise(dsh_home: Path, locks: list[dict]) -> None:
+    """Refuse an existing home unless it has our marker or its lock profiles hold lock rows only."""
+    if not dsh_home.exists():
+        return
+    known = (dsh_home / FULL_MARKER).is_file()
+    for lock in locks:
+        profile = dsh_home / "profiles" / lock["profile"]
+        rows, stack = _lock_rows(lock)
+        _bare(profile, not any(app in TEMPLATES for app in stack))
+        if not profile.exists():
+            continue
+        manifest = profile / "package.json"
+        try:  # a marked home may hold a profile its first run left without a manifest
+            data = json.loads(manifest.read_text()) if manifest.exists() or not known else {}
+            foreign = [] if profile.is_dir() else ["not a directory"]
+            foreign += sorted(
+                (set(data.get("dependencies", {})) - {row["package"] for row in rows})
+                | (set(data.get("dsh", {}).get("profile", {}).get("bundles", [])) - set(stack))
+            )
+        except (OSError, ValueError, AttributeError, TypeError):
+            foreign, data = ["an unreadable package.json"], {}
+        if foreign:
+            raise Refused(f"{profile}: not built from the lock ({foreign}); no change made")
+        # dsh appends only newly recorded bundles (operations.js:101-129)
+        held = data.get("dsh", {}).get("profile", {}).get("bundles", [])
+        at = next((i for i, bundle in enumerate(held) if stack[i : i + 1] != [bundle]), None)
+        late = [b for b in stack[len(held) :] if b in data.get("dependencies", {})]
+        if at is not None or late:
+            found = f"{late} unselected" if at is None else f"position {at} holds {held[at]!r}"
+            want = stack[at : at + 1] if at is not None else "has them"
+            raise Refused(
+                f"{lock['profile']}: bundles out of the lock's order ({found}, lock {want})"
+            )
+        known = True
+    if not known or not dsh_home.is_dir():
+        raise Refused(f"{dsh_home}: exists and is not a home this installer made; no change made")
+
+
+def _main_mismatch(repository: Path) -> str | None:
+    """Links into an existing home read house bundles from this checkout, so its HEAD must be
+    the commit of refs/remotes/origin/main as last fetched (git 2.53 git-fetch(1) DESCRIPTION:
+    fetch updates remote-tracking branches; gitrevisions(7): refs/remotes/<refname>)."""
+    head = _git(repository, "rev-parse", "HEAD")
+    main = _git(repository, "rev-parse", "--verify", "refs/remotes/origin/main^{commit}")
+    return None if head == main else f"HEAD {head} is not refs/remotes/origin/main {main}"
+
+
+def _checkout_at_main(repository: Path) -> None:
+    if reason := _main_mismatch(repository):
+        raise Refused(f"{repository}: {reason}; no change made")
+
+
+def _working_link(value: str | None, package: str) -> bool:
+    """A recorded link to a directory holding this package."""
+    try:
+        target = Path(value.removeprefix("link:")) / "package.json"
+        return value.startswith("link:") and json.loads(target.read_text())["name"] == package
+    except (AttributeError, OSError, ValueError, KeyError, TypeError):
+        return False
+
+
+def install_lock_profile(
+    dsh_home: Path, dsh: list[str], repository: Path, lock: dict, repoint=False, gate=False
+) -> list:
+    """One lock profile: plain rows, then one add per missing bundle in the lock's order (dsh
+    appends each). Never removes; keeps outside links unless repoint; gate holds new links."""
+    rows, stack = _lock_rows(lock)
+    by_name = {row["package"]: row for row in rows}
+    plain = [row for row in rows if row["package"] not in stack]
+    ordered = plain + [by_name[name] for name in stack if name in by_name and name not in IN_BOX]
+    name, states = lock["profile"], []
+    profile = dsh_home / "profiles" / name
+    env = {**os.environ, "DSH_HOME": str(dsh_home)}
+    links = [row for row in ordered if row["spec"].startswith("link:")]
+    if gate and links and not (profile / "package.json").is_file():
+        if reason := _main_mismatch(repository):
+            print(f"{name}: skipped creating it: {repository} {reason}")
+            return [f"{name}: skipped"]
+    template = next((TEMPLATES[app] for app in stack if app in TEMPLATES), None)
+    if template and not (profile / "package.json").is_file():
+        # A non-shipped name starts from dsh-base alone; the shipped template carries the app.
+        command = ["--profile", name, "--from-default-profile", template, "--dump-config"]
+        _native([*dsh, *command], env=env, stdout=subprocess.DEVNULL)
+        states.append(f"{name}: initialized from {template}")
+    workspace = profile / "pnpm-workspace.yaml"  # setup.sh's documented profile workspace
+    if not workspace.exists():
+        _publish(workspace, (repository / "deploy/wsl/dsh/pnpm-workspace.yaml").read_text(), 0o644)
+    manifest, held = profile / "package.json", None
+    for row in ordered:
+        present = json.loads(manifest.read_text()) if manifest.is_file() else {}
+        target, recorded = _lock_target(repository, row)
+        now = _recorded(profile, present.get("dependencies", {}).get(row["package"]))
+        entry = profile / "node_modules" / row["package"]  # pnpm installs here (operations.js:336)
+        installed = (entry / "package.json").is_file()
+        installed &= not str(now).startswith("link:") or now == "link:" + os.path.realpath(entry)
+        if now == recorded and installed:
+            continue
+        if not repoint and installed and _working_link(now, row["package"]):
+            print(f"{name}: kept {row['package']} at {now[5:]}; --repoint-links moves it")
+            states.append(f"{name}: kept a link outside this checkout")
+            continue
+        if lost := now is not None and not installed:
+            print(f"{name}: {row['package']} is recorded but not installed")
+        if not held and gate and row in links:
+            held = _main_mismatch(repository)
+        if held:  # later bundles wait too, so the stack keeps the lock's order
+            print(f"{name}: skipped {row['package']}: {repository} {held}")
+            if lost:
+                raise Refused(f"{name}: {row['package']} recorded but not installed; {held}")
+            states.append(f"{name}: skipped")
+            continue
+        if shutil.which("pnpm") is None:  # dsh-plugin-manager spawns pnpm from PATH
+            raise Refused("pnpm is not on PATH; run parity.sh or setup.sh (host-tools lock)")
+        states.extend(_install_bundle_dependencies([target]))
+        _native([*dsh, "plugin", "--profile", name, "add", "--save-exact", target], env=env)
+        states.append(f"{name}: added {target}")
+    bundles = json.loads(manifest.read_text()).get("dsh", {}).get("profile", {}).get("bundles")
+    if not held and bundles != stack:
+        raise Refused(f"{name}: dsh.profile.bundles are out of the lock's order; kept for review")
+    return states
+
+
+def install_dsh_full(
+    skills: dict[str, Path], dsh_home: Path, dsh: list[str], repository: Path, repoint=False
+) -> list[str]:
+    """The enhanced home: recognised first, then the shelf's skills and both lock profiles."""
+    if repoint:
+        _checkout_at_main(repository)
+    lock = _profile_lock(repository)[1]
+    locks = [lock["interactive"], lock["headless"]]
+    _dsh_roots(dsh_home, *(row["profile"] for row in locks))
+    _recognise(dsh_home, locks)
+    for source in skills.values():  # check every skill before copying any
+        target = dsh_home / "skills" / source.name
+        if target.exists() and _tree(target) != _tree(source):
+            raise Refused(f"{target}: differs from the pinned skill; no change made")
+    new = not dsh_home.exists()
+    gate = not new and not repoint
+    if new:
+        head = _git(repository, "rev-parse", "HEAD")
+        print(f"{dsh_home}: new home, links into {repository} at HEAD {head}")
+        _publish(dsh_home / FULL_MARKER, f"{SPEC['runtimes']['dsh']['full']['lock']}\n", 0o644)
+    states = [copy_skill(path, dsh_home / "skills") for path in skills.values()]
+    for row in locks:
+        states.extend(install_lock_profile(dsh_home, dsh, repository, row, repoint, gate))
     return states
 
 
@@ -710,15 +902,18 @@ def preflight(home: Path) -> None:
     _codex_lane(home)
     _dsh_roots(Path(os.environ.get("DSH_HOME") or home / ".dsh"))
     _dsh_tui_destinations(home, prefix)
+    lock = _profile_lock(REPO)[1]
+    full = home / SPEC["runtimes"]["dsh"]["full"]["home"]
+    _dsh_roots(full, *(lock[variant]["profile"] for variant in ("interactive", "headless")))
     _antigravity_roots(home)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--runtime", action="append", choices=("codex", "dsh", "antigravity", "muse")
-    )
+    runtimes = ("codex", "dsh", "dsh-full", "antigravity", "muse")
+    parser.add_argument("--runtime", action="append", choices=runtimes)
     parser.add_argument("--check-roots", action="store_true", help="read-only installer preflight")
+    parser.add_argument("--repoint-links", action="store_true", help="dsh-full: links to checkout")
     args = parser.parse_args()
     home = Path.home()
     try:
@@ -730,17 +925,24 @@ def main() -> int:
         return 0
     prefix = home / ".local/share/sextant-lane-runtimes"
     cache = home / ".local/share/sextant-runtime-skills"
-    repository = Path((prefix / "repository-path").read_text().strip())
+    # parity.sh records the installing checkout; setup.sh runs the dsh-full step before it has.
+    recorded = prefix / "repository-path"
+    repository = Path(recorded.read_text().strip()) if recorded.is_file() else REPO
     for name in ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN"):  # the launchers' rule
         os.environ.pop(name, None)
     os.environ["AGY_CLI_DISABLE_AUTO_UPDATE"] = "true"
+    dsh = [str(home / ".local/share/sextant-agents/node_modules/.bin/dsh")]
+    full = home / SPEC["runtimes"]["dsh"]["full"]["home"]
     steps = {
         "codex": lambda skills: install_codex(skills, home),
         "dsh": lambda skills: install_dsh(
             skills,
             Path(os.environ.get("DSH_HOME") or home / ".dsh"),
-            [str(home / ".local/share/sextant-agents/node_modules/.bin/dsh")],
+            dsh,
             repository,
+        ),
+        "dsh-full": lambda skills: install_dsh_full(
+            skills, full, dsh, repository, args.repoint_links
         ),
         "antigravity": lambda skills: install_antigravity(
             skills,

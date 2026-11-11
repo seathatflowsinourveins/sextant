@@ -67,6 +67,9 @@ bash "$devc_template/install.sh" self-install
 docker context inspect rootless > /dev/null 2>&1 || dockerd-rootless-setuptool.sh install
 docker context use rootless > /dev/null
 
+# ~/.dsh-full, the enhanced home every dsh worker runs on, from config/dsh/profile.lock.json.
+python3 -I deploy/wsl/lane-runtimes/parity.py --runtime dsh-full
+
 # dsh-tui's documented profile install, with the hook packages Orca's dsh row loads from each profile.
 mapfile -t plugins < <(jq -r '.devDependencies | to_entries[] | .key + "@" + .value' config/dsh/package.json)
 profile_dir="$HOME/.dsh/profiles/dsh-tui"
