@@ -1,0 +1,14 @@
+[Unit]
+Description=Sextant TradingView display sync loop (NS movers and NS focus, one session)
+Documentation=https://github.com/seathatflowsinourveins/sextant/blob/main/deploy/tradingview/README.md
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/sextant
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin PYTHONUNBUFFERED=1
+# No stored key. Each process waits for the owner's browser consent and keeps it in memory only.
+# No Restart=: the loop exits 0 at the display close, and a nonzero exit needs the owner or a review.
+ExecStart=%h/.local/bin/uv run --frozen python -m sextant.tradingview --loop --research-dir %h/sextant-data/tradingview-prestage/unit --authorize
+MemoryMax=@SYNC_MEMORY_MAX@
+MemorySwapMax=0
