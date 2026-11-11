@@ -2,6 +2,8 @@
 
 Sources read 2026-11-10: alpaca-py@cc4cb3b7 alpaca/trading/{models,enums}.py,
 https://docs.alpaca.markets/us/docs/orders-at-alpaca,
+https://docs.alpaca.markets/us/reference/subscribetotradev2sse,
+https://alpaca.markets/sdks/python/api_reference/trading/enums.html,
 https://docs.alpaca.markets/us/docs/websocket-streaming,
 and https://docs.alpaca.markets/us/docs/position-average-entry-price-calculation.
 NautilusTrader@d53849b docs/developer_guide/{python_adapters,adapters}.md,
@@ -47,6 +49,8 @@ _LOG = Logger("AlpacaReports")
 _STATUS = {
     alpaca.OrderStatus.NEW: OrderStatus.ACCEPTED,
     alpaca.OrderStatus.ACCEPTED: OrderStatus.ACCEPTED,
+    alpaca.OrderStatus.HELD: OrderStatus.ACCEPTED,
+    alpaca.OrderStatus.PENDING_REVIEW: OrderStatus.ACCEPTED,
     alpaca.OrderStatus.PENDING_NEW: OrderStatus.ACCEPTED,
     alpaca.OrderStatus.ACCEPTED_FOR_BIDDING: OrderStatus.ACCEPTED,
     alpaca.OrderStatus.DONE_FOR_DAY: OrderStatus.ACCEPTED,
@@ -149,10 +153,13 @@ def order_status_report(
         raise UnmappedOrderStatus(
             f"Alpaca order status requires classification or succession: {order.status}"
         )
+    if status == OrderStatus.ACCEPTED and 0 < filled_qty < quantity:
+        status = OrderStatus.PARTIALLY_FILLED
     if order.status in (
         alpaca.OrderStatus.STOPPED,
         alpaca.OrderStatus.SUSPENDED,
         alpaca.OrderStatus.CALCULATED,
+        alpaca.OrderStatus.PENDING_REVIEW,
     ):
         _LOG.warning(f"Retaining Alpaca order with venue status {order.status}")
 
@@ -244,28 +251,31 @@ def position_status_report(
 
 
 def order_status_report_results(
-    orders: Iterable[tuple[Order, Equity]],
+    orders: Iterable[tuple[Mapping[str, Any], Equity]],
     *,
     account_id: AccountId,
     ts_init: int,
-) -> list[tuple[Order, OrderStatusReport | ValueError]]:
+) -> list[tuple[Mapping[str, Any], OrderStatusReport | ValueError]]:
     """Process every resolved record and retain failures with their original payload.
 
     The adapter guide's fallible per-record mapping preserves sibling records.
     Callers must retain incomplete coverage when a result is an error. Contingent
     records retain their legs for the external-order proposal and custody decision.
     """
-    results: list[tuple[Order, OrderStatusReport | ValueError]] = []
-    for order, instrument in orders:
+    results: list[tuple[Mapping[str, Any], OrderStatusReport | ValueError]] = []
+    for row, instrument in orders:
         try:
             report = order_status_report(
-                order, account_id=account_id, instrument=instrument, ts_init=ts_init
+                Order.model_validate(row),
+                account_id=account_id,
+                instrument=instrument,
+                ts_init=ts_init,
             )
         except ValueError as exc:
-            _LOG.error(f"Alpaca order report failed for {order.id}: {exc}")
-            results.append((order, exc))
+            _LOG.error(f"Alpaca order report failed: {type(exc).__name__}")
+            results.append((row, exc))
         else:
-            results.append((order, report))
+            results.append((row, report))
     return results
 
 

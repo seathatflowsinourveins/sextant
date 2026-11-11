@@ -127,7 +127,7 @@ def test_report_preserves_supported_venue_status(status, filled_qty, expected):
     assert report.order_status == expected
 
 
-@pytest.mark.parametrize("status", ["replaced", "pending_review", "held"])
+@pytest.mark.parametrize("status", ["replaced"])
 def test_venue_status_requiring_more_evidence_fails_loudly(status):
     with pytest.raises(ValueError, match="status"):
         order_status_report(
@@ -312,7 +312,9 @@ def test_p2_5_fractional_order_is_refused_at_equity_size_precision():
         )
 
 
-@pytest.mark.parametrize("status", ["pending_new", "accepted_for_bidding", "done_for_day"])
+@pytest.mark.parametrize(
+    "status", ["pending_new", "accepted_for_bidding", "done_for_day", "held", "pending_review"]
+)
 def test_p2_6_open_venue_order_remains_in_report(status):
     report = order_status_report(
         snapshot(status=status, qty="9"),
@@ -359,17 +361,17 @@ def test_p2_7_batch_preserves_failures_and_contingent_owner_sell_leg():
     parse_batch = getattr(parsing, "order_status_report_results", None)
     assert parse_batch is not None, "per-record report results are missing"
     leg = snapshot(id=str(UUID(int=6)), side="sell")
-    parent = snapshot(order_class="bracket", legs=[leg], side="buy")
-    unknown = snapshot().model_copy(update={"status": "future_status"})
+    parent = snapshot(order_class="bracket", legs=[leg], side="buy").model_dump(mode="json")
+    unknown = snapshot().model_dump(mode="json") | {"status": "future_status"}
     results = parse_batch(
-        [(parent, EQUITY), (unknown, EQUITY), (snapshot(), EQUITY)],
+        [(parent, EQUITY), (unknown, EQUITY), (snapshot().model_dump(mode="json"), EQUITY)],
         account_id=ACCOUNT,
         ts_init=INITIALIZED_NS,
     )
     assert results[0][0] is parent
     assert isinstance(results[0][1], ValueError)
-    assert results[0][0].legs is not None
-    assert results[0][0].legs[0].side == "sell"
+    assert results[0][0]["legs"][0]["side"] == "sell"
+    assert results[1][0] is unknown
     assert isinstance(results[1][1], ValueError)
     assert isinstance(results[2][1], OrderStatusReport)
     assert results[2][1].order_status == OrderStatus.ACCEPTED
@@ -435,11 +437,21 @@ def test_nonterminal_restriction_retains_order_and_warns(status, monkeypatch):
 
 
 @pytest.mark.parametrize(
-    ("filled", "expected"), [("0", OrderStatus.ACCEPTED), ("9", OrderStatus.FILLED)]
+    ("status", "qty", "filled", "expected"),
+    [
+        ("calculated", "9", "0", OrderStatus.ACCEPTED),
+        ("calculated", "9", "9", OrderStatus.FILLED),
+        pytest.param("done_for_day", "100", "40", OrderStatus.PARTIALLY_FILLED, id="day_partial"),
+        pytest.param(
+            "calculated", "100", "40", OrderStatus.PARTIALLY_FILLED, id="calculated_partial"
+        ),
+        ("canceled", "100", "40", OrderStatus.CANCELED),
+        ("expired", "100", "40", OrderStatus.EXPIRED),
+    ],
 )
-def test_calculated_uses_venue_execution_totals(filled, expected):
+def test_open_status_uses_venue_execution_totals(status, qty, filled, expected):
     report = order_status_report(
-        snapshot(status="calculated", filled_qty=filled),
+        snapshot(status=status, qty=qty, filled_qty=filled),
         account_id=ACCOUNT,
         instrument=EQUITY,
         ts_init=INITIALIZED_NS,
