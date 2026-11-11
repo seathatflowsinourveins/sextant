@@ -1,3 +1,4 @@
+# pyright: reportAttributeAccessIssue=false, reportIncompatibleMethodOverride=false, reportOptionalMemberAccess=false
 from dataclasses import replace
 from decimal import Decimal
 
@@ -114,7 +115,13 @@ def test_added_shares_stay_covered_when_a_trail_remains_partly_filled():
         print("L2_WIRE", strategy.wire)
         print("L2_SNAPSHOTS", strategy.snapshots)
         print("L2_PAGES", [row for row in journal if row["kind"] == "page"])
-        print("L2_ORDER_EVENTS", [(str(order.client_order_id), [str(event) for event in order.events()]) for order in engine.cache.orders()])
+        print(
+            "L2_ORDER_EVENTS",
+            [
+                (str(order.client_order_id), [str(event) for event in order.events()])
+                for order in engine.cache.orders()
+            ],
+        )
         assert any(
             snapshot["trails"] and any(Decimal(trail[3]) > 0 for trail in snapshot["trails"])
             for snapshot in strategy.snapshots
@@ -125,9 +132,10 @@ def test_added_shares_stay_covered_when_a_trail_remains_partly_filled():
             if snapshot["source"].startswith("filled:OWNER-ADDED:")
         ]
         assert at_addition
-        # ADAPTED (ADR-0007:17, one house trail of the full net quantity, re-armed by cancel plus one resubmit; ADR-0007:25, LEAD-2308, lead decision 09:3x): while the partly filled
-        # trail completes, the added shares wait and are paged once. Original: cover >= needed
-        # at the addition.
+        # ADAPTED (ADR-0007:17, one house trail of the full net quantity, re-armed by cancel plus
+        # one resubmit; ADR-0007:25, LEAD-2308, lead decision 09:3x): while the partly filled trail
+        # completes, the added shares wait and are paged once. Original: cover >= needed at the
+        # addition.
         pages = [row.get("reason") for row in journal if row["kind"] == "page"]
         assert "exit_triggered_left_to_complete" in pages
         assert not [s for s in strategy.snapshots if s["coverage"] > s["held"]]

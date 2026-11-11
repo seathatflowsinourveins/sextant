@@ -1,10 +1,12 @@
+# pyright: reportAttributeAccessIssue=false, reportIncompatibleMethodOverride=false, reportOptionalMemberAccess=false
+# ruff: noqa: RUF059
 from dataclasses import replace
 from decimal import Decimal
 
 import pytest
 import test_b_lifecycle as lifecycle_proofs
-from nautilus_trader.execution import StaticLatencyModel
 from nautilus_trader.config import RiskEngineConfig
+from nautilus_trader.execution import StaticLatencyModel
 from nautilus_trader.model import OrderSide, OrderStatus, Price, Quantity, QuoteTick
 from test_b_lifecycle import GATE_ON, NS, PENNY, quote
 from test_b_lifecycle_entry import QUOTES, Recording, at, run_entry
@@ -156,6 +158,7 @@ def test_partial_fill_during_quantity_replace_preserves_coverage_and_exit(
         "BacktestVenueConfig",
         lambda **options: venue_config(**options, liquidity_consumption=liquidity_consumption),
     )
+
     class Case(RaceObserver):
         actions = (
             (at("0.7"), "OWNER-INITIAL", OrderSide.BUY, 100, "0.6000"),
@@ -207,7 +210,9 @@ def test_partial_fill_during_quantity_replace_preserves_coverage_and_exit(
     assert all(snapshot["coverage"] >= snapshot["needed"] for snapshot in at_owner_fill)
 
 
-@pytest.mark.xfail(strict=True, reason="the entry time limit waits for the engine's managed GTD part (lead 09:3x)")
+@pytest.mark.xfail(
+    strict=True, reason="the entry time limit waits for the engine's managed GTD part (lead 09:3x)"
+)
 def test_entry_ttl_really_cancels_after_update_answer(tmp_path):
     class Observed(Recording):
         def __init__(self, config):
@@ -285,15 +290,26 @@ def test_modify_throttle_rejection_does_not_retry_inside_the_same_callback(tmp_p
         cls=Throttled,
         gate=replace(GATE_ON, value=False),
         native_trail_fraction=NATIVE,
-        quotes=[*QUOTES, quote(at("0.8"), "0.5200", "0.5250"), quote(at("2.5"), "0.5200", "0.5250")],
+        quotes=[
+            *QUOTES,
+            quote(at("0.8"), "0.5200", "0.5250"),
+            quote(at("2.5"), "0.5200", "0.5250"),
+        ],
         risk=RiskEngineConfig(max_order_modify_rate="1/00:00:01"),
     )
     print("THROTTLED_ATTEMPTS", strategy.attempts)
     print("THROTTLED_REFUSALS", strategy.refusals)
     print("THROTTLED_STOPPED_LOOP", strategy.stopped_loop)
-    print("THROTTLED_ORDERS", [(str(order.client_order_id), str(order.leaves_qty), order.status.name) for order in orders])
-    # ADAPTED (ADR-0007:17, one house trail of the full net quantity, re-armed by cancel plus one resubmit): no quantity modify is sent at all, so none is throttled and nothing
-    # can repeat inside a rejection. Original: `assert strategy.refusals` (a throttled resize).
+    print(
+        "THROTTLED_ORDERS",
+        [
+            (str(order.client_order_id), str(order.leaves_qty), order.status.name)
+            for order in orders
+        ],
+    )
+    # ADAPTED (ADR-0007:17, one house trail of the full net quantity, re-armed by cancel plus one
+    # resubmit): no quantity modify is sent at all, so none is throttled and nothing can repeat
+    # inside a rejection. Original: `assert strategy.refusals` (a throttled resize).
     assert strategy.attempts == []
     assert not strategy.stopped_loop
 
@@ -329,8 +345,8 @@ def test_stale_second_resize_cannot_restore_coverage_above_current_holdings(tmp_
     # ADAPTED (ADR-0007:17, one house trail of the full net quantity, re-armed by cancel plus one
     # resubmit): no resize is sent, so the precondition `assert late_resize_answers` cannot hold.
     # The safety check runs on every snapshot: cover is above the holding only at an owner sale's
-    # own instant while B's cancel of every working trail is already in flight (the venue's
-    # reduce-only sync shrinks it in the same event). Original: `:120` answers after 4 s only.
+    # own instant while B's cancel of every working trail is already in flight (the venue's reduce-
+    # only sync shrinks it in the same event). Original: `:120` answers after 4 s only.
     assert strategy.snapshots
     over = [s for s in strategy.snapshots if s["coverage"] > s["held"]]
     assert not [s for s in over if any(t[4] != "PENDING_CANCEL" for t in s["trails"])], over
