@@ -612,6 +612,8 @@ def install_dsh(
     quality_profiles = SPEC["runtimes"]["dsh"]["quality"]["profiles"]
     profiles = [*SPEC["runtimes"]["dsh"]["profiles"]]
     profiles += [name for name in quality_profiles if name not in profiles]
+    for name in profiles:  # before any skill copy or plugin add
+        _bare(dsh_home / "profiles" / name)
     states = [copy_skill(path, dsh_home / "skills") for path in skills.values()]
     for name in profiles:
         missing = dsh_missing(dsh_home / "profiles" / name, repository)
@@ -653,6 +655,19 @@ def _lock_target(repository: Path, row: dict) -> tuple[str, str]:
     return _quality_target(repository, spec)
 
 
+def _bare(profile: Path, resume: bool = False) -> None:
+    """dsh adopts (operations.js:616-626) or replaces (profile-boot-*.js:156-185) a bare profile."""
+    if not os.path.lexists(profile) or (profile / "package.json").is_file():
+        return
+    entries = sorted(profile.iterdir()) if profile.is_dir() else None
+    ours = REPO / "deploy/wsl/dsh/pnpm-workspace.yaml"
+    mine = profile / ours.name
+    if resume and entries == [mine] and mine.read_bytes() == ours.read_bytes():
+        return
+    found = "a file" if entries is None else "a directory without package.json"
+    raise Refused(f"{profile}: {found}; no change made")
+
+
 def _recognise(dsh_home: Path, locks: list[dict]) -> None:
     """Refuse an existing home unless it has our marker or its lock profiles hold lock rows only."""
     if not dsh_home.exists():
@@ -660,9 +675,10 @@ def _recognise(dsh_home: Path, locks: list[dict]) -> None:
     known = (dsh_home / FULL_MARKER).is_file()
     for lock in locks:
         profile = dsh_home / "profiles" / lock["profile"]
+        rows, stack = _lock_rows(lock)
+        _bare(profile, not any(app in TEMPLATES for app in stack))
         if not profile.exists():
             continue
-        rows, stack = _lock_rows(lock)
         manifest = profile / "package.json"
         try:  # a marked home may hold a profile its first run left without a manifest
             data = json.loads(manifest.read_text()) if manifest.exists() or not known else {}
@@ -672,9 +688,19 @@ def _recognise(dsh_home: Path, locks: list[dict]) -> None:
                 | (set(data.get("dsh", {}).get("profile", {}).get("bundles", [])) - set(stack))
             )
         except (OSError, ValueError, AttributeError, TypeError):
-            foreign = ["an unreadable package.json"]
+            foreign, data = ["an unreadable package.json"], {}
         if foreign:
             raise Refused(f"{profile}: not built from the lock ({foreign}); no change made")
+        # dsh appends only newly recorded bundles (operations.js:101-129)
+        held = data.get("dsh", {}).get("profile", {}).get("bundles", [])
+        at = next((i for i, bundle in enumerate(held) if stack[i : i + 1] != [bundle]), None)
+        late = [b for b in stack[len(held) :] if b in data.get("dependencies", {})]
+        if at is not None or late:
+            found = f"{late} unselected" if at is None else f"position {at} holds {held[at]!r}"
+            want = stack[at : at + 1] if at is not None else "has them"
+            raise Refused(
+                f"{lock['profile']}: bundles out of the lock's order ({found}, lock {want})"
+            )
         known = True
     if not known or not dsh_home.is_dir():
         raise Refused(f"{dsh_home}: exists and is not a home this installer made; no change made")
@@ -734,16 +760,23 @@ def install_lock_profile(
         present = json.loads(manifest.read_text()) if manifest.is_file() else {}
         target, recorded = _lock_target(repository, row)
         now = _recorded(profile, present.get("dependencies", {}).get(row["package"]))
-        if now == recorded:
+        entry = profile / "node_modules" / row["package"]  # pnpm installs here (operations.js:336)
+        installed = (entry / "package.json").is_file()
+        installed &= not str(now).startswith("link:") or now == "link:" + os.path.realpath(entry)
+        if now == recorded and installed:
             continue
-        if not repoint and _working_link(now, row["package"]):
+        if not repoint and installed and _working_link(now, row["package"]):
             print(f"{name}: kept {row['package']} at {now[5:]}; --repoint-links moves it")
             states.append(f"{name}: kept a link outside this checkout")
             continue
+        if lost := now is not None and not installed:
+            print(f"{name}: {row['package']} is recorded but not installed")
         if not held and gate and row in links:
             held = _main_mismatch(repository)
         if held:  # later bundles wait too, so the stack keeps the lock's order
             print(f"{name}: skipped {row['package']}: {repository} {held}")
+            if lost:
+                raise Refused(f"{name}: {row['package']} recorded but not installed; {held}")
             states.append(f"{name}: skipped")
             continue
         if shutil.which("pnpm") is None:  # dsh-plugin-manager spawns pnpm from PATH
