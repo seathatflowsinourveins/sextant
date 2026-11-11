@@ -7,6 +7,7 @@ import copy
 import hashlib
 import importlib
 import json
+import os
 import socket
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta, timezone
@@ -1543,3 +1544,281 @@ def test_sdk_does_not_negotiate_and_resend_mutations(monkeypatch: pytest.MonkeyP
     asyncio.run(run())
     assert len(attempts) == 1
     assert peer.calls == []
+
+
+# A lasting sign-in: the owner's D-23 word, kept in the repo's encrypted store (ADR-0021 amendment).
+
+LOGIN_NAME = "TRADINGVIEW_MCP_OAUTH"
+LOGIN_ACCESS = "fixture-access-2b1f6c"
+LOGIN_REFRESH = "fixture-refresh-9d4a2e"
+LOGIN_CLIENT = "fixture-client-7c3e11"
+
+
+def stored_login():
+    try:
+        return importlib.import_module("sextant.tradingview.stored_login")
+    except ModuleNotFoundError:
+        pytest.fail("The encrypted TradingView login store is not implemented")
+
+
+def a_token(access: str = LOGIN_ACCESS, refresh: str = LOGIN_REFRESH, expires_in: int = 3600):
+    from mcp.shared.auth import OAuthToken
+
+    return OAuthToken(
+        access_token=access,
+        refresh_token=refresh,
+        token_type="Bearer",  # noqa: S106 - fixture value, not a credential
+        expires_in=expires_in,
+    )
+
+
+def a_registration():
+    from mcp.shared.auth import OAuthClientInformationFull
+    from pydantic import AnyUrl
+
+    return OAuthClientInformationFull(
+        client_id=LOGIN_CLIENT,
+        redirect_uris=[AnyUrl("http://127.0.0.1:1/callback")],
+        token_endpoint_auth_method="none",  # noqa: S106 - public client, no secret
+    )
+
+
+def a_registered_login(tmp_path: Path):
+    """The real store under a temporary HOME, or a host-absence skip (the local run witnesses)."""
+    module = stored_login()
+    login = module.StoredLogin(home=tmp_path)
+    try:
+        login.save(a_token(), a_registration())
+    except module.StoredLoginError:
+        pytest.skip(
+            "the systemd-creds user store is unavailable here; the local ci run is the witness"
+        )
+    return login
+
+
+def test_stored_login_is_encrypted_at_rest_rotates_and_forgets(tmp_path: Path, capfd, caplog):
+    import logging
+
+    caplog.set_level(logging.DEBUG)
+    capfd.readouterr()
+    module = stored_login()
+    login = a_registered_login(tmp_path)
+    try:
+        path = tmp_path / ".config" / "sextant" / "credentials" / LOGIN_NAME
+        assert path.is_file()
+        assert (path.stat().st_mode & 0o777) == 0o600
+        raw = path.read_bytes()
+        for secret in (LOGIN_ACCESS, LOGIN_REFRESH, LOGIN_CLIENT):
+            assert secret.encode() not in raw
+
+        loaded = login.load()
+        assert loaded is not None
+        assert loaded.tokens.access_token == LOGIN_ACCESS
+        assert loaded.tokens.refresh_token == LOGIN_REFRESH
+        assert loaded.client_info.client_id == LOGIN_CLIENT
+
+        rotated = a_token(access="rotated-access", refresh="rotated-refresh")
+        asyncio.run(module.StoredTokenStorage(login).set_tokens(rotated))
+        after = login.load()
+        assert after is not None
+        assert after.tokens.refresh_token == "rotated-refresh"  # noqa: S105 - fixture
+        assert b"rotated-refresh" not in path.read_bytes()
+
+        assert login.forget() is True
+        assert login.load() is None
+        assert not path.exists()
+
+        # File-descriptor capture also sees a key-store subprocess that writes to the
+        # terminal; each stream is searched as text, not as a tuple of whole strings.
+        out, err = capfd.readouterr()
+        assert_no_secret(out + err + caplog.text)
+    finally:
+        login.forget()
+
+
+def test_real_sdk_refresh_writes_the_rotated_token_back(tmp_path: Path):
+    import httpx2
+    from mcp.client.auth import OAuthClientProvider
+    from mcp.shared.auth import OAuthClientMetadata
+    from pydantic import AnyUrl
+
+    module = stored_login()
+    login = a_registered_login(tmp_path)
+    # Already past its lifetime: the store's issue time primes the SDK's expiry, so the
+    # next process refreshes through the stored refresh token instead of re-consenting.
+    login.save(
+        a_token(access="stale-access", refresh="old-refresh", expires_in=-60), a_registration()
+    )
+    seen: list[tuple[str, str | None]] = []
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        seen.append((str(request.url), request.headers.get("authorization")))
+        if str(request.url).endswith("/token"):
+            body = (await request.aread()).decode()
+            assert "grant_type=refresh_token" in body
+            assert "refresh_token=old-refresh" in body
+            return httpx2.Response(
+                200,
+                content=json.dumps(
+                    {
+                        "access_token": "fresh-access",
+                        "refresh_token": "fresh-refresh",
+                        "token_type": "Bearer",
+                        "expires_in": 3600,
+                    }
+                ).encode(),
+            )
+        return httpx2.Response(200, content=b"{}")
+
+    async def run():
+        storage = module.StoredTokenStorage(login)
+        provider = OAuthClientProvider(
+            server_url="https://mcp.tradingview.com/mcp",
+            client_metadata=OAuthClientMetadata(
+                client_name="fixture", redirect_uris=[AnyUrl("http://127.0.0.1:1/callback")]
+            ),
+            storage=storage,
+            redirect_handler=pytest.fail,
+            callback_handler=pytest.fail,
+        )
+        storage.prime_expiry(provider.context)
+        async with httpx2.AsyncClient(
+            auth=provider, transport=httpx2.MockTransport(handler)
+        ) as client:
+            return await client.post("https://mcp.tradingview.com/mcp", json={})
+
+    assert asyncio.run(run()).status_code == 200
+    stored = login.load()
+    assert stored is not None
+    assert stored.tokens.refresh_token == "fresh-refresh"  # noqa: S105 - fixture
+    assert [url for url, _ in seen] == [
+        "https://mcp.tradingview.com/token",
+        "https://mcp.tradingview.com/mcp",
+    ]
+    assert seen[0][1] is None
+    assert seen[1][1] == "Bearer fresh-access"
+
+
+def test_keys_registers_the_tradingview_login_sealed_name():
+    text = (Path(__file__).resolve().parents[2] / "scripts" / "keys.sh").read_text()
+    known = text.split("KNOWN=(", 1)[1].split("\n)", 1)[0]
+    assert LOGIN_NAME in known.split()
+
+
+@pytest.mark.parametrize(
+    ("invalid_section", "marker"),
+    [
+        ("tokens", "witness-refresh-token-value"),
+        ("client_info", "witness-client-secret-value"),
+    ],
+)
+def test_unreadable_stored_document_does_not_expose_credentials(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, invalid_section: str, marker: str
+):
+    import subprocess
+    import traceback
+
+    module = stored_login()
+    payload = {
+        "tokens": {"access_token": "witness-access-token-value"},
+        "client_info": {"client_id": "witness-client-id-value"},
+        "obtained_at": 1.0,
+    }
+    if invalid_section == "tokens":
+        payload["tokens"] = {"refresh_token": marker}
+    else:
+        payload["client_info"] = {"client_secret": marker}
+    login = module.StoredLogin(home=tmp_path)
+    monkeypatch.setattr(login, "_state", lambda: "set")
+    monkeypatch.setattr(
+        module,
+        "_run",
+        lambda *arguments, **options: subprocess.CompletedProcess(
+            arguments, 0, json.dumps(payload).encode(), b""
+        ),
+    )
+    exposes_credential = False
+    sanitized = False
+    try:
+        login.load()
+    except module.StoredLoginError as error:
+        exposes_credential = any(marker in line for line in traceback.format_exception(error))
+        sanitized = (
+            error.__cause__ is None
+            and error.__context__ is None
+            and error.__suppress_context__ is True
+        )
+    else:
+        pytest.fail("malformed stored document was not refused", pytrace=False)
+    if exposes_credential:
+        pytest.fail(
+            "the stored credential is exposed by the chained exception graph",
+            pytrace=False,
+        )
+    assert sanitized
+
+
+# Fix round on the stored login (issue #470 row 14). Each value below is a recognisable
+# fake; a proof that output is clean searches every output stream and file for all of them.
+FAKE_ACCESS = "fake-access-token-a91c"
+FAKE_REFRESH = "fake-refresh-token-4be7"
+ROTATED_ACCESS = "fake-rotated-access-c30d"
+ROTATED_REFRESH = "fake-rotated-refresh-58f2"
+FRESH_ACCESS = "fake-fresh-access-e6b0"
+FRESH_REFRESH = "fake-fresh-refresh-71d4"
+FAKE_CODE = "fake-auth-code-9a2e"
+FAKE_CALLBACK = "http://127.0.0.1:1/callback"
+FAKES = (
+    LOGIN_ACCESS,
+    LOGIN_REFRESH,
+    LOGIN_CLIENT,
+    FAKE_ACCESS,
+    FAKE_REFRESH,
+    ROTATED_ACCESS,
+    ROTATED_REFRESH,
+    FRESH_ACCESS,
+    FRESH_REFRESH,
+    FAKE_CODE,
+    "127.0.0.1:1",
+)
+
+
+def assert_no_secret(text: str, root: Path | None = None) -> None:
+    """Names the leaked fixtures only, so a failure never prints the surrounding output."""
+    leaked = [value for value in FAKES if value in text]
+    for path in sorted(root.rglob("*")) if root is not None else ():
+        if path.is_file():
+            data = path.read_bytes()
+            leaked += [f"{path.name}:{value}" for value in FAKES if value.encode() in data]
+    assert leaked == []
+
+
+def test_with_keys_cannot_put_the_stored_login_in_an_environment(tmp_path: Path):
+    """Fix 4: with-keys refuses the name; the sync's own loader still reads it."""
+    import subprocess
+
+    login = a_registered_login(tmp_path)
+    try:
+        done = subprocess.run(
+            [
+                "bash",
+                str(Path(__file__).resolve().parents[2] / "scripts" / "with-keys.sh"),
+                "-k",
+                LOGIN_NAME,
+                "--",
+                "printenv",
+                LOGIN_NAME,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            env={"HOME": str(tmp_path), "PATH": os.environ.get("PATH", "/usr/bin:/bin")},
+        )
+        code = done.returncode
+        assert code == 3
+        assert_no_secret(done.stdout + done.stderr)
+        loaded = login.load()
+        assert loaded is not None
+        assert loaded.tokens.refresh_token == LOGIN_REFRESH
+    finally:
+        login.forget()

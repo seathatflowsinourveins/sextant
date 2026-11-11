@@ -145,6 +145,8 @@ ns_systemd_inject() {
     [[ "$name" =~ ^[A-Z][A-Z0-9_]*$ ]] || { echo "bad key name: $name (UPPER_SNAKE_CASE, as stored by keys.sh)" >&2; return 2; }
     [[ "$envname" =~ ^[A-Z_][A-Z0-9_]*$ ]] || { echo "bad env name: $envname" >&2; return 2; }
     [[ "$name" == *LIVE* || "$envname" == *LIVE* ]] && { echo "refusing to inject $name (live credentials are not allowed here)" >&2; return 3; }
+    # D-23 (docs/adr/0021): only the TradingView sync's own loader reads its stored sign-in.
+    [[ "$name" == TRADINGVIEW_MCP_OAUTH ]] && { echo "refusing to inject $name (read only by the TradingView sync)" >&2; return 3; }
     if [[ ( "$name" == ANTHROPIC_API_KEY || "$envname" == ANTHROPIC_API_KEY ) && $is_interactive_claude == 1 ]]; then
       echo "skipping ANTHROPIC_API_KEY for interactive claude (keeps the lead on your subscription)" >&2; continue
     fi
