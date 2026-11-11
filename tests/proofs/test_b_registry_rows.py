@@ -219,7 +219,8 @@ def test_every_copied_exit_row_is_the_shared_registrys_value_and_source() -> Non
     registry = {row.name: row for row in REGISTRY}
     for name in GAIN_FILE - {"round_trip_cost"}:
         row, shared = rows[name], registry[name]
-        assert set(row) == OTHER_KEYS and row["unit"] and row["last_change"]
+        assert set(row) == OTHER_KEYS | {"scope"} and row["unit"] and row["last_change"]
+        assert row["scope"] == "alpaca-paper-b"
         if shared.start is None:
             assert row["value"] is None and row["calibration_state"] == "UNAVAILABLE"
             assert row["source"].startswith(f"UNAVAILABLE: {SHARED_PREFIX}{shared.source}")
