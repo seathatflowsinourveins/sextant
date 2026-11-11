@@ -1,0 +1,26 @@
+# EXPLICIT WORKER OPT-IN: dsh --profile worker --patch config/dsh/weknora.cordis.yml "job"
+# Only the worker profile lists Tencent/WeKnora's own plugin (deploy/weknora/README.md); headless, AO,
+# the gate and the TUI never load it. Its README: it only reads, a patch replaces the row's whole
+# config, and tools.* registers fewer tools. The key carries only `retrieve`
+# (WeKnora@f17ee8a8:website-docs/03-features/01-tenant-auth.md:342-350); `ask` would open chat sessions.
+- id: weknora
+  config:
+    baseUrl: http://127.0.0.1:21937/api/v1
+    apiKey: !!js process.env.WEKNORA_API_KEY
+    knowledgeBaseIds: []
+    maxResults: 8
+    maxChunkChars: 1200
+    requestTimeoutMs: 30000
+    resourceUrls: handle
+    toolPrefix: weknora
+    tools: {listKnowledgeBases: true, search: true, readDocument: true, ask: false}
+# The receipt's worker selection (native-startup.mjs: workerWeKnora is valid only with profile worker).
+- insert:
+    - id: northstar-native-startup
+      name: ./native-startup.mjs
+      config:
+        profile: worker
+        workerWeKnora: true
+        inventoryModule: !!js >-
+          'file://' + process.env.HOME +
+          '/.local/share/sextant-agents/node_modules/@deepseek-ai/dsh-host-plugin-inventory/lib/index.js'

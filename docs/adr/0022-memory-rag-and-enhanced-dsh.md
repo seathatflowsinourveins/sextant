@@ -21,6 +21,7 @@ Trading research needs retrievable, citable records. Runtime memory, curated nar
 - dsh uses its native profiles and ordered overlays. Blind research legs receive no house memory or corpus; synthesis may retrieve it. The old overlay inventory is Context7, Exa, DeepWiki, paper-search, Brooks review, reference-checker and session-search.
 - The archived Exa selection permits web_search_exa and web_fetch_exa. DeepWiki permits read_wiki_structure and read_wiki_contents; its hosted question tool is masked through dsh's native tool restrictions.
 - The old knowledge inventory is billion-context, OpenResearch, WeKnora and OpenViking. OpenResearch's dsh integration is BLOCKED; WeKnora is a scoped retrieval service. These inventories do not select every entry for Sextant.
+- **Amended 2026-11-10 (owner order: WeKnora, "clean install into their native workflow"):** WeKnora 0.9.0 is selected to retrieve the pinned upstream sources the manifest cites, through its own dsh plugin in the worker profile only, with a `retrieve`-only key; the TUI keeps its hold and OpenViking the house records. Neither is a memory ([deploy/weknora](../../deploy/weknora/README.md)).
 - OpenViking is write-capable: explicit synthesis opt-in only, never a blind-leg default. Its comments are not an enforced read-only boundary. Use a disposable corpus COPY in an isolated loopback workspace; re-import a fresh copy if changed. No automatic conversation capture, session.commit, memory or external URL ingestion. Use find, then read the returned viking:// URI for citations.
 
 ## Evidence

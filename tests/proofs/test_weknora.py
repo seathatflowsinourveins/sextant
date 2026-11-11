@@ -89,7 +89,7 @@ def test_no_secret_value_is_tracked_and_keys_come_through_the_store() -> None:
         r"(PASSWORD|SECRET|AES_KEY|API_KEY)\s*[:=]\s*['\"]?(?![$!{]|process\.env|[A-Z][A-Z0-9_]*\b)"
         r"[A-Za-z0-9+/_-]{8,}"
     )
-    tracked = list(HERE.iterdir())
+    tracked = [*HERE.iterdir(), ROOT / "config/dsh/weknora.cordis.yml"]
     for path in tracked:
         assert not assignment.search(path.read_text()), path
     readme = (HERE / "README.md").read_text()
@@ -157,3 +157,45 @@ def test_the_ingest_is_the_one_writer_at_pinned_commits_and_never_ingests_urls()
     for corpus in _pins()["corpus"].values():
         assert re.fullmatch(r"[0-9a-f]{40}", corpus["commit"])
         assert corpus["commit"] in manifest, corpus["repository"]
+
+
+def test_the_worker_patch_selects_the_upstream_plugin_retrieve_only() -> None:
+    rows = yaml.safe_load((ROOT / "config/dsh/weknora.cordis.yml").read_text().replace("!!js", ""))
+    plugin = next(row for row in rows if row.get("id") == "weknora")["config"]
+    assert plugin["baseUrl"] == _pins()["weknora"]["url"]
+    assert plugin["apiKey"].strip() == "process.env.WEKNORA_API_KEY"
+    assert plugin["tools"] == dict(
+        listKnowledgeBases=True, search=True, readDocument=True, ask=False
+    )
+    receipt = next(row for row in rows if "insert" in row)["insert"][0]
+    assert receipt["config"]["profile"] == "worker" and receipt["config"]["workerWeKnora"] is True
+    pin, commit = _pins()["dsh-weknora"], _pins()["weknora"]["commit"]
+    # The tag's own tree, never npm's older 0.1.0; the integrity is the commit tarball's sha512.
+    assert pin["spec"] == f"github:Tencent/WeKnora#{commit}&path:/packages/dsh-weknora"
+    tarball = f"https://codeload.github.com/Tencent/WeKnora/tar.gz/{commit}"
+    assert pin["allow_build"] == f"{pin['package']}@{tarball}#path:/packages/dsh-weknora"
+    assert pin["integrity"].startswith("sha512-")
+    readme = (HERE / "README.md").read_text()
+    assert '."dsh-weknora".spec' in readme and "--from-default-profile headless" in readme
+    # Only the worker profile lists the plugin; no shared bundle does.
+    assert "dsh-weknora" not in (ROOT / "config/dsh/package.json").read_text()
+
+
+def test_the_hold_is_lifted_for_the_worker_only() -> None:
+    probe = """
+import assert from 'node:assert/strict';
+import { providersForProfile, tuiStartupContract } from './config/dsh/native-startup.mjs';
+assert.ok('weknora' in providersForProfile('worker', { workerWeKnora: true }));
+for (const profile of ['web', 'headless', 'tui', 'worker'])
+  assert.ok(!('weknora' in providersForProfile(profile)));
+assert.throws(() => providersForProfile('headless', { workerWeKnora: true }));
+const row = { entryId: 'weknora', enabled: true, fiberPhase: 'active' };
+assert.equal(tuiStartupContract({ entries: [row] }, {}).forbiddenActive, 1);
+"""
+    subprocess.run(["node", "--input-type=module", "-e", probe], cwd=ROOT, check=True, timeout=30)
+    receipt = (ROOT / "config/dsh/startup-receipt.cordis.yml").read_text()
+    hold = re.search(r"\{id: weknora, reason: '([^']+)'\}", receipt)
+    assert hold and "no service or credential provisioned" not in hold[1]
+    assert "worker profile only" in hold[1]
+    for doc in ("docs/start.md", "docs/design.md"):
+        assert "no service or credential provisioned" not in (ROOT / doc).read_text(), doc
