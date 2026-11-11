@@ -10,6 +10,10 @@ Run `just session-start`. It checks the live dsh profile against
 `config/dsh/profile.lock.json`, then checks that `llms.txt` is current. Drift stops the
 session: fix the profile or the lock, never the check.
 
+Adding, renaming or deleting a page under `docs/` is not done until
+`scripts/ecosystem_index.py --write` runs in the same PR: `llms.txt` is generated, and a
+stale index stops the next session.
+
 ## Route a question
 
 | Question | First move | Owner |
@@ -55,6 +59,10 @@ second list here.
 Every answer names its evidence: `path:line`, a commit or run URL, or a source URL.
 "Cite" means the reader can open the same record and check the claim. An uncited claim is
 a draft, not a finding.
+
+A map is an answer: every row carries a `path:line`, a commit or run URL, or a receipt,
+never a bare claim, and the map names the exact head it was read at and checks it again
+before hand-off.
 
 ## Search order
 

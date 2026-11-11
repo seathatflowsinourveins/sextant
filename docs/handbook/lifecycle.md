@@ -43,9 +43,19 @@ That ruling records the evidence-led delegation, owner-only reservations, draft 
 
 The `gh` CLI reads review threads and failed job logs natively ([manual](https://cli.github.com/manual/), read 2026-11-09), so neither family needs a plugin for the feedback stage. A lesson lands with the PR that taught it, in `docs/handbook/` or the append-only `lessons.jsonl`; `ce-compound` is the skill that turns the solved problem into that artifact. A stopped practice is deleted, not left as a fallback.
 
+## Lessons from the 2026-11-11 landings
+
+- **Restart the display producer between segments, never inside one.** A restart inside a trading segment costs one full baseline rebuild, about 16 minutes at 2026-11-11's size; between ticks the ranked view carries its host, so it is not rebuilt per tick. [Producer units](../../deploy/tradingview/README.md); [#622](https://github.com/seathatflowsinourveins/sextant/pull/622)
+- **A map row needs a path or a receipt, never a bare claim.** A row without `path:line`, a commit, a run URL or a digest is a draft sentence, not a finding. [The ecosystem map](ecosystem.md#cite)
+- **A map names the exact head it was read at and checks that head again before hand-off.** A line map at an unstated head is not a map. [The ecosystem map](ecosystem.md#cite)
+- **A page added, renamed or removed under `docs/` needs `scripts/ecosystem_index.py --write` in the same PR.** `llms.txt` is generated, and a stale index failed an IBKR part-2 `ci-local` run on 2026-11-11. [The ecosystem map](ecosystem.md#session-start); [the index script](../../scripts/ecosystem_index.py)
+- **The lead starts a worker through the dispatch scripts, never `orca terminal create`.** A terminal the lead creates does not appear in the owner's window, so the owner can neither see nor steer it. [Board and worktrees](#board-and-worktrees)
+
 ## Board and worktrees
 
 A task's card moves to `in-review` when its PR opens and to `completed` when the PR merges; the worker's hand-back or Landing's merge note triggers the move, not a later sweep. The lead refreshes the eight lane comments when a lane's state changes. The owner's attention is the unread dot on the lane plus the tab's name in the lead's message, until bring-to-front is enabled on the desktop side.
+
+The lead starts a worker through the dispatch scripts, never `orca terminal create`: a terminal the lead creates does not appear in the owner's window, so the owner can neither see nor steer it.
 
 Authority: LEAD-1712-board-consolidation.md, SHA-256 `2e83e8e370b2e262c6a8a892e2430892bb6a9904e2a95feff9821d7dd16c8421`.
 
