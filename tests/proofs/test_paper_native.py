@@ -777,7 +777,7 @@ def test_record_sandbox_run_writes_one_receipt_and_one_simulated_row(tmp_path):
     assert row["strategy"] == "sim-sandbox"
     assert row["state"] == "RUNNING"
     assert row["n_trials"] == 1
-    assert row["effective_n"] is None
+    assert row["effective_n"] == 1.0  # archive #110 no-discount count fallback
     assert config["tier"] == "SIMULATED"
     assert config["arm_id"] == "sim-sandbox"
     assert config["arm_run_id"] == "sim-run-1"
