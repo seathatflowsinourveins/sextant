@@ -61,12 +61,12 @@
     "sign_in": "~/sextant-data/muse-install/login.log: 'Logged in \u2026 Model API access verified' (2026-11-08 00:09); the credential file was not opened",
     "session": "one muse exec with --model muse-wonder-full-1.0 --reasoning-effort max --contributor-mode off on the owner's sign-in, scratch XDG_DATA_HOME: exit 0; session.jsonl run.model.configured model_id muse-wonder-full-1.0; provider facet detail.model muse-wonder-full-1.0, provider meta (a contributor run reads <model>-contributor); Muse records no main-agent effort (only its reminder subagents' low and high), and a loopback capture stopped at its catalog fetch, so max rests on the documented flag",
     "settings_keys": "muse exec --provider echo -c accepts reasoning_effort and model and refuses an unknown key ('unknown key: no such setting'); -c cannot add an MCP server (issue #256)",
+    "shelf_mcp": "2026-11-10, checksum-verified Muse in an offline scratch home: superpowers and sextant-mcp listed; 15 Superpowers skills, 10 user skills and 6 MCP declarations. Parity counted 12 installs then 12 unchanged. Native review decisions are separate.",
     "effort": "effort attested by configuration (Muse writes no per-call effort): the launch argv carries --reasoning-effort max and --contributor-mode off (test_muse_sessions_run_wonder_full_at_max_with_contributor_mode_off), muse model-profile show muse-wonder-full-1.0 --effort max resolves, and the provider facet names muse-wonder-full-1.0; ~/.config/muse/settings.json reasoning_effort \"max\" is the lead's step",
     "reminders": "muse exec --provider echo, scratch homes: every session log's runtime.session reminder_roster holds skill-reminder low, goal-reminder high, verify-reminder high (preset plugin-reminder-default); -c runtime_capabilities.plugin:tbh-reminders:reminder:<id>.enabled=false removes that agent, all three together leave no roster recorded; run.reminder_roster refuses an agents list or map ('the JSON type does not fit this setting') and an effort-only roster records source settings with no agents, so no sourced max pin exists"
   },
   "hosted_keyless": "POST initialize without a key, 2026-11-08: mcp.context7.com/mcp 200, mcp.exa.ai/mcp 200, mcp.deepwiki.com/mcp 200",
   "deferred": {
-    "muse_shelf_and_mcp": "#256",
     "dsh_observation_journal": "#257"
   }
 }

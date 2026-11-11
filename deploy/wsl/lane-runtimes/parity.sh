@@ -29,7 +29,7 @@ fi
 mkdir -p "$prefix/mcp-bridge"
 cp "$here/mcp-bridge/package.json" "$here/mcp-bridge/package-lock.json" "$prefix/mcp-bridge/"
 npm ci --prefix "$prefix/mcp-bridge" --omit=dev --ignore-scripts --no-audit --no-fund
-for runtime in claude antigravity dsh muse; do
+for runtime in claude antigravity dsh dsh-tui muse; do
   install -m 755 "$here/$runtime-launch.sh" "$prefix/$runtime-launch.sh"
 done
 cp "$here/pins.json" "$here/model-policy.json" "$prefix/"
@@ -40,5 +40,7 @@ ln -sfn "$prefix/antigravity-launch.sh" "$HOME/.local/bin/agy"
 # The bare dsh stays for AO 0.14.10, whose deepseek-harness adapter resolves only that name.
 ln -sfn "$prefix/dsh-launch.sh" "$HOME/.local/bin/sextant-dsh"
 ln -sfn "$prefix/dsh-launch.sh" "$HOME/.local/bin/dsh"
+# Plain dsh-tui, Orca's dsh agent launch, is the keyed launcher on the enhanced home (dsh-tui-launch.sh).
+ln -sfn "$prefix/dsh-tui-launch.sh" "$HOME/.local/bin/dsh-tui"
 ln -sfn "$prefix/muse-launch.sh" "$HOME/.local/bin/muse"
 python3 -I "$here/parity.py" "$@"

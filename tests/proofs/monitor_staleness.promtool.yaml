@@ -1,0 +1,46 @@
+evaluation_interval: 1m
+tests:
+  - name: both bridges fresh stay healthy
+    input_series:
+      - series: 'sextant_monitor_last_success_timestamp_seconds{bridge="l3_l4"}'
+        values: '0+0x30'
+      - series: 'sextant_monitor_last_success_timestamp_seconds{bridge="evidence"}'
+        values: '0+0x30'
+    promql_expr_test:
+      - expr: &alert '(absent(sextant_monitor_last_success_timestamp_seconds{bridge="l3_l4"}) or absent(sextant_monitor_last_success_timestamp_seconds{bridge="evidence"}) or (time() - sextant_monitor_last_success_timestamp_seconds > 900) or on() vector(0)) > bool 0'
+        eval_time: 5m
+        exp_samples:
+          - labels: '{}'
+            value: 0
+  - name: missing l3_l4 bridge alerts
+    input_series:
+      - series: 'sextant_monitor_last_success_timestamp_seconds{bridge="evidence"}'
+        values: '0+0x30'
+    promql_expr_test:
+      - expr: *alert
+        eval_time: 5m
+        exp_samples:
+          - labels: '{bridge="l3_l4"}'
+            value: 1
+  - name: missing evidence bridge alerts
+    input_series:
+      - series: 'sextant_monitor_last_success_timestamp_seconds{bridge="l3_l4"}'
+        values: '0+0x30'
+    promql_expr_test:
+      - expr: *alert
+        eval_time: 5m
+        exp_samples:
+          - labels: '{bridge="evidence"}'
+            value: 1
+  - name: stale l3_l4 bridge alerts
+    input_series:
+      - series: 'sextant_monitor_last_success_timestamp_seconds{bridge="l3_l4"}'
+        values: '0+0x30'
+      - series: 'sextant_monitor_last_success_timestamp_seconds{bridge="evidence"}'
+        values: '0+60x30'
+    promql_expr_test:
+      - expr: *alert
+        eval_time: 20m
+        exp_samples:
+          - labels: '{bridge="l3_l4"}'
+            value: 1
