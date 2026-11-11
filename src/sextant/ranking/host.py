@@ -175,10 +175,12 @@ class RankingHost:
     ) -> None:
         self._require_thread()
         self.publisher.set_symbol(name, references=references, asset=asset)
+        self._publish()  # a veto set here withdraws the rank at once
 
     def set_coverage(self, coverage: Coverage) -> None:
         self._require_thread()
         self.publisher.set_coverage(coverage)
+        self._publish()  # same: the consumer never outlives its coverage
 
     def on_trade(self, tick: TradeTick) -> RankingGeneration | None:
         """Advance one full-universe trade, then publish; a bad trade only degrades."""
@@ -207,6 +209,13 @@ class RankingHost:
         ready = (
             publisher.coverage.state is CoverageState.READY
             and publisher.coverage.complete
+            and publisher.coverage.expected_symbols
+            == publisher.coverage.observed_symbols
+            == len(publisher.universe)
+            and publisher.coverage.missing_symbols
+            == publisher.coverage.invalid_symbols
+            == publisher.coverage.late_symbols
+            == 0
             and all(publisher.states[name].latest is not None for name in publisher.universe)
             and all(
                 (asset := publisher.assets.get(name)) is not None and asset.eligible(now)

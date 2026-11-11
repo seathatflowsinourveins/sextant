@@ -7,6 +7,8 @@ import asyncio
 import itertools
 import json
 import threading
+from collections.abc import Callable
+from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
 
@@ -366,3 +368,62 @@ def test_every_degraded_generation_pages_the_alarm(tmp_path: Path) -> None:
     host.close()
     generations = _interval_generations(tmp_path)
     assert pages.count(("generation_degraded", None)) == len(generations) >= 2
+
+
+def test_gate_witness_a_coverage_veto_after_warm_withdraws_the_rank_at_once(
+    tmp_path: Path,
+) -> None:
+    host, now, _ = wired(tmp_path)
+    warm(host, now)
+    host.set_coverage(Coverage(CoverageState.DEGRADED, False))
+    assert host.entry_rank("PENNY", now=START + 360 * NS) is None
+    assert host.ranked_names(now=START + 360 * NS) == ()
+    host.close()
+
+
+REFS = ReferencePrices(D("0.50"), START - NS, "fixture official close")
+GOOD = AssetState(START - NS, SCOPE.end_ns, False, "common", "fixture vendor")
+
+
+def _set_asset(host: RankingHost, asset: AssetState | None) -> None:
+    host.set_symbol("PENNY", references=REFS, asset=asset)
+
+
+# Every veto either host setter can set, keyed by proof name.
+VETOES: dict[str, Callable[[RankingHost], None]] = {
+    f"coverage_{s.name.lower()}": lambda h, s=s: h.set_coverage(Coverage(s, False))
+    for s in CoverageState
+    if s is not CoverageState.READY
+}
+VETOES["coverage_incomplete"] = lambda h: h.set_coverage(Coverage(CoverageState.READY, False))
+VETOES["coverage_counts"] = lambda h: h.set_coverage(
+    Coverage(CoverageState.READY, True, 3, 2, missing_symbols=1)
+)
+VETOES["asset_none"] = lambda h: _set_asset(h, None)
+for _name, _asset in {
+    "halted": replace(GOOD, halted=True),
+    "halt_unknown": replace(GOOD, halted=None),
+    "type_ineligible": replace(GOOD, security_type="etf"),
+    "expired": replace(GOOD, expires_at=START),
+    "not_yet_known": replace(GOOD, known_at=SCOPE.end_ns),
+    "no_source": replace(GOOD, source=""),
+}.items():
+    VETOES[f"asset_{_name}"] = lambda h, a=_asset: _set_asset(h, a)
+
+
+@pytest.mark.parametrize("when", ["before_warm", "after_warm", "between_read_and_entry"])
+@pytest.mark.parametrize("veto", sorted(VETOES))
+def test_every_veto_withdraws_the_rank_at_every_time(tmp_path: Path, veto: str, when: str) -> None:
+    host, now, _ = wired(tmp_path)
+    at = START + 360 * NS
+    if when == "before_warm":
+        VETOES[veto](host)
+        warm(host, now)
+    else:
+        warm(host, now)
+        if when == "between_read_and_entry":
+            assert host.entry_rank("PENNY", now=at) == 1
+        VETOES[veto](host)
+    assert all(host.entry_rank(name, now=at) is None for name in UNIVERSE)
+    assert host.ranked_names(now=at) == ()
+    host.close()
