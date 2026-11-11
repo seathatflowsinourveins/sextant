@@ -336,3 +336,24 @@ def test_the_actor_opens_no_socket() -> None:
     assert calls.isdisjoint(
         {"reconnect_socket", "subscribe_socket_state", "connect", "run_forever"}
     )
+
+
+def test_an_unknown_config_key_is_refused_by_name() -> None:
+    import pytest
+
+    with pytest.raises(TypeError, match="feeed"):
+        RankingActorConfig(
+            instrument_ids=IDS,
+            feed="sip",
+            host_factory=cast(Any, lambda: FakeHost([])),
+            priming=priming,
+            feeed="boats",
+        )
+    config = RankingActorConfig(  # the engine's own base fields still pass through
+        instrument_ids=IDS,
+        feed="sip",
+        host_factory=cast(Any, lambda: FakeHost([])),
+        priming=priming,
+        log_events=False,
+    )
+    assert config.log_events is False
