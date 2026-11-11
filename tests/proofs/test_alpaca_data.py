@@ -674,3 +674,45 @@ def test_disconnect_releases_client_on_owner_with_retained_sdk_callback(
         assert submitted
 
     asyncio.run(check())
+
+
+@pytest.mark.parametrize("channel", ["trades", "bars"])
+def test_later_subscriptions_deliver_all_channels_after_bad_stream_row(channel):
+    # Stopping the stream on conversion failure, or refusing a later
+    # subscription, prevents this Strategy from receiving all three events.
+    class LaterSubscriber(Witness):
+        def __init__(self):
+            super().__init__()
+            self.expected_live_events = 2  # run_shell adds one for bad_channel.
+
+        def on_start(self):
+            if channel == "trades":
+                self.subscribe_trades(INSTRUMENT_ID)
+            else:
+                self.subscribe_bars(BAR_TYPE)
+
+        def receive(self, event):
+            super().receive(event)
+            if len(self.events) == 1:
+                # The socket dispatches the bad row before this good row.
+                # Neither of the other channels was subscribed at startup.
+                self.subscribe_quotes(INSTRUMENT_ID)
+            elif len(self.events) == 2:
+                if channel == "trades":
+                    self.subscribe_bars(BAR_TYPE)
+                else:
+                    self.subscribe_trades(INSTRUMENT_ID)
+
+    async def check():
+        return await run_shell(bad_channel=channel, strategy=LaterSubscriber())
+
+    owner = threading.get_ident()
+    strategy, stream, history, client = asyncio.run(check())
+    expected = [TradeTick, QuoteTick, Bar] if channel == "trades" else [Bar, QuoteTick, TradeTick]
+    assert [type(event) for event, _ in strategy.events] == expected
+    assert_ticks(strategy.events, owner)
+    assert client.dropped_trade_count == int(channel == "trades")
+    assert client.dropped_bar_count == int(channel == "bars")
+    assert client.dropped_quote_count == len(INVALID_QUOTES)
+    assert stream.delivered == {"trades", "quotes", "bars"}
+    assert stream.closed.is_set() and not history.calls
