@@ -1,8 +1,6 @@
-"""N1d (LEAD-0020 2b, 2e): a name's halt state starts unknown and moves only on evidence.
+"""N1d (LEAD-0020 2b, 2e): halt state starts unknown and moves only on evidence.
 
 A real BacktestNode replays fixture PENNY prints at 0, 60, ... 360 s and fixture statuses.
-"Not halted" needs a price-eligible print received after the status subscription is active
-with no halt since; only a resume clears a halt; a stream gap resets every name.
 """
 
 from __future__ import annotations
@@ -18,7 +16,7 @@ from test_ranking_actor import IDS, ROOT, FakeHost, Logged, equity, priming, run
 from test_ranking_actor_status import OTHER, status
 
 from sextant.ranking.engine import EXCLUDED_CONDITIONS
-from sextant.ranking.node_actor import RankingActorConfig
+from sextant.ranking.node_actor import RankingActor, RankingActorConfig
 
 HALT, TRADING = MarketStatusAction.HALT, MarketStatusAction.TRADING
 
@@ -261,3 +259,54 @@ def test_a_clear_the_host_refuses_leaves_the_name_unknown(tmp_path) -> None:  # 
     out = run(tmp_path, host_cls=RefusesClears, facts=regular)
     assert out["actor"].evidence()["not_halted"] == 0 and out["actor"].errors["set_symbol"] >= 1
     assert all(halted is None for _, halted, _ in out["hosts"][0].assets)
+
+
+def test_a_restarted_actor_starts_from_unknown_evidence() -> None:  # review G1
+    from decimal import Decimal
+
+    from nautilus_trader.backtest import BacktestEngine
+    from nautilus_trader.config import BacktestEngineConfig
+    from nautilus_trader.execution import MakerTakerFeeModel
+    from nautilus_trader.model import AccountType, Money, OmsType
+    from test_ranking_actor import equity, ticks
+
+    hosts: list[Evidence] = []
+
+    def build() -> Evidence:
+        hosts.append(Evidence([]))
+        return hosts[-1]
+
+    actor = RankingActor(
+        RankingActorConfig(
+            instrument_ids=IDS,
+            feed="sip",
+            host_factory=cast(Any, build),
+            priming=priming,
+            page_window_s=3600,
+            trade_facts=regular,
+        )
+    )
+    engine = BacktestEngine(BacktestEngineConfig(bypass_logging=True, run_analysis=False))
+    engine.add_venue(
+        venue=IDS[0].venue,
+        oms_type=OmsType.NETTING,
+        account_type=AccountType.CASH,
+        starting_balances=[Money.from_str("100000 USD")],
+        fee_model=MakerTakerFeeModel(Decimal(0), Decimal(0)),
+    )
+    for instrument_id in IDS:
+        engine.add_instrument(equity(instrument_id))
+    engine.add_actor(actor)
+    try:
+        engine.add_data(ticks())
+        engine.run(start=START - NS)
+        engine.reset()
+        engine.clear_data()
+        engine.add_data(ticks())
+        engine.run(start=START - NS)
+        assert len(hosts) == 2 and hosts[-1].calls == 12 and actor.errors == {}
+        assert hosts[-1].assets[3:][0] == ("PENNY", False, 0)  # cleared again by run 2's print
+        penny = hosts[-1].publisher.assets["PENNY"]
+        assert penny is not None and penny.halted is False
+    finally:
+        engine.dispose()

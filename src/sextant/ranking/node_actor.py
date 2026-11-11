@@ -197,6 +197,7 @@ class RankingActor(DataActor):
 
     def on_start(self) -> None:
         """Build, then prime, then subscribe: never a tick to an unprimed host."""
+        self._reset_run()
         try:
             self.host = self._factory()
         except Exception as exc:
@@ -223,6 +224,15 @@ class RankingActor(DataActor):
             self.subscribe_trades(list(self._ids))
         except Exception as exc:
             self._fault("subscribe", exc)
+
+    def _reset_run(self) -> None:
+        """A (re)start builds a new host: no evidence, lineage or pending state from an earlier
+        run carries over (review G1)."""
+        self.host, self.primed, self._primed = None, False, {}
+        self._halted = dict.fromkeys(self._halted)  # every name unknown again
+        self._watch_from = self._subscribed_at = self._lineage = None
+        for pending in (self._status_seen, self._early, self._veto, self._retired):
+            pending.clear()
 
     def watch_statuses(self) -> None:
         """Subscribe the universe's statuses; prints count as evidence only after this."""
