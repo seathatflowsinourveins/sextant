@@ -161,7 +161,7 @@ def test_b_chase_allowance_sizes_risk_without_enabling_exit_chase() -> None:
     assert chase_limit(D("98"), D("100"), exits) == D("98")
 
 
-def test_b_strategy_refuses_entry_with_only_the_files_first_leg_rows(tmp_path) -> None:
+def test_b_strategy_refuses_entry_with_the_files_rows(tmp_path) -> None:
     """An intentionally incomplete load still names missing sizing rows and sends nothing."""
     narrow = EntryParameters.from_rows(entry_rows(), first_leg_only=True)
     journal, orders, strategy = run_entry(tmp_path, entry_params=narrow)
@@ -171,7 +171,7 @@ def test_b_strategy_refuses_entry_with_only_the_files_first_leg_rows(tmp_path) -
     assert house(orders) == [] and strategy.sent == []
 
 
-def test_entry_rows_keep_shared_starts_and_bs_own_sizing_allowance() -> None:
+def test_entry_rows_are_the_sim_lanes_reviewed_rows_under_the_ruling() -> None:
     rows = entry_rows()
     sim = {r["name"]: r for r in json.loads((ROOT / "lanes/sim/entry-parameters.json").read_text())}
     assert [r["name"] for r in rows] == list(sim) and set(sim) == NAMES
@@ -341,4 +341,4 @@ def test_every_b_row_has_a_reader_and_chase_cap_fraction_lives_once() -> None:
     for name, want in rows.items():
         assert {r["name"] for r in load(name)} == want
     chase = {row.name: row.start for row in REGISTRY}["chase_cap_fraction"]
-    assert chase is None  # the exit engine's independent row still has no authority
+    assert chase is None  # the exit engine's own row agrees: no authority
