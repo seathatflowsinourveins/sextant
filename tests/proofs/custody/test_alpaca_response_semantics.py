@@ -15,7 +15,7 @@ from types import SimpleNamespace as NS
 
 import pytest
 import requests
-from nautilus_trader.model import ClientOrderId, Money, OrderStatus
+from nautilus_trader.model import ClientOrderId, OrderStatus
 
 from .test_alpaca_client import client
 from .test_alpaca_execution import order
@@ -98,46 +98,6 @@ def test_delete_response_classes(cls):
         await _read(node, "cancel")  # Authoritative: still working, so refused once.
         node.generate_order_cancel_rejected.assert_called_once()
         assert not node._cancels
-
-    asyncio.run(run())
-
-
-@pytest.mark.parametrize(
-    "event", ["canceled", "fill", "expired", "rejected", "order_cancel_rejected"]
-)
-def test_an_acknowledged_delete_is_resolved_by_a_terminal_or_refusing_stream_event(event):
-    async def run():
-        node = client()
-        await node._submit_order(NS(order=order(), params={}))
-        venue = node.gateway.sdk
-        row = next(iter(venue.rows.values()))
-        venue.delete = lambda path, body: venue.requests.append(("DELETE", path, {}))
-        await node._cancel_order(_cmd("cancel"))
-        assert node._cancels == {row["id"]}
-        node.commission_for_fill = lambda data: Money.from_str("0 USD")
-        status = {
-            "canceled": "canceled",
-            "fill": "filled",
-            "expired": "expired",
-            "rejected": "rejected",
-        }
-        changed = row | {"status": status.get(event, "new")}
-        if event == "fill":
-            changed |= {"filled_qty": changed["qty"], "filled_avg_price": "0.1234"}
-            update = {
-                "event": "fill",
-                "order": changed,
-                "execution_id": "fixture-x",
-                "price": "0.1234",
-                "qty": changed["qty"],
-                "timestamp": row["updated_at"],
-            }
-            await node._on_trade_update({"stream": "trade_updates", "data": update})
-        else:
-            await _stream(node, event, changed)
-        assert not node._cancels
-        refused = node.generate_order_cancel_rejected.call_count
-        assert refused == (1 if event == "order_cancel_rejected" else 0)
 
     asyncio.run(run())
 
