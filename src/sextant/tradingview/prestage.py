@@ -37,6 +37,7 @@ from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame
 from exchange_calendars import get_calendar
 from nautilus_trader.common import MessageBus
+from nautilus_trader.core.datetime import unix_nanos_to_dt
 from nautilus_trader.model import TraderId
 
 from sextant.data.alpaca_history import Pacer, decimal_value
@@ -693,7 +694,8 @@ def publish_tick(
         write_atomic(generation / filename, document)
     validated = read_research_inputs(
         generation,
-        now=datetime.fromtimestamp(publish_clock_ns / NS, UTC),
+        # The exact clock that stamped generated_at; a float datetime drops its nanoseconds.
+        now=unix_nanos_to_dt(publish_clock_ns),
         max_age=max_age,
     )
     pointer = unit_dir.parent / f".{unit_dir.name}.pointer"

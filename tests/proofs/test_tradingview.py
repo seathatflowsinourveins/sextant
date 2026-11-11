@@ -856,7 +856,9 @@ def test_nanosecond_clock_disagreement_refuses_the_generation(tmp_path: Path):
         (datetime(1970, 1, 1, 0, 0, 0, 1, tzinfo=UTC), 1_000),
         (datetime(1969, 12, 31, 23, 59, 59, 999999, tzinfo=UTC), -1_000),
         (datetime(1970, 1, 1, tzinfo=timezone(timedelta(microseconds=1))), -1_000_000_000),
-        (pd.Timestamp("1970-01-01T00:00:00.000000123Z"), 0),
+        # The engine's exact pair keeps a Timestamp's nanoseconds (was 0: the
+        # drop that refused about half the producer's ticks, 2026-11-11).
+        (pd.Timestamp("1970-01-01T00:00:00.000000123Z"), 123),
         ("0001-01-01T00:00:00Z", -62_135_596_800_000_000_000),
         ("9999-12-31T23:59:59.999999Z", 253_402_300_799_999_999_000),
     ],
