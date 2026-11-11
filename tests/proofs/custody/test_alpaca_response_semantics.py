@@ -1,0 +1,86 @@
+"""T1: what each broker response means, and which evidence it keeps (E5 r4).
+
+Alpaca API reference (orders, read 2026-11-10):
+- POST /v2/orders "Places a new order" (200), 403/422 refuse;
+- PATCH /v2/orders/{id}: "A success return code from a replaced order does NOT guarantee
+  the existing open order has been replaced";
+- DELETE /v2/orders/{id}: "Attempts to cancel an Open Order" (204), 422 "not cancelable".
+alpaca-py cc4cb3b7 common/rest.py:197-210 maps 4xx/5xx to APIError and returns the 2xx body.
+A 2xx that acknowledges an attempt never clears evidence; only a terminal venue confirmation
+or an authoritative refusal does. The table is EXIT-TABLE-r4.md, T1.
+"""
+
+import asyncio
+from types import SimpleNamespace as NS
+
+import pytest
+import requests
+from nautilus_trader.model import ClientOrderId, OrderStatus
+
+from .test_alpaca_client import client
+from .test_alpaca_execution import order
+from .test_alpaca_exits import _api
+
+CLASSES = ["2xx", "4xx", "5xx", "none"]
+
+
+def _answer(venue, method, cls, *, apply):
+    original = getattr(venue, method)
+
+    def respond(path, body):
+        if cls == "2xx":
+            return original(path, body)
+        venue.requests.append((method.upper(), path, dict(body or {})))
+        if cls == "4xx":
+            raise _api(422)
+        if apply:
+            original(path, body)
+        raise _api(500) if cls == "5xx" else requests.ConnectionError("no response")
+
+    setattr(venue, method, respond)
+
+
+def _stream(node, event, row):
+    return node._on_trade_update(
+        {
+            "stream": "trade_updates",
+            "data": {"event": event, "order": row, "timestamp": row["updated_at"]},
+        }
+    )
+
+
+@pytest.mark.parametrize("cls", CLASSES)
+def test_post_response_classes(cls):
+    async def run():
+        node = client()
+        _answer(node.gateway.sdk, "post", cls, apply=False)
+        try:
+            await node._submit_order(NS(order=order(), params={}))
+        except Exception:
+            assert cls in ("5xx", "none")  # Unresolved: the supervised task reports it.
+        if cls == "2xx":  # The venue's own order: its status is reported, nothing cleared.
+            assert node._handle_report.call_args.args[0].order_status == OrderStatus.ACCEPTED
+            row = next(iter(node.gateway.sdk.rows.values()))
+            await _stream(node, "rejected", row | {"status": "rejected"})  # A later venue answer.
+            assert node._handle_report.call_args.args[0].order_status == OrderStatus.REJECTED
+        elif cls == "4xx":
+            node.generate_order_rejected.assert_called_once()
+        else:  # SUBMITTED stays; the engine's own query reads the venue later.
+            node.generate_order_rejected.assert_not_called()
+
+    asyncio.run(run())
+
+
+def test_a_query_by_client_id_answers_an_unresolved_post():
+    async def run():
+        node = client()
+        _answer(node.gateway.sdk, "post", "5xx", apply=True)  # Applied, reply lost.
+        with pytest.raises(Exception, match="fixture"):  # The 5xx: unresolved, not rejected.
+            await node._submit_order(NS(order=order(), params={}))
+        report = await node._generate_order_status_report(
+            NS(client_order_id=ClientOrderId("fixture-entry"), venue_order_id=None)
+        )
+        assert report.order_status == OrderStatus.ACCEPTED  # The venue's state, not a guess.
+        node.generate_order_rejected.assert_not_called()
+
+    asyncio.run(run())
