@@ -22,6 +22,7 @@
         "./native-auth.cordis.yml",
         "./bili-ports.cordis.yml",
         "./mcp/source-tools.cordis.yml",
+        "./native-parallel.cordis.yml",
         "./mcp/max-effort.cordis.yml"
       ]
     }
