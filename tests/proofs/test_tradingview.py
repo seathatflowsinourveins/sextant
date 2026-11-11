@@ -1346,7 +1346,8 @@ def test_cli_prints_each_fixed_sync_literal(
         assert cli.main(["--research-dir", str(tmp_path), "--authorize"]) == 2
         output = capsys.readouterr()
         assert f"Safe diagnostic: SyncError at tool list: {message}" in output.out
-        assert output.err == ""
+        # A stored-login stop also pages its fixed owner step; nothing else reaches stderr.
+        assert output.err == (f"{message}\n" if message in sync.LOGIN_STOPS else "")
 
 
 def test_cli_withholds_a_message_outside_the_fixed_sync_literals(
@@ -1800,6 +1801,196 @@ def test_a_refused_stored_login_falls_back_once_and_never_loops():
     assert callbacks == [True]
     assert len(token_calls) == 1 and "grant_type=authorization_code" in token_calls[0]
     assert mcp_calls == ["Bearer " + LOGIN_ACCESS, "Bearer fresh-access"]
+
+
+def test_cli_forget_login_is_the_one_command_and_never_opens_the_sdk(monkeypatch, capsys):
+    cli = importlib.import_module("sextant.tradingview.__main__")
+    calls: list[str] = []
+
+    class Login:
+        def forget(self):
+            calls.append("forget")
+            return True
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("forget must not open an OAuth session")
+
+    monkeypatch.setattr(cli, "StoredLogin", Login)
+    monkeypatch.setattr(cli, "official_client", forbidden)
+    assert cli.main(["--forget-login"]) == 0
+    assert calls == ["forget"]
+    out = capsys.readouterr().out
+    assert "Stored TradingView sign-in removed." in out
+
+
+def test_cli_keep_login_passes_the_stored_login_to_one_cycle(tmp_path: Path, monkeypatch):
+    cli = importlib.import_module("sextant.tradingview.__main__")
+    _, sync = api()
+    seen: dict[str, Any] = {}
+
+    class Login:
+        pass
+
+    @asynccontextmanager
+    async def fake_client(authorize, login=None):
+        seen.update(authorize=authorize, login=login)
+        raise sync.SyncError(sync.INVALID_INPUTS)
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(cli, "StoredLogin", Login)
+    monkeypatch.setattr(cli, "official_client", fake_client)
+    monkeypatch.setattr(cli, "run_loop", pytest.fail)
+    monkeypatch.setattr(cli, "read_research_inputs", lambda *args, **kwargs: object())
+    assert cli.main(["--research-dir", str(tmp_path), "--keep-login"]) == 2
+    assert isinstance(seen["login"], Login)
+    assert seen["authorize"] is False
+    assert cli.main(["--research-dir", str(unit(tmp_path)), "--keep-login", "--loop"]) == 2
+
+
+def test_the_first_keep_login_authentication_is_saved_before_sync(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from urllib.parse import parse_qs, urlsplit
+
+    import httpx2
+    from mcp.client.auth import AuthorizationCodeResult
+
+    auth = importlib.import_module("sextant.tradingview.auth")
+    cli = importlib.import_module("sextant.tradingview.__main__")
+    module = stored_login()
+    events: list[str] = []
+    saved: list[Any] = []
+    storage_types: list[str] = []
+    states: list[str] = []
+    state = SimpleNamespace(document=None)
+    original_http_client = httpx2.AsyncClient
+
+    class Login:
+        def present(self):
+            return state.document is not None
+
+        def load(self):
+            return state.document
+
+        def save(self, tokens, client_info, obtained_at):
+            events.append("save")
+            saved.append((tokens, client_info, obtained_at))
+            state.document = module.StoredDocument(tokens, client_info, obtained_at)
+
+        def forget(self):
+            events.append("forget")
+            removed = state.document is not None
+            state.document = None
+            return removed
+
+    class Callback:
+        uri = "http://127.0.0.1:1/callback"
+        result = None
+        server = SimpleNamespace(server_close=lambda: None)
+
+        async def redirect(self, url):
+            events.append("consent")
+            states.append(parse_qs(urlsplit(url).query)["state"][0])
+
+        async def wait(self):
+            return AuthorizationCodeResult(code="fixture-code", state=states[-1])
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        if request.url.path == "/mcp":
+            if request.headers.get("authorization") == "Bearer first-access":
+                events.append("authenticated")
+                return httpx2.Response(200, json={"authenticated": True})
+            return httpx2.Response(401)
+        if request.url.path == "/.well-known/oauth-authorization-server":
+            # The legacy origin document (oauth2.py:696-718); a stored login needs one.
+            base = "https://mcp.tradingview.com"
+            return httpx2.Response(
+                200,
+                json={
+                    "issuer": base,
+                    "authorization_endpoint": base + "/authorize",
+                    "token_endpoint": base + "/token",
+                    "registration_endpoint": base + "/register",
+                },
+            )
+        if "/.well-known/" in request.url.path:
+            return httpx2.Response(404)
+        if request.url.path == "/register":
+            return httpx2.Response(
+                201,
+                json={
+                    "client_id": "witness-client",
+                    "redirect_uris": [Callback.uri],
+                    "token_endpoint_auth_method": "none",
+                },
+            )
+        if request.url.path == "/token":
+            return httpx2.Response(
+                200,
+                json={
+                    "access_token": "first-access",
+                    "refresh_token": "first-refresh",
+                    "token_type": "Bearer",
+                    "expires_in": 3600,
+                },
+            )
+        pytest.fail(f"unexpected mocked path {request.url.path}", pytrace=False)
+
+    def http_client(**options):
+        storage_types.append(type(options["auth"].context.storage).__name__)
+        return original_http_client(
+            transport=httpx2.MockTransport(handler), trust_env=False, **options
+        )
+
+    def transport(server, http_client):
+        assert server == auth.SERVER
+        return http_client
+
+    class Client:
+        def __init__(self, transport, **options):
+            self.transport = transport
+
+        async def __aenter__(self):
+            response = await self.transport.post(auth.SERVER, json={})
+            assert response.status_code == 200
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+    async def sync(*args, **kwargs):
+        events.append("sync")
+        return {}
+
+    monkeypatch.setattr(auth, "OwnerCallback", Callback)
+    monkeypatch.setattr(auth.httpx2, "AsyncClient", http_client)
+    monkeypatch.setattr(auth, "streamable_http_client", transport)
+    monkeypatch.setattr(auth, "Client", Client)
+    monkeypatch.setattr(cli, "StoredLogin", Login)
+    monkeypatch.setattr(cli, "read_research_inputs", lambda *args, **kwargs: object())
+    monkeypatch.setattr(cli, "sync_research", sync)
+
+    assert cli.main(["--research-dir", str(tmp_path), "--authorize", "--keep-login"]) == 0
+    assert "authenticated" in events
+    assert "sync" in events
+    if not saved:
+        pytest.fail(
+            "the first successful --keep-login reached sync without saving the login; "
+            f"storage={storage_types}, events={events}",
+            pytrace=False,
+        )
+    assert events.index("save") < events.index("sync")
+    assert storage_types == ["StoredTokenStorage"]
+    assert state.document is not None
+    assert state.document.tokens.access_token == "first-access"  # noqa: S105 - fixture
+    assert state.document.client_info is not None
+    assert state.document.client_info.client_id == "witness-client"
+
+    events.clear()
+    assert cli.main(["--research-dir", str(tmp_path), "--keep-login"]) == 0
+    assert "consent" not in events
+    assert "authenticated" in events
+    assert storage_types[-1] == "StoredTokenStorage"
 
 
 def test_keys_registers_the_tradingview_login_sealed_name():
@@ -2308,6 +2499,36 @@ def test_the_guard_never_lets_a_refresh_reach_an_unpublished_endpoint():
     assert guard.reason() == "unavailable"
 
 
+@pytest.mark.parametrize("authorize", [False, True])
+def test_a_corrupt_stored_login_stops_at_the_cli_naming_forget_then_authorize(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capfd, authorize: bool
+):
+    """Fix 3: --authorize alone would fail the same way, so the step names --forget-login."""
+    import subprocess
+
+    cli = importlib.import_module("sextant.tradingview.__main__")
+    auth = importlib.import_module("sextant.tradingview.auth")
+    module = stored_login()
+    login = module.StoredLogin(home=tmp_path)
+    corrupt = json.dumps({"tokens": {"refresh_token": FAKE_REFRESH}}).encode()
+    monkeypatch.setattr(login, "_state", lambda: "set")
+    monkeypatch.setattr(
+        module, "_run", lambda *a, **k: subprocess.CompletedProcess(a, 0, corrupt, b"")
+    )
+    monkeypatch.setattr(auth, "OwnerCallback", lambda: pytest.fail("no sign-in", pytrace=False))
+    monkeypatch.setattr(cli, "StoredLogin", lambda: login)
+    monkeypatch.setattr(cli, "read_research_inputs", lambda *args, **kwargs: object())
+    argv = ["--research-dir", str(tmp_path), "--keep-login"] + (
+        ["--authorize"] if authorize else []
+    )
+    assert cli.main(argv) == 2
+    out, err = capfd.readouterr()
+    assert literal("LOGIN_UNREADABLE") in out
+    assert "--forget-login, then --authorize --keep-login" in literal("LOGIN_UNREADABLE")
+    assert literal("LOGIN_UNREADABLE") in err  # the page
+    assert_no_secret(out + err)
+
+
 def test_with_keys_cannot_put_the_stored_login_in_an_environment(tmp_path: Path):
     """Fix 4: with-keys refuses the name; the sync's own loader still reads it."""
     import subprocess
@@ -2337,3 +2558,43 @@ def test_with_keys_cannot_put_the_stored_login_in_an_environment(tmp_path: Path)
         assert loaded.tokens.refresh_token == LOGIN_REFRESH
     finally:
         login.forget()
+
+
+@pytest.mark.parametrize(
+    ("refresh", "code", "message"),
+    [
+        (answer(200, token_body(ROTATED_ACCESS, ROTATED_REFRESH)), 0, ""),
+        (answer(503, {}), 2, "LOGIN_UNAVAILABLE"),
+        (answer(400, {"error": "invalid_grant"}), 2, "LOGIN_REFUSED"),
+    ],
+)
+def test_the_keep_login_cli_prints_no_token_code_or_callback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capfd, caplog, refresh, code, message
+):
+    """Fix 5: stdout, stderr, logs and files carry none of the fakes on any outcome."""
+    import logging
+
+    caplog.set_level(logging.DEBUG)
+    events: list[str] = []
+    login = stale_login(events)
+    wired_session(monkeypatch, oauth_service(events, refresh=refresh), events)
+    cli = importlib.import_module("sextant.tradingview.__main__")
+
+    async def sync(tools, inputs, *, apply):
+        return {"applied": False}
+
+    monkeypatch.setattr(cli, "StoredLogin", lambda: login)
+    monkeypatch.setattr(cli, "read_research_inputs", lambda *args, **kwargs: object())
+    monkeypatch.setattr(cli, "sync_research", sync)
+    monkeypatch.chdir(tmp_path)
+    capfd.readouterr()
+    assert cli.main(["--research-dir", str(tmp_path), "--keep-login"]) == code
+    out, err = capfd.readouterr()
+    assert "consent" not in events
+    if message:
+        assert literal(message) in out
+        assert literal(message) in err  # the page
+    else:
+        assert login.document is not None
+        assert login.document.tokens.refresh_token == ROTATED_REFRESH
+    assert_no_secret(out + err + caplog.text, tmp_path)
