@@ -18,7 +18,7 @@ import hashlib
 import json
 import os
 from array import array
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from datetime import time as clock_time
@@ -361,9 +361,14 @@ def publish_tick(
     j5_path: Path,
     bounds: DisplayBounds,
     max_age: int = 1_200,
+    clock: Callable[[], int] | None = None,
     feed: str = "sip",
 ) -> dict[str, Any]:
-    """Replay the current segment once and publish one complete unit."""
+    """Replay the current segment once and publish one complete unit.
+
+    When ``clock`` is supplied it is read again after the replay, so the unit is
+    stamped and validated with the time the fetch actually finished.
+    """
     if segment.name not in SUPPORTED:
         raise PrestageError(f"the producer does not write {segment.name} units")
     if not segment.start_ns <= now_ns < segment.end_ns:
@@ -419,7 +424,10 @@ def publish_tick(
             received_ns=close_ns,
         )
 
-    publish_clock_ns = max(latest_close_ns, min(now_ns, segment.end_ns - NS))
+    publication_ns = now_ns if clock is None else int(clock())
+    if not segment.start_ns <= publication_ns < segment.end_ns:
+        raise PrestageError(f"the {segment.name} segment closed before the tick could publish")
+    publish_clock_ns = max(latest_close_ns, min(publication_ns, segment.end_ns - NS))
     max_age_ns = registry.seconds("input_max_age_s")
     for name, state in list(publisher.states.items()):
         if state.latest is None:
