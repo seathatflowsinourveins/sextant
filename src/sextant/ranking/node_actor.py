@@ -19,15 +19,9 @@ primed references kept; only a halting action or TRADING is classified, everythi
 an unknown halt state, so the ranking refuses the name (``AssetState.eligible`` needs
 ``halted is False``). A generation a setter returns is published at once, as for a trade.
 
-N1d (LEAD-0020 2b): every name starts unknown, whatever priming says. A Regulatory Halt,
-the LULD pause included, halts trading on all Trading Centers (UTP Plan X.A.10 and X.G; CTA
-Plan XI(a)(vii); FINRA 6120(a)(1), 6121.01), so the first print that counts for price
-(``price_counts``, the producer's mask) executed after the status subscription is active,
-with no halt since, sets "not halted". A halt sets halted; only a resume clears it; a print
-never does. rc8's ``TradeTick`` carries no conditions, so the print's facts come from the
-required ``trade_facts`` source; with None no print clears. A socket state change
-(``subscribe_socket_state``, actors.md:273-345) or ``reset_evidence`` makes every name
-unknown again. The recorder counts each name's first status in the first N seconds (2e).
+N1d (LEAD-0020 2b): halt state starts unknown; a halt stops trading on all Trading Centers
+(UTP Plan X.A.10, X.G; CTA XI(a)(vii); FINRA 6120(a)(1), 6121.01), so the first print that
+counts for price after the status watch, with no halt since, clears it (N1D-SOURCES.md).
 """
 
 from __future__ import annotations
@@ -230,7 +224,9 @@ class RankingActor(DataActor):
         run carries over (review G1)."""
         self.host, self.primed, self._primed = None, False, {}
         self._halted = dict.fromkeys(self._halted)  # every name unknown again
-        self._watch_from = self._subscribed_at = self._lineage = None
+        self._watch_from = self._subscribed_at = self._lineage = self._last = None
+        if self.snapshot_statuses is not None:  # the 2e recorder counts this run only (P2)
+            self.snapshot_statuses = {}
         for pending in (self._status_seen, self._early, self._veto, self._retired):
             pending.clear()
 

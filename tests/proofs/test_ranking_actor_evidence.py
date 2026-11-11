@@ -22,7 +22,7 @@ HALT, TRADING = MarketStatusAction.HALT, MarketStatusAction.TRADING
 
 
 def regular(_tick) -> tuple[bool, tuple[str, ...]]:
-    return True, ()  # fixture: a price-eligible print with no condition
+    return True, ()
 
 
 class Evidence(FakeHost):
@@ -38,14 +38,14 @@ class Evidence(FakeHost):
 
 
 def moves(out) -> list[tuple[str, bool | None, int]]:
-    return out["hosts"][0].assets[3:]  # the first three are the primed universe
+    return out["hosts"][0].assets[3:]
 
 
 def test_every_name_starts_unknown_whatever_priming_says(tmp_path) -> None:
-    out = run(tmp_path, host_cls=Evidence)  # priming says halted False; no eligibility source
+    out = run(tmp_path, host_cls=Evidence)
     primed = out["hosts"][0].assets[:3]
     assert [halted for _, halted, _ in primed] == [None, None, None]
-    assert moves(out) == []  # with no source of eligibility no print clears
+    assert moves(out) == []
     assert out["actor"].evidence() == dict(
         unknown=3, not_halted=0, halted=0, cleared_by_print=0, resets=0
     )
@@ -85,31 +85,31 @@ def test_a_failing_fact_source_is_counted_and_the_feed_continues(tmp_path) -> No
 
     out = run(tmp_path, host_cls=Evidence, facts=broken)
     assert moves(out) == [] and out["actor"].errors == {"trade_facts": 12}
-    assert out["hosts"][0].calls == 12  # every print still reached the host
+    assert out["hosts"][0].calls == 12
 
 
 def test_a_print_during_a_halt_does_not_clear_and_only_a_resume_does(tmp_path) -> None:
     feed = [
         status(30, HALT),
-        status(45, MarketStatusAction.NONE),  # unclassified: still halted
+        status(45, MarketStatusAction.NONE),
         status(200, TRADING, is_trading=True),
     ]
     out = run(tmp_path, host_cls=Evidence, facts=regular, statuses=feed)
     assert moves(out) == [("PENNY", False, 0), ("PENNY", True, 30), ("PENNY", False, 200)]
     held = run(tmp_path / "held", host_cls=Evidence, facts=regular, statuses=feed[:2])
-    assert moves(held) == [("PENNY", False, 0), ("PENNY", True, 30)]  # prints 60-360 ignored
+    assert moves(held) == [("PENNY", False, 0), ("PENNY", True, 30)]
     assert held["actor"].evidence()["halted"] == 1
 
 
 def test_a_print_before_the_status_subscription_is_active_does_not_clear(tmp_path) -> None:
     class Late(Logged):
-        def watch_statuses(self) -> None:  # the subscription becomes active at 200 s
+        def watch_statuses(self) -> None:
             self.clock.set_time_alert_ns(
                 "late", START + 200 * NS, lambda _e: super(Late, self).watch_statuses()
             )
 
     out = run(tmp_path, host_cls=Evidence, facts=regular, actor_cls=Late)
-    assert moves(out) == [("PENNY", False, 240)]  # prints 0-180 preceded it
+    assert moves(out) == [("PENNY", False, 240)]
 
 
 def gap(actor, at_s: int, state=SocketState.DISCONNECTED) -> None:
@@ -202,7 +202,7 @@ def test_the_subscribe_recorder_is_off_by_default_and_counts_first_statuses_in_w
 ) -> None:
     feed = [
         status(30, HALT),  # PENNY's first status, inside 60 s of subscribing
-        status(50, TRADING, is_trading=True),  # a change after one: not counted
+        status(50, TRADING, is_trading=True),
         status(90, TRADING, iid=IDS[0], is_trading=True),  # ADR's first, outside the window
     ]
     off = run(tmp_path, host_cls=Evidence, facts=regular, statuses=feed)
@@ -219,7 +219,7 @@ def test_new_config_keys_are_required_bounded_and_misspellings_refused() -> None
         priming=priming,
         page_window_s=3600,
     )
-    with pytest.raises(TypeError, match="trade_facts"):  # no default eligibility source
+    with pytest.raises(TypeError, match="trade_facts"):
         RankingActorConfig(**base)
     with pytest.raises(TypeError, match=r"'trade_fact'"):
         RankingActorConfig(**base, trade_facts=None, trade_fact=regular)
@@ -231,7 +231,7 @@ def test_new_config_keys_are_required_bounded_and_misspellings_refused() -> None
     assert RankingActorConfig(**base, trade_facts=regular).status_snapshot_window_s is None
 
 
-def test_statuses_before_priming_fold_by_the_same_rule(tmp_path) -> None:  # review F1 in N1d
+def test_statuses_before_priming_fold_by_the_same_rule(tmp_path) -> None:
     class Early(Logged):
         def on_start(self) -> None:
             original = self._priming
@@ -245,11 +245,11 @@ def test_statuses_before_priming_fold_by_the_same_rule(tmp_path) -> None:  # rev
             super().on_start()
 
     out = run(tmp_path, host_cls=Evidence, facts=regular, actor_cls=Early)
-    assert moves(out)[0] == ("PENNY", True, -1)  # still halted: only a resume clears it
-    assert out["actor"].evidence()["halted"] == 1  # prints 0-360 never cleared it
+    assert moves(out)[0] == ("PENNY", True, -1)
+    assert out["actor"].evidence()["halted"] == 1
 
 
-def test_a_clear_the_host_refuses_leaves_the_name_unknown(tmp_path) -> None:  # review F2 in N1d
+def test_a_clear_the_host_refuses_leaves_the_name_unknown(tmp_path) -> None:
     class RefusesClears(Evidence):
         def set_symbol(self, name, *, references, asset):
             if name == "PENNY" and asset.halted is False:
@@ -261,7 +261,8 @@ def test_a_clear_the_host_refuses_leaves_the_name_unknown(tmp_path) -> None:  # 
     assert all(halted is None for _, halted, _ in out["hosts"][0].assets)
 
 
-def test_a_restarted_actor_starts_from_unknown_evidence() -> None:  # review G1
+def run_twice(actor: RankingActor) -> None:
+    """Two BacktestEngine runs of the same Actor with a reset between them."""
     from decimal import Decimal
 
     from nautilus_trader.backtest import BacktestEngine
@@ -270,22 +271,6 @@ def test_a_restarted_actor_starts_from_unknown_evidence() -> None:  # review G1
     from nautilus_trader.model import AccountType, Money, OmsType
     from test_ranking_actor import equity, ticks
 
-    hosts: list[Evidence] = []
-
-    def build() -> Evidence:
-        hosts.append(Evidence([]))
-        return hosts[-1]
-
-    actor = RankingActor(
-        RankingActorConfig(
-            instrument_ids=IDS,
-            feed="sip",
-            host_factory=cast(Any, build),
-            priming=priming,
-            page_window_s=3600,
-            trade_facts=regular,
-        )
-    )
     engine = BacktestEngine(BacktestEngineConfig(bypass_logging=True, run_analysis=False))
     engine.add_venue(
         venue=IDS[0].venue,
@@ -298,15 +283,50 @@ def test_a_restarted_actor_starts_from_unknown_evidence() -> None:  # review G1
         engine.add_instrument(equity(instrument_id))
     engine.add_actor(actor)
     try:
-        engine.add_data(ticks())
-        engine.run(start=START - NS)
-        engine.reset()
-        engine.clear_data()
-        engine.add_data(ticks())
-        engine.run(start=START - NS)
-        assert len(hosts) == 2 and hosts[-1].calls == 12 and actor.errors == {}
-        assert hosts[-1].assets[3:][0] == ("PENNY", False, 0)  # cleared again by run 2's print
-        penny = hosts[-1].publisher.assets["PENNY"]
-        assert penny is not None and penny.halted is False
+        for second in (False, True):
+            engine.add_data(ticks())
+            engine.run(start=START - NS)
+            if not second:
+                engine.reset()
+                engine.clear_data()
     finally:
         engine.dispose()
+
+
+def config(host_factory, **extra: Any) -> RankingActorConfig:
+    return RankingActorConfig(
+        instrument_ids=IDS,
+        feed="sip",
+        host_factory=cast(Any, host_factory),
+        priming=priming,
+        page_window_s=3600,
+        trade_facts=regular,
+        **extra,
+    )
+
+
+def test_a_restarted_actor_starts_from_unknown_evidence() -> None:
+    hosts: list[Evidence] = []
+
+    def build() -> Evidence:
+        hosts.append(Evidence([]))
+        return hosts[-1]
+
+    actor = RankingActor(config(build))
+    run_twice(actor)
+    assert len(hosts) == 2 and hosts[-1].calls == 12 and actor.errors == {}
+    assert hosts[-1].assets[3:][0] == ("PENNY", False, 0)  # cleared again by run 2's print
+    penny = hosts[-1].publisher.assets["PENNY"]
+    assert penny is not None and penny.halted is False
+
+
+def test_the_status_snapshot_counts_only_the_latest_run() -> None:
+    class StatusEachRun(RankingActor):
+        def watch_statuses(self) -> None:
+            super().watch_statuses()
+            alert = lambda _event: self.on_instrument_status(status(30, HALT))  # noqa: E731
+            self.clock.set_time_alert_ns("fixture-status", START + 30 * NS, alert)
+
+    actor = StatusEachRun(config(lambda: Evidence([]), status_snapshot_window_s=60))
+    run_twice(actor)
+    assert actor.snapshot_statuses == {"HALT": 1}  # the second run's own count
