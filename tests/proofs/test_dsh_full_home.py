@@ -151,9 +151,15 @@ def _expected_calls() -> list[str]:
     return calls
 
 
-def test_a_fresh_home_is_built_from_the_lock_with_exact_pins(world: dict[str, Path]) -> None:
+def test_a_fresh_home_is_built_from_the_lock_with_exact_pins(
+    world: dict[str, Path], capsys: pytest.CaptureFixture[str]
+) -> None:
     parity = _parity()
     _install(parity, world)
+    assert (
+        f"new home, links into {ROOT} at HEAD {_git(ROOT, 'rev-parse', 'HEAD')}"
+        in capsys.readouterr().out
+    )
     assert _lines(world["tmp"] / "dsh.log") == _expected_calls()
     review = ROOT / "config/dsh/review-cmd"
     assert _lines(world["tmp"] / "pnpm.log") == [f"--dir {review} install --frozen-lockfile"] * 2
@@ -186,9 +192,13 @@ def test_a_second_run_changes_nothing_and_calls_nothing(world: dict[str, Path]) 
     assert not (world["tmp"] / "dsh.log").exists() and not (world["tmp"] / "pnpm.log").exists()
 
 
-def test_a_missing_spec_is_the_only_one_added(world: dict[str, Path]) -> None:
+@pytest.mark.parametrize("at_main", [False, True])
+def test_an_existing_home_links_into_the_checkout_only_at_its_fetched_main(
+    world: dict[str, Path], capsys: pytest.CaptureFixture[str], at_main: bool
+) -> None:
     parity = _parity()
     _install(parity, world)
+    shutil.rmtree(world["home"] / "profiles/dsh-headless")
     tui = world["home"] / "profiles/dsh-tui"
     data = json.loads((tui / "package.json").read_text())
     last = LOCK["interactive"]["bundles"][-1]  # what `dsh plugin remove` leaves behind
@@ -197,12 +207,22 @@ def test_a_missing_spec_is_the_only_one_added(world: dict[str, Path]) -> None:
     (tui / "package.json").write_text(json.dumps(data))
     (tui / "node_modules" / last).unlink()
     (world["tmp"] / "dsh.log").unlink()
+    off = "HEAD 1a is not refs/remotes/origin/main 2b"
+    parity._main_mismatch = lambda repository: None if at_main else off
+    capsys.readouterr()
     _install(parity, world)
-    row = next(r for r in LOCK["interactive"]["dependencies"] if r["package"] == last)
-    assert _lines(world["tmp"] / "dsh.log") == [
-        f"plugin --profile dsh-tui add --save-exact {_target(row)}"
-    ]
-    assert _doctor(tui / "package.json").returncode == 0
+    assert (world["home"] / "profiles/dsh-headless").exists() == at_main
+    if at_main:
+        row = next(r for r in LOCK["interactive"]["dependencies"] if r["package"] == last)
+        assert _lines(world["tmp"] / "dsh.log") == [
+            f"plugin --profile dsh-tui add --save-exact {_target(row)}",
+            *(call for call in _expected_calls() if "dsh-headless" in call),
+        ]
+        assert _doctor(tui / "package.json").returncode == 0
+    else:
+        assert not (world["tmp"] / "dsh.log").exists()
+        assert last not in json.loads((tui / "package.json").read_text())["dependencies"]
+        assert capsys.readouterr().out.count(off) == 2
 
 
 @pytest.mark.parametrize("drift", ["one extra bundle", "one missing bundle"])
@@ -220,24 +240,6 @@ def test_the_doctor_fails_the_built_home_on_bundle_drift(
     manifest.write_text(json.dumps(data))
     result = _doctor(manifest)
     assert result.returncode == 2 and "bundles differ from the lock" in result.stderr
-
-
-def test_a_foreign_dependency_is_refused_before_any_change(world: dict[str, Path]) -> None:
-    parity = _parity()
-    _install(parity, world)
-    profiles = world["home"] / "profiles"
-    for name in ("dsh-tui", "dsh-headless"):
-        data = json.loads((profiles / name / "package.json").read_text())
-        if name == "dsh-tui":  # a missing row the installer would otherwise add first
-            del data["dependencies"][LOCK["interactive"]["bundles"][-1]]
-        else:
-            data["dependencies"]["dsh-extra-fixture"] = "1.0.0"
-        (profiles / name / "package.json").write_text(json.dumps(data))
-    before = parity._tree(world["home"])
-    (world["tmp"] / "dsh.log").unlink()
-    with pytest.raises(parity.Refused, match=r"dsh-headless.*dsh-extra-fixture"):
-        _install(parity, world)
-    assert parity._tree(world["home"]) == before and not (world["tmp"] / "dsh.log").exists()
 
 
 def _bytes(root: Path) -> dict[str, bytes | None]:

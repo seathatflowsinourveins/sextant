@@ -654,8 +654,7 @@ def _lock_target(repository: Path, row: dict) -> tuple[str, str]:
 
 
 def _recognise(dsh_home: Path, locks: list[dict]) -> None:
-    """Refuse an existing home before any change unless this installer made it (its marker) or
-    built it: every lock profile present records only that lock's rows and bundles."""
+    """Refuse an existing home unless it has our marker or its lock profiles hold lock rows only."""
     if not dsh_home.exists():
         return
     known = (dsh_home / FULL_MARKER).is_file()
@@ -681,14 +680,18 @@ def _recognise(dsh_home: Path, locks: list[dict]) -> None:
         raise Refused(f"{dsh_home}: exists and is not a home this installer made; no change made")
 
 
-def _checkout_at_main(repository: Path) -> None:
-    """--repoint-links reads the house bundles from this checkout, so its HEAD must be the
-    commit of refs/remotes/origin/main as last fetched (git 2.53 git-fetch(1) DESCRIPTION:
+def _main_mismatch(repository: Path) -> str | None:
+    """Links into an existing home read house bundles from this checkout, so its HEAD must be
+    the commit of refs/remotes/origin/main as last fetched (git 2.53 git-fetch(1) DESCRIPTION:
     fetch updates remote-tracking branches; gitrevisions(7): refs/remotes/<refname>)."""
     head = _git(repository, "rev-parse", "HEAD")
     main = _git(repository, "rev-parse", "--verify", "refs/remotes/origin/main^{commit}")
-    if head != main:
-        raise Refused(f"{repository}: HEAD {head} is not origin/main {main}; no change made")
+    return None if head == main else f"HEAD {head} is not refs/remotes/origin/main {main}"
+
+
+def _checkout_at_main(repository: Path) -> None:
+    if reason := _main_mismatch(repository):
+        raise Refused(f"{repository}: {reason}; no change made")
 
 
 def _working_link(value: str | None, package: str) -> bool:
@@ -701,11 +704,10 @@ def _working_link(value: str | None, package: str) -> bool:
 
 
 def install_lock_profile(
-    dsh_home: Path, dsh: list[str], repository: Path, lock: dict, repoint: bool = False
+    dsh_home: Path, dsh: list[str], repository: Path, lock: dict, repoint=False, gate=False
 ) -> list:
-    """One lock profile by dsh's own commands: plain rows first, then one add per missing
-    bundle in the lock's order, since dsh appends each new bundle. Nothing is removed. A link
-    to a working bundle outside this checkout is reported and kept unless repoint is set."""
+    """One lock profile: plain rows, then one add per missing bundle in the lock's order (dsh
+    appends each). Never removes; keeps outside links unless repoint; gate holds new links."""
     rows, stack = _lock_rows(lock)
     by_name = {row["package"]: row for row in rows}
     plain = [row for row in rows if row["package"] not in stack]
@@ -713,6 +715,11 @@ def install_lock_profile(
     name, states = lock["profile"], []
     profile = dsh_home / "profiles" / name
     env = {**os.environ, "DSH_HOME": str(dsh_home)}
+    links = [row for row in ordered if row["spec"].startswith("link:")]
+    if gate and links and not (profile / "package.json").is_file():
+        if reason := _main_mismatch(repository):
+            print(f"{name}: skipped creating it: {repository} {reason}")
+            return [f"{name}: skipped"]
     template = next((TEMPLATES[app] for app in stack if app in TEMPLATES), None)
     if template and not (profile / "package.json").is_file():
         # A non-shipped name starts from dsh-base alone; the shipped template carries the app.
@@ -722,7 +729,7 @@ def install_lock_profile(
     workspace = profile / "pnpm-workspace.yaml"  # setup.sh's documented profile workspace
     if not workspace.exists():
         _publish(workspace, (repository / "deploy/wsl/dsh/pnpm-workspace.yaml").read_text(), 0o644)
-    manifest = profile / "package.json"
+    manifest, held = profile / "package.json", None
     for row in ordered:
         present = json.loads(manifest.read_text()) if manifest.is_file() else {}
         target, recorded = _lock_target(repository, row)
@@ -733,12 +740,19 @@ def install_lock_profile(
             print(f"{name}: kept {row['package']} at {now[5:]}; --repoint-links moves it")
             states.append(f"{name}: kept a link outside this checkout")
             continue
+        if not held and gate and row in links:
+            held = _main_mismatch(repository)
+        if held:  # later bundles wait too, so the stack keeps the lock's order
+            print(f"{name}: skipped {row['package']}: {repository} {held}")
+            states.append(f"{name}: skipped")
+            continue
         if shutil.which("pnpm") is None:  # dsh-plugin-manager spawns pnpm from PATH
             raise Refused("pnpm is not on PATH; run parity.sh or setup.sh (host-tools lock)")
         states.extend(_install_bundle_dependencies([target]))
         _native([*dsh, "plugin", "--profile", name, "add", "--save-exact", target], env=env)
         states.append(f"{name}: added {target}")
-    if json.loads(manifest.read_text()).get("dsh", {}).get("profile", {}).get("bundles") != stack:
+    bundles = json.loads(manifest.read_text()).get("dsh", {}).get("profile", {}).get("bundles")
+    if not held and bundles != stack:
         raise Refused(f"{name}: dsh.profile.bundles are out of the lock's order; kept for review")
     return states
 
@@ -757,11 +771,15 @@ def install_dsh_full(
         target = dsh_home / "skills" / source.name
         if target.exists() and _tree(target) != _tree(source):
             raise Refused(f"{target}: differs from the pinned skill; no change made")
-    if not dsh_home.exists():
+    new = not dsh_home.exists()
+    gate = not new and not repoint
+    if new:
+        head = _git(repository, "rev-parse", "HEAD")
+        print(f"{dsh_home}: new home, links into {repository} at HEAD {head}")
         _publish(dsh_home / FULL_MARKER, f"{SPEC['runtimes']['dsh']['full']['lock']}\n", 0o644)
     states = [copy_skill(path, dsh_home / "skills") for path in skills.values()]
     for row in locks:
-        states.extend(install_lock_profile(dsh_home, dsh, repository, row, repoint))
+        states.extend(install_lock_profile(dsh_home, dsh, repository, row, repoint, gate))
     return states
 
 
