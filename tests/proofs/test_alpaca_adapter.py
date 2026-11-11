@@ -2,10 +2,13 @@
 
 upstream checked: nautilus_trader@d53849b216e20f2c122ca01b4dd0da377638b186:
 examples/live/_template/{constants,providers,factories,data,execution}.py,
-docs/developer_guide/python_adapters.md, docs/concepts/instruments/equity.md;
+docs/developer_guide/python_adapters.md, docs/concepts/instruments/equity.md,
+crates/model/src/instruments/tick_scheme.rs:150-217 (tiered scheme precedent);
 alpaca-py@cc4cb3b7ba50ae250e621983c2779047fb16bb28:
 alpaca/trading/{client,models,requests}.py, alpaca/data/enums.py.
-The sub-dollar fallback tick follows src/sextant/paper/c_live_main.py:273-295.
+The sub-penny tiers follow Alpaca "Orders at Alpaca" (sub-penny increments),
+https://docs.alpaca.markets/us/docs/orders-at-alpaca, page updated 2026-10-13,
+read 2026-11-10: at or above $1.00 two decimals, below $1.00 four.
 
 No network: every Alpaca trading client is faked, environment values are dummies,
 and no proof reads or records a real credential.
