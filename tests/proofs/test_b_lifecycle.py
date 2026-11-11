@@ -263,3 +263,16 @@ def test_the_strategy_has_no_forbidden_order_path() -> None:
         if isinstance(node, ast.Attribute)
     }
     assert names.isdisjoint(FORBIDDEN)  # S1-2 adds ENTRY_PATH: the entry's own commands
+
+
+def test_an_unknown_config_key_is_refused_and_an_engine_field_passes() -> None:
+    import pytest
+
+    entry = consumer(publisher(), heartbeat=2, generation=1, inputs=2)
+    own: dict[str, Any] = dict(
+        namespace="BTEST", instrument_ids=(PENNY,), consumer=entry, rank_gate=GATE_ON
+    )
+    with pytest.raises(TypeError, match="rank_gates"):
+        BLifecycleConfig(**own, rank_gates=GATE_ON)  # a misspelled key, never swallowed
+    config = BLifecycleConfig(**own, log_events=False)  # an engine field reaches the base
+    assert config.log_events is False and str(config.strategy_id) == "BLIFECYCLE-BTEST"

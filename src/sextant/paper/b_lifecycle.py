@@ -63,11 +63,23 @@ ENTRY_ROWS = FIRST_LEG | SIZING
 NS = 1_000_000_000
 
 
+# The engine fields a caller may pass through (trading stub StrategyConfig :1021-1041): the
+# event and command logging switches. strategy_id and order_id_tag come from the namespace, and
+# every other StrategyConfig field is refused, since B's house guard and its never-used exits
+# depend on them; any key that is neither B's own nor one of these is refused by name.
+ENGINE_FIELDS = frozenset({"log_events", "log_commands"})
+
+
 class BLifecycleConfig(StrategyConfig):
-    def __new__(cls, *, namespace: str, **_kwargs: Any):
-        # rc8's PyO3 configs initialize their native fields in __new__ (native.py's shape).
+    def __new__(cls, *, namespace: str, **kwargs: Any):
+        # rc8's PyO3 configs initialize their native fields in __new__ (native.py's shape); the
+        # constructor's own keywords arrive here too, so only the engine fields are forwarded.
+        engine = {key: kwargs[key] for key in ENGINE_FIELDS if key in kwargs}
         return cast(Any, super().__new__)(
-            cls, strategy_id=StrategyId.from_str(f"BLIFECYCLE-{namespace}"), order_id_tag=namespace
+            cls,
+            strategy_id=StrategyId.from_str(f"BLIFECYCLE-{namespace}"),
+            order_id_tag=namespace,
+            **engine,
         )
 
     def __init__(
@@ -83,7 +95,11 @@ class BLifecycleConfig(StrategyConfig):
         commission_rate: Decimal | None = None,
         basis_path: Path | None = None,
         baseline: BaselineTable | None = None,
+        **engine: object,
     ) -> None:
+        unknown = sorted(set(engine) - ENGINE_FIELDS)
+        if unknown:
+            raise TypeError(f"{type(self).__name__}() got unexpected keyword arguments {unknown}")
         super().__init__()
         ids = tuple(instrument_ids)
         if not ids or len(set(ids)) != len(ids):
