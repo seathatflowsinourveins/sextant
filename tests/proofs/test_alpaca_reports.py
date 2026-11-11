@@ -428,7 +428,7 @@ def test_order_and_position_values_use_loaded_precision():
 @pytest.mark.parametrize("status", ["stopped", "suspended"])
 def test_nonterminal_restriction_retains_order_and_warns(status, monkeypatch):
     logger = Mock(spec=Logger)
-    monkeypatch.setattr(parsing, "_LOG", logger)
+    monkeypatch.setattr(parsing, "_log", lambda: logger)
     report = order_status_report(
         snapshot(status=status), account_id=ACCOUNT, instrument=EQUITY, ts_init=INITIALIZED_NS
     )
@@ -562,7 +562,7 @@ def position(**fields: object) -> Position:
 
 def test_non_equity_position_logs_once(monkeypatch):
     logger = Mock(spec=Logger)
-    monkeypatch.setattr(parsing, "_LOG", logger)
+    monkeypatch.setattr(parsing, "_log", lambda: logger)
     assert (
         position_status_report(
             position(asset_class="crypto"),

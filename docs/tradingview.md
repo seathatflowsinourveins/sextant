@@ -410,9 +410,17 @@ measurement; it is the producer's share of a key that Paper B's reads and the
 nightly calibration job also use. A row without a value, a REVIEWED scope or a
 source still refuses (AGENTS.md Rule 2).
 
-The directory texts are the public NASDAQ Trader files read on the lane's
-published date; the symbol map is the operator's exact TradingView map and must
-cover the whole filtered universe (no shipped source). The three display bounds
+The directory texts are the public NASDAQ Trader files. The
+`sextant-tradingview-listings` timer stages them in the producer's state root each
+weekday at 03:00 New York time, and keeps the previous good files when a download is
+refused (`deploy/listings/README.md`). The producer reads them once at start and does
+not refuse an old file, because no maximum age has a source. Each tick receipt's
+`universe_source` carries both files' File Creation Time, so the age is visible. An
+`otherlisted.txt` row whose Exchange code NASDAQ Trader does not define (A, N, P, Z and V
+only) is skipped and never guessed. The symbol map is the exact TradingView map. A
+directory name with no mapping, or with `null`, is left out of the display universe
+and counted in `universe_source` ("N of M directory symbols mapped, K unmapped
+omitted"); a map that resolves no name refuses. The three display bounds
 are metadata the bridge validates and never applies, read from
 `lanes/tradingview/display-bounds.params.json` (`--display-bounds`, sourced
 UNCALIBRATED rows); all three of `--gap-bound`, `--rvol-bound` and
