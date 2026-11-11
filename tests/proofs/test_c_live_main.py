@@ -184,7 +184,9 @@ class FakeTradingClient:
         trail_ack_status: str | None = None,
         validate_order_ids: bool = False,
     ) -> None:
-        self.account = SimpleNamespace(account_number=account_number)
+        self.account = SimpleNamespace(
+            account_number=account_number, equity="10000", buying_power="10000"
+        )
         self.positions = list(positions)
         self.orders = list(orders)
         self.assets = list(assets)
@@ -205,9 +207,12 @@ class FakeTradingClient:
         self.overrides: dict[str, str] = {}
         self.cancelled: list[str] = []
         self.replaced: list[tuple[str, Any]] = []
+        self.fail_account_reads = False
 
     def get_account(self) -> Any:
         self.calls.append("get_account")
+        if self.fail_account_reads:
+            raise RuntimeError("the account read is unavailable")
         return self.account
 
     def get_all_positions(self) -> Any:
@@ -404,19 +409,26 @@ def quote(
     )
 
 
-def replay(feed: FakeFeed, *, base: int = START, iid: InstrumentId = IID) -> None:
+def replay(
+    feed: FakeFeed,
+    *,
+    base: int = START,
+    iid: InstrumentId = IID,
+    size: int = 100,
+    entry_hook: Any = None,
+) -> None:
     """The C session's warm-up, flag, first leg and ask quote, with the live clock."""
 
-    for seconds, price, size in (
-        (0, "1.0000", 100),
-        (25, "1.0100", 100),
-        (26, "1.0100", 100),
-        (30, "1.0000", 100),
+    for seconds, price, warm_size in (
+        (0, "1.0000", size),
+        (25, "1.0100", size),
+        (26, "1.0100", size),
+        (30, "1.0000", size),
         (31, "1.0300", 500),
         (32, "1.0400", 500),
     ):
         feed.clock.value = base + seconds * SEC
-        feed.on_trade(trade(seconds, price, size, base=base, iid=iid))
+        feed.on_trade(trade(seconds, price, warm_size, base=base, iid=iid))
     feed.clock.value = base + 32 * SEC
     feed.on_quote(quote(32, "1.0400", "1.0600", base=base, iid=iid))
     feed.clock.value = base + 33 * SEC
@@ -425,6 +437,8 @@ def replay(feed: FakeFeed, *, base: int = START, iid: InstrumentId = IID) -> Non
         feed.clock.value = base + seconds * SEC
         feed.on_trade(trade(seconds, "1.0200", 100, base=base, iid=iid))
     feed.clock.value = base + 38 * SEC
+    if entry_hook is not None:
+        entry_hook()
     feed.on_quote(quote(38, "1.0200", "1.0300", base=base, iid=iid))
 
 
@@ -843,13 +857,13 @@ def test_the_entry_is_a_limit_buy_and_the_fill_rests_a_gtc_trailing_sell(
     assert buy.time_in_force is TimeInForce.DAY
     assert buy.extended_hours is False
     assert D(str(buy.limit_price)) == D("1.03")
-    assert D(str(buy.qty)) == D("1")
+    assert D(str(buy.qty)) == D("120")  # flow-bound: 0.05 x 2472 / 1.03
 
     assert isinstance(trail, TrailingStopOrderRequest)
     assert trail.side is OrderSide.SELL
     assert trail.time_in_force is TimeInForce.GTC
     assert trail.symbol == "OMH"
-    assert D(str(trail.qty)) == D("1")
+    assert D(str(trail.qty)) == D("120")
     assert D(str(trail.trail_percent)) == D("2.5")
 
     written = receipt(live_env)
@@ -860,7 +874,7 @@ def test_the_entry_is_a_limit_buy_and_the_fill_rests_a_gtc_trailing_sell(
     assert [row["kind"] for row in written["commands"]] == ["LIMIT", "TRAILING_STOP"]
     assert [row["side"] for row in written["commands"]] == ["BUY", "SELL"]
     assert written["commands"][0]["status"] == "FILLED"
-    assert written["commands"][0]["fill"] == "1"
+    assert written["commands"][0]["fill"] == "120"
     assert written["commands"][1]["trail"] == "2.5"
     assert written["commands"][1]["status"] == "FILLED"
     assert written["protection_cid"] == trail.client_order_id
@@ -874,6 +888,188 @@ def test_the_entry_is_a_limit_buy_and_the_fill_rests_a_gtc_trailing_sell(
     assert API_KEY not in captured.out + captured.err
     assert SECRET not in captured.out + captured.err
     assert ACCOUNT not in captured.out + captured.err
+
+
+def test_a_fresh_balance_read_caps_the_entry_in_the_live_runner(live_env: Path) -> None:
+    client = FakeTradingClient()
+
+    def cap_before_entry() -> None:
+        client.account.buying_power = "100"
+
+    def capped(feed: FakeFeed) -> None:
+        replay(feed, entry_hook=cap_before_entry)
+
+    assert invoke(live_env, client, Clock(), Monotonic(), replays=[capped]) == 0
+
+    buy = client.submitted[0]
+    assert isinstance(buy, LimitOrderRequest)
+    assert buy.side is OrderSide.BUY
+    # Basis 10000 (risk 333); the fresh 100 buying power caps at 97 shares.
+    assert D(str(buy.qty)) == D("97")
+    assert client.calls.count("get_account") == 3
+
+
+def test_each_segment_freezes_its_basis_from_that_segments_balance(live_env: Path) -> None:
+    client = FakeTradingClient()
+
+    def close_overnight(feed: FakeFeed) -> None:
+        feed.clock.value = PRE_OPEN_CLOCK
+        client.account.equity = "5000"
+        client.account.buying_power = "5000"
+
+    def pre_surge(feed: FakeFeed) -> None:
+        replay(feed, base=PRE_OPEN_CLOCK, size=100_000)
+
+    baseline_dir = write_baseline_dir(live_env, segments=("OVERNIGHT", "PRE"))
+    code = invoke(
+        live_env,
+        client,
+        Clock(OVERNIGHT_CLOCK),
+        Monotonic(),
+        baseline_dir=baseline_dir,
+        replays=[close_overnight, pre_surge],
+    )
+
+    assert code == 0
+    buys = [
+        order
+        for order in client.submitted
+        if isinstance(order, LimitOrderRequest) and order.side is OrderSide.BUY
+    ]
+    assert len(buys) == 1
+    # PRE basis 5000: planned 10 over the 0.06 stop = 166 shares, not 333.
+    assert D(str(buys[0].qty)) == D("166")
+    assert client.calls.count("get_account") == 4
+
+
+def test_a_failed_balance_read_refuses_the_entry_and_keeps_the_startup_number_out(
+    live_env: Path,
+) -> None:
+    client = FakeTradingClient()
+
+    def fail_before_entry() -> None:
+        client.fail_account_reads = True
+
+    def failing(feed: FakeFeed) -> None:
+        replay(feed, entry_hook=fail_before_entry)
+
+    assert invoke(live_env, client, Clock(), Monotonic(), replays=[failing]) == 0
+
+    assert client.submitted == []
+    assert client.calls.count("get_account") == 3
+    assert receipt(live_env)["commands"] == []
+
+
+def test_one_entry_wave_never_spends_the_same_buying_power_twice(live_env: Path) -> None:
+    """The sender commits buying power, so the next intent must read it again."""
+
+    class CommittingClient(FakeTradingClient):
+        def submit_order(self, order_data: Any) -> Any:
+            if isinstance(order_data, LimitOrderRequest) and order_data.side is OrderSide.BUY:
+                committed = D(str(order_data.qty)) * D(str(order_data.limit_price))
+                self.account.buying_power = str(D(self.account.buying_power) - committed)
+            return super().submit_order(order_data)
+
+    symbols = ("OMH", "DDD")
+    identifiers = tuple(InstrumentId.from_str(f"{symbol}.ALPACA") for symbol in symbols)
+    client = CommittingClient(
+        assets=tuple(asset(symbol) for symbol in symbols), trail_ack_status="new"
+    )
+    data = FakeDataClient({symbol: daily_bars("1.10", "500") for symbol in symbols})
+
+    def wave(feed: FakeFeed) -> None:
+        for seconds, price, size in (
+            (0, "1.0000", 100),
+            (25, "1.0100", 100),
+            (26, "1.0100", 100),
+            (30, "1.0000", 100),
+            (31, "1.0300", 500),
+            (32, "1.0400", 500),
+        ):
+            feed.clock.value = START + seconds * SEC
+            for iid in identifiers:
+                feed.on_trade(trade(seconds, price, size, iid=iid))
+        feed.clock.value = START + 32 * SEC
+        for iid in identifiers:
+            feed.on_quote(quote(32, "1.0400", "1.0600", iid=iid))
+        feed.clock.value = START + 33 * SEC
+        for iid in identifiers:
+            feed.on_trade(trade(33, "1.0500", 500, iid=iid))
+        for seconds in range(34, 38):
+            feed.clock.value = START + seconds * SEC
+            for iid in identifiers:
+                feed.on_trade(trade(seconds, "1.0200", 100, iid=iid))
+        for iid in identifiers:
+            feed.on_quote(quote(37, "1.0200", "1.0300", iid=iid))
+        feed.clock.value = START + 38 * SEC
+        for iid in identifiers:
+            feed.on_trade(trade(38, "1.0200", 100, iid=iid))
+        client.account.buying_power = "100"
+        feed.on_quote(quote(38, "1.0200", "1.0300", iid=identifiers[0]))
+
+    code = invoke(
+        live_env,
+        client,
+        Clock(),
+        Monotonic(),
+        universe=True,
+        data=data,
+        baseline_dir=write_baseline_dir(live_env, segments=("RTH",), symbols=symbols),
+        replays=[wave],
+    )
+
+    buys = [
+        order
+        for order in client.submitted
+        if isinstance(order, LimitOrderRequest) and order.side is OrderSide.BUY
+    ]
+    notional = sum(D(str(order.qty)) * D(str(order.limit_price)) for order in buys)
+    assert code == 0
+    # The first 97-share BUY commits 99.91; the second intent sees 0.09 left and
+    # refuses instead of sizing against the stale 100.
+    assert len(buys) == 1
+    assert notional <= D("100")
+    assert client.calls.count("get_account") == 4
+
+
+@pytest.mark.parametrize("terminal_status", ["canceled", "expired", "rejected"])
+def test_a_sized_entry_partial_fill_is_reconciled_and_protected(
+    live_env: Path, terminal_status: str
+) -> None:
+    """A terminal entry must protect the shares it filled (fix3 item 2)."""
+
+    class PartialThenTerminalClient(FakeTradingClient):
+        actual_filled = D(0)
+
+        def submit_order(self, order_data: Any) -> Any:
+            ack = super().submit_order(order_data)
+            if isinstance(order_data, LimitOrderRequest) and order_data.side is OrderSide.BUY:
+                requested = D(str(order_data.qty))
+                self.actual_filled = min(D("25"), requested)
+                ack.filled_qty = self.actual_filled
+                if requested > self.actual_filled:
+                    ack.status = "partially_filled"
+            return ack
+
+        def get_order_by_client_id(self, client_id: str) -> Any:
+            order = super().get_order_by_client_id(client_id)
+            request, _ = self.orders_by_cid[client_id]
+            if isinstance(request, LimitOrderRequest) and request.side is OrderSide.BUY:
+                order.status = terminal_status
+                order.filled_qty = self.actual_filled
+            return order
+
+    client = PartialThenTerminalClient(trail_ack_status="new")
+    assert invoke(live_env, client, Clock(), Monotonic()) == 1
+
+    protected = sum(
+        D(str(request.qty)) for request in client.submitted if request.side is OrderSide.SELL
+    )
+    assert client.actual_filled == D("25")
+    assert protected >= client.actual_filled
+    written = receipt(live_env)
+    entry = next(row for row in written["commands"] if row["side"] == "BUY")
+    assert entry["fill"] == "25"
 
 
 def test_an_unknown_order_state_stops_without_a_resubmit(live_env: Path) -> None:
@@ -906,7 +1102,7 @@ def test_c_polls_an_unfilled_entry_by_its_client_order_id(live_env: Path) -> Non
     entry = written["commands"][0]
     assert entry["kind"] == "LIMIT"
     assert entry["status"] == "FILLED"
-    assert entry["fill"] == "1"
+    assert entry["fill"] == "120"
     assert client.client_polls == [entry["cid"]]
     assert "get_order_by_id" not in client.calls
 

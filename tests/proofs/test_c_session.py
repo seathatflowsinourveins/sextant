@@ -75,8 +75,8 @@ def registry_rows() -> list[dict]:
     return json.loads((ROOT / "lanes/sim/entry-parameters.json").read_text())
 
 
-def reviewed_params() -> EntryParameters:
-    return EntryParameters.from_rows(registry_rows(), first_leg_only=True)
+def sizing_params() -> EntryParameters:
+    return EntryParameters.from_rows(registry_rows(), sizing_only=True)
 
 
 FIXTURE_VALUES: dict[str, object] = {
@@ -139,11 +139,47 @@ class Clock:
 
 
 @dataclass
+class BrokerAccount:
+    """The runner's one account read, injected instead of a broker client."""
+
+    equity: D = D("10000")
+    buying_power: D = D("10000")
+    reads: int = 0
+    failure: str | None = None
+
+    def read(self) -> tuple[D, D]:
+        self.reads += 1
+        if self.failure is not None:
+            raise RuntimeError(self.failure)
+        return self.equity, self.buying_power
+
+
+@dataclass
 class Harness:
     session: CSession
     clock: Clock
     submitted: list[OrderCommand] = field(default_factory=list)
     config: CConfig | None = None
+    broker: BrokerAccount = field(default_factory=BrokerAccount)
+
+    def decide(self) -> None:
+        intents = self.session.take_ready(self.clock())
+        if not intents:
+            return
+        # A wave re-reads before every intent: an earlier order has committed
+        # buying power by the time the next intent sizes.
+        for index, intent in enumerate(intents):
+            try:
+                equity, buying_power = self.broker.read()
+            except RuntimeError:
+                for remaining in intents[index:]:
+                    self.session.refuse(remaining)
+                return
+            self.session.enter(intent, equity=equity, buying_power=buying_power)
+
+    def quote(self, tick: QuoteTick) -> None:
+        self.session.on_quote(tick)
+        self.decide()
 
 
 def make_harness(
@@ -152,6 +188,9 @@ def make_harness(
     slot_count: int = 2,
     params: EntryParameters | None = None,
     chase: str = "0.03",
+    basis: str = "10000",
+    broker_equity: str = "10000",
+    broker_buying_power: str = "10000",
 ) -> Harness:
     subscribed = iids or (AAA,)
     instruments: dict[str, Equity] = {str(iid): equity(iid) for iid in subscribed}
@@ -159,9 +198,10 @@ def make_harness(
         symbols=tuple(str(iid) for iid in subscribed),
         chase_cap_fraction=D(chase),
         trail_fraction=D("0.025"),
+        basis=D(basis),
         slot_count=slot_count,
         segment=segment(segment_name),
-        params=params if params is not None else reviewed_params(),
+        params=params if params is not None else sizing_params(),
     )
     submitted: list[OrderCommand] = []
     clock = Clock()
@@ -172,7 +212,13 @@ def make_harness(
         submitted.append,
         instruments=instruments,
     )
-    return Harness(session=session, clock=clock, submitted=submitted, config=config)
+    return Harness(
+        session=session,
+        clock=clock,
+        submitted=submitted,
+        config=config,
+        broker=BrokerAccount(equity=D(broker_equity), buying_power=D(broker_buying_power)),
+    )
 
 
 def trade(seconds: int | str, price: str, *, iid: InstrumentId = AAA, size: int = 100) -> TradeTick:
@@ -222,7 +268,7 @@ def warm_to_quote(h: Harness, iids: tuple[InstrumentId, ...] = (AAA,)) -> None:
             h.session.on_trade(trade(seconds, price, iid=iid, size=size))
     h.clock.at(32)
     for iid in iids:
-        h.session.on_quote(quote(32, "1.0400", "1.0600", iid=iid))
+        h.quote(quote(32, "1.0400", "1.0600", iid=iid))
 
 
 def flag(h: Harness, iids: tuple[InstrumentId, ...] = (AAA,)) -> None:
@@ -260,7 +306,7 @@ def ask_quote(
 ) -> None:
     h.clock.at(seconds)
     for iid in iids:
-        h.session.on_quote(quote(seconds, bid, ask, iid=iid))
+        h.quote(quote(seconds, bid, ask, iid=iid))
 
 
 def entered(h: Harness, iids: tuple[InstrumentId, ...] = (AAA,)) -> None:
@@ -293,7 +339,7 @@ def test_no_order_before_a_qualifying_surge_and_the_flag_arms_the_entry() -> Non
     assert after[symbol]["pending_cid"] is None
 
 
-def test_the_first_leg_sends_one_limit_buy_at_the_ask_on_the_increment() -> None:
+def test_the_first_leg_sends_one_sized_limit_buy_at_the_ask() -> None:
     h = make_harness(AAA)
     entered(h)
 
@@ -301,7 +347,8 @@ def test_the_first_leg_sends_one_limit_buy_at_the_ask_on_the_increment() -> None
     command = h.submitted[0]
     assert command.side == "BUY"
     assert command.instrument == str(AAA)
-    assert command.quantity == D("1")
+    # basis 10000: risk 333; flow 0.05 x 2472 / 1.03 = 120 binds.
+    assert command.quantity == D("120")
     assert command.order_type == "LIMIT"
     assert command.time_in_force == "DAY"
     assert command.limit_price == limit_price(D("1.0300"), D("0.01"))
@@ -310,6 +357,45 @@ def test_the_first_leg_sends_one_limit_buy_at_the_ask_on_the_increment() -> None
     assert command.limit_price % D("0.01") == 0
     assert command.client_order_id
     assert h.session.snapshot()[str(AAA)]["pending_cid"] == command.client_order_id
+
+
+def test_a_sizing_refusal_sends_no_entry_order() -> None:
+    h = make_harness(AAA, broker_buying_power="1")
+    entered(h)
+
+    assert h.submitted == []
+    assert h.session.snapshot()[str(AAA)]["pending_cid"] is None
+
+
+def test_a_fresh_balance_read_caps_the_entry_after_the_basis_is_frozen() -> None:
+    h = make_harness(AAA)
+    warm(h)
+    first_leg_run(h)
+
+    h.broker.buying_power = D("100")
+    ask_quote(h, 38)
+
+    assert len(h.submitted) == 1
+    # Basis stays 10000 (risk 333); the fresh 100 buying power caps at 97 shares.
+    assert h.submitted[0].quantity == D("97")
+    assert h.broker.reads == 1
+
+
+def test_a_failed_balance_read_refuses_the_entry_and_does_not_retry_the_flag() -> None:
+    h = make_harness(AAA)
+    warm(h)
+    first_leg_run(h)
+
+    h.broker.failure = "account read failed"
+    ask_quote(h, 38)
+
+    assert h.submitted == []
+    assert h.broker.reads == 1
+
+    ask_quote(h, 39)
+
+    assert h.submitted == []
+    assert h.broker.reads == 1
 
 
 def test_the_same_flag_never_submits_twice() -> None:
@@ -355,23 +441,23 @@ def test_an_rth_fill_emits_one_native_trailing_sell() -> None:
     entered(h)
     cid = h.submitted[0].client_order_id
 
-    h.session.on_fill(OrderFact(cid, str(AAA), "BUY", D("1"), D("1"), "FILLED", "venue-1"))
+    h.session.on_fill(OrderFact(cid, str(AAA), "BUY", D("120"), D("120"), "FILLED", "venue-1"))
 
     assert len(h.submitted) == 2
     trail = h.submitted[1]
     assert trail.client_order_id == f"{cid}-trail"
     assert trail.instrument == str(AAA)
     assert trail.side == "SELL"
-    assert trail.quantity == D("1")
+    assert trail.quantity == D("120")
     assert trail.order_type == "TRAILING_STOP"
     assert trail.time_in_force == "GTC"
     assert trail.limit_price is None
     assert trail.trail_price == D("2.5")
     snapshot = h.session.snapshot()[str(AAA)]
-    assert snapshot["filled_qty"] == D("1")
+    assert snapshot["filled_qty"] == D("120")
     assert snapshot["protection"] == trail.client_order_id
 
-    h.session.on_fill(OrderFact(cid, str(AAA), "BUY", D("1"), D("1"), "FILLED", "venue-1"))
+    h.session.on_fill(OrderFact(cid, str(AAA), "BUY", D("120"), D("120"), "FILLED", "venue-1"))
     assert len(h.submitted) == 2
 
 
@@ -380,11 +466,11 @@ def test_an_outside_rth_fill_records_pending_protection_and_emits_nothing() -> N
     entered(h)
     cid = h.submitted[0].client_order_id
 
-    h.session.on_fill(OrderFact(cid, str(AAA), "BUY", D("1"), D("1"), "FILLED", "venue-2"))
+    h.session.on_fill(OrderFact(cid, str(AAA), "BUY", D("120"), D("120"), "FILLED", "venue-2"))
 
     assert len(h.submitted) == 1
     snapshot = h.session.snapshot()[str(AAA)]
-    assert snapshot["filled_qty"] == D("1")
+    assert snapshot["filled_qty"] == D("120")
     assert snapshot["protection"] == "outside RTH"
 
 
