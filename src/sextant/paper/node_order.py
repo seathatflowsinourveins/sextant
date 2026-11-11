@@ -1,4 +1,8 @@
-"""Paper B's order-mode node entry (N3, #470 rows 10-11): DEFAULT-REFUSING until its parts land.
+"""Paper B's order-mode node entry (N3, #470 rows 10-11): protection only, refusing by default.
+
+With the rank gate row off (``ranking/registry.py:50-61``) the command runs B's Strategy with no
+ranking consumer, so no rank is read and the Strategy refuses every house entry; it protects.
+Every other start condition below still refuses by default.
 
 One command builds the paper account's live node in the official engine's shape: the Alpaca data
 client, the Alpaca execution client and B's lifecycle Strategy through
@@ -21,7 +25,10 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import hmac
 import json
+import os
+import sys
 import threading
 from collections.abc import Callable, Mapping
 from contextlib import ExitStack
@@ -48,10 +55,15 @@ from sextant.alpaca.execution import execution_engine_config
 from sextant.alpaca.factories import AlpacaDataClientFactory, AlpacaExecutionClientFactory
 from sextant.entry.parameters import EntryParameters
 from sextant.execution.custody import AccountScope, CustodyError, WriterLease
+from sextant.execution.pacer import ActionKind
 from sextant.execution.state import write_atomic
 from sextant.paper.b_lifecycle import BLifecycle, BLifecycleConfig
 from sextant.paper.b_protector import load_b_parameters
-from sextant.paper.b_protector_main import load_account_config
+from sextant.paper.b_protector_main import (
+    EXPECTED_FULL_ENV,
+    EXPECTED_SUFFIX_ENV,
+    load_account_config,
+)
 from sextant.paper.config import PaperAccount
 from sextant.ranking.consumer import RankingConsumer
 from sextant.ranking.registry import RANK_GATE_ENABLED
@@ -85,6 +97,7 @@ class OrderModeRefused(ValueError):
 @dataclass(frozen=True)
 class Rows:
     native: Decimal
+    poll_ns: int  # reconcile_interval_s
     width: dict[str, Decimal] | None
     inflight_ms: int
     commission: list[dict[str, Any]]
@@ -97,7 +110,7 @@ class Rows:
 class OrderArguments:
     account: PaperAccount
     rows: Rows
-    listings_dir: Path
+    universe_artifact: Path
     duration_s: int
     receipt_dir: Path
     api_key_env: str
@@ -158,24 +171,19 @@ def load_rows(raw: argparse.Namespace) -> Rows:
     )
     steps["reentry"] = f"off: no re-entry part on main; unavailable {_unavailable(reentry_rows)}"
     commission = [row for row in node.values() if row["name"].startswith("paper_us_equity_")]
-    return Rows(b.native_trail_fraction, width, inflight, commission, pacing, entry, steps)
+    poll = int(b.reconcile_interval_s * 1_000_000_000)
+    return Rows(b.native_trail_fraction, poll, width, inflight, commission, pacing, entry, steps)
 
 
-def read_directory(directory: Path) -> tuple[tuple[InstrumentId, ...], str]:
-    """Every listed common stock, only as the listings job's receipt and validator accept."""
-    from sextant.data.ranking_inputs import _listing_texts
-    from sextant.tradingview.bars import build_universe
-    from sextant.tradingview.listings import creation_time
+def read_universe(path: Path) -> tuple[tuple[InstrumentId, ...], str]:
+    """The ranked universe file, the K2 artifact the ranking mode reads, and nothing else."""
+    from sextant.data.baseline_recipe import load_universe
 
     try:
-        texts, staged_at = _listing_texts(Path(directory))
-        names = build_universe(*texts.values())
+        names, digest = load_universe(Path(path))
     except (OSError, ValueError) as error:
         raise OrderModeRefused("claim_list", f"{type(error).__name__}: {error}") from error
-    if not names:
-        raise OrderModeRefused("claim_list", "the listing directory has no common stock")
-    created = " / ".join(creation_time(text) for text in texts.values())
-    source = f"NASDAQ Trader directory, File Creation Time {created}, staged {staged_at}"
+    source = f"K2 universe artifact sha256 {digest['sha256']}"
     return tuple(InstrumentId(Symbol(name), VENUE) for name in names), source
 
 
@@ -184,7 +192,7 @@ def parse(argv: list[str] | None = None) -> OrderArguments:
     required = parser.add_argument_group("required")
     for flag, kind in (
         ("--account-config", Path),
-        ("--listings-dir", Path),
+        ("--universe-artifact", Path),
         ("--b-parameters", Path),
         ("--entry-parameters", Path),
         ("--exit-parameters", Path),
@@ -216,7 +224,7 @@ def parse(argv: list[str] | None = None) -> OrderArguments:
     return OrderArguments(
         account,
         rows,
-        raw.listings_dir,
+        raw.universe_artifact,
         raw.duration_s,
         raw.receipt_dir,
         raw.api_key_env,
@@ -276,6 +284,9 @@ class Gate:
     """The cutover rule (LEAD-0310 9): FLAT and no resting house order, or nothing is sent."""
 
     old_prefix: str
+    claims: set[str] = field(default_factory=set)
+    poll_ns: int = 0
+    paged: set[str] = field(default_factory=set)
     clients: list[Any] = field(default_factory=list)
     checked: bool = False
     open: bool = False
@@ -307,6 +318,18 @@ class Gate:
         return [name for name, count in zip(names, values, strict=True) if count]
 
 
+def account_matches(number: object) -> bool:
+    """The old writer's rule (b_protector_main.py:300-313): the full id wins over the suffix.
+    Compared as digests, so neither value is printed, logged or kept."""
+    full = os.environ.get(EXPECTED_FULL_ENV) or ""
+    suffix = os.environ.get(EXPECTED_SUFFIX_ENV) or ""
+    if not isinstance(number, str) or not (full or suffix):
+        return False
+    seen, want = (number, full) if full else (number[-len(suffix) :], suffix)
+    digest = [hashlib.sha256(text.encode()).digest() for text in (seen, want)]
+    return hmac.compare_digest(*digest)
+
+
 class GatedBLifecycle(BLifecycle):
     """B's Strategy, built from its own config, behind the cutover gate: ``on_start`` checks
     the reconciled cache first, and every send is refused until the gate opens. A refused gate
@@ -318,10 +341,41 @@ class GatedBLifecycle(BLifecycle):
         gate = self.gate
         gate.reasons, gate.checked = gate.check(self.cache), True
         if gate.reasons:
-            self.shutdown_system("order mode refused: " + ", ".join(gate.reasons))
-            return
-        gate.open = True
-        super().on_start()
+            return self._stop_refused()
+        gate.clients[0].create_task(self._verify(), "b-node-account")
+
+    def _stop_refused(self) -> None:
+        self.shutdown_system("order mode refused: " + ", ".join(self.gate.reasons))
+
+    async def _verify(self) -> None:
+        """After connect: the account the client reached is the expected one, read through
+        the client's own paced gateway; only then does B start."""
+        client = self.gate.clients[0]
+        try:
+            row = await client.gateway.call(ActionKind.QUERY, "get", "/account")
+            number = row.get("account_number") if isinstance(row, dict) else None
+        except Exception:  # an unread account is never a match
+            number = None
+        if not account_matches(number):
+            self.gate.reasons = ["account_mismatch"]
+            return self._stop_refused()
+        self.gate.open = True
+        BLifecycle.on_start(self)
+        self.clock.set_timer_ns(
+            "b-node-outside-holdings",
+            self.gate.poll_ns,
+            callback=lambda _event: client.create_task(self._outside(), "b-node-outside"),
+        )
+
+    async def _outside(self) -> None:
+        """While RUNNING: a holding in a name outside the claim list cannot be protected
+        here, so each such name is paged once (the unit's journal) and counted."""
+        rows = await self.gate.clients[0].gateway.call(ActionKind.QUERY, "get", "/positions")
+        for row in rows if isinstance(rows, list) else ():
+            name = row.get("symbol") if isinstance(row, dict) else None
+            if isinstance(name, str) and name not in self.gate.claims | self.gate.paged:
+                self.gate.paged.add(name)
+                print(f"order node page holding_outside_claims_running {name}", file=sys.stderr)
 
     def _allowed(self) -> bool:
         if not self.gate.open:
@@ -353,7 +407,7 @@ class _Retaining(ExecutionClientFactory):
 def build(
     args: OrderArguments,
     *,
-    consumer: RankingConsumer,
+    consumer: RankingConsumer | None,
     data_factory: Any = AlpacaDataClientFactory,
     exec_factory: Any = AlpacaExecutionClientFactory,
     timing: Mapping[str, float] | None = None,
@@ -361,7 +415,8 @@ def build(
     config = node_config(args, **dict(timing or {}))
     exec_config = execution_config(args)
     refuse_non_paper([(CLIENT_NAME, exec_factory, exec_config)], config)
-    gate = Gate(args.account.house_prefix)
+    gate = Gate(args.account.house_prefix, {iid.symbol.value for iid in args.universe})
+    gate.poll_ns = args.rows.poll_ns
     data = AlpacaDataClientConfig(
         api_key_env=args.api_key_env,
         api_secret_env=args.api_secret_env,
@@ -439,12 +494,15 @@ def run(
     timing: Mapping[str, float] | None = None,
 ) -> tuple[Path, int]:
     """The remaining start conditions in order, then the node; (receipt, exit code)."""
-    if consumer is None:  # a registries-stage refusal, before any lease
-        detail = (
-            "BLifecycleConfig requires a RankingConsumer (b_lifecycle.py:109,130-131) and its "
-            "entry ages have no registry row (ranking/registry.py:42-46)"
-        )
+    # The Strategy takes no consumer only while the rank gate row is False (P2's
+    # BLifecycleConfig refuses any other pair); with it off, B protects and no rank is read.
+    # Only the bool False counts as off here, so a 0 or a missing value refuses.
+    if consumer is None and RANK_GATE_ENABLED.value is not False:  # before any lease
+        detail = "the rank gate row is on and no RankingConsumer exists (ranking/registry.py:50)"
         return write_receipt(args, "refused", reason="ranking_consumer", detail=detail), 2
+    if not (os.environ.get(EXPECTED_FULL_ENV) or os.environ.get(EXPECTED_SUFFIX_ENV)):
+        detail = f"set {EXPECTED_FULL_ENV} or {EXPECTED_SUFFIX_ENV} (b_protector_main.py:300-306)"
+        return write_receipt(args, "refused", reason="account_mismatch", detail=detail), 2
     with ExitStack() as held:
         try:
             leases(held, args)
@@ -455,7 +513,7 @@ def run(
             old = args.account.house_prefix
             if HOUSE_PREFIX.startswith(old) or old.startswith(HOUSE_PREFIX):
                 raise OrderModeRefused("house_prefix", "the old writer's prefix overlaps O-")
-            universe, source = read_directory(args.listings_dir)
+            universe, source = read_universe(args.universe_artifact)
             if len(universe) > QUEUE:
                 raise OrderModeRefused(
                     "claim_list",
@@ -472,6 +530,9 @@ def run(
             )
         except OrderModeRefused as refusal:
             return write_receipt(args, "refused", reason=refusal.reason, detail=refusal.detail), 2
+        if strategy.missing:  # the Strategy's own list (P2 BLifecycle.missing): no house entry
+            off = f"off: the Strategy refuses entries; missing {strategy.missing}"
+            args = replace(args, rows=replace(args.rows, steps=args.rows.steps | {"entry": off}))
         write_receipt(args, "starting")
         timer = threading.Timer(args.duration_s, node.handle().stop)
         timer.daemon = True
@@ -490,7 +551,12 @@ def run(
         reason = failure or (None if gate.open else ",".join(gate.reasons) or "startup_aborted")
         del node, strategy  # rc8 allows one LiveNode per thread until it is released
         receipt = write_receipt(
-            args, phase, reason=reason, gate=gate.counts, refused_sends=gate.refused_sends
+            args,
+            phase,
+            reason=reason,
+            gate=gate.counts,
+            refused_sends=gate.refused_sends,
+            outside_holdings_paged=len(gate.paged),
         )
         return receipt, 0 if phase == "stopped" else 2
 
