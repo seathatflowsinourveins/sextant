@@ -17,6 +17,11 @@ order is built in the completing trade's handler with ``order_factory.limit`` (c
 convention. Without B's entry rows the Strategy refuses entries and names the missing rows;
 no row has a default here (Rule 2). With the rank gate off there are no house entries. One
 entry per instrument: re-entry belongs to a later part. Money is Price, Quantity or Decimal.
+
+S1-3, first protection (LEAD-2201 A4, A8, B2-B5, F): from the first fill, venue-held
+``trailing_stop_market`` SELLs (GTC, reduce-only, no emulation, BASIS_POINTS) cover the
+unreserved whole long quantity, per ``reconcile``'s quantity rule; they rest across sessions and
+each session change writes one record. Every cancel or modify goes through the house guard.
 """
 
 from __future__ import annotations
@@ -24,7 +29,7 @@ from __future__ import annotations
 from collections import deque
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from decimal import Decimal
+from decimal import ROUND_FLOOR, Decimal
 from pathlib import Path
 from typing import Any, cast
 
@@ -36,12 +41,15 @@ from nautilus_trader.model import (
     Equity,
     InstrumentId,
     OrderSide,
+    OrderStatus,
+    OrderType,
     Price,
     Quantity,
     QuoteTick,
     StrategyId,
     TimeInForce,
     TradeTick,
+    TrailingOffsetType,
 )
 from nautilus_trader.trading import Strategy
 
@@ -51,7 +59,8 @@ from sextant.entry.signals import EntryState
 from sextant.entry.sizing import SegmentBasis, Sizing, size_entry
 from sextant.entry.surge import SurgeState, advance_surge
 from sextant.exits.policy import ExitParams, buffer
-from sextant.paper.sessions import Session, session_at
+from sextant.paper.b_width import trail_percent
+from sextant.paper.sessions import Session, session_at, session_start_ns
 from sextant.ranking.baseline import BaselineTable
 from sextant.ranking.consumer import RankingConsumer
 from sextant.ranking.publisher import ranking_data_type
@@ -95,6 +104,7 @@ class BLifecycleConfig(StrategyConfig):
         commission_rate: Decimal | None = None,
         basis_path: Path | None = None,
         baseline: BaselineTable | None = None,
+        native_trail_fraction: Decimal | None = None,
         **engine: object,
     ) -> None:
         unknown = sorted(set(engine) - ENGINE_FIELDS)
@@ -108,6 +118,8 @@ class BLifecycleConfig(StrategyConfig):
             raise ValueError("B instrument ids must be native InstrumentIds")
         if not isinstance(consumer, RankingConsumer):
             raise ValueError("B needs the reviewed RankingConsumer")
+        if not namespace.isalnum():  # the house guard reads it as one id segment
+            raise ValueError("B's namespace must be letters and digits")
         if not isinstance(rank_gate, RegistryRow) or rank_gate.name != "rank_gate_enabled":
             raise ValueError("B needs the rank_gate_enabled registry row")
         if baseline is not None and (
@@ -118,6 +130,7 @@ class BLifecycleConfig(StrategyConfig):
         self.consumer, self.rank_gate, self.journal = consumer, rank_gate, journal
         self.entry_params, self.exit_params = entry_params, exit_params
         self.commission_rate, self.basis_path, self.baseline = commission_rate, basis_path, baseline
+        self.native_trail_fraction = native_trail_fraction
 
 
 @dataclass(slots=True)
@@ -136,6 +149,9 @@ class _Book:
     first_limit: Decimal | None = None
     expiry_ns: int | None = None
     refused_flag: int | None = None
+    session: Session | None = None
+    stale_since: int | None = None
+    paged: str | None = None
 
 
 class BLifecycle(Strategy):
@@ -151,6 +167,7 @@ class BLifecycle(Strategy):
         self.commission, self.baseline = config.commission_rate, config.baseline
         self.basis_path = config.basis_path
         self.basis: Decimal | None = None  # N5: frozen at node start, or no entry
+        self.tag, self.native = config.namespace, config.native_trail_fraction
         rows = self.params
         missing = sorted(n for n in ENTRY_ROWS if rows is None or not rows.has(n))
         named = (
@@ -206,6 +223,13 @@ class BLifecycle(Strategy):
         if book.quote is not None and quote.ts_event < book.quote.ts_event:
             return
         book.quote = quote
+        self._session(book, now)
+        if book.stale_since is not None and quote.ts_event >= book.stale_since:
+            gap = quote.ts_event - book.stale_since  # the carried trigger's unquoted interval
+            self._record(
+                kind="session_quote", ts=now, instrument=str(book.instrument_id), gap_ns=gap
+            )
+            book.stale_since = None
         if book.entry_id is not None:
             self._reprice(book, now)
 
@@ -214,6 +238,7 @@ class BLifecycle(Strategy):
         if book is None:
             return
         now = self.clock.timestamp_ns()
+        self._session(book, now)
         allowed = self.candidate(book, now)
         if book.entry is None or self.baseline is None or self.exit is None:
             return
@@ -325,7 +350,7 @@ class BLifecycle(Strategy):
             return
         self._record(kind="modify", ts=now, limit=str(price))
         native = Price.from_decimal_dp(price, book.instrument.price_precision)
-        self.modify_order(order.client_order_id, price=native)
+        self._modify(order.client_order_id, price=native)
 
     def _expire(self, iid: InstrumentId) -> None:
         """TTL: cancel the remainder of this book's own entry, by its own id only."""
@@ -334,7 +359,137 @@ class BLifecycle(Strategy):
         if order is None or order.is_closed or order.is_pending_cancel:
             return
         self._record(kind="cancel", ts=self.clock.timestamp_ns(), order=str(order.client_order_id))
-        self.cancel_order(order.client_order_id)
+        self._cancel(order.client_order_id)
+
+    # -- S1-3: first protection, the quantity rule and the house guard -------------------
+
+    def on_order_filled(self, event: Any) -> None:
+        self._on_order(event)
+
+    def on_order_accepted(self, event: Any) -> None:
+        self._on_order(event)
+
+    def on_order_canceled(self, event: Any) -> None:
+        self._on_order(event)
+
+    def on_order_expired(self, event: Any) -> None:
+        self._on_order(event)
+
+    def on_order_denied(self, event: Any) -> None:
+        self._record(
+            kind="page", ts=event.ts_event, reason="denied", order=str(event.client_order_id)
+        )
+
+    def _on_order(self, event: Any) -> None:
+        book = self.books.get(event.instrument_id)
+        if book is not None:
+            self.reconcile(book)
+
+    def reconcile(self, book: _Book) -> None:
+        """Cover the unreserved whole long quantity with house trails (LEAD-2201 A4, B3).
+
+        Position and orders are the engine's cache under this strategy id, where claimed owner
+        fills and orders land. A triggered or partly filled house exit is never cancelled,
+        modified or resized here (B3 a): nothing is sent until it completes. An increase gets a
+        second trail for the added shares only (B3 b); a decrease that is not the trail's own
+        fill reduces the newest trail by quantity alone (B3 c), so its offset never moves.
+        """
+        iid, now = book.instrument_id, self.clock.timestamp_ns()
+        live = [o for o in self.cache.orders(instrument_id=iid, strategy_id=self.strategy_id)]
+        live = [o for o in live if not o.is_closed]
+        trails = sorted(
+            (o for o in live if self._house(o.client_order_id) and _is_trail(o)),
+            key=lambda o: o.ts_init,
+        )
+        if any(o.is_inflight or o.is_pending_update or o.is_pending_cancel for o in trails):
+            return  # one command at a time per trail: wait for its answer
+        if any(o.status is OrderStatus.TRIGGERED or o.filled_qty.as_decimal() > 0 for o in trails):
+            return self._page(book, now, "exit_triggered_left_to_complete")
+        ids = {o.client_order_id for o in trails}
+        sells = [o for o in live if o.side is OrderSide.SELL and o.client_order_id not in ids]
+        reserved = sum((o.leaves_qty.as_decimal() for o in sells), Decimal(0))  # owner's too
+        positions = self.cache.positions_open(instrument_id=iid, strategy_id=self.strategy_id)
+        held = sum((p.quantity.as_decimal() for p in positions if p.is_long), Decimal(0))
+        unreserved = max(Decimal(0), held - reserved).to_integral_value(rounding=ROUND_FLOOR)
+        covered = sum((o.leaves_qty.as_decimal() for o in trails), Decimal(0))
+        if held > 0 and unreserved == 0:
+            self._page(book, now, "owner_reserved_unprotected")
+        if unreserved > covered:
+            self._arm(book, now, unreserved - covered)
+        excess = covered - unreserved
+        for order in reversed(trails):  # the newest trail first
+            if excess <= 0:
+                break
+            leaves = order.leaves_qty.as_decimal()
+            if excess >= leaves:
+                self._cancel(order.client_order_id)
+            else:  # quantity only: trigger and offset stay as they are
+                self._modify(
+                    order.client_order_id, quantity=Quantity.from_int(int(leaves - excess))
+                )
+            excess -= leaves
+
+    def _arm(self, book: _Book, now: int, shares: Decimal) -> None:
+        if self.native is None:
+            return self._page(book, now, "native_trail_fraction_missing")
+        order = self.order_factory.trailing_stop_market(
+            book.instrument_id,
+            OrderSide.SELL,
+            Quantity.from_int(int(shares)),
+            trail_percent(self.native) * 100,  # basis points, rounded wider (b_width.py)
+            trailing_offset_type=TrailingOffsetType.BASIS_POINTS,
+            time_in_force=TimeInForce.GTC,
+            reduce_only=True,
+            tags=["protect"],
+        )
+        self._record(kind="protect", ts=now, order=str(order.client_order_id), quantity=str(shares))
+        self.submit_order(order)
+
+    def _session(self, book: _Book, now: int) -> None:
+        """Section F: one record at every session change; the same trail rests across it."""
+        session = session_at(now)
+        if book.session is not None and session is not book.session:
+            trails = [
+                o
+                for o in self.cache.orders(
+                    instrument_id=book.instrument_id, strategy_id=self.strategy_id
+                )
+                if not o.is_closed and self._house(o.client_order_id) and _is_trail(o)
+            ]
+            self._record(
+                kind="session",
+                ts=now,
+                boundary_ns=session_start_ns(now),
+                instrument=str(book.instrument_id),
+                carry=True,
+                trails=[str(o.client_order_id) for o in trails],
+                triggers=[
+                    None if o.trigger_price is None else str(o.trigger_price) for o in trails
+                ],
+                **{"from": book.session.value, "to": session.value},
+            )
+            book.stale_since = session_start_ns(now)  # the boundary itself
+        book.session = session
+
+    def _house(self, cid: ClientOrderId) -> bool:
+        """The house namespace: rc8's generator ``O-date-time-trader-{order_id_tag}-count``."""
+        parts = str(cid).split("-")
+        return len(parts) == 6 and parts[0] == "O" and parts[4] == self.tag
+
+    def _cancel(self, cid: ClientOrderId) -> None:
+        if not self._house(cid):  # LEAD-1818 D-c: never an owner order
+            return self._record(kind="guard_refused", order=str(cid))
+        self.cancel_order(cid)
+
+    def _modify(self, cid: ClientOrderId, **change: Any) -> None:
+        if not self._house(cid):
+            return self._record(kind="guard_refused", order=str(cid))
+        self.modify_order(cid, **change)
+
+    def _page(self, book: _Book, now: int, reason: str) -> None:
+        if book.paged != reason:  # one page per state, not one per event
+            self._record(kind="page", ts=now, instrument=str(book.instrument_id), reason=reason)
+        book.paged = reason
 
     def on_order_cancel_rejected(self, event: Any) -> None:
         self._record(kind="page", ts=event.ts_event, order=str(event.client_order_id))
@@ -395,6 +550,10 @@ class BLifecycle(Strategy):
             self._journal(row)
         except Exception:  # containment: evidence never changes a decision
             self.journal_errors += 1
+
+
+def _is_trail(order: Any) -> bool:
+    return order.order_type is OrderType.TRAILING_STOP_MARKET
 
 
 def quote_ask(quote: QuoteTick) -> Decimal:
