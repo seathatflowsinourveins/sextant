@@ -95,7 +95,11 @@ FILL_REST = [*QUOTES, quote(at("1"), "0.5050", "0.5100")]  # the entry remainder
 def test_the_first_fill_arms_one_venue_held_trail_and_added_fills_get_their_own(tmp_path):
     _, orders, strategy = run(tmp_path, quotes=FILL_REST)
     house = trails(orders)
-    assert house and sum(o.quantity.as_decimal() for o in house) == held(orders)
+    # ADAPTED (ADR-0007:17, cancel plus one resubmit): the remainder's fill re-arms one trail of the
+    # full holding. Original: one trail per fill, their quantities summing to the holding, and no
+    # cancel.
+    (working,) = [o for o in house if o.is_open]
+    assert working.quantity.as_decimal() == held(orders)
     for order in house:
         assert order.side is OrderSide.SELL and order.time_in_force is TimeInForce.GTC
         assert order.is_reduce_only and order.emulation_trigger is TriggerType.NO_TRIGGER
@@ -104,8 +108,11 @@ def test_the_first_fill_arms_one_venue_held_trail_and_added_fills_get_their_own(
     (entry,) = [o for o in orders if o.side is OrderSide.BUY]
     fills = [e for e in entry.events() if type(e).__name__ == "OrderFilled"]
     assert house[0].ts_init == fills[0].ts_event  # armed in the first fill's own handler
-    assert [o.quantity.as_decimal() for o in house] == [f.last_qty.as_decimal() for f in fills]
-    assert [kind for kind, _, _ in strategy.sent].count("cancel") == 0
+    assert [o.quantity.as_decimal() for o in house] == [
+        fills[0].last_qty.as_decimal(),
+        held(orders),
+    ]
+    assert [kind for kind, _, _ in strategy.sent].count("cancel") == 1
 
 
 def test_an_owner_reservation_reduces_coverage_and_a_full_one_pages(tmp_path):
@@ -127,11 +134,11 @@ def test_an_owner_add_is_covered_by_a_second_trail(tmp_path):
     quotes = [*QUOTES, quote(at("0.8"), "0.5050", "0.5100")]
     journal, orders, strategy = run(tmp_path, quotes=quotes, actions=add)
     protects = [row for row in journal if row["kind"] == "protect"]
-    assert [row["quantity"] for row in protects] == ["100", "11", "50"]  # B3(b): added shares
-    # rc8's simulated venue then resizes every resting reduce-only order to the whole position
-    # (matching_engine/mod.rs:6490-6551, which Alpaca does not do); B reduces the excess.
-    house = [o for o in trails(orders) if o.is_open]
-    assert sum(o.leaves_qty.as_decimal() for o in house) == held(orders) == 161
+    # ADAPTED (ADR-0007:17, cancel plus one resubmit). Original: a second trail for the added
+    # shares, ["100", "11", "50"].
+    assert [row["quantity"] for row in protects] == ["100", "111", "161"]
+    (house,) = [o for o in trails(orders) if o.is_open]
+    assert house.leaves_qty.as_decimal() == held(orders) == 161
     assert no_owner_target(strategy)
 
 
@@ -139,10 +146,11 @@ def test_an_owner_sale_reduces_the_trail_by_quantity_only(tmp_path):
     sale = [(at("0.7"), "OWNER-3", OrderSide.SELL, 40, "0.4000")]
     quotes = [*QUOTES, quote(at("0.8"), "0.5050", "0.5100")]
     _, orders, strategy = run(tmp_path, quotes=quotes, actions=sale)
-    modifies = [(cid, args) for kind, cid, args in strategy.sent if kind == "modify"]
-    assert modifies and all(price is None for _, price in modifies)  # quantity only
+    # ADAPTED (ADR-0007:17, cancel plus one resubmit). Original: the trail came down by a quantity-
+    # only modify.
+    assert [kind for kind, _, _ in strategy.sent].count("modify") == 0
     house = [o for o in trails(orders) if o.is_open]
-    assert sum(o.leaves_qty.as_decimal() for o in house) == held(orders)
+    assert len(house) == 1 and house[0].leaves_qty.as_decimal() == held(orders)
     for order in house:
         assert order.trailing_offset == D("250.00")  # the distance is unchanged
     assert no_owner_target(strategy)
@@ -158,7 +166,9 @@ def test_a_triggered_partly_filled_trail_is_left_to_complete(tmp_path):
     fills = [e for e in fired.events() if type(e).__name__ == "OrderFilled"]
     assert len(fills) >= 2 and fired.status is OrderStatus.FILLED  # its remainder completed
     assert all(cid != fired.client_order_id for kind, cid, _ in strategy.sent if kind != "submit")
-    assert [kind for kind, _, _ in strategy.sent].count("submit") == 3  # entry and two trails
+    # ADAPTED (ADR-0007:17, cancel plus one resubmit): each quantity change re-arms, so the submit
+    # count is not fixed. Original: `.count("submit") == 3` (the entry and two trails).
+    assert len([o for o in trails(orders) if o.is_open]) <= 1
     assert any(row.get("reason") == "exit_triggered_left_to_complete" for row in journal)
     assert all(o.ts_init < fills[0].ts_event for o in trails(orders))  # no lower re-cover
     assert no_owner_target(strategy)
@@ -169,11 +179,14 @@ def test_the_session_boundary_keeps_the_same_trail_and_writes_one_record(tmp_pat
     journal, orders, strategy = run(tmp_path, quotes=cross)
     records = [row for row in journal if row["kind"] == "session"]
     assert [(row["from"], row["to"]) for row in records] == [("pre", "rth")]
-    assert records[0]["trails"] == [str(o.client_order_id) for o in trails(orders)]
+    # ADAPTED (ADR-0007:17, cancel plus one resubmit): the remainder's fill re-armed before the
+    # boundary. Original: every trail, and no command but submits; now the open trail, and only that
+    # re-arm's cancel.
+    assert records[0]["trails"] == [str(o.client_order_id) for o in trails(orders) if o.is_open]
     assert records[0]["carry"] is True
     (fresh,) = [row for row in journal if row["kind"] == "session_quote"]
     assert fresh["gap_ns"] == NS and records[0]["boundary_ns"] == OPEN
-    assert [kind for kind, _, _ in strategy.sent if kind != "submit"] == []
+    assert [kind for kind, _, _ in strategy.sent if kind != "submit"] == ["cancel"]
 
 
 def test_every_cancel_and_modify_goes_through_the_house_guard() -> None:
