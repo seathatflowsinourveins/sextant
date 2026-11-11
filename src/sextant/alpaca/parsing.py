@@ -1,15 +1,12 @@
-"""Parse an Alpaca assets row into a Nautilus ``Equity`` on Alpaca's tick ladder.
+"""Parse an Alpaca asset row into a Nautilus ``Equity``.
 
-The Equity shape (zero size precision, multiplier and size increment one, USD
-quote currency) follows nautilus_trader@d53849b216e20f2c122ca01b4dd0da377638b186
-``docs/concepts/instruments/equity.md``. Prices use the engine's tiered tick
-scheme (``register_tick_scheme``; precedent
-``crates/model/src/instruments/tick_scheme.rs:150-217``): Alpaca accepts at most
-two decimals at or above $1.00 and four below, rejecting an excess increment with
-error 42210000 (https://docs.alpaca.markets/us/docs/orders-at-alpaca, page
-updated 2026-10-13, read 2026-11-10). Every equity gets ``price_precision`` 4,
-the 0.0001 unit increment and the ``ALPACA_US_EQUITY`` scheme, whose open tier
-ends at $10,000.99.
+Shape follows nautilus_trader@d53849b ``docs/concepts/instruments/equity.md``.
+Prices use the engine's tiered tick scheme (precedent
+``crates/model/src/instruments/tick_scheme.rs:150-217``): Alpaca allows two
+decimals at or above $1.00 and four below
+(https://docs.alpaca.markets/us/docs/orders-at-alpaca, updated 2026-10-13, read
+2026-11-10). Every equity gets precision 4, the 0.0001 increment and the
+``ALPACA_US_EQUITY`` scheme, whose open tier ends at $10,000.99.
 """
 
 from __future__ import annotations

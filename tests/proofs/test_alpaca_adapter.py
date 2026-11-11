@@ -1,16 +1,14 @@
-"""Proofs for the Alpaca adapter's instrument provider, configs and factories.
+"""Proofs for the Alpaca adapter's provider, configs and factories.
 
-upstream checked: nautilus_trader@d53849b216e20f2c122ca01b4dd0da377638b186:
-examples/live/_template/{constants,providers,factories,data,execution}.py,
-docs/developer_guide/python_adapters.md, docs/concepts/instruments/equity.md,
-crates/model/src/instruments/tick_scheme.rs:150-217;
-alpaca-py@cc4cb3b7ba50ae250e621983c2779047fb16bb28:
-alpaca/trading/{client,models,requests}.py, alpaca/data/enums.py. The sub-penny
-tiers follow Alpaca "Orders at Alpaca", https://docs.alpaca.markets/us/docs/orders-at-alpaca
-(updated 2026-10-13, read 2026-11-10): at or above $1.00 two decimals, below four.
+upstream checked: nautilus_trader@d53849b ``examples/live/_template/``,
+``docs/developer_guide/python_adapters.md``, ``docs/concepts/instruments/equity.md``,
+``crates/model/src/instruments/tick_scheme.rs:150-217``;
+alpaca-py@cc4cb3b7 ``alpaca/trading/{client,models,requests}.py``,
+``alpaca/data/enums.py``. Sub-penny tiers follow Alpaca "Orders at Alpaca"
+(https://docs.alpaca.markets/us/docs/orders-at-alpaca, updated 2026-10-13, read
+2026-11-10): two decimals at or above $1.00, four below.
 
-No network: every trading client is faked, environment values are dummies, and
-no proof reads or records a real credential.
+No network: clients are faked and no proof reads a real credential.
 """
 
 from __future__ import annotations

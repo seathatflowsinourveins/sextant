@@ -1,19 +1,14 @@
 """Build Alpaca clients and the instrument provider from node configuration.
 
-Follows nautilus_trader@d53849b216e20f2c122ca01b4dd0da377638b186
-``examples/live/_template/factories.py`` and
-``docs/developer_guide/python_adapters.md``: each factory's static ``create``
-returns a fresh client synchronously and opens no network resource. The data
-factory builds the instrument provider with a deferred ``TradingClient``
-factory, matching the template's data/execution wiring split. The execution
-factory owns the account identity and, following the template, passes no
-instrument provider: the venue's instruments reach the engine through the data
-client. ``AccountType.MARGIN`` and ``OmsType.NETTING`` are the template's
-execution settings, and margin is the Alpaca lane in ADR-0008 B1. Credentials
-arrive only as environment-variable names from the adapter config; the
-``TradingClient`` is built inside the provider's first load. It is always
-constructed with ``paper=True`` (alpaca-py ``alpaca/trading/client.py:80-82``
-picks the live base URL only for ``paper=False``): this adapter has one home.
+Follows nautilus_trader@d53849b ``examples/live/_template/factories.py`` and
+``docs/developer_guide/python_adapters.md``: each static ``create`` returns a
+fresh client synchronously and opens no network resource. The data factory
+defers its ``TradingClient`` to the provider's first load; the execution factory
+owns the account identity and, as the template does, passes no instrument
+provider. ``AccountType.MARGIN`` and ``OmsType.NETTING`` follow the template and
+ADR-0008 B1. Credentials arrive only as environment-variable names. The client
+is always built with ``paper=True`` (alpaca-py ``alpaca/trading/client.py:80-82``
+selects the live URL only for ``paper=False``): this adapter has one home.
 """
 
 from __future__ import annotations
