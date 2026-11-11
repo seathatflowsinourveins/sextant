@@ -181,3 +181,36 @@ def test_a_setter_generation_never_reuses_or_regresses(tmp_path, offset) -> None
     out = run(tmp_path, host_cls=OldGeneration, statuses=[status(361, MarketStatusAction.HALT)])
     sequences = [g.generation_id.sequence for g in out["receiver"].received]
     assert sequences == sorted(set(sequences)) and out["actor"].errors == {"lineage": 1}
+
+
+def test_a_status_the_host_cannot_apply_leaves_the_name_unknown(tmp_path) -> None:  # F2
+    class FailingStatusSetter(Recording):
+        def set_symbol(self, name, *, references, asset) -> Any:
+            if name == "PENNY" and asset.halted is not False:
+                raise RuntimeError("fixture status setter unavailable")
+            return super().set_symbol(name, references=references, asset=asset)
+
+    out = run(
+        tmp_path, host_cls=FailingStatusSetter, statuses=[status(355, MarketStatusAction.NONE)]
+    )
+    last = out["receiver"].received[-1]
+    (penny,) = [row for row in last.rows if row.symbol == "PENNY"]
+    assert penny.focus_eligible is False and penny.rank is None
+    assert last.coverage.state.name == "DEGRADED"  # withheld while the status is unapplied
+    assert out["actor"].errors["instrument_status"] >= 1 and out["actor"].vetoed == {"PENNY"}
+    assert out["consumer"].reader.generation is None  # no readable rank
+
+
+def test_a_status_veto_lifts_once_the_host_applies_it(tmp_path) -> None:  # F2 recovery
+    class FailsOnce(Recording):
+        failed = False
+
+        def set_symbol(self, name, *, references, asset) -> Any:
+            if name == "PENNY" and asset.halted is None and not self.failed:
+                self.failed = True
+                raise RuntimeError("fixture status setter unavailable once")
+            return super().set_symbol(name, references=references, asset=asset)
+
+    out = run(tmp_path, host_cls=FailsOnce, statuses=[status(305, MarketStatusAction.NONE)])
+    assert out["actor"].vetoed == set() and out["actor"].errors == {"instrument_status": 1}
+    assert out["hosts"][0].publisher.assets["PENNY"].halted is None  # applied on the retry
