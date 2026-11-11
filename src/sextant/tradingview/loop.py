@@ -24,6 +24,7 @@ from typing import Any
 from sextant.tradingview.auth import official_client
 from sextant.tradingview.cadence import Cadence
 from sextant.tradingview.inputs import (
+    DISPLAY_PAPER_SLOT,
     ET,
     NAMES,
     InputError,
@@ -112,7 +113,7 @@ def _admission(inputs: ResearchInputs) -> dict:
         "schema": "sextant.display-admission/1",
         "status": "fresh",
         "display_only": True,
-        "paper_slot": 3,
+        "paper_slot": DISPLAY_PAPER_SLOT,
         "generated_at_ns": _ns(inputs.generation["as_of"]),
         "expires_at_ns": _ns(inputs.expires_at),
         "watchlists": {name: sorted(inputs.memberships[name]) for name in NAMES},

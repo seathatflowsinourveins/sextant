@@ -26,6 +26,7 @@ from typing import Any
 from sextant.ranking.generation import CoverageState, RankingGeneration, generation_digest
 from sextant.ranking.publisher import METHOD, RANKER, universe_digest
 from sextant.tradingview.inputs import (
+    DISPLAY_PAPER_SLOT,
     EPOCH,
     QUALIFIED,
     TICKER,
@@ -246,7 +247,7 @@ def project_display_unit(j5: Mapping[str, Any], *, bounds: DisplayBounds) -> Dis
             not REQUIRED <= j5.keys()
             or j5["display_only"] is not True
             or type(j5["paper_slot"]) is not int
-            or j5["paper_slot"] != 3
+            or j5["paper_slot"] != DISPLAY_PAPER_SLOT
             or not isinstance(j5["generation_sha256"], str)
             or not SHA256.fullmatch(j5["generation_sha256"])
             or not isinstance(j5["params_hash"], str)

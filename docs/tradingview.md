@@ -183,8 +183,12 @@ against the broker's current lists rather than the previous session's. The defau
 must use the same canonical root. `--weekly-usage-pct`/`--usage-source` exist to
 supply the Windows controller's sourced number; when unset, the process states
 that it has no Claude surface and the 900s branch is not exercised. The loop
-needs one complete display unit; projecting the slot-3 `sextant.j5-ranked/1`
+needs one complete display unit; projecting the `sextant.j5-ranked/1`
 document into that unit is the bridge's job and is not part of this change.
+Every display unit and admission view carries `paper_slot: 2`, the account
+whose data key feeds it; slot 3 was revoked on 2026-11-10 (owner, D-46). The
+producer writes that label, and the bridge, the cadence claim and the loop's
+admission view refuse any other, the revoked 3 included.
 
 ## Display parameter registry
 

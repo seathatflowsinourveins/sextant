@@ -20,6 +20,8 @@ from exchange_calendars import get_calendar
 from nautilus_trader.core.datetime import _datetime_to_unix_nanos
 
 NAMES = ("NS movers", "NS focus")
+# Display units carry slot 2's label; slot 3 was revoked 2026-11-10 (D-46), so 3 refuses.
+DISPLAY_PAPER_SLOT = 2
 QUALIFIED = re.compile(r"[A-Z0-9_]+:[A-Z0-9_.!\-]+\Z")
 TICKER = re.compile(r"[A-Z0-9_.!\-]+\Z")
 ET = ZoneInfo("America/New_York")

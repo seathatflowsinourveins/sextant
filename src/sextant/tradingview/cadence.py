@@ -18,7 +18,7 @@ from types import MappingProxyType
 from sextant.execution.custody import AccountScope, CustodyError, WriterLease
 from sextant.execution.state import write_atomic
 from sextant.ranking.registry import RegistryRow
-from sextant.tradingview.inputs import ET, NAMES, QUALIFIED, _ns, _session
+from sextant.tradingview.inputs import DISPLAY_PAPER_SLOT, ET, NAMES, QUALIFIED, _ns, _session
 
 # The T1 producer document and the loop's explicit two-list display view. Both
 # describe exactly one complete membership observation; neither is a score feed.
@@ -259,7 +259,7 @@ class Cadence:
                         or unit["status"] != "fresh"
                         or unit["display_only"] is not True
                         or type(unit["paper_slot"]) is not int
-                        or unit["paper_slot"] != 3
+                        or unit["paper_slot"] != DISPLAY_PAPER_SLOT
                         or not (desired.get("NS Ranked") or desired.get("NS movers"))
                         or not unit["generated_at_ns"] <= at < unit["expires_at_ns"]
                     ):

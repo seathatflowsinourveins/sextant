@@ -261,7 +261,7 @@ def test_prestage_publishes_each_segment_unit_that_reads_back(
     admission = _admission(inputs)
     assert admission["watchlists"]["NS movers"]
     assert admission["display_only"] is True
-    assert admission["paper_slot"] == 3
+    assert admission["paper_slot"] == 2
     assert (tmp_path / "j5.json").is_file()
 
 
