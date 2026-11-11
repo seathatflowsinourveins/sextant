@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import time
 from decimal import Decimal as D
-from typing import Any
+from typing import Any, cast
 
 import msgpack
 import pytest
@@ -47,8 +47,17 @@ DROP = "drop"
 
 def row(trade_id: int, conditions: object) -> dict[str, Any]:
     stamp = msgpack.Timestamp.from_unix_nano(time.time_ns())  # after the Actor's watch began
-    return {"T": "t", "S": "AAPL", "t": stamp, "p": 10.02, "s": 7, "x": "D", "i": trade_id,
-            "c": conditions, "z": "C"}
+    return {
+        "T": "t",
+        "S": "AAPL",
+        "t": stamp,
+        "p": 10.02,
+        "s": 7,
+        "x": "D",
+        "i": trade_id,
+        "c": conditions,
+        "z": "C",
+    }
 
 
 class Wire:
@@ -69,7 +78,7 @@ class Wire:
         step = self.script.pop(0)
         if step == DROP:
             raise websockets.WebSocketException("fixture transport loss")
-        return msgpack.packb([row(*step)])
+        return cast(bytes, msgpack.packb([row(*step)]))
 
     async def close(self) -> None:
         return None
@@ -242,8 +251,13 @@ def test_conditions_are_kept_only_as_the_vendors_string_list(conditions, expecte
     if conditions is not None:
         raw["c"] = conditions
     tick = TradeTick(
-        INSTRUMENT_ID, Price.from_str("10.02"), Quantity.from_int(7),
-        AggressorSide.NO_AGGRESSOR, TradeId("D-1"), 1, 2,
+        INSTRUMENT_ID,
+        Price.from_str("10.02"),
+        Quantity.from_int(7),
+        AggressorSide.NO_AGGRESSOR,
+        TradeId("D-1"),
+        1,
+        2,
     )
     try:
         trade = Trade("AAPL", raw)
@@ -259,8 +273,13 @@ def test_the_actor_reads_facts_only_for_the_same_trade() -> None:
 
     def tick(trade_id: str, iid: InstrumentId = INSTRUMENT_ID) -> TradeTick:
         return TradeTick(
-            iid, Price.from_str("10.02"), Quantity.from_int(7),
-            AggressorSide.NO_AGGRESSOR, TradeId(trade_id), 1, 2,
+            iid,
+            Price.from_str("10.02"),
+            Quantity.from_int(7),
+            AggressorSide.NO_AGGRESSOR,
+            TradeId(trade_id),
+            1,
+            2,
         )
 
     assert source(tick("D-1")) is None  # nothing seen yet

@@ -73,6 +73,7 @@ from nautilus_trader.model import (
     Venue,
 )
 
+from sextant.alpaca.stream_facts import AlpacaStreamGap, facts_type, gap_type, trade_facts
 from sextant.alpaca.trade_updates import _trade_update
 
 _NY = ZoneInfo("America/New_York")
@@ -105,6 +106,20 @@ class AlpacaStockDataStream(StockDataStream):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._subscription_lock = asyncio.Lock()
+        self.connects = 0
+        self.on_reconnect: Callable[[int], None] | None = None
+
+    async def _start_ws(self) -> None:
+        # alpaca-py websocket.py:452-456 is the one call site, before the subscribe send and
+        # before any consume; it reconnects with only a log line (:445-492). Every connect
+        # after the first is a stream gap the node must see before any later row (N1e).
+        await super()._start_ws()
+        self.connects += 1
+        if self.connects > 1:
+            notice = self.on_reconnect
+            if notice is None:
+                raise RuntimeError("Alpaca stream reconnected with no gap notice wired")
+            notice(self.connects)  # a raise here fails this connect; the SDK retries
 
     async def _dispatch(self, msg: dict) -> None:
         # alpaca-py cc4cb3b websocket.py:294-317,324-372 permits raw rows,
@@ -190,9 +205,22 @@ def _publish_on_owner(
     key: InstrumentId | BarType | None,
     tick: _Tick | None,
     conversion_error: Exception | None,
+    facts: CustomData | None = None,
 ) -> None:
     if (client := client_ref()) is not None:
-        client._publish(channel, symbol, key, tick, conversion_error)
+        client._publish(channel, symbol, key, tick, conversion_error, facts)
+
+
+def _notice_gap(
+    owner: asyncio.AbstractEventLoop, client_ref: ReferenceType[AlpacaDataClient], connects: int
+) -> None:
+    # Called on the stream thread; FIFO with every later row's hand-off (call_soon_threadsafe).
+    owner.call_soon_threadsafe(_gap_on_owner, client_ref, connects, time.time_ns())
+
+
+def _gap_on_owner(client_ref: ReferenceType[AlpacaDataClient], connects: int, receipt: int) -> None:
+    if (client := client_ref()) is not None:
+        client._publish_gap(connects, receipt)
 
 
 class AlpacaDataClient(MarketDataClient):
@@ -244,6 +272,21 @@ class AlpacaDataClient(MarketDataClient):
         self._unknown_status_count = 0
         self._dropped_counts.update(corrections=0, cancelErrors=0)
         self._update_counts: dict[str, int] = dict.fromkeys(("corrections", "cancelErrors"), 0)
+        self._gap_count = 0
+
+    @property
+    def stream_gap_count(self) -> int:
+        """Reconnects after the first connect, each published as ``AlpacaStreamGap``."""
+        return self._gap_count
+
+    def _publish_gap(self, connects: int, receipt: int) -> None:
+        self._gap_count += 1
+        self._log.warning(f"Alpaca stream reconnected (connect {connects}); published a gap")
+        if not self._stream_state.closing:
+            feed = self._feed.value
+            self._handle_data(
+                CustomData(gap_type(feed), AlpacaStreamGap(feed, connects, receipt, receipt))
+            )
 
     @property
     def dropped_quote_count(self) -> int:
@@ -467,6 +510,7 @@ class AlpacaDataClient(MarketDataClient):
             self._stream = AlpacaStockDataStream(*self._credentials(), feed=self._feed)
         stream = self._stream
         client_ref: ReferenceType[AlpacaDataClient] = ref(self)
+        stream.on_reconnect = partial(_notice_gap, owner, client_ref)
         state = self._stream_state
 
         async def receive(
@@ -477,6 +521,7 @@ class AlpacaDataClient(MarketDataClient):
             receipt = time.time_ns()
             tick: _Tick | None = None
             conversion_error: Exception | None = None
+            facts: CustomData | None = None
             try:
                 if channel == "statuses":
                     # SDK raw status dictionaries reach this boundary before
@@ -509,6 +554,11 @@ class AlpacaDataClient(MarketDataClient):
                         tick = _trade_tick(row, stock, receipt)
                     except Exception as error:
                         conversion_error = error
+                    if isinstance(tick, TradeTick):  # its conditions, published just before it
+                        try:
+                            facts = CustomData(facts_type(feed), trade_facts(row, tick))
+                        except Exception:
+                            facts = None  # the Actor then reads unknown facts: nothing moves
                 elif isinstance(key, BarType) and isinstance(row, StockBar):
                     try:
                         tick = _bar(row, stock, key, receipt)
@@ -521,7 +571,14 @@ class AlpacaDataClient(MarketDataClient):
                 await stream.stop_ws()
                 return
             owner.call_soon_threadsafe(
-                _publish_on_owner, client_ref, channel, stock.symbol, key, tick, conversion_error
+                _publish_on_owner,
+                client_ref,
+                channel,
+                stock.symbol,
+                key,
+                tick,
+                conversion_error,
+                facts,
             )
 
         venue, feed = self.venue, self._feed.value
@@ -576,6 +633,7 @@ class AlpacaDataClient(MarketDataClient):
         key: InstrumentId | BarType | None,
         tick: _Tick | None,
         conversion_error: Exception | None = None,
+        facts: CustomData | None = None,
     ) -> None:
         if tick is None:
             self._dropped_counts[channel] += 1
@@ -593,6 +651,8 @@ class AlpacaDataClient(MarketDataClient):
             if isinstance(tick, InstrumentStatus) and tick.action == MarketStatusAction.NONE:
                 self._unknown_status_count += 1
                 self._log.error("Unknown Alpaca status code; published unknown instrument status")
+            if facts is not None:
+                self._handle_data(facts)  # before its tick, on the same ordered output
             self._handle_data(tick)
 
     async def _unsubscribe_quotes(self, command: UnsubscribeQuotes) -> None:

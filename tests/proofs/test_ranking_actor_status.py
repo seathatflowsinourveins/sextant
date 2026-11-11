@@ -111,7 +111,7 @@ def test_a_generation_returned_by_a_setter_is_published_at_once(tmp_path) -> Non
 
 def test_an_error_alternating_with_successes_pages_once_per_window(tmp_path) -> None:
     class Flaky(FakeHost):
-        def on_trade(self, tick):
+        def on_trade(self, tick, *, facts=None):
             self.calls += 1
             if self.calls % 2:
                 raise RuntimeError("fixture host failure")
@@ -169,7 +169,7 @@ def test_a_setter_generation_never_reuses_or_regresses(tmp_path, offset) -> None
             super().__init__(log, fail_at)
             self.history: list[Any] = []
 
-        def on_trade(self, tick):
+        def on_trade(self, tick, *, facts=None):
             generation = super().on_trade(tick)
             if generation is not None:
                 self.history.append(generation)
