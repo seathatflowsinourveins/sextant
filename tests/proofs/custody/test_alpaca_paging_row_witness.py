@@ -13,11 +13,11 @@ def test_malformed_order_row_keeps_good_sibling_and_payload():
         await node._submit_order(SimpleNamespace(order=order(), params={}))
         venue = node.gateway.sdk
         good = next(iter(venue.rows.values()))
-        malformed = {'qty': '5'}
+        malformed = {"qty": "5"}
         original_get = venue.get
 
         def listed_rows(path, params):
-            if path == '/orders':
+            if path == "/orders":
                 return [good, malformed]
             return original_get(path, params)
 

@@ -824,26 +824,32 @@ class AlpacaExecutionClient(ExecutionClient):
         budget, limit = self.gateway.pacer.controls["request_budget"], 500
         query: dict[str, Any] = dict(params, limit=limit, direction="desc")
         rows: dict[str, dict] = {}
+        unkeyed: list = []  # Rows the pager cannot key or place; each fails in its own row.
         edge: set[str] = set()
         for _ in range(budget):
             try:
                 page = await self._call(ActionKind.QUERY, "get", "/orders", query)
             except Exception as exc:
                 raise IncompleteCoverage([], [(query, exc)]) from exc
-            ids = {row["id"] for row in page}
-            if not edge <= ids:
+            stamped = {}
+            for row in page:
+                try:
+                    stamped[row["id"]] = (dt_to_unix_nanos(row["submitted_at"]), row)
+                except Exception:
+                    unkeyed.append(row)
+            if not edge <= set(stamped):
                 raise IncompleteCoverage(
                     [], [(query, ValueError("order pages are not contiguous"))]
                 )
-            fresh = [row for row in page if row["id"] not in rows]
-            rows.update((row["id"], row) for row in fresh)
+            fresh = {key: row for key, (_, row) in stamped.items() if key not in rows}
+            rows.update(fresh)
             if len(page) < limit:
-                return list(rows.values())
+                return [*rows.values(), *unkeyed]
             if not fresh:
                 raise IncompleteCoverage([], [(query, ValueError("order page made no progress"))])
-            oldest = min(page, key=lambda row: dt_to_unix_nanos(row["submitted_at"]))
-            instant = dt_to_unix_nanos(oldest["submitted_at"])
-            edge = {r["id"] for r in page if dt_to_unix_nanos(r["submitted_at"]) == instant}
+            instant = min(ns for ns, _ in stamped.values())
+            edge = {key for key, (ns, _) in stamped.items() if ns == instant}
+            oldest = next(row for ns, row in stamped.values() if ns == instant)
             query = dict(query, until=oldest["submitted_at"])
         reason = "order listing needs more requests than the registered request budget"
         raise IncompleteCoverage([], [(params, ValueError(reason))])
