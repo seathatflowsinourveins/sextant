@@ -12,6 +12,7 @@ import os
 import re
 import weakref
 from collections.abc import Callable
+from dataclasses import dataclass
 from decimal import Decimal
 from threading import Event
 from typing import Any
@@ -75,6 +76,73 @@ def _run_stream(stream, owner, ready, closing):
     asyncio.run(run())
 
 
+@dataclass(eq=False)
+class _Command:
+    """One house submit, modify or cancel, registered when its hook schedules it.
+
+    ``sent`` is set only by ``_mark_sent``, the gateway's on-wire hook, before the request
+    leaves; that is the one place on-wire evidence is recorded. Afterwards only an
+    authoritative answer resolves it: the venue's response, a venue 4xx, or a later read.
+    """
+
+    kind: str
+    native: Any
+    venue_order_id: Any = None
+    sent: bool = False
+    withdrawn: bool = False  # Pacer admission refuses it from here on.
+    settled: bool = False  # A refusal or a venue answer was applied once.
+    submitted: bool = False
+    row_id: str | None = None  # The venue order a DELETE targets.
+    wire_id: str | None = None  # A PATCH's proposal key.
+    root: str | None = None  # A submit's engine client order id.
+
+
+# Every trade_updates event the client classifies: alpaca-py TradeEvent at the pin
+# (enums.py:321-333) plus the documented status and refusal events (Alpaca streaming,
+# read 2026-11-10). Anything else, "restated" included, is incomplete coverage.
+_INGRESS = frozenset(
+    {
+        "new",
+        "accepted",
+        "rejected",
+        "canceled",
+        "expired",
+        "done_for_day",
+        "replaced",
+        "pending_new",
+        "stopped",
+        "pending_cancel",
+        "pending_replace",
+        "calculated",
+        "suspended",
+        "accepted_for_bidding",
+        "held",
+        "pending_review",
+        "fill",
+        "partial_fill",
+        "order_replace_rejected",
+        "order_cancel_rejected",
+    }
+)
+# Events after which no cancel of the order can still act (Alpaca order statuses).
+_TERMINAL_EVENTS = frozenset({"fill", "canceled", "expired", "rejected", "replaced"})
+
+
+def _unresolved(exc, token) -> bool:
+    """After send, only a venue 4xx refusal resolves a command locally.
+
+    alpaca-py rest.py:197-210 raises APIError for 4xx/5xx and returns
+    response.json() on 2xx (requests' JSONDecodeError, a ValueError); the session
+    call raises requests' RequestException family (ConnectionError, Timeout,
+    ChunkedEncodingError, ...). None of these, nor any other exception after the
+    gateway's on-wire token, proves the venue did not act. Before it, nothing left.
+    """
+    if not token.sent:
+        return False
+    status = exc.status_code if isinstance(exc, APIError) else None
+    return not (status is not None and 400 <= status < 500)
+
+
 class AlpacaExecutionClient(ExecutionClient):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -87,31 +155,103 @@ class AlpacaExecutionClient(ExecutionClient):
         self._sequence: dict[str, int] = {}
         self.failures: list[tuple[object, Exception]] = []
         self._executing: set[str] = set()
+        self._cancels: set[str] = set()  # Venue ids with a sent, unanswered DELETE.
         self._stream = None
         self._stream_task = None
         self._stream_ready = None
         self._closing = Event()
         self._actions: set[asyncio.Task] = set()
-        self._submissions: dict[str, dict[str, Any]] = {}
+        self._submissions: dict[str, _Command] = {}
+        self._commands: set[_Command] = set()
+        self.late_answers = 0  # Venue answers to a command an earlier answer settled.
+        self._active_n: dict[str, int] = {}  # Successor number of each root's active order.
         # No invented commission: caller supplies an evidenced Money per execution.
         self.commission_for_fill: Callable[[dict], Money] | None = None
 
-    def _queue_action(self, operation, name):
+    def _queue_action(self, operation, name, token: _Command | None = None):
         # NT's Python client queue is FIFO; await no wire receipt in its hook.
         # The pinned AX adapter likewise spawns supervised command work.
         if self._closing.is_set():
             operation.close()
+            if token is not None:  # Nothing left: refuse rather than leave it pending.
+                self._refuse(token, f"{token.kind} not sent: execution client is closing")
             raise RuntimeError("execution client is closing")
         try:
             task = self.create_task(operation, name)
         except BaseException:
             operation.close()
+            if token is not None:  # No task exists, so no done callback can refuse it.
+                self._refuse(token, f"{token.kind} not sent: scheduling failed")
             raise
         self._actions.add(task)
         task.add_done_callback(self._actions.discard)
+        if token is not None:
+            self._commands.add(token)
+            task.add_done_callback(lambda done: self._task_done(token, done))
+
+    def _task_done(self, token: _Command, task) -> None:
+        # Any cancellation (disconnect, node stop, a timeout wrapper, runner teardown),
+        # even before the coroutine's first step, ends here; only unsent work is refused.
+        self._commands.discard(token)
+        if task.cancelled() and not token.sent:
+            self._refuse(token, f"{token.kind} not sent before cancellation")
+
+    def _mark_sent(self, token: _Command) -> None:
+        """The send boundary: the one place on-wire evidence is recorded."""
+        token.sent = True
+        if token.kind == "cancel" and token.row_id is not None:
+            self._cancels.add(token.row_id)
+
+    def _answered(self, kind: str, key: str | None) -> None:
+        """An authoritative answer settles the live sent command it answers, once.
+
+        Whichever comes first (the venue's response, a stream event or a read) settles
+        the command; a later answer for it emits nothing (review e5r3-99ac5bf).
+        """
+        for token in self._commands:
+            if (
+                token.kind == kind
+                and token.sent
+                and key in (token.row_id, token.wire_id, token.root)
+            ):
+                token.settled = True
+
+    def _refuse(self, token: _Command, reason: str) -> None:
+        """Apply a definite refusal once: nothing left, or the venue said no (4xx).
+
+        Refusing an unsent command withdraws it in the same act, so a request it left queued
+        in the pacer is dropped at admission and never reaches the wire (review of PR 552)."""
+        if not token.sent:
+            token.withdrawn = True
+        if token.settled:
+            if token.sent:
+                self.late_answers += 1  # An earlier authoritative answer already settled it.
+            return
+        token.settled = True
+        if token.wire_id is not None:
+            self._proposals.pop(token.wire_id, None)
+        if token.row_id is not None:
+            self._cancels.discard(token.row_id)
+        native, now = token.native, self.clock.timestamp_ns()
+        if native is None:
+            return
+        if token.kind == "submit":
+            if token.submitted:
+                self.generate_order_rejected(native, reason, now, False)
+            else:
+                self.generate_order_denied(native, reason)
+        elif token.kind == "modify":
+            self.generate_order_modify_rejected(native, token.venue_order_id, reason, now)
+        else:
+            self.generate_order_cancel_rejected(native, token.venue_order_id, reason, now)
+
+    def _command(self, kind: str, command) -> _Command:
+        native = command.order if kind == "submit" else self.cache.order(command.client_order_id)
+        return _Command(kind, native, getattr(command, "venue_order_id", None))
 
     async def _submit_order(self, command):
-        self._queue_action(self._do_submit_order(command), "alpaca-submit")
+        token = self._command("submit", command)
+        self._queue_action(self._do_submit_order(command, token), "alpaca-submit", token)
 
     async def _query_order(self, command):
         self._queue_action(self._do_query_order(command), "alpaca-query-order")
@@ -155,14 +295,11 @@ class AlpacaExecutionClient(ExecutionClient):
         # Disconnect never cancels orders or closes positions.
         self.coverage_complete = False
         self._closing.set()
-        now = self.clock.timestamp_ns()
-        for token in tuple(self._submissions.values()):
-            if not token["sent"] and not token["cancelled"]:
+        for token in tuple(self._commands):
+            if not token.sent:
                 # Positive not-sent evidence: the admission check now refuses it.
-                token["cancelled"] = True
-                self.generate_order_rejected(
-                    token["order"], "submission not sent before disconnect", now, False
-                )
+                token.withdrawn = True
+                self._refuse(token, f"{token.kind} not sent before disconnect")
         actions = tuple(self._actions)
         for action in actions:
             action.cancel()
@@ -210,17 +347,19 @@ class AlpacaExecutionClient(ExecutionClient):
         if not wire_id.startswith(self.house_prefix) or not self.house_prefix:
             return ClientOrderId(wire_id)
         root = re.sub(r"-r[0-9]+$", "", wire_id)
+        suffix = re.search(r"-r([0-9]+)$", wire_id)
+        number = int(suffix[1]) if suffix else 0
+        # House successors are numbered r1, r2, ...: an older number is never bound again.
+        stale = number < self._active_n.get(root, -1)
         if wire_id != root:
             raise ValueError("replacement namespace requires parent evidence")
-        known_predecessor = venue_id in self._roots and self._active.get(root) not in (
-            None,
-            venue_id,
+        known_predecessor = stale or (
+            venue_id in self._roots and self._active.get(root) not in (None, venue_id)
         )
         if not row.get("replaced_by") and not known_predecessor:
-            self._active[root] = venue_id
+            self._active[root], self._active_n[root] = venue_id, number
         self._roots[venue_id] = root
-        suffix = re.search(r"-r([0-9]+)$", wire_id)
-        self._sequence[root] = max(self._sequence.get(root, 0), int(suffix[1]) if suffix else 0)
+        self._sequence[root] = max(self._sequence.get(root, 0), number)
         return ClientOrderId(root)
 
     def _parse_order(self, row, stable):
@@ -233,22 +372,25 @@ class AlpacaExecutionClient(ExecutionClient):
             client_order_id=stable,
         )
 
-    async def _report(self, row):
-        stable = await self._identity(row)
+    async def _report(self, row, stable=None):
+        stable = stable or await self._identity(row)
+        self._answered("submit", str(stable))  # The venue holds the order: the POST is answered.
         if self._roots.get(row["id"]) == str(stable) and self._active.get(str(stable)) != row["id"]:
             return None  # Suppress stale predecessor state, not its execution reports.
         return self._parse_order(row, stable)
 
-    async def _do_submit_order(self, command):
+    async def _do_submit_order(self, command, token: _Command | None = None):
         native = command.order
+        token = token or _Command("submit", native)
         try:
             payload = submit_payload(native, command.params or {}, self.house_prefix)
         except ValueError as exc:
+            token.settled = True
             self.generate_order_denied(native, str(exc))
             return
         self.generate_order_submitted(native)
-        root = str(native.client_order_id)
-        token = {"sent": False, "cancelled": False, "order": native}
+        token.submitted = True
+        root = token.root = str(native.client_order_id)
         self._submissions[root] = token
         kind = ActionKind.REDUCE if native.side.name == "SELL" else ActionKind.SUBMIT
         try:
@@ -257,28 +399,21 @@ class AlpacaExecutionClient(ExecutionClient):
                 "post",
                 "/orders",
                 payload,
-                admission=lambda: not token["cancelled"],
-                on_wire=lambda: token.__setitem__("sent", True),
+                admission=lambda: not token.withdrawn,
+                on_wire=lambda: self._mark_sent(token),
             )
-        except ValueError:
-            if token["cancelled"]:
-                return  # Positive local withdrawal already emitted Canceled.
-            if not token["sent"]:
-                self.generate_order_rejected(
-                    native, "submission refused before wire", self.clock.timestamp_ns(), False
-                )
-                return
-            raise  # A sent request with malformed evidence remains unresolved.
-        except APIError as exc:
-            if exc.status_code is not None and 400 <= exc.status_code < 500:
-                self.generate_order_rejected(
-                    native, "venue submit refused", self.clock.timestamp_ns(), False
-                )
-                return
-            raise
+        except Exception as exc:
+            if _unresolved(exc, token):
+                raise  # Sent: the venue's later status decides, never a local reject.
+            sent = token.sent
+            self._refuse(
+                token, "venue submit refused" if sent else "submission refused before wire"
+            )
+            return
         finally:
             if self._submissions.get(root) is token:
                 self._submissions.pop(root)
+        token.settled = True  # The venue's response answers the submit.
         report = await self._report(row)
         if report is not None:
             self._handle_report(report)
@@ -358,13 +493,30 @@ class AlpacaExecutionClient(ExecutionClient):
             raise ValueError("raw trade_updates envelope required")
         data = update["data"]
         event, row = data["event"], data["order"]
+        if event in ("trade_bust", "trade_correct"):
+            self.coverage_complete = False
+            raise IncompleteCoverage(
+                [], [(update, ValueError("trade correction requires reconciliation"))]
+            )
+        if event not in _INGRESS:
+            self.coverage_complete = False
+            raise ValueError("unclassified trade update event")
+        # One identity resolution for every event: a successor binds before anything about
+        # it is forwarded, and unconfirmed lineage fails here as incomplete coverage.
+        stable = await self._identity(row)
         if row.get("side") == "sell" and event in ("fill", "partial_fill", "stopped"):
             self._executing.add(row["id"])
-        native = self.cache.order(
-            ClientOrderId(self._roots.get(row["id"]) or row["client_order_id"])
-        )
+        if event in _TERMINAL_EVENTS:
+            self._cancels.discard(row["id"])  # The venue's terminal confirmation.
+        native = self.cache.order(stable)
         now = dt_to_unix_nanos(data.get("timestamp", row["updated_at"]))
         if event in ("order_replace_rejected", "order_cancel_rejected"):
+            if event == "order_cancel_rejected":
+                self._answered("cancel", row["id"])
+                self._cancels.discard(row["id"])  # The venue's authoritative refusal.
+            for key, (_, parent) in self._proposals.items():
+                if event == "order_replace_rejected" and parent == row["id"]:
+                    self._answered("modify", key)
             if event == "order_replace_rejected":
                 self._proposals = {k: v for k, v in self._proposals.items() if v[1] != row["id"]}
             if native is not None:
@@ -375,13 +527,7 @@ class AlpacaExecutionClient(ExecutionClient):
                 )
                 emit(native, VenueOrderId(row["id"]), "venue mutation refused", now)
             return
-        if event in ("trade_bust", "trade_correct"):
-            self.coverage_complete = False
-            raise IncompleteCoverage(
-                [], [(update, ValueError("trade correction requires reconciliation"))]
-            )
         if event in ("fill", "partial_fill"):
-            stable = ClientOrderId(self._roots.get(row["id"]) or row["client_order_id"])
             if self.commission_for_fill is None:
                 self.coverage_complete = False
                 raise IncompleteCoverage(
@@ -397,28 +543,8 @@ class AlpacaExecutionClient(ExecutionClient):
             )
             self._handle_report(report)
             return
-        if event not in {
-            "new",
-            "accepted",
-            "rejected",
-            "canceled",
-            "expired",
-            "done_for_day",
-            "replaced",
-            "pending_new",
-            "stopped",
-            "pending_cancel",
-            "pending_replace",
-            "calculated",
-            "suspended",
-            "accepted_for_bidding",
-            "held",
-            "pending_review",
-        }:
-            self.coverage_complete = False
-            raise ValueError("unclassified trade update event")
         if event == "stopped" and native is not None:
             self.generate_order_triggered(native, VenueOrderId(row["id"]), now)
-        report = await self._report(row)
+        report = await self._report(row, stable)
         if report is not None:
             self._handle_report(report)
