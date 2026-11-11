@@ -42,3 +42,17 @@ The request budget has one authority: the reviewed account control rows. The
 client must not add another numeric pin after parsing them; otherwise another
 paper profile or a later sourced rate change needs a code change. The pacer still
 validates the budget against the broker ceiling and retains per-position reserves.
+
+On-wire evidence is recorded at one send boundary, the gateway's on-wire hook,
+before any reply: a sent DELETE's venue id, a submit's or PATCH's sent flag
+beside its reserved proposal. An exception, a cancellation or a destroyed task
+never creates it. A 2xx that acknowledges an attempt (DELETE 204, PATCH 200)
+never clears it; only a terminal venue event, a venue refusal or the next
+authoritative read does, and the first such answer settles the command once.
+Unsent work is refused once, even before its first step or when it cannot be
+scheduled. Sources: Alpaca order API, read 2026-11-10; CPython 3.13 asyncio.
+
+Every trade update passes one identity resolution before it is forwarded, fills
+included. Unknown lineage is incomplete coverage, never another order's id, and
+the active binding moves only forward by house successor number. Sources:
+alpaca-py `trading/enums.py:321-333`; reviews e5r3-99ac5bf and e5max-99ac5bf.
