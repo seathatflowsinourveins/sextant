@@ -145,7 +145,7 @@ def test_node_starts_with_open_replaced_and_unloaded_owner_orders_untouched():
     old = _owner(venue, "owner-was", status="replaced")
     new = _owner(venue, "owner-now", replaces=old["id"])
     old["replaced_by"] = new["id"]
-    _owner(venue, "owner-other", symbol="OTHER")
+    _owner(venue, "owner-other", symbol="OTHER", status="canceled")
     seeded = _seeded(venue)
     seen = _run_node(venue)
     assert "error" not in seen, seen.get("error")

@@ -42,7 +42,7 @@ def _bracket(venue):
 def _other_symbol(node, venue):
     stock = node.cache.instrument.return_value
     node.cache.instrument.side_effect = lambda iid: stock if iid == TEST else None
-    return _owner(venue, "owner-other", symbol="OTHER")
+    return _owner(venue, "owner-other", symbol="OTHER", status="canceled")
 
 
 async def _scan(node):

@@ -80,8 +80,10 @@ The paper node claims external orders for the house universe and limits
 reconciliation to it (lead ruling 2026-11-11): the owner's filled shares in a
 universe symbol are the position the Strategy protects, while no order outside
 the house namespace is ever modified or cancelled. Owner rows the engine would
-skip (replaced without fills, or in an unloaded instrument) are withheld with
-their payload, and their instrument loses bulk position coverage; an owner
+skip (replaced without fills) are withheld with their payload. Terminal rows in
+an unloaded instrument are also withheld, across every namespace; a working or
+unknown-status unloaded row refuses startup by name before the gate. Withheld
+instruments lose bulk position coverage; an owner
 bracket refuses startup by name. The engine's lookback stays unbounded and the
 order listing pages newest first by `until`, past the 500-row cap, so a holding
 whose fills are old is still explained by its order; a failed or non-contiguous
@@ -138,6 +140,16 @@ cost still unavailable.
 
 A failed startup reconciliation names its cause. The engine keeps only "Failed to get mass
 status" (`python/node.rs:676`), so each report generator records its requests, rows and
-first failure (class, HTTP status, our own reason text), and the order node writes them to
-the receipt's `reconciliation` block and one ERROR line. No value is recorded. Source:
-stage 1 start 1, FAILED-START-1.md.
+first failure (class, HTTP status, our own reason text). It also counts terminal unloaded
+history skipped per stage, in successful receipts as well as a failed stage's ERROR line;
+one aggregate warning names only stage and count. Terminal skipped rows remain in the
+gate's existing replacement-lineage input. Fill activities still require a listed order
+covering their cumulative quantity, including those tied to skipped terminal history;
+working unloaded orders never disappear. No value is recorded. Sources: stage 1 starts
+1 and 2; NT d53849b2 `crates/adapters/binance/src/spot/execution.rs:3542-3545`.
+
+Rehearse on the failed history's shape, including unloaded terminal orders and their
+fills, rather than only the claim list. The run-2 regression uses the real order node,
+engine and gate over the fake venue; it proves flat admission, named refusal for unloaded
+working orders in every namespace, and unresolved replacement refusal. It establishes
+no broker behavior or permission to trade (`test_alpaca_unloaded_history.py`).

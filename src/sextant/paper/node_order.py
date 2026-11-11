@@ -645,7 +645,7 @@ def run(
             timer.cancel()
             node.dispose()
         gate = strategy.gate
-        cause = startup_cause(gate.clients) if failure else None
+        cause = startup_cause(gate.clients)
         phase = "stopped" if gate.open else "refused" if gate.checked else "aborted_at_start"
         phase = "failed" if failure else phase
         reason = failure or (None if gate.open else ",".join(gate.reasons) or "startup_aborted")
@@ -667,16 +667,17 @@ def run(
 
 def startup_cause(clients: list[Any]) -> dict[str, Any] | None:
     """The client's per-stage startup trace (counts, classes, status, our own reason texts),
-    when a stage failed: the engine logs only "Failed to get mass status" (FAILED-START-1.md).
-    One ERROR line goes to the unit's output; no value is in either."""
+    including terminal history skipped without an instrument (LEAD-1618).
+    A failed stage also emits one ERROR line; no value is in either."""
     try:  # Best effort: the recorder never replaces the run's own failure or its receipt.
         trace = {k: v for c in clients for k, v in getattr(c, "report_trace", {}).items()}
         failed = {stage: entry for stage, entry in trace.items() if "error" in entry}
         if not failed:
-            return None
+            return trace or None
         parts = [
             f"stage={stage} error={e['error']} first={e.get('first')} status={e.get('status')} "
-            f"failures={e.get('failures')} reason={e.get('reason')!r} requests="
+            f"failures={e.get('failures')} skipped_unloaded={e.get('skipped_unloaded', 0)} "
+            f"reason={e.get('reason')!r} requests="
             + ",".join(f"{k}:{v.get('requests')}/{v.get('rows')}" for k, v in e["requests"].items())
             for stage, e in failed.items()
         ]
