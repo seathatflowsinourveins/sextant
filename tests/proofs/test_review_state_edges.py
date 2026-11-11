@@ -1,3 +1,4 @@
+# pyright: reportAttributeAccessIssue=false, reportIncompatibleMethodOverride=false, reportOptionalMemberAccess=false
 from dataclasses import replace
 from decimal import Decimal
 from types import SimpleNamespace
@@ -11,7 +12,6 @@ from test_ranking import publisher
 from test_ranking_consumer import consumer
 
 from sextant.paper.b_lifecycle import BLifecycle, BLifecycleConfig
-
 
 CID = ClientOrderId("O-20261027-080600-001-BTEST-2")
 
@@ -29,7 +29,9 @@ def cached_order(*, filled=0, quantity=100, pending=True, trail=True):
         status=(
             OrderStatus.PENDING_UPDATE
             if pending
-            else OrderStatus.PARTIALLY_FILLED if filled else OrderStatus.ACCEPTED
+            else OrderStatus.PARTIALLY_FILLED
+            if filled
+            else OrderStatus.ACCEPTED
         ),
         filled_qty=Quantity.from_int(filled),
         leaves_qty=Quantity.from_int(quantity - filled),
@@ -108,12 +110,27 @@ def test_added_shares_have_cover_while_an_existing_exit_is_partly_filled(pending
     engine.orders[CID] = order
     owner_reservation(engine)
     engine.held = Decimal(140)
-    engine.on_order_filled(SimpleNamespace(instrument_id=PENNY, client_order_id=ClientOrderId("OWNER-ADDED")))
-    print("PARTIAL_ADDITION", "pending", pending, "held", engine.held, "leaves", order.leaves_qty, "arms", engine.arms, "pages", engine.rows)
+    engine.on_order_filled(
+        SimpleNamespace(instrument_id=PENNY, client_order_id=ClientOrderId("OWNER-ADDED"))
+    )
+    print(
+        "PARTIAL_ADDITION",
+        "pending",
+        pending,
+        "held",
+        engine.held,
+        "leaves",
+        order.leaves_qty,
+        "arms",
+        engine.arms,
+        "pages",
+        engine.rows,
+    )
     assert not engine.commands
-    # ADAPTED (ADR-0007:17, one house trail of the full net quantity, re-armed by cancel plus one resubmit; ADR-0007:25 and LEAD-2308, lead decision 09:3x): while the one trail
-    # completes, the added shares wait, paged once, and are armed on its end. Original: the
-    # leaves plus a second trail equal the unreserved holding.
+    # ADAPTED (ADR-0007:17, one house trail of the full net quantity, re-armed by cancel plus one
+    # resubmit; ADR-0007:25 and LEAD-2308, lead decision 09:3x): while the one trail completes, the
+    # added shares wait, paged once, and are armed on its end. Original: the leaves plus a second
+    # trail equal the unreserved holding.
     assert engine.arms == []
     assert any(r.get("reason") == "exit_triggered_left_to_complete" for r in engine.rows)
 
@@ -125,15 +142,28 @@ def test_quantity_answer_does_not_strand_the_added_shares_after_a_partial_fill()
     owner_reservation(engine)
     engine.held = Decimal(140)
     engine.on_order_updated(SimpleNamespace(instrument_id=PENNY, client_order_id=CID))
-    print("PARTIAL_RESIZE_ANSWER", "held", engine.held, "reserved", 30, "leaves", order.leaves_qty, "arms", engine.arms)
+    print(
+        "PARTIAL_RESIZE_ANSWER",
+        "held",
+        engine.held,
+        "reserved",
+        30,
+        "leaves",
+        order.leaves_qty,
+        "arms",
+        engine.arms,
+    )
     assert not engine.commands
-    # ADAPTED (ADR-0007:17, one house trail of the full net quantity, re-armed by cancel plus one resubmit; ADR-0007:25, LEAD-2308): no resize exists to answer, and a partly filled
-    # trail completes before the rest is armed. Original: the leaves plus a second trail.
+    # ADAPTED (ADR-0007:17, one house trail of the full net quantity, re-armed by cancel plus one
+    # resubmit; ADR-0007:25, LEAD-2308): no resize exists to answer, and a partly filled trail
+    # completes before the rest is armed. Original: the leaves plus a second trail.
     assert engine.arms == []
     assert any(r.get("reason") == "exit_triggered_left_to_complete" for r in engine.rows)
 
 
-@pytest.mark.xfail(strict=True, reason="the entry time limit waits for the engine's managed GTD part (lead 09:3x)")
+@pytest.mark.xfail(
+    strict=True, reason="the entry time limit waits for the engine's managed GTD part (lead 09:3x)"
+)
 def test_entry_ttl_survives_a_rejected_cancel_after_the_replace_answer():
     engine = probe()
     order = cached_order(trail=False)
@@ -151,14 +181,26 @@ def test_entry_ttl_survives_a_rejected_cancel_after_the_replace_answer():
     order.status = OrderStatus.PENDING_CANCEL
     order.is_pending_cancel = False
     order.status = OrderStatus.ACCEPTED
-    engine.on_order_cancel_rejected(SimpleNamespace(instrument_id=PENNY, client_order_id=CID, ts_event=engine.now))
+    engine.on_order_cancel_rejected(
+        SimpleNamespace(instrument_id=PENNY, client_order_id=CID, ts_event=engine.now)
+    )
     engine.now = at("12")
     engine.on_order_updated(SimpleNamespace(instrument_id=PENNY, client_order_id=CID))
-    print("TTL_REJECTED_CANCEL", "commands", engine.commands, "expire_due", book.expire_due, "status", order.status)
+    print(
+        "TTL_REJECTED_CANCEL",
+        "commands",
+        engine.commands,
+        "expire_due",
+        book.expire_due,
+        "status",
+        order.status,
+    )
     assert len(engine.commands) == 2
 
 
-@pytest.mark.xfail(strict=True, reason="the entry time limit waits for the engine's managed GTD part (lead 09:3x)")
+@pytest.mark.xfail(
+    strict=True, reason="the entry time limit waits for the engine's managed GTD part (lead 09:3x)"
+)
 @pytest.mark.parametrize("answer", ["updated", "modify_rejected", "filled"])
 def test_entry_ttl_answer_and_terminal_controls(answer):
     engine = probe()
@@ -170,15 +212,15 @@ def test_entry_ttl_answer_and_terminal_controls(answer):
     order.is_pending_update = order.is_inflight = False
     order.status = OrderStatus.FILLED if answer == "filled" else OrderStatus.ACCEPTED
     order.is_closed = answer == "filled"
-    getattr(engine, f"on_order_{answer}")(
-        SimpleNamespace(instrument_id=PENNY, client_order_id=CID)
-    )
+    getattr(engine, f"on_order_{answer}")(SimpleNamespace(instrument_id=PENNY, client_order_id=CID))
     print("TTL_CONTROL", answer, "commands", engine.commands, "expire_due", book.expire_due)
     assert len(engine.commands) == (0 if answer == "filled" else 1)
     assert not book.expire_due
 
 
-@pytest.mark.xfail(strict=True, reason="the entry time limit waits for the engine's managed GTD part (lead 09:3x)")
+@pytest.mark.xfail(
+    strict=True, reason="the entry time limit waits for the engine's managed GTD part (lead 09:3x)"
+)
 def test_entry_expiry_remains_effective_after_a_strategy_restart():
     before = probe()
     order = cached_order(trail=False)
@@ -193,7 +235,15 @@ def test_entry_expiry_remains_effective_after_a_strategy_restart():
     order.is_pending_update = order.is_inflight = False
     order.status = OrderStatus.ACCEPTED
     after.on_order_updated(SimpleNamespace(instrument_id=PENNY, client_order_id=CID))
-    print("TTL_RESTART", "entry_id", after.books[PENNY].entry_id, "expire_due", after.books[PENNY].expire_due, "commands", after.commands)
+    print(
+        "TTL_RESTART",
+        "entry_id",
+        after.books[PENNY].entry_id,
+        "expire_due",
+        after.books[PENNY].expire_due,
+        "commands",
+        after.commands,
+    )
     assert after.commands == [("cancel", CID)]
 
 
@@ -214,7 +264,9 @@ def test_refused_trail_rearms_on_the_next_trade(refusal):
     assert engine.arms == [Decimal(100)]
 
 
-@pytest.mark.xfail(strict=True, reason="the entry time limit waits for the engine's managed GTD part (lead 09:3x)")
+@pytest.mark.xfail(
+    strict=True, reason="the entry time limit waits for the engine's managed GTD part (lead 09:3x)"
+)
 def test_unanswered_price_modify_retains_expiry_without_an_illegal_cancel():
     engine = probe()
     order = cached_order(trail=False)
@@ -223,6 +275,8 @@ def test_unanswered_price_modify_retains_expiry_without_an_illegal_cancel():
     book.entry_id, book.expiry_ns = CID, at("5.5")
     engine._expire(PENNY)
     engine.now = at("60")
-    engine.on_order_accepted(SimpleNamespace(instrument_id=PENNY, client_order_id=ClientOrderId("OWNER-OTHER")))
+    engine.on_order_accepted(
+        SimpleNamespace(instrument_id=PENNY, client_order_id=ClientOrderId("OWNER-OTHER"))
+    )
     print("TTL_NO_ANSWER", "expire_due", book.expire_due, "commands", engine.commands)
     assert book.expire_due and not engine.commands

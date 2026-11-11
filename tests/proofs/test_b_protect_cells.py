@@ -10,10 +10,9 @@ Shape-neutral on purpose: the same file runs off main (4e25b0be) and off the own
 from __future__ import annotations
 
 from dataclasses import replace
-
-import pytest
 from types import SimpleNamespace
 
+import pytest
 from nautilus_trader.config import RiskEngineConfig
 from nautilus_trader.model import ClientOrderId, OrderSide, OrderStatus, OrderType, Quantity
 from test_b_lifecycle import GATE_ON, PENNY, quote
@@ -134,7 +133,9 @@ def test_a_rejected_entry_cancel_is_sent_again_later():
 # Cell "entry working x Strategy rebuilt from the cache" (verdict s13h P2-2): the rebuilt
 # Strategy finds its own working entry in the cache and still ends it by its time limit
 # (at most ts_init + entry_ttl_s, the limit _enter set it within).
-@pytest.mark.xfail(strict=True, reason="the entry time limit waits for the engine's managed GTD part (lead 09:3x)")
+@pytest.mark.xfail(
+    strict=True, reason="the entry time limit waits for the engine's managed GTD part (lead 09:3x)"
+)
 def test_a_rebuilt_strategy_still_ends_a_cached_entry_past_its_time_limit():
     engine = probe(entry_params=FULL)
     engine.orders[ENTRY] = entry_order(ts_init=at("0"))
@@ -181,6 +182,7 @@ def test_a_rejected_resize_is_retried_on_the_next_quote_never_inside_its_callbac
         ],
         risk=RiskEngineConfig(max_order_modify_rate="1/00:00:01"),
     )
-    # ADAPTED (ADR-0007:17, one house trail of the full net quantity, re-armed by cancel plus one resubmit): no resize is ever sent, so none is throttled, repeated inside a
-    # callback, or retried. Original: a throttled resize retried once at the next quote.
+    # ADAPTED (ADR-0007:17, one house trail of the full net quantity, re-armed by cancel plus one
+    # resubmit): no resize is ever sent, so none is throttled, repeated inside a callback, or
+    # retried. Original: a throttled resize retried once at the next quote.
     assert strategy.attempts == [] and strategy.refusals == []
