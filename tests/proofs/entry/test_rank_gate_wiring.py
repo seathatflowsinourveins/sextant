@@ -12,6 +12,7 @@ from nautilus_trader.execution import StaticLatencyModel
 from nautilus_trader.model import CustomData, TraderId
 from test_ranking import baseline, registry
 
+from sextant.entry.replay import _ReplayEntry
 from sextant.ranking import registry as gate_registry
 from sextant.ranking.consumer import RankingConsumer
 from sextant.ranking.engine import ReferencePrices, Segment
@@ -208,3 +209,52 @@ def test_invalid_registry_switch_cannot_bypass_rank_gate(instrument, tmp_path, m
     result = episode(instrument, tmp_path)
     assert not result.failed and result.orders == []
     assert any(e.get("reason") == "rank_gate_setting_invalid" for e in result.events)
+
+
+def change_switch_before_decision(monkeypatch, *, at, value):
+    decide = _ReplayEntry._decide
+
+    def changed(strategy):
+        if strategy.clock.timestamp_ns() >= at:
+            monkeypatch.setattr(
+                gate_registry,
+                "RANK_GATE_ENABLED",
+                replace(gate_registry.RANK_GATE_ENABLED, value=value),
+            )
+        return decide(strategy)
+
+    monkeypatch.setattr(_ReplayEntry, "_decide", changed)
+
+
+@pytest.mark.parametrize(
+    ("value", "reason"),
+    [(True, "candidate_unranked"), (0, "rank_gate_setting_invalid")],
+    ids=["enable", "invalid-setting"],
+)
+def test_current_switch_refuses_entry_after_warmup(
+    instrument, tmp_path, monkeypatch, value, reason
+):
+    assert gate_registry.RANK_GATE_ENABLED.value is False
+    consumer = ranked(focus=False)
+    assert consumer.entry_rank("AAA", now=START) is None and consumer.reason == "fresh"
+    change_switch_before_decision(monkeypatch, at=START + 2 * SEC, value=value)
+
+    result = episode(instrument, tmp_path, ranking_consumer=consumer)
+
+    assert not result.failed, result.events
+    assert result.orders == [], result.events
+    assert any(e.get("stage") == "RANK" and e.get("reason") == reason for e in result.events)
+
+
+def test_disabling_current_switch_restores_off_after_rank_refusal(
+    instrument, tmp_path, monkeypatch, enabled
+):
+    consumer = ranked(focus=False)
+    change_switch_before_decision(monkeypatch, at=START + 3 * SEC, value=False)
+
+    result = episode(instrument, tmp_path, ranking_consumer=consumer)
+
+    assert not result.failed, result.events
+    assert any(e.get("reason") == "candidate_unranked" for e in result.events)
+    assert len(result.orders) == 1, result.events
+    assert [e["ts"] for e in result.events if e["action"] == "SUBMIT"] == [START + 3 * SEC]
