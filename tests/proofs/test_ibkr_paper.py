@@ -190,7 +190,7 @@ def test_preload_iterable_is_materialized_without_losing_instruments() -> None:
 
 def test_toml_registry_preserves_inventory_and_supplies_native_data_policy() -> None:
     registry = tomllib.loads((ROOT / "lanes/paper/ibkr.toml").read_text())
-    assert registry["state"] == "OFF" and registry["lane"] == "ibkr-paper"
+    assert registry["state"] == "ON" and registry["lane"] == "ibkr-paper"
     gateway = registry["gateway"]
     assert gateway["image"] == (
         "ghcr.io/gnzsnz/ib-gateway:10.50.1f@sha256:"

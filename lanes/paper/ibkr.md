@@ -1,7 +1,7 @@
 # IBKR paper: offline adapter slice
 
 Issue [#81](https://github.com/seathatflowsinourveins/sextant-archive/issues/81). This supplies configuration
-for broker-portability evidence. It is OFF and establishes no readiness, custody or trading result.
+for broker-portability evidence. The lane is ON for the paper account only (the owner logs in); this establishes no readiness, custody or trading result.
 The shared paper node belongs to #84 and custody/pacer/guard/halt to #51; no node is duplicated here.
 
 `sextant.paper.ibkr.build_client_configs` returns `IbkrClientConfigs(data, execution)`, the native
