@@ -8,9 +8,10 @@ from __future__ import annotations
 
 import ast
 import json
+import sys
 from decimal import Decimal as D
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from nautilus_trader.backtest import BacktestNode
@@ -113,6 +114,7 @@ def run(tmp_path: Path, receipt: Path, cls=CapacityActor, **kwargs: Any) -> Capa
         start=START - NS,
     )
     kwargs.setdefault("quotes", True)
+    kwargs.setdefault("bucket_window_s", 3600)  # fixture window
     actor = cls(
         CapacityActorConfig(
             instrument_ids=(PENNY,), receipt_path=receipt, receipt_interval_s=1, **kwargs
@@ -167,7 +169,12 @@ def test_the_receipt_interval_has_no_default() -> None:
     with pytest.raises(TypeError):
         CapacityActorConfig(instrument_ids=(PENNY,), receipt_path=Path("x"))  # type: ignore[call-arg]
     with pytest.raises(ValueError):
-        CapacityActorConfig(instrument_ids=(PENNY,), receipt_path=Path("x"), receipt_interval_s=0)
+        CapacityActorConfig(
+            instrument_ids=(PENNY,),
+            receipt_path=Path("x"),
+            receipt_interval_s=0,
+            bucket_window_s=60,
+        )
 
 
 def test_the_actor_holds_no_socket_and_places_nothing() -> None:
@@ -205,9 +212,52 @@ def test_an_unknown_config_key_is_refused_by_name() -> None:
             instrument_ids=(PENNY,),
             receipt_path=Path("x"),
             receipt_interval_s=1,
+            bucket_window_s=60,
             receipt_interval=5,
         )
     config = CapacityActorConfig(  # the engine's own base fields still pass through
-        instrument_ids=(PENNY,), receipt_path=Path("x"), receipt_interval_s=1, log_events=False
+        instrument_ids=(PENNY,),
+        receipt_path=Path("x"),
+        receipt_interval_s=1,
+        bucket_window_s=60,
+        log_events=False,
     )
     assert config.log_events is False
+
+
+# --- Review round 1 (Codex xhigh at ba990fd): the exact-head witnesses as proofs ----------
+
+
+def test_closed_buckets_and_queue_states_stay_inside_the_window(tmp_path, monkeypatch) -> None:
+    samples = 256  # F5: a long session in one receipt interval
+    monkeypatch.setattr(
+        sys.modules[__name__], "TRADES", [trade(START + i * NS, 0, i) for i in range(samples)]
+    )
+    monkeypatch.setattr(sys.modules[__name__], "QUOTES", [])
+
+    class LongInterval(CapacityActor):
+        def __init__(self, config) -> None:
+            super().__init__(config)
+            self._interval = samples + 1
+
+    receipt = tmp_path / "capacity.json"
+    actor = run(tmp_path, receipt, cls=LongInterval, quotes=False, bucket_window_s=60)
+    assert len(actor._closed) <= 60 and actor.dropped_buckets == samples - 1 - 60
+    body = json.loads(receipt.read_text())
+    assert len(body["buckets"]) <= 61 and body["dropped_buckets"] == actor.dropped_buckets
+    assert body["ticks"] == samples  # the totals still cover the whole session
+
+
+def test_the_bucket_window_has_no_default() -> None:
+    with pytest.raises(TypeError, match="bucket_window_s"):
+        CapacityActorConfig(  # type: ignore[call-arg]
+            instrument_ids=(PENNY,), receipt_path=Path("unused.json"), receipt_interval_s=1
+        )
+    for bad in (0, -1, 1.5, True):
+        with pytest.raises(ValueError, match="bucket_window_s"):
+            CapacityActorConfig(
+                instrument_ids=(PENNY,),
+                receipt_path=Path("unused.json"),
+                receipt_interval_s=1,
+                bucket_window_s=cast(Any, bad),
+            )
