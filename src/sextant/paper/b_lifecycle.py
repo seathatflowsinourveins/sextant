@@ -62,7 +62,7 @@ from sextant.entry.parameters import FIRST_LEG, SIZING, EntryParameters
 from sextant.entry.signals import EntryState
 from sextant.entry.sizing import SegmentBasis, Sizing, size_entry
 from sextant.entry.surge import SurgeState, advance_surge
-from sextant.exits.engine import CANCEL_RETRY_NS
+from sextant.exits.engine import CANCEL_RETRIES, CANCEL_RETRY_NS
 from sextant.exits.policy import ExitParams, buffer
 from sextant.paper.b_width import MAX_TRAIL_FRACTION, trail_fraction, trail_percent, view_from_quote
 from sextant.paper.sessions import Session, session_at, session_start_ns
@@ -108,7 +108,7 @@ class BLifecycleConfig(StrategyConfig):
         *,
         namespace: str,
         instrument_ids: Sequence[InstrumentId],
-        consumer: RankingConsumer,
+        consumer: RankingConsumer | None,
         rank_gate: RegistryRow,
         journal: Journal | None = None,
         entry_params: EntryParameters | None = None,
@@ -118,6 +118,7 @@ class BLifecycleConfig(StrategyConfig):
         baseline: BaselineTable | None = None,
         native_trail_fraction: Decimal | None = None,
         width_rows: Mapping[str, Decimal] | None = None,
+        trail_reduce_only: bool = True,
         **engine: object,
     ) -> None:
         unknown = sorted(set(engine) - ENGINE_FIELDS)
@@ -129,14 +130,23 @@ class BLifecycleConfig(StrategyConfig):
             raise ValueError("B needs unique instrument ids")
         if not all(isinstance(iid, InstrumentId) for iid in ids):
             raise ValueError("B instrument ids must be native InstrumentIds")
-        if not isinstance(consumer, RankingConsumer):
-            raise ValueError("B needs the reviewed RankingConsumer")
         if not namespace.isalnum():  # the house guard reads it as one id segment
             raise ValueError("B's namespace must be letters and digits")
         if not isinstance(rank_gate, RegistryRow) or rank_gate.name != "rank_gate_enabled":
             raise ValueError("B needs the rank_gate_enabled registry row")
-        if baseline is not None and (
-            baseline.identity != consumer.reader.baseline_hash or baseline.feed != consumer.feed
+        # With the gate off no rank is read, so protection needs no consumer (lead 09:1x); the
+        # entry then has no session segment and is refused.
+        if not isinstance(consumer, RankingConsumer) and (consumer, rank_gate.value) != (
+            None,
+            False,
+        ):
+            raise ValueError("B needs the reviewed RankingConsumer")
+        if (
+            consumer is not None
+            and baseline is not None
+            and (
+                baseline.identity != consumer.reader.baseline_hash or baseline.feed != consumer.feed
+            )
         ):
             raise ValueError("the surge baseline differs from the ranking's baseline")
         self.namespace, self.instrument_ids = namespace, ids
@@ -151,6 +161,13 @@ class BLifecycleConfig(StrategyConfig):
                 if width_rows[name] % 1 or width_rows[name] < 1:
                     raise ValueError(f"{name} must be a whole number of at least one")
         self.width_rows = width_rows
+        # The venue's row for the trail's reduce-only flag, read where the trail is built: True on
+        # Alpaca (ADR-0005:34); False on the official Interactive Brokers adapter, which denies a
+        # reduce-only order (nautilus_trader rc8 adapters/interactive_brokers/src/execution/
+        # core.rs:1032-1043, :2191-2196). Never an `if venue` in the Strategy.
+        if not isinstance(trail_reduce_only, bool):
+            raise ValueError("trail_reduce_only must be True or False")
+        self.trail_reduce_only = trail_reduce_only
 
 
 @dataclass(slots=True)
@@ -184,6 +201,14 @@ class _Book:
     session_bars: list[Bar] = field(default_factory=list)
     rearm_from: int | None = None  # a re-arm's cancel was sent then; its new trail is owed
     cancelling: set[ClientOrderId] = field(default_factory=set)  # cancels sent, until the end
+    # The cancel's record (exits/engine.py:303-330, ADR-0007:27): when a rejected cancel's retry
+    # is due, how many went out for the order, the last send, and the orders past K+1.
+    recancel: dict[ClientOrderId, int] = field(default_factory=dict)
+    cancel_tries: dict[ClientOrderId, int] = field(default_factory=dict)
+    cancel_sent: dict[ClientOrderId, int] = field(default_factory=dict)
+    exhausted: set[ClientOrderId] = field(default_factory=set)
+    started: set[ClientOrderId] = field(default_factory=set)  # completing trails, paged once
+    not_in_cache: set[ClientOrderId] = field(default_factory=set)  # paged once per id, kept
 
 
 class BLifecycle(Strategy):
@@ -203,6 +228,7 @@ class BLifecycle(Strategy):
         rows = self.params
         missing = sorted(n for n in ENTRY_ROWS if rows is None or not rows.has(n))
         named = (
+            ("ranking_consumer", self.consumer),
             ("exit_params", self.exit),
             ("commission_rate", self.commission),
             ("basis_path", self.basis_path),
@@ -211,8 +237,9 @@ class BLifecycle(Strategy):
         self.missing = missing + [name for name, value in named if value is None]
 
     def on_start(self) -> None:
-        self.subscribe_data(ranking_data_type(self.consumer.feed))
-        now, segment = self.clock.timestamp_ns(), self.consumer.reader.segment
+        now = self.clock.timestamp_ns()
+        if self.consumer is not None:
+            self.subscribe_data(ranking_data_type(self.consumer.feed))
         for iid, book in self.books.items():
             self.subscribe_trades(iid)
             self.subscribe_quotes(iid)
@@ -220,8 +247,10 @@ class BLifecycle(Strategy):
             if not isinstance(instrument, Equity):
                 continue
             book.instrument = instrument  # protection never waits on entry rows
-            if self.missing:
+            self.reconcile(book)  # a (re)start covers what is held at once (ADR-0007:17)
+            if self.missing or self.consumer is None:
                 continue
+            segment = self.consumer.reader.segment
             book.entry = EntryState(iid, self._p, segment.name, start_ns=segment.start_ns)
             self.subscribe_bars(book.entry.bar_type)
         rows = self.width_rows
@@ -240,6 +269,8 @@ class BLifecycle(Strategy):
         book = next((b for b in self.books.values() if b.instrument is not None), None)
         account = None if book is None else self.portfolio.account(book.instrument_id.venue)
         if book is not None and account is not None and self.basis_path is not None:
+            assert self.consumer is not None  # "ranking_consumer" is not missing
+            segment = self.consumer.reader.segment
             key = f"{segment.session_date.isoformat()}:{segment.name}:{segment.start_ns}"
             store = SegmentBasis(self.basis_path, str(account.id), self._p)
             free = self._balance(book, "free")
@@ -260,6 +291,8 @@ class BLifecycle(Strategy):
         return self.params
 
     def on_data(self, data: CustomData) -> None:
+        if self.consumer is None:
+            return
         now = self.clock.timestamp_ns()
         accepted = self.consumer.handle(data, now=now)
         self._record(kind="generation", ts=now, accepted=accepted, reason=self.consumer.reason)
@@ -313,7 +346,7 @@ class BLifecycle(Strategy):
                 book.surge,
                 trade,
                 self.baseline,
-                segment=self.consumer.reader.segment,
+                segment=cast(RankingConsumer, self.consumer).reader.segment,  # entry: consumer
                 feed=self.baseline.feed,
                 params=self._p,
                 quote=quote,
@@ -332,12 +365,14 @@ class BLifecycle(Strategy):
 
     def candidate(self, book: _Book, now: int) -> bool:
         """The rank gate over one current ``entry_rank``; DISABLED means no house entry."""
-        enabled = self.rank_gate.value
+        enabled, consumer = self.rank_gate.value, self.consumer
         rank = None
-        if enabled is True:
-            rank = self.consumer.entry_rank(str(book.instrument_id.symbol), now=now)
+        if enabled is True and consumer is not None:
+            rank = consumer.entry_rank(str(book.instrument_id.symbol), now=now)
         decision = decide_rank_gate(
-            enabled=cast(bool, enabled), rank=rank, consumer_reason=self.consumer.reason
+            enabled=cast(bool, enabled),
+            rank=rank,
+            consumer_reason=None if consumer is None else consumer.reason,
         )
         book.gate, book.gate_ns = decision, now
         allowed = decision.status is RankGateStatus.PASS
@@ -435,26 +470,53 @@ class BLifecycle(Strategy):
         self._on_order(event)
 
     def on_order_denied(self, event: Any) -> None:
-        self._record(
-            kind="page", ts=event.ts_event, reason="denied", order=str(event.client_order_id)
-        )
-        book = self.books.get(event.instrument_id)
-        if book is not None and _is_trail(self.cache.order(event.client_order_id)):
-            book.rearm = True  # a later event re-arms; never a resubmit into the same denial
+        self._refused(event, "denied")
+
+    def on_order_rejected(self, event: Any) -> None:
+        self._refused(event, "rejected")
+
+    def _refused(self, event: Any, reason: str) -> None:
+        """OrderDenied, by Nautilus before the venue (events/order/denied.rs:36-39), and
+        OrderRejected, by the venue (rejected.rs:36): either pages, and a refused trail re-arms
+        on the book's next quote or trade, never by a resubmit inside the refusal."""
+        cid = event.client_order_id
+        self._record(kind="page", ts=event.ts_event, reason=reason, order=str(cid))
+        book, order = self.books.get(event.instrument_id), self.cache.order(cid)
+        if book is not None and order is not None and _is_trail(order):
+            book.rearm = True
 
     def _rearm(self, book: _Book) -> None:
         """A trail the RiskEngine denied (its submit rate, or no price) is armed again on the
         book's next quote or trade, not recursively inside the denial."""
+        self._due_cancels(book)
         if book.rearm:
             book.rearm = False
             self.reconcile(book)
 
     def _on_order(self, event: Any) -> None:
         book = self.books.get(event.instrument_id)
-        if book is not None:
-            for cid in [c for c in book.cancelling if self._ended(c)]:
-                book.cancelling.discard(cid)  # the cancel's terminal event: re-arm may follow
-            self.reconcile(book)
+        if book is None:
+            return
+        cid = event.client_order_id
+        if self.cache.order(cid) is None and cid not in book.not_in_cache:
+            # An anomaly made visible once (lead ruling 07:5x): an absent row ends nothing and
+            # counts toward no cover.
+            book.not_in_cache.add(cid)
+            now = self.clock.timestamp_ns()
+            self._record(kind="page", ts=now, reason="order_not_in_cache", order=str(cid))
+        for ended in [
+            c for c in {*book.cancelling, *book.recancel, *book.exhausted} if self._ended(c)
+        ]:
+            self._forget(book, ended)  # the cancel's terminal event: re-arm may follow
+        self._due_cancels(book)
+        self.reconcile(book)
+
+    def _forget(self, book: _Book, cid: ClientOrderId) -> None:
+        """Everything the cancel's record holds for an order that has ended."""
+        for record in (book.recancel, book.cancel_tries, book.cancel_sent):
+            record.pop(cid, None)
+        book.cancelling.discard(cid)
+        book.exhausted.discard(cid)
 
     def _ended(self, cid: ClientOrderId) -> bool:
         order = self.cache.order(cid)
@@ -490,7 +552,8 @@ class BLifecycle(Strategy):
         if any(o.status is OrderStatus.TRIGGERED or o.filled_qty.as_decimal() > 0 for o in trails):
             return self._page(book, now, "exit_triggered_left_to_complete")
         busy = [o for o in trails if o.is_inflight or o.is_pending_cancel]
-        if busy or any(o.client_order_id in book.cancelling for o in trails):
+        held_back = {*book.cancelling, *book.recancel, *book.exhausted}
+        if busy or any(o.client_order_id in held_back for o in trails):
             return  # a submit or a cancel in flight: one command at a time, wait for its answer
         if not trails:
             if target > 0:
@@ -544,7 +607,7 @@ class BLifecycle(Strategy):
             bps,
             trailing_offset_type=TrailingOffsetType.BASIS_POINTS,
             time_in_force=TimeInForce.GTC,
-            reduce_only=True,
+            reduce_only=self._config.trail_reduce_only,  # the venue's row
             tags=["protect"],
         )
         self._record(kind="protect", ts=now, order=str(order.client_order_id), quantity=str(shares))
@@ -653,9 +716,23 @@ class BLifecycle(Strategy):
             return self._record(kind="guard_refused", order=str(cid))
         order = self.cache.order(cid)
         book = None if order is None else self.books.get(order.instrument_id)
-        if book is not None:  # an OrderUpdated clears PENDING_CANCEL (orders/mod.rs:1314-1316)
-            book.cancelling.add(cid)
+        if book is not None and order is not None:
+            if _trail_started(order):  # LEAD-2201 B3(a): a completing trail is never cancelled
+                return self._left_to_complete(book, cid)
+            if cid in book.exhausted:  # K+1 cancels were refused (ADR-0007:27): no more
+                return
+            book.cancelling.add(cid)  # an OrderUpdated clears PENDING_CANCEL (mod.rs:1314-1316)
+            book.cancel_sent[cid] = self.clock.timestamp_ns()  # the retry's clock
+            book.cancel_tries[cid] = book.cancel_tries.get(cid, 0) + 1
         self.cancel_order(cid)
+
+    def _left_to_complete(self, book: _Book, cid: ClientOrderId) -> None:
+        if cid not in book.started:
+            book.started.add(cid)
+            now = self.clock.timestamp_ns()
+            self._record(
+                kind="page", ts=now, reason="exit_triggered_left_to_complete", order=str(cid)
+            )
 
     def _modify(self, cid: ClientOrderId, **change: Any) -> None:
         if not self._house(cid):
@@ -668,12 +745,49 @@ class BLifecycle(Strategy):
         book.paged = reason
 
     def on_order_cancel_rejected(self, event: Any) -> None:
-        """The order keeps working; its cover is computed again on the next event."""
-        self._record(kind="page", ts=event.ts_event, order=str(event.client_order_id))
+        """A rejected cancel only marks. The cancel bound (exits/engine.py:303-330): sent again
+        once CANCEL_RETRY_NS has passed since that order's last cancel send, by a clock alert or
+        the next event, never inside this callback; at most K+1 cancels per order
+        (ADR-0007:27), then the order is exhausted until it ends. A cancel refused before the
+        venue accepted the order goes again on its acceptance."""
+        cid = event.client_order_id
+        self._record(kind="page", ts=event.ts_event, reason="cancel_rejected", order=str(cid))
         book = self.books.get(event.instrument_id)
-        if book is not None:
-            book.cancelling.discard(event.client_order_id)
-            book.rearm = True
+        if book is None:
+            return
+        book.cancelling.discard(cid)
+        now, order = self.clock.timestamp_ns(), self.cache.order(cid)
+        if book.cancel_tries.get(cid, 0) > CANCEL_RETRIES:
+            book.exhausted.add(cid)
+            return self._page(book, now, "cancel_retries_exhausted")
+        due = book.cancel_sent.get(cid, now - CANCEL_RETRY_NS) + CANCEL_RETRY_NS
+        if order is not None and order.status is OrderStatus.SUBMITTED:
+            due = now  # its retry waits for the acceptance event (_due_cancels)
+        book.recancel[cid] = due
+        if due > now:  # on the clock too, so a quiet market still sends it
+            name = f"b-recancel-{cid}-{book.cancel_tries.get(cid, 0)}"
+            self.clock.set_time_alert_ns(
+                name, due, callback=lambda _e, b=book: self._due_cancels(b)
+            )
+
+    def _due_cancels(self, book: _Book) -> None:
+        """Each rejected cancel whose retry is due goes out again through ``_recancel``. An
+        absent row and an order not yet accepted keep their retry."""
+        now = self.clock.timestamp_ns()
+        for cid, due in list(book.recancel.items()):
+            order = self.cache.order(cid)
+            if due > now or order is None or order.status is OrderStatus.SUBMITTED:
+                continue
+            del book.recancel[cid]
+            self._recancel(cid)
+
+    def _recancel(self, client_order_id: ClientOrderId) -> None:
+        """The one re-send of a rejected cancel: only while the order still works
+        (exits/engine.py:323-330, northstar strategies/base.py:2186-2189); a completing trail
+        is refused at the send (``_cancel``)."""
+        order = self.cache.order(client_order_id)
+        if order is not None and not order.is_closed:
+            self._cancel(client_order_id)
 
     def _fresh_quote(self, book: _Book, now: int) -> QuoteTick | None:
         quote = book.quote
@@ -746,6 +860,12 @@ def _reserved(sells: list[Any]) -> Decimal:
         else:
             single += o.leaves_qty.as_decimal()
     return single + sum(pairs.values(), Decimal(0))
+
+
+def _trail_started(order: Any) -> bool:
+    """A trailing stop that has started executing: TRIGGERED or partly filled (B3 a)."""
+    started = order.status is OrderStatus.TRIGGERED or order.filled_qty.as_decimal() > 0
+    return _is_trail(order) and started
 
 
 def _is_trail(order: Any) -> bool:
