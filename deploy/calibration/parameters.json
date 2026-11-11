@@ -18,6 +18,12 @@
       "unit": "systemd OnCalendar expression",
       "status": "UNCALIBRATED",
       "source": "LEAD-2127 section 5: rebuild C baselines each morning; ADR-0002 PRE starts 04:00 ET. Starting schedule one hour before PRE, not a measured completion-time guarantee; systemd.time calendar timezone syntax read 2026-11-10."
+    },
+    "memory_max": {
+      "value": "2G",
+      "unit": "systemd MemoryMax (binary bytes)",
+      "status": "UNCALIBRATED",
+      "source": "Offline SDK job: 4M quotes, peak RSS 1526252 KiB; next whole GiB is 2G, below the 8G/no-swap house ceiling in docs/superpowers/plans/2026-11-10-c-account-lease-and-track1a-followups.md:117. systemd.resource-control(5) MemoryMax and MemorySwapMax, https://www.freedesktop.org/software/systemd/man/latest/systemd.resource-control.html read 2026-11-10. Fixture measurement, not production capacity."
     }
   }
 }

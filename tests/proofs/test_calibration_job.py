@@ -386,3 +386,14 @@ def test_history_availability_is_recorded_after_the_response(setup_job, job):
     receipt = json.loads(next((out / "calibration/runs").glob("*.json")).read_text())
     assert receipt["files"][0]["known_at"] == NOW + 1
     assert receipt["known_at"] == NOW + 4
+
+
+def test_service_memory_limit_matches_its_uncalibrated_registry_row():
+    import configparser
+
+    service = configparser.ConfigParser(interpolation=None)
+    service.read(ROOT / "deploy/calibration/sextant-calibration-data.service")
+    row = json.loads(PARAMETERS.read_text())["rows"]["memory_max"]
+    assert row["status"] == "UNCALIBRATED" and row["source"]
+    assert service["Service"]["MemoryMax"] == row["value"]
+    assert service["Service"]["MemorySwapMax"] == "0"
