@@ -82,8 +82,11 @@ universe symbol are the position the Strategy protects, while no order outside
 the house namespace is ever modified or cancelled. Owner rows the engine would
 skip (replaced without fills, or in an unloaded instrument) are withheld with
 their payload, and their instrument loses bulk position coverage; an owner
-bracket refuses startup by name. A holding whose fills predate the lookback
-window aborts startup. A read that finds an order unchanged after an unanswered
+bracket refuses startup by name. The engine's lookback stays unbounded and the
+order listing pages newest first by `until`, past the 500-row cap, so a holding
+whose fills are old is still explained by its order; a failed or non-contiguous
+page, a page without progress, or a listing needing more requests than the
+registered request budget is incomplete coverage and startup refuses. A read that finds an order unchanged after an unanswered
 modify or cancel returns it to its venue state before the engine's in-flight
 ladder would close it, and disconnect rejects a queued entry it never sent.
 Sources: pinned NautilusTrader `manager.rs` (external-order claim and filter,

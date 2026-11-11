@@ -60,6 +60,10 @@ def execution_engine_config(*, universe, **kwargs) -> LiveExecutionEngineConfig:
     scope = [str(instrument_id) for instrument_id in universe]
     if not scope:
         raise ValueError("reconciliation requires the house universe")
+    if kwargs.get("reconciliation_lookback_mins") is not None:
+        # E5 u9: a holding older than a window would be unexplained and abort startup;
+        # the paged listing reads the whole history instead (node_config.rs:442-443).
+        raise ValueError("reconciliation lookback must stay unbounded")
     return LiveExecutionEngineConfig(
         generate_missing_orders=False,
         filter_position_reports=False,
@@ -806,29 +810,68 @@ class AlpacaExecutionClient(ExecutionClient):
             return "owner order instrument unavailable"
         return None
 
+    async def _list_orders(self, params):
+        """Read GET /orders completely, newest first, paging by ``until``.
+
+        alpaca-py requests.py:202-213: limit max 500, ``until`` on submission time,
+        direction desc; no page token. Each next page must again contain the rows at
+        the previous page's oldest instant (so neither reading of ``until`` can skip
+        a row) and must add rows. A failed page, a gap, no progress, or more pages
+        than the registered request budget is incomplete coverage, never truncation.
+        """
+        if self.gateway is None:
+            raise RuntimeError("account gateway is disconnected")
+        budget, limit = self.gateway.pacer.controls["request_budget"], 500
+        query: dict[str, Any] = dict(params, limit=limit, direction="desc")
+        rows: dict[str, dict] = {}
+        unkeyed: list = []  # Rows the pager cannot key or place; each fails in its own row.
+        edge: set[str] = set()
+        for _ in range(budget):
+            try:
+                page = await self._call(ActionKind.QUERY, "get", "/orders", query)
+            except Exception as exc:
+                raise IncompleteCoverage([], [(query, exc)]) from exc
+            stamped = {}
+            for row in page:
+                try:
+                    stamped[row["id"]] = (dt_to_unix_nanos(row["submitted_at"]), row)
+                except Exception:
+                    unkeyed.append(row)
+            if not edge <= set(stamped):
+                raise IncompleteCoverage(
+                    [], [(query, ValueError("order pages are not contiguous"))]
+                )
+            fresh = {key: row for key, (_, row) in stamped.items() if key not in rows}
+            rows.update(fresh)
+            if len(page) < limit:
+                return [*rows.values(), *unkeyed]
+            if not fresh:
+                raise IncompleteCoverage([], [(query, ValueError("order page made no progress"))])
+            instant = min(ns for ns, _ in stamped.values())
+            edge = {key for key, (ns, _) in stamped.items() if ns == instant}
+            oldest = next(row for ns, row in stamped.values() if ns == instant)
+            query = dict(query, until=oldest["submitted_at"])
+        reason = "order listing needs more requests than the registered request budget"
+        raise IncompleteCoverage([], [(params, ValueError(reason))])
+
     async def _generate_order_status_reports(self, command):
         self.coverage_complete = self._orders_complete = False
         self.withheld = []
-        # Vendor maximum: refuse capped coverage rather than infer missing orders.
-        rows = await self._call(
-            ActionKind.QUERY,
-            "get",
-            "/orders",
-            {
-                "status": "open" if command.open_only else "all",
-                "limit": 500,
-                "nested": True,
-                **_bounds(command),
-            },
-        )
-        capped = len(rows) >= 500
-        if not command.open_only and getattr(command, "start", None) is not None:
-            # A submission-time window cannot cover older still-working orders.
-            opened = await self._call(
-                ActionKind.QUERY, "get", "/orders", {"status": "open", "limit": 500, "nested": True}
+        try:
+            rows = await self._list_orders(
+                {
+                    "status": "open" if command.open_only else "all",
+                    "nested": True,
+                    **_bounds(command),
+                }
             )
-            capped = capped or len(opened) >= 500
-            rows = _merge_listings(rows, opened)
+            if not command.open_only and getattr(command, "start", None) is not None:
+                # A submission-time window cannot cover older still-working orders.
+                opened = await self._list_orders({"status": "open", "nested": True})
+                rows = _merge_listings(rows, opened)
+        except IncompleteCoverage as exc:
+            self.failures.extend(exc.failures)
+            raise
         reports, failures = [], []
         for row in rows:
             try:
@@ -841,8 +884,6 @@ class AlpacaExecutionClient(ExecutionClient):
                     reports.append(report)
             except Exception as exc:
                 failures.append((row, exc))
-        if capped:
-            failures.append((rows, ValueError("order listing reached venue page cap")))
         if failures:
             self.failures.extend(failures)
             raise IncompleteCoverage(reports, failures)

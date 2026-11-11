@@ -25,6 +25,7 @@ class Venue:
         self.rows = {}
         self.positions: list[dict] = []
         self.activities: list[dict] = []
+        self.until_exclusive = False  # Models the other reading of ``until`` (unverified).
         self.requests = []
         self.regular = True
         self.pending = None
@@ -65,8 +66,9 @@ class Venue:
     def listing(self, params):
         """GET /orders parameters, alpaca-py requests.py:202-213 (GetOrdersRequest).
 
-        status open|closed|all (default open), after/until on submission time,
-        symbols, limit (default 50, max 500), newest first (direction desc).
+        status open|closed|all (default open), after/until on submission time
+        (until inclusive unless ``until_exclusive``), symbols, limit (default 50,
+        capped at the venue's 500), direction desc (default) or asc.
         """
         status = params.get("status", "open")
         symbols = params.get("symbols")
@@ -78,9 +80,11 @@ class Venue:
             if status == "all" or (status == "open") == (r["status"] not in CLOSED)
             if symbols is None or r["symbol"] in symbols
             if "after" not in params or _ns(r["submitted_at"]) > _ns(params["after"])
-            if "until" not in params or _ns(r["submitted_at"]) <= _ns(params["until"])
+            if "until" not in params
+            or _ns(r["submitted_at"]) < _ns(params["until"])
+            or (not self.until_exclusive and _ns(r["submitted_at"]) == _ns(params["until"]))
         ]
-        rows.sort(key=lambda r: _ns(r["submitted_at"]), reverse=True)
+        rows.sort(key=lambda r: _ns(r["submitted_at"]), reverse=params.get("direction") != "asc")
         return deepcopy(rows[: min(int(params.get("limit", 50)), 500)])
 
     def get(self, path, params):
