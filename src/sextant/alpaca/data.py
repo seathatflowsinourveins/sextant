@@ -18,7 +18,9 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import timedelta
 from decimal import Decimal
+from threading import Thread
 from typing import Protocol, cast
+from weakref import ReferenceType, ref
 from zoneinfo import ZoneInfo
 
 from alpaca.data.enums import DataFeed
@@ -131,6 +133,24 @@ class _Stock:
         return Quantity.from_decimal_dp(number * multiplier, self.size_precision)
 
 
+@dataclass
+class _StreamState:
+    closing: bool = False
+    failure: Exception | None = None
+
+
+def _publish_on_owner(
+    client_ref: ReferenceType[AlpacaDataClient],
+    channel: str,
+    symbol: str,
+    key: InstrumentId | BarType,
+    tick: _Tick | None,
+    conversion_error: Exception | None,
+) -> None:
+    if (client := client_ref()) is not None:
+        client._publish(channel, symbol, key, tick, conversion_error)
+
+
 class AlpacaDataClient(MarketDataClient):
     """One SDK stream and historical client for one explicit IEX or SIP feed.
 
@@ -174,8 +194,7 @@ class AlpacaDataClient(MarketDataClient):
         }
         self._stream_ready: asyncio.Future[_StreamOwner] | None = None
         self._stream_task: asyncio.Task[object] | None = None
-        self._closing = False
-        self._handler_failure: Exception | None = None
+        self._stream_state = _StreamState()
         self._dropped_counts = dict.fromkeys(self._active, 0)
 
     @property
@@ -210,24 +229,33 @@ class AlpacaDataClient(MarketDataClient):
         return self._historical
 
     async def _disconnect(self) -> None:
-        self._closing = True
+        self._stream_state.closing = True
         # The ready future supplies the actual loop before stop is attempted.
-        async with asyncio.timeout(_STREAM_STOP_TIMEOUT_S):
-            if self._stream_task is not None and self._stream_ready is not None:
-                if not self._stream_task.done():
-                    loop, task = await asyncio.shield(self._stream_ready)
-                    try:
-                        loop.call_soon_threadsafe(task.cancel)
-                    except RuntimeError:
-                        if not loop.is_closed():
-                            raise
-                await asyncio.shield(self._stream_task)
+        try:
+            async with asyncio.timeout(_STREAM_STOP_TIMEOUT_S):
+                if self._stream_task is not None and self._stream_ready is not None:
+                    if not self._stream_task.done():
+                        loop, task = await asyncio.shield(self._stream_ready)
+                        try:
+                            loop.call_soon_threadsafe(task.cancel)
+                        except RuntimeError:
+                            if not loop.is_closed():
+                                raise
+                    await asyncio.shield(self._stream_task)
+        finally:
+            if self._stream_task is not None and self._stream_task.done():
+                # Release exception tracebacks on the node loop after draining;
+                # timed-out work stays tracked, as in rc8 live/src/task.rs.
+                self._stream_task = None
+                self._stream_ready = None
+                self._stream_state.failure = None
 
+    @staticmethod
     def _run_stream(
-        self,
         stream: AlpacaStockDataStream,
         owner: asyncio.AbstractEventLoop,
         ready: asyncio.Future[_StreamOwner],
+        state: _StreamState,
     ) -> None:
         async def run() -> None:
             task = asyncio.current_task()
@@ -236,18 +264,29 @@ class AlpacaDataClient(MarketDataClient):
             try:
                 # SDK run() wraps this coroutine in asyncio.run(). Retain
                 # that boundary while making startup and shutdown cancellable.
-                if not self._closing:
+                if not state.closing:
                     await stream._run_forever()
             except asyncio.CancelledError:
                 pass
+            except Exception as error:
+                if state.failure is None:
+                    state.failure = error
             finally:
                 try:
                     await stream.close()
+                except Exception as error:
+                    if state.failure is None:
+                        state.failure = error
                 finally:
-                    if self._handler_failure is not None:
-                        raise self._handler_failure
+                    # rc8 AX data.rs:362-386 cancels, drains, then clears state.
+                    for handlers in stream._handlers.values():
+                        handlers.clear()
 
-        asyncio.run(run())
+        try:
+            asyncio.run(run())
+        except Exception as error:
+            if state.failure is None:
+                state.failure = error
 
     async def _stream_worker(
         self,
@@ -255,8 +294,17 @@ class AlpacaDataClient(MarketDataClient):
         owner: asyncio.AbstractEventLoop,
         ready: asyncio.Future[_StreamOwner],
     ) -> None:
-        await asyncio.to_thread(self._run_stream, stream, owner, ready)
-        if not self._closing:
+        # Join before propagating failures: owner-side tracebacks capture self.
+        thread = Thread(
+            target=AlpacaDataClient._run_stream,
+            args=(stream, owner, ready, self._stream_state),
+            name="alpaca-stock-stream",
+        )
+        thread.start()
+        await asyncio.to_thread(thread.join)
+        if self._stream_state.failure is not None:
+            raise self._stream_state.failure
+        if not self._stream_state.closing:
             raise RuntimeError("Alpaca stock data stream exited")
 
     async def _change_subscription(
@@ -342,9 +390,11 @@ class AlpacaDataClient(MarketDataClient):
         if self._stream is None:
             self._stream = AlpacaStockDataStream(*self._credentials(), feed=self._feed)
         stream = self._stream
+        client_ref: ReferenceType[AlpacaDataClient] = ref(self)
+        state = self._stream_state
 
         async def receive(row: Quote | Trade | StockBar) -> None:
-            if self._handler_failure is not None:
+            if state.failure is not None:
                 return
             receipt = time.time_ns()
             tick: _Tick | None = None
@@ -370,11 +420,11 @@ class AlpacaDataClient(MarketDataClient):
                 else:
                     raise TypeError("Unexpected Alpaca market data model")
             except Exception as error:
-                self._handler_failure = error
+                state.failure = error
                 await stream.stop_ws()
                 return
             owner.call_soon_threadsafe(
-                self._publish, channel, stock.symbol, key, tick, conversion_error
+                _publish_on_owner, client_ref, channel, stock.symbol, key, tick, conversion_error
             )
 
         # alpaca-py installs these handlers before its wire send and retains
@@ -394,7 +444,7 @@ class AlpacaDataClient(MarketDataClient):
             self._dropped_counts[channel] += 1
             if conversion_error is not None:
                 self._log.error(f"Dropped Alpaca {channel} row for {symbol}: {conversion_error}")
-        elif not self._closing and self._active[channel].get(symbol) == key:
+        elif not self._stream_state.closing and self._active[channel].get(symbol) == key:
             self._handle_data(tick)
 
     async def _unsubscribe_quotes(self, command: UnsubscribeQuotes) -> None:
