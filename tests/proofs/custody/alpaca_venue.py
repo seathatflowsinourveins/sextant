@@ -35,7 +35,9 @@ class Venue:
         self.requests.append(("POST", path, deepcopy(body)))
         if body["extended_hours"] and body["type"] != "limit":
             raise ValueError("extended hours requires LIMIT")
-        if any(
+        # Alpaca user-protection docs (read 2026-11-11): trailing stops are exempt from
+        # wash-trade protection, including protection while a BUY remainder still rests.
+        if body["type"] != "trailing_stop" and any(
             r["symbol"] == body["symbol"]
             and r["side"] != body["side"]
             and r["status"] not in ("filled", "canceled", "replaced")
