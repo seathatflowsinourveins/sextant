@@ -14,7 +14,7 @@ precheck="bash $PWD/deploy/wsl/reflection-precheck.sh"
 # model-policy.json claude_reflection. Both paths set it, so a re-run converges an existing automation:
 # orca-ide 1.4.251 `automations edit --help`, "--extra-agent-args=<args> Extra agent arguments for fresh
 # runs; empty clears", and automations.mdx above, "Extra agent arguments".
-agent_args="--model claude-fable-5-2 --effort high"
+agent_args="--model fable --effort high"
 default_branch=$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name)
 base_branch="origin/${default_branch}"
 id=$(orca-ide automations list --json | jq -r --arg name "$name" '.result.automations[] | select(.name == $name) | .id' | head -n 1)

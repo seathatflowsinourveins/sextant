@@ -32,7 +32,7 @@
   },
   "claude_lead": {
     "runtime": "native Claude Code",
-    "model": "claude-fable-5-2",
+    "model": "fable",
     "effort": "high",
     "read_date": "2026-11-09",
     "launch": "python3 scripts/role_launch.py lead",
@@ -42,9 +42,9 @@
     "autocompact_window_source": "https://code.claude.com/docs/en/model-config (autoCompactWindow's 100,000-1,000,000 range) and https://code.claude.com/docs/en/settings-reference (idleCompaction's 200,000 threshold), read 2026-11-09",
     "advisor": null,
     "pinned_in": "the lead tab's launch (`.claude/agents/lead.md` and `python3 scripts/role_launch.py lead`)",
-    "authority": "The owner's named assignment of the lead, 2026-11-09, and the lead's ruling 1 as amended by the effort ruling (ADR-0030, 2026-11-09 amendment, effort by role)",
+    "authority": "The owner's named assignment of the lead, 2026-11-09, and the lead's ruling 1 as amended by the effort ruling (ADR-0030, 2026-11-09 amendment, effort by role). Since 2026-11-11 the pin is Claude Code's `fable` alias, so the surface follows the newest Fable the installed build resolves (the owner's word, ADR-0030, 2026-11-11 amendment)",
     "vendor_source": "https://platform.claude.com/docs/en/models/fable-5-2/overview",
-    "alias_source": "https://code.claude.com/docs/en/model-config, read 2026-11-09: the fable alias resolves to Fable 5.2, which requires Claude Code 2.1.321 or later",
+    "alias_source": "https://code.claude.com/docs/en/model-config, read 2026-11-09: the fable alias resolves to Fable 5.2, which requires Claude Code 2.1.321 or later; measured 2026-11-11 on Claude Code 2.1.322: `claude -p --model fable --output-format json` reported modelUsage `claude-fable-5-2`",
     "effort_source": "https://platform.claude.com/docs/en/build-with-claude/effort"
   },
   "claude_roles": {
@@ -75,11 +75,11 @@
   },
   "claude_reflection": {
     "runtime": "native Claude Code, run by an Orca automation (orca-ide 1.4.251)",
-    "model": "claude-fable-5-2",
+    "model": "fable",
     "effort": "high",
     "read_date": "2026-11-09",
     "pinned_in": "deploy/wsl/reflection.sh, the agent args of both its create and edit paths: the reflection automation",
-    "authority": "ADR-0030 Decision 1 as amended: a long unattended Claude run at the Claude-worker level, high; the daily detector's #168 on 2026-11-09 (ADR-0030, 2026-11-09 amendment, effort by role)",
+    "authority": "ADR-0030 Decision 1 as amended: a long unattended Claude run at the Claude-worker level, high; the daily detector's #168 on 2026-11-09 (ADR-0030, 2026-11-09 amendment, effort by role). Since 2026-11-11 the pin is Claude Code's `fable` alias, so the surface follows the newest Fable the installed build resolves (the owner's word, ADR-0030, 2026-11-11 amendment)",
     "vendor_source": "https://platform.claude.com/docs/en/models/fable-5-2/overview",
     "effort_source": "https://platform.claude.com/docs/en/build-with-claude/effort"
   },

@@ -119,7 +119,7 @@ class World:
                 "Verified reflection",
                 REFLECTION,
                 "reflection-precheck.sh",
-                "--model claude-fable-5-2 --effort high",
+                "--model fable --effort high",
             ),
         ]
         self.agy_mcp = [
@@ -172,7 +172,7 @@ class World:
         return {
             "gpt": {"model": "gpt-6.1-sol", "effort": "max"},
             "claude": {"model": "claude-opus-5-5", "effort": "high"},
-            "claude_reflection": {"model": "claude-fable-5-2", "effort": "high"},
+            "claude_reflection": {"model": "fable", "effort": "high"},
             "google": {"antigravity": "gemini-4-argon-high", "effort": "high"},
             "meta": {"model": "muse-wonder-full-1.0", "effort": "max", "contributor_mode": "off"},
         }
