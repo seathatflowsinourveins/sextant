@@ -47,7 +47,7 @@ def test_every_name_starts_unknown_whatever_priming_says(tmp_path) -> None:
     assert [halted for _, halted, _ in primed] == [None, None, None]
     assert moves(out) == []
     assert out["actor"].evidence() == dict(
-        unknown=3, not_halted=0, halted=0, cleared_by_print=0, resets=0
+        unknown=3, not_halted=0, halted=0, cleared_by_print=0, cleared_by_status=0, resets=0
     )
 
 
@@ -61,7 +61,7 @@ def test_the_first_eligible_print_clears_and_later_prints_change_nothing(tmp_pat
     out = run(tmp_path, host_cls=Evidence, facts=regular)
     assert moves(out) == [("PENNY", False, 0)]
     assert out["actor"].evidence() == dict(
-        unknown=2, not_halted=1, halted=0, cleared_by_print=1, resets=0
+        unknown=2, not_halted=1, halted=0, cleared_by_print=1, cleared_by_status=0, resets=0
     )
 
 
@@ -154,7 +154,7 @@ def test_a_stream_gap_resets_every_name_and_the_rule_applies_again(tmp_path) -> 
         ("PENNY", False, 300),
     ]
     assert out["actor"].evidence() == dict(
-        unknown=2, not_halted=1, halted=0, cleared_by_print=3, resets=2
+        unknown=2, not_halted=1, halted=0, cleared_by_print=3, cleared_by_status=0, resets=2
     )
 
 

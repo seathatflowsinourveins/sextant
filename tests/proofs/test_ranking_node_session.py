@@ -14,7 +14,7 @@ from typing import Any
 
 from nautilus_trader.model import CustomData, MarketStatusAction
 from test_ranking import NS, SCOPE, START, baseline, registry
-from test_ranking_actor import NAMES, Logged, run
+from test_ranking_actor import IDS, NAMES, Logged, run
 from test_ranking_actor_status import status
 
 from sextant.alpaca.stream_facts import AlpacaStreamGap, StreamFacts, gap_type
@@ -45,11 +45,13 @@ def inputs(segment: Segment) -> SegmentInputs:
 
 def session_run(tmp_path: Path, *, segments=lambda ts: SCOPE, source=inputs, **kwargs: Any):
     clocks: list[Any] = []
+    actors: list[Any] = []
     sessions: list[SegmentedHost] = []
 
     class Clocked(kwargs.pop("actor_cls", Logged)):  # type: ignore[misc]
         def on_start(self) -> None:
             clocks.append(self.clock)
+            actors.append(self)
             super().on_start()
 
     def build() -> SegmentedHost:
@@ -63,6 +65,7 @@ def session_run(tmp_path: Path, *, segments=lambda ts: SCOPE, source=inputs, **k
                 segment_of=segments,
                 clock=clocks[0].timestamp_ns,
                 receipt_dir=tmp_path / "receipts",
+                evidence=lambda: actors[0].evidence(),
             )
         )
         return sessions[-1]
@@ -95,6 +98,12 @@ def test_a_segment_held_from_before_its_start_ranks_and_beats(tmp_path) -> None:
     assert body["observed"] is True and body["gaps"] == 0 and body["names_ranked"] == 1
     assert body["names_unknown"] == 2 and body["names_halted"] == 0
     assert body["generations"] == out["actor"].published
+
+
+def test_the_receipt_says_how_names_left_unknown(tmp_path) -> None:
+    trading = status(30, MarketStatusAction.TRADING, iid=IDS[0], is_trading=True)
+    session_run(tmp_path, statuses=[trading])
+    assert receipt(tmp_path)["cleared"] == {"cleared_by_print": 1, "cleared_by_status": 1}
 
 
 def test_a_halted_name_has_no_entry_rank(tmp_path) -> None:

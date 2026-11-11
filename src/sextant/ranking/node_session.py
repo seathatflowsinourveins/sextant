@@ -67,10 +67,12 @@ class SegmentedHost:
         segment_of: Callable[[int], Segment | None],
         clock: Callable[[], int],
         receipt_dir: Path,
+        evidence: Callable[[], Mapping[str, int]] | None = None,
     ) -> None:
         self.feed, self.universe, self._source = feed, tuple(sorted(universe)), universe_source
         self._registry, self._inputs, self._segment_of = registry, inputs, segment_of
         self._clock, self._receipt_dir = clock, Path(receipt_dir)
+        self._evidence = evidence  # the Actor's run counts, read when a receipt is written
         self.observing_since = clock()  # the Actor subscribes in this same on_start callback
         self._halted: dict[str, bool | None] = dict.fromkeys(self.universe)
         self._known: dict[str, int] = {}
@@ -210,6 +212,7 @@ class SegmentedHost:
             return
         host, last = self.host, self._last
         states = list(self._halted.values())
+        counts = self._evidence() if self._evidence is not None else {}
         body: dict[str, Any] = {
             "segment": segment.name,
             "session_date": segment.session_date.isoformat(),
@@ -222,6 +225,8 @@ class SegmentedHost:
             "names_ranked": 0 if last is None else sum(r.rank is not None for r in last.rows),
             "names_unknown": states.count(None),
             "names_halted": sum(state is True for state in states),
+            # how names left unknown, the run's totals when this receipt is written (lead 04:4x)
+            "cleared": {key: counts.get(key) for key in ("cleared_by_print", "cleared_by_status")},
             "late": self.late,
             "unrouted": self.unrouted,
             "unprimed": self.unprimed,
