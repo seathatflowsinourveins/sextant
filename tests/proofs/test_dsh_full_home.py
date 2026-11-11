@@ -201,28 +201,40 @@ def test_an_existing_home_links_into_the_checkout_only_at_its_fetched_main(
     shutil.rmtree(world["home"] / "profiles/dsh-headless")
     tui = world["home"] / "profiles/dsh-tui"
     data = json.loads((tui / "package.json").read_text())
-    last = LOCK["interactive"]["bundles"][-1]  # what `dsh plugin remove` leaves behind
-    del data["dependencies"][last]
-    data["dsh"]["profile"]["bundles"].remove(last)
+    stack = LOCK["interactive"]["bundles"]
+    rows = {row["package"]: row for row in LOCK["interactive"]["dependencies"]}
+    links = [
+        i for i, name in enumerate(stack) if rows.get(name, {}).get("spec", "").startswith("link:")
+    ]
+    first = max(links)  # the in-box base bundle has no dependency row
+    removed = stack[first:]  # the last house link and every bundle after it
+    for last in removed:
+        del data["dependencies"][last]
+        data["dsh"]["profile"]["bundles"].remove(last)
+        (tui / "node_modules" / last).unlink(missing_ok=True)
     (tui / "package.json").write_text(json.dumps(data))
-    (tui / "node_modules" / last).unlink()
     (world["tmp"] / "dsh.log").unlink()
     off = "HEAD 1a is not refs/remotes/origin/main 2b"
-    parity._main_mismatch = lambda repository: None if at_main else off
+    parity._main_mismatch = lambda repository: None if at_main else off  # pyright: ignore[reportAttributeAccessIssue]
     capsys.readouterr()
     _install(parity, world)
     assert (world["home"] / "profiles/dsh-headless").exists() == at_main
     if at_main:
-        row = next(r for r in LOCK["interactive"]["dependencies"] if r["package"] == last)
         assert _lines(world["tmp"] / "dsh.log") == [
-            f"plugin --profile dsh-tui add --save-exact {_target(row)}",
+            *(
+                f"plugin --profile dsh-tui add --save-exact {_target(rows[name])}"
+                for name in removed
+            ),
             *(call for call in _expected_calls() if "dsh-headless" in call),
         ]
         assert _doctor(tui / "package.json").returncode == 0
     else:
         assert not (world["tmp"] / "dsh.log").exists()
-        assert last not in json.loads((tui / "package.json").read_text())["dependencies"]
-        assert capsys.readouterr().out.count(off) == 2
+        held = json.loads((tui / "package.json").read_text())["dependencies"]
+        assert not set(removed) & set(held)
+        assert capsys.readouterr().out.count(off) == 1 + len(
+            removed
+        )  # each waiting bundle, then the headless home
 
 
 @pytest.mark.parametrize("drift", ["one extra bundle", "one missing bundle"])
