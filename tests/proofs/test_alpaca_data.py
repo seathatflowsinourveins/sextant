@@ -321,3 +321,85 @@ def test_failed_stock_history_completes_requests_without_publishing_data():
     assert all(
         "fixture history unavailable" in (r.failure_reason or "") for r in strategy.responses
     )
+
+
+@pytest.mark.parametrize("bound", [False, True])
+def test_disconnect_bounds_readiness_and_join(monkeypatch, bound):
+    from sextant.alpaca import data
+
+    monkeypatch.setattr(data, "_STREAM_STOP_TIMEOUT_S", 0.01, raising=False)
+
+    async def blocked():
+        await asyncio.Future()
+
+    async def check():
+        client = offline_client()
+        loop = asyncio.get_running_loop()
+        vendor = asyncio.create_task(blocked())
+        worker = asyncio.create_task(blocked())
+        client._stream_task = worker
+        client._stream_ready = loop.create_future()
+        if bound:
+            client._stream_ready.set_result((loop, vendor))
+        stop = asyncio.create_task(client._disconnect())
+        try:
+            done, _ = await asyncio.wait([stop], timeout=0.1)
+            assert done, f"disconnect stalled with stream loop bound={bound}"
+            with pytest.raises(TimeoutError):
+                stop.result()
+            assert vendor.cancelled() is bound
+            assert not worker.done()
+        finally:
+            for task in (stop, worker, vendor):
+                task.cancel()
+            await asyncio.gather(stop, worker, vendor, return_exceptions=True)
+
+    asyncio.run(check())
+
+
+def offline_client(**kwargs):
+    from typing import cast
+
+    from sextant.alpaca.data import AlpacaDataClient
+
+    return AlpacaDataClient(
+        name="ALPACA",
+        config=DataClientConfig(),
+        cache=cast(Any, None),
+        clock=cast(Any, None),
+        venue=INSTRUMENT_ID.venue,
+        feed=DataFeed.SIP,
+        **kwargs,
+    )
+
+
+def test_disconnect_reraises_first_handler_conversion_failure(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from alpaca.data.models import Quote
+
+    from sextant.alpaca import data
+
+    class Stream(data.AlpacaStockDataStream):
+        async def _run_forever(self):
+            await asyncio.Future()
+
+        async def register(self, channel, symbols, handler):
+            await handler(Quote(symbols[0], {**QUOTE, "bs": 1.5}))
+            await handler(Quote("UNREGISTERED", QUOTE))
+
+    async def check():
+        client = offline_client(stream=Stream("fixture", "fixture"))
+        monkeypatch.setattr(client, "create_task", lambda coro, _name: asyncio.create_task(coro))
+        monkeypatch.setattr(
+            client,
+            "_stock",
+            AsyncMock(
+                return_value=data._Stock(INSTRUMENT_ID, INSTRUMENT_ID.symbol.value, 2, 0),
+            ),
+        )
+        await client._subscribe_channel("quotes", [INSTRUMENT_ID])
+        with pytest.raises(ValueError, match="nonnegative whole count"):
+            await client._disconnect()
+
+    asyncio.run(check())

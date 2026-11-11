@@ -4,6 +4,9 @@ NautilusTrader d53849b: examples/live/_template/data.py, the Python adapter
 guide and live/__init__.pyi. alpaca-py cc4cb3b: data/live/{stock,websocket}.py,
 data/historical/stock.py and data/requests.py. Receipt and bar clocks follow
 Sextant ADR-0013 and the existing alpaca_feed.py thread boundary.
+Thread hand-off uses Python 3.13 asyncio's call_soon_threadsafe
+(https://docs.python.org/3.13/library/asyncio-eventloop.html#asyncio.loop.call_soon_threadsafe,
+read 2026-11-10).
 """
 
 from __future__ import annotations
@@ -14,7 +17,7 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import timedelta
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from typing import Protocol, cast
 from zoneinfo import ZoneInfo
 
@@ -62,6 +65,7 @@ from nautilus_trader.model import (
 )
 
 _NY = ZoneInfo("America/New_York")
+_STREAM_STOP_TIMEOUT_S = 5.0  # E4 dsh build 48cb220, shutdown bound.
 _ROUND_LOT_SHARES = 100  # Alpaca's quote sizes and the incumbent SIP normalization.
 type _Tick = QuoteTick | TradeTick | Bar
 type _StreamOwner = tuple[asyncio.AbstractEventLoop, asyncio.Task[None]]
@@ -169,6 +173,7 @@ class AlpacaDataClient(MarketDataClient):
         self._stream_ready: asyncio.Future[_StreamOwner] | None = None
         self._stream_task: asyncio.Task[object] | None = None
         self._closing = False
+        self._handler_failure: Exception | None = None
 
     async def _connect(self) -> None:
         if self.instrument_provider is None:
@@ -190,18 +195,20 @@ class AlpacaDataClient(MarketDataClient):
 
     async def _disconnect(self) -> None:
         self._closing = True
-        if self._stream_task is not None and self._stream_ready is not None:
-            if not self._stream_task.done():
-                loop, task = await asyncio.shield(self._stream_ready)
-                try:
-                    loop.call_soon_threadsafe(task.cancel)
-                except RuntimeError:
-                    if not loop.is_closed():
-                        raise
-            await asyncio.shield(self._stream_task)
+        # The ready future supplies the actual loop before stop is attempted.
+        async with asyncio.timeout(_STREAM_STOP_TIMEOUT_S):
+            if self._stream_task is not None and self._stream_ready is not None:
+                if not self._stream_task.done():
+                    loop, task = await asyncio.shield(self._stream_ready)
+                    try:
+                        loop.call_soon_threadsafe(task.cancel)
+                    except RuntimeError:
+                        if not loop.is_closed():
+                            raise
+                await asyncio.shield(self._stream_task)
 
-    @staticmethod
     def _run_stream(
+        self,
         stream: AlpacaStockDataStream,
         owner: asyncio.AbstractEventLoop,
         ready: asyncio.Future[_StreamOwner],
@@ -213,11 +220,16 @@ class AlpacaDataClient(MarketDataClient):
             try:
                 # SDK run() wraps this coroutine in asyncio.run(). Retain
                 # that boundary while making startup and shutdown cancellable.
-                await stream._run_forever()
+                if not self._closing:
+                    await stream._run_forever()
             except asyncio.CancelledError:
                 pass
             finally:
-                await stream.close()
+                try:
+                    await stream.close()
+                finally:
+                    if self._handler_failure is not None:
+                        raise self._handler_failure
 
         asyncio.run(run())
 
@@ -311,7 +323,13 @@ class AlpacaDataClient(MarketDataClient):
         if not stocks:
             return
 
+        if self._stream is None:
+            self._stream = AlpacaStockDataStream(*self._credentials(), feed=self._feed)
+        stream = self._stream
+
         async def receive(row: Quote | Trade | StockBar) -> None:
+            if self._handler_failure is not None:
+                return
             receipt = time.time_ns()
             try:
                 stock, key = stocks[row.symbol]
@@ -323,15 +341,9 @@ class AlpacaDataClient(MarketDataClient):
                     tick = _bar(row, stock, key, receipt)
                 else:
                     raise TypeError("Unexpected Alpaca market data model")
-            except (
-                AttributeError,
-                InvalidOperation,
-                KeyError,
-                OverflowError,
-                TypeError,
-                ValueError,
-            ):
-                owner.call_soon_threadsafe(self._log.error, f"Invalid Alpaca {channel} row")
+            except Exception as error:
+                self._handler_failure = error
+                await stream.stop_ws()
                 return
             if tick is not None:
                 owner.call_soon_threadsafe(self._publish, channel, stock.symbol, key, tick)
@@ -339,15 +351,7 @@ class AlpacaDataClient(MarketDataClient):
         # alpaca-py installs these handlers before its wire send and retains
         # them for reconnect. Accept the earliest queued tick from each handler.
         active.update({symbol: key for symbol, (_, key) in stocks.items()})
-        if self._stream is None:
-            self._stream = AlpacaStockDataStream(*self._credentials(), feed=self._feed)
-        await self._change_subscription(
-            self._stream,
-            self._stream.register,
-            channel,
-            tuple(stocks),
-            receive,
-        )
+        await self._change_subscription(stream, stream.register, channel, tuple(stocks), receive)
 
     def _publish(self, channel: str, symbol: str, key: InstrumentId | BarType, tick: _Tick) -> None:
         if not self._closing and self._active[channel].get(symbol) == key:
