@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
 
@@ -88,6 +89,8 @@ class SegmentedHost:
         self.observed = False
         self.gaps = self.generations = self.late = self.unprimed = 0
         self.amendments = {"inside": 0, "outside": 0, "unprimed": 0}
+        self.amendment_notional = {"inside": Decimal(0), "outside": Decimal(0)}
+        self._amended_names: set[str] = set()
         self._last: RankingGeneration | None = None
 
     def actor_priming(self) -> Priming:
@@ -157,14 +160,22 @@ class SegmentedHost:
             )
         )
 
-    def on_amendment(self, name: str, key: str) -> RankingGeneration | None:
-        """A correction or cancel, for the current segment's adapter (N1f)."""
+    def on_amendment(
+        self, name: str, key: str, *, notional: Decimal | None = None
+    ) -> RankingGeneration | None:
+        """A correction or cancel, for the current segment's adapter (N1f). The records' own
+        notional is summed for the receipt only: the segment's cumulative dollar volume keeps a
+        corrected print until the segment ends (a known limit, lead ruling 03:35)."""
+        self._amended_names.add(name)
         if self.host is None:
             self.amendments["unprimed"] += 1
             return None
         before = self.host.amendments_inside
         generation = self._count(self.host.on_amendment(name, key))
-        self.amendments["inside" if self.host.amendments_inside > before else "outside"] += 1
+        side = "inside" if self.host.amendments_inside > before else "outside"
+        self.amendments[side] += 1
+        if notional is not None:
+            self.amendment_notional[side] += notional
         return generation
 
     def set_coverage(self, coverage: Coverage) -> RankingGeneration | None:
@@ -269,6 +280,8 @@ class SegmentedHost:
             "unrouted": self.unrouted,
             "unprimed": self.unprimed,
             "amendments": dict(self.amendments),
+            "amendment_notional": {k: format(v, "f") for k, v in self.amendment_notional.items()},
+            "amended_names": len(self._amended_names),
             "faults": {}
             if host is None
             else {

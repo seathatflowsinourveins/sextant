@@ -136,3 +136,17 @@ def test_two_overlapping_amendments_withdraw_until_both_prints_leave(tmp_path) -
     assert rank(out, 540) is None  # the 120 s print is still the window's anchor
     assert rank(out, 600) is not None
     assert receipt(tmp_path)["amendments"]["inside"] == 2
+
+
+def test_the_receipt_sums_the_amended_notional_inside_and_outside(tmp_path) -> None:
+    # Lead ruling 03:35: the cumulative dollar volume keeps a corrected print's notional (a
+    # known limit); the receipt measures it from the records' own fields, no behaviour change.
+    amended_run(
+        tmp_path,
+        (365, "correction", "PENNY", 60),
+        (370, "cancel", "PENNY", 999),
+        (375, "correction", "LARGE", 999),
+    )
+    body = receipt(tmp_path)
+    assert body["amendment_notional"] == {"inside": "50.00", "outside": "100.00"}
+    assert body["amended_names"] == 2

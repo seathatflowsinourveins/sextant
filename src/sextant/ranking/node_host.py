@@ -26,6 +26,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import replace
+from decimal import Decimal
 
 from nautilus_trader.model import TradeTick
 
@@ -105,7 +106,9 @@ class NodeRankingHost:
             publisher.states[name] = replace(state, latest=None, segment_covered=False)  # (G2)
         return self._publish(force=False)
 
-    def on_amendment(self, name: str, key: str) -> RankingGeneration | None:
+    def on_amendment(
+        self, name: str, key: str, *, notional: Decimal | None = None
+    ) -> RankingGeneration | None:
         """A correction or cancel: withhold the name while a live window holds the print."""
         if name not in self.publisher.states or not _contains(self.publisher.states[name], key):
             self.amendments_outside += 1
