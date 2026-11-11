@@ -43,7 +43,9 @@ from nautilus_trader.model import (
 from sextant.alpaca.stream_facts import AlpacaTradeFacts, StreamFacts
 from sextant.ranking.engine import ReferencePrices, price_counts
 from sextant.ranking.generation import Coverage, CoverageState, RankingGeneration
+from sextant.ranking.heartbeat import HeartbeatEmitter, heartbeat_signal
 from sextant.ranking.publisher import AssetState, ranking_data_type
+from sextant.ranking.registry import Registry
 
 Page = Callable[[str, str], None]
 # A print's (price_eligible, conditions) from the data client, or None when they are unknown.
@@ -117,6 +119,7 @@ class RankingActorConfig(DataActorConfig):
         trade_facts: TradeFacts | None,
         page: Page | None = None,
         status_snapshot_window_s: int | None = None,
+        heartbeat_registry: Registry | None = None,
         **kwargs: object,
     ) -> None:
         refuse_unknown(kwargs, type(self).__name__)
@@ -137,6 +140,9 @@ class RankingActorConfig(DataActorConfig):
         self.host_factory, self.priming, self.page = host_factory, priming, page
         self.page_window_s, self.trade_facts = page_window_s, trade_facts
         self.status_snapshot_window_s = window
+        if heartbeat_registry is not None and not isinstance(heartbeat_registry, Registry):
+            raise ValueError("heartbeat_registry must be the ranking Registry or None (no beat)")
+        self.heartbeat_registry = heartbeat_registry
 
 
 def withheld(generation: RankingGeneration) -> RankingGeneration:
@@ -168,6 +174,8 @@ class RankingActor(DataActor):
         self._factory, self._priming, self._page = config.host_factory, config.priming, config.page
         self._window_ns = config.page_window_s * NS
         self._facts = config.trade_facts
+        self._beat_registry = config.heartbeat_registry
+        self.heartbeat: HeartbeatEmitter | None = None
         self._primed: dict[str, tuple[ReferencePrices, AssetState | None]] = {}
         self._halted: dict[str, bool | None] = {str(iid.symbol): None for iid in self._ids}
         self._watch_from: int | None = None  # node time the status subscription went active
@@ -195,6 +203,10 @@ class RankingActor(DataActor):
     def on_start(self) -> None:
         """Build, then prime, then subscribe: never a tick to an unprimed host."""
         self._reset_run()
+        if self._beat_registry is not None:  # main's emitter, beating after each publish
+            self.heartbeat = HeartbeatEmitter(
+                registry=self._beat_registry, clock=self.clock.timestamp_ns, sink=self._beat
+            )
         try:
             self.host = self._factory()
         except Exception as exc:
@@ -426,6 +438,12 @@ class RankingActor(DataActor):
         self._lineage = (identity.producer_epoch, identity.sequence)
         self._last = generation
         self.published += 1
+        if self.heartbeat is not None:  # only after the generation is on the bus
+            self.heartbeat.emit(generation)
+
+    def _beat(self, *, at: int, received_ns: int) -> bool:
+        self.publish_signal(heartbeat_signal(self._feed), str(at), ts_event=at)
+        return True
 
     def _advances(self, generation: RankingGeneration) -> bool:
         """Only a generation past the last published one leaves (review F3; reader.py:220-235)."""

@@ -21,6 +21,11 @@ from sextant.ranking.generation import CoverageState, RankingGeneration
 from sextant.ranking.registry import Registry
 
 
+def heartbeat_signal(feed: str) -> str:
+    """The node bus signal name the RankingActor beats on (DESIGN-N2B1 section 1)."""
+    return f"ranking.heartbeat.{feed}"
+
+
 class HeartbeatSink(Protocol):
     def __call__(self, *, at: int, received_ns: int) -> bool: ...
 

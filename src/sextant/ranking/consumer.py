@@ -8,6 +8,7 @@ imported or exposed, and held names and exits stay with their existing owners.
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Any
 
 from nautilus_trader.common import DataActor, MessageBus
 from nautilus_trader.config import DataActorConfig
@@ -15,6 +16,7 @@ from nautilus_trader.model import CustomData
 
 from sextant.ranking.engine import Segment
 from sextant.ranking.generation import RankingRow
+from sextant.ranking.heartbeat import heartbeat_signal
 from sextant.ranking.publisher import ranking_data_type
 from sextant.ranking.reader import GenerationReader
 from sextant.ranking.registry import Registry
@@ -235,6 +237,14 @@ class RankingDataActor(DataActor):
 
     def on_start(self) -> None:
         self.subscribe_data(ranking_data_type(self.consumer.feed))
+        self.subscribe_signal(heartbeat_signal(self.consumer.feed))
 
     def on_data(self, data: CustomData) -> None:
         self.consumer.handle(data, now=self.clock.timestamp_ns())
+
+    def on_signal(self, signal: Any) -> None:
+        """The node's heartbeat: ``at`` is the beaten generation's ``known_at`` (N2b-2a)."""
+        if signal.name == heartbeat_signal(self.consumer.feed):
+            self.consumer.accept_heartbeat(
+                at=signal.ts_event, received_ns=self.clock.timestamp_ns()
+            )
