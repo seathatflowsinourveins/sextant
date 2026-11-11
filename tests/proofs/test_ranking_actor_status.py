@@ -159,3 +159,25 @@ def test_a_status_delivered_during_priming_is_kept_and_applied(tmp_path) -> None
     out = run(tmp_path, actor_cls=EarlyStatus, host_cls=Recording)
     assert out["hosts"][0].publisher.assets["PENNY"].halted is True
     assert statuses_after_priming(out["hosts"][0]) == [("PENNY", True, D("0.50"))]
+
+
+@pytest.mark.parametrize("offset", [-1, -2], ids=["reused", "regressed"])
+def test_a_setter_generation_never_reuses_or_regresses(tmp_path, offset) -> None:  # F3
+    class OldGeneration(FakeHost):
+        def __init__(self, log, fail_at=None) -> None:
+            super().__init__(log, fail_at)
+            self.history: list[Any] = []
+
+        def on_trade(self, tick):
+            generation = super().on_trade(tick)
+            if generation is not None:
+                self.history.append(generation)
+            return generation
+
+        def set_symbol(self, name, *, references, asset) -> Any:
+            super().set_symbol(name, references=references, asset=asset)
+            return self.history[offset] if len(self.history) >= abs(offset) else None
+
+    out = run(tmp_path, host_cls=OldGeneration, statuses=[status(361, MarketStatusAction.HALT)])
+    sequences = [g.generation_id.sequence for g in out["receiver"].received]
+    assert sequences == sorted(set(sequences)) and out["actor"].errors == {"lineage": 1}
