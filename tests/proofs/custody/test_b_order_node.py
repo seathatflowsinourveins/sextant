@@ -354,7 +354,9 @@ def test_a_non_flat_account_stops_before_any_command(tmp_path, case) -> None:
 # crates/model/src/enums.rs:1489-1500).
 
 
-@pytest.mark.parametrize("status", ["canceled", "filled", "expired", "rejected", "replaced"])
+# "replaced" ends only its own row: it starts only through a resolved chain (below); a bare
+# replaced row with no successor link refuses (test_a_replacement_cycle_or_missing_link_refuses).
+@pytest.mark.parametrize("status", ["canceled", "filled", "expired", "rejected"])
 def test_a_terminal_old_writer_order_outside_the_claims_does_not_refuse(tmp_path, status) -> None:
     venue = AccountVenue()
     _owner(venue, "BTEST-trail-OUTX-1-1", symbol="OUTX", side="sell", status=status)

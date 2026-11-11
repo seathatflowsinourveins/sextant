@@ -315,22 +315,43 @@ class Gate:
         withheld = [row for client in self.clients for row, _ in client.withheld_positions]
         # A withheld row is withheld whatever its status (its name is not claimed); only a row
         # that has not ended is open. Alpaca's terminal statuses (execution.py _TERMINAL) are
-        # the engine's closed set (rc8 crates/model/src/enums.rs:1489-1500) plus "replaced".
-        withheld_house = [
-            row
-            for client in self.clients
-            for row, _ in client.withheld
-            if str(row.get("client_order_id", "")).startswith((HOUSE_PREFIX, self.old_prefix))
-            and row.get("status") not in _TERMINAL
-        ]
+        # the engine's closed set (rc8 crates/model/src/enums.rs:1489-1500) plus "replaced",
+        # which ends only its own row: its lineage is followed to the end (_lineage_end).
+        rows = [row for client in self.clients for row, _ in client.withheld]
+        by_id = {row.get("id"): row for row in rows}
+        ends, unresolved = {}, 0
+        for row in rows:
+            if not str(row.get("client_order_id", "")).startswith((HOUSE_PREFIX, self.old_prefix)):
+                continue
+            end = _lineage_end(row, by_id)
+            if end is None:
+                unresolved += 1
+            elif end.get("status") not in _TERMINAL:
+                ends[id(end)] = end  # a working end counts once, however many rows lead to it
         self.counts = {
             "open_positions": len(positions),
-            "open_house_orders": len(house) + len(withheld_house),
+            "open_house_orders": len(house) + len(ends),
             "withheld_holdings": len(withheld),
+            "unresolved_replacements": unresolved,
         }
-        names = ("not_flat", "house_order_open", "holding_outside_claims")
-        values = (len(positions), self.counts["open_house_orders"], len(withheld))
+        names = ("not_flat", "house_order_open", "holding_outside_claims", "replacement_unresolved")
+        values = (len(positions), self.counts["open_house_orders"], len(withheld), unresolved)
         return [name for name, count in zip(names, values, strict=True) if count]
+
+
+def _lineage_end(row: dict[str, Any], by_id: Mapping[Any, dict[str, Any]]) -> Any:
+    """The row a replacement chain ends at, through Alpaca's ``replaced_by`` link (alpaca-py
+    cc4cb3b7 ``alpaca/trading/models.py:223``); a successor may carry any client id
+    (``requests.py:300``). None for a missing link, a successor not in the same listing or a
+    cycle: the cutover refuses then. It only reads; no row is adopted, changed or cancelled."""
+    seen: set[str] = set()
+    while row.get("status") == "replaced":
+        key = row.get("replaced_by")
+        if not isinstance(key, str) or not key or key in seen or key not in by_id:
+            return None
+        seen.add(key)
+        row = by_id[key]
+    return row
 
 
 def account_matches(number: object) -> bool:
