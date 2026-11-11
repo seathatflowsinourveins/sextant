@@ -195,6 +195,7 @@ def run(
     extra=(),
     facts=None,
     snapshot_window=None,
+    heartbeat=None,
 ) -> dict[str, Any]:
     tmp_path.mkdir(parents=True, exist_ok=True)
     catalog = ParquetDataCatalog(str(tmp_path))
@@ -250,6 +251,7 @@ def run(
         page_window_s=window,
         trade_facts=facts,
         status_snapshot_window_s=snapshot_window,
+        heartbeat_registry=heartbeat,
     )
     bound = type("Bound", (actor_cls or Logged,), {"calls": log})
     actor = bound(actor_config)
