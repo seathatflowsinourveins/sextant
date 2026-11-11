@@ -131,7 +131,7 @@ def test_b_chase_allowance_sizes_risk_without_enabling_exit_chase() -> None:
         sizing_only=True,
         fixture=True,
     )
-    inputs = dict(
+    inputs: dict[str, Any] = dict(
         instrument=EQUITY,
         setup="FIRST_LEG",
         entry=D("100"),
