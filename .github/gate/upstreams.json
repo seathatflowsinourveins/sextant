@@ -47,9 +47,9 @@
     },
     "claude-code-action": {
       "repository": "anthropics/claude-code-action",
-      "version": "v1.0.262",
-      "sha": "925afb53776cf1a2b738c6bdbed37b4d4000ef13",
-      "published_at": "2026-10-24T18:57:30Z",
+      "version": "v1.0.264",
+      "sha": "d70510b174a1244958df0b03166a54912811f3e6",
+      "published_at": "2026-10-27T20:28:03Z",
       "paths": [
         "action.yml:34-45,57-69,104-119,170-185",
         "docs/usage.md:205-249",

@@ -97,6 +97,30 @@ def test_every_action_in_workflows_and_composites_has_a_full_pin() -> None:
                     assert re.fullmatch(r"[\w./-]+@[0-9a-f]{40}", action), (path, action)
 
 
+def test_the_claude_action_pin_agrees_across_the_workflow_manifest_and_upstreams() -> None:
+    """LEAD-0946: the workflow is the truth; its pin, the manifest row and upstreams.json agree."""
+    steps = re.findall(
+        r"^\s*uses: anthropics/claude-code-action@([0-9a-f]{40}) # (v\d+\.\d+\.\d+)\s*$",
+        (WORKFLOWS / "gate.yml").read_text(),
+        re.MULTILINE,
+    )
+    assert len(steps) == 1, steps
+    sha, version = steps[0]
+
+    pin = json.loads((ROOT / ".github/gate/upstreams.json").read_text())["components"][
+        "claude-code-action"
+    ]
+    assert (pin["version"], pin["sha"]) == (version, sha)
+
+    row = next(
+        line
+        for line in (ROOT / "docs/manifest.md").read_text().splitlines()
+        if line.startswith("| Official Claude API quality review under the key policy |")
+    )
+    cited = re.search(r"anthropics/claude-code-action@(v\d+\.\d+\.\d+) `([0-9a-f]{40})`", row)
+    assert cited is not None and cited.groups() == (version, sha)
+
+
 def test_ci_runs_the_complete_check_without_repository_secrets() -> None:
     text = (WORKFLOWS / "ci.yml").read_text()
     ci = yaml.safe_load(text)
