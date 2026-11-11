@@ -72,6 +72,10 @@ class StreamFacts:
         self.facts_type, self.gap_type = facts_type(feed), gap_type(feed)
         self._latest: dict[InstrumentId, AlpacaTradeFacts] = {}
 
+    def clear(self) -> None:
+        """A (re)start holds no earlier run's facts (review P2)."""
+        self._latest.clear()
+
     def record(self, facts: AlpacaTradeFacts) -> None:
         self._latest[facts.instrument_id] = facts
 

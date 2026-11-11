@@ -231,6 +231,8 @@ class RankingActor(DataActor):
         self.host, self.primed, self._primed = None, False, {}
         self._halted = dict.fromkeys(self._halted)  # every name unknown again
         self._watch_from = self._subscribed_at = self._lineage = self._last = None
+        if isinstance(self._facts, StreamFacts):  # no earlier run's conditions (P2)
+            self._facts.clear()
         if self.snapshot_statuses is not None:  # the 2e recorder counts this run only (P2)
             self.snapshot_statuses = {}
         for pending in (self._status_seen, self._early, self._veto, self._retired):
