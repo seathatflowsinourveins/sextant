@@ -1,3 +1,4 @@
+# pyright: reportOptionalMemberAccess=false, reportArgumentType=false, reportAttributeAccessIssue=false
 from __future__ import annotations
 
 import hashlib
@@ -16,6 +17,7 @@ from test_ranking_actor import NAMES, ticks
 from test_ranking_node_ranking import argv
 from test_ranking_node_session import inputs as fixture_inputs
 
+from sextant.paper.sessions import ET
 from sextant.ranking import node_ranking
 from sextant.ranking.baseline import dump_baseline
 from sextant.ranking.engine import ReferencePrices, Segment
@@ -23,7 +25,6 @@ from sextant.ranking.generation import Coverage, CoverageState
 from sextant.ranking.node_actor import RankingActor
 from sextant.ranking.node_session import SegmentedHost, SegmentInputs
 from sextant.ranking.publisher import AssetState
-from sextant.paper.sessions import ET
 from sextant.tradingview.producer import reserve_stream
 
 
@@ -70,12 +71,21 @@ def test_refuse_baselines_with_another_universe_digest(tmp_path):
     path = tmp_path / "baselines" / "manifest.json"
     manifest = json.loads(path.read_text())
     universe = tmp_path / "universe.json"
-    manifest["universe"] = {"path": str(universe), "sha256": hashlib.sha256(universe.read_bytes()).hexdigest()}
+    manifest["universe"] = {
+        "path": str(universe),
+        "sha256": hashlib.sha256(universe.read_bytes()).hexdigest(),
+    }
     manifest["symbols"] = ["AAPL"]
     path.write_text(json.dumps(manifest))
     universe.write_text(json.dumps({"rows": [{"symbol": "AAPL"}, {"symbol": "IBM"}]}))
-    ranking_inputs.produce(tmp_path / "ranking-inputs", universe_artifact=universe, listings_dir=tmp_path / "listings", session=date(2026, 11, 11), daily=Daily({"AAPL": Decimal("10.50"), "IBM": Decimal("200.25")}))
-    with pytest.raises(node_ranking.RankingRefused, match="baseline.*universe"):
+    ranking_inputs.produce(
+        tmp_path / "ranking-inputs",
+        universe_artifact=universe,
+        listings_dir=tmp_path / "listings",
+        session=date(2026, 11, 11),
+        daily=Daily({"AAPL": Decimal("10.50"), "IBM": Decimal("200.25")}),
+    )
+    with pytest.raises(node_ranking.RankingRefused, match="baseline.*universe"):  # noqa: RUF043
         node_ranking.parse(arguments)
 
 
@@ -112,8 +122,10 @@ def test_boundary_gap_degrades_new_segment_in_either_order(tmp_path, gap_first):
 
 
 def test_closed_moment_retains_a_clock_wakeup_for_next_segment(tmp_path):
-    first, second = pair()
-    host, clock = host_at(tmp_path, lambda timestamp: None if timestamp < second.start_ns else second)
+    first, second = pair()  # noqa: RUF059
+    host, clock = host_at(
+        tmp_path, lambda timestamp: None if timestamp < second.start_ns else second
+    )
     clock[0] = START
     generation, boundary = host.on_clock(clock[0])
     assert generation is None
@@ -187,8 +199,12 @@ def test_references_known_at_expiry_are_segment_local(tmp_path):
         offset = 0 if segment.name == "PRE" else 2
         return SegmentInputs(
             baseline(),
-            dict.fromkeys(NAMES, ReferencePrices(Decimal(offset + 1), START - NS + offset, "fixture")),
-            dict.fromkeys(NAMES, AssetState(START - NS + offset, segment.end_ns, None, "common", "fixture")),
+            dict.fromkeys(
+                NAMES, ReferencePrices(Decimal(offset + 1), START - NS + offset, "fixture")
+            ),
+            dict.fromkeys(
+                NAMES, AssetState(START - NS + offset, segment.end_ns, None, "common", "fixture")
+            ),
         )
 
     host, clock = host_at(
@@ -196,7 +212,11 @@ def test_references_known_at_expiry_are_segment_local(tmp_path):
     )
     clock[0] = START
     host.on_clock(clock[0])
-    host.set_symbol("PENNY", references=ReferencePrices(None, 0, "ignored"), asset=AssetState(START + NS, first.end_ns, True, "test", "ignored"))
+    host.set_symbol(
+        "PENNY",
+        references=ReferencePrices(None, 0, "ignored"),
+        asset=AssetState(START + NS, first.end_ns, True, "test", "ignored"),
+    )
     clock[0] = second.start_ns
     host.on_clock(clock[0])
     publisher = host.host.publisher
@@ -251,10 +271,14 @@ def test_cli_build_wires_a_pager_without_starting_a_node(tmp_path, monkeypatch):
         def build(self):
             return InertNode()
 
-    monkeypatch.setattr(node_ranking.LiveNodeBuilder, "from_config", lambda *arguments: InertBuilder())
+    monkeypatch.setattr(
+        node_ranking.LiveNodeBuilder, "from_config", lambda *arguments: InertBuilder()
+    )
     monkeypatch.setattr(node_ranking, "RankingActor", lambda config: config)
-    node_ranking.build(arguments, inputs=node_ranking.file_inputs(arguments), config=LiveNodeConfig())
-    pages = []
+    node_ranking.build(
+        arguments, inputs=node_ranking.file_inputs(arguments), config=LiveNodeConfig()
+    )
+    pages = []  # noqa: F841
 
     def turn(now):
         raise RuntimeError("offline node clock fixture")
@@ -272,7 +296,9 @@ def test_cli_build_wires_a_pager_without_starting_a_node(tmp_path, monkeypatch):
     actor._fault = MethodType(RankingActor._fault, actor)
     RankingActor._on_clock(actor, None)
     assert actor.errors == {"clock": 1}
-    assert actor._page is not None, "CLI always uses page=None; counted clock failure has no page transport"
+    assert actor._page is not None, (
+        "CLI always uses page=None; counted clock failure has no page transport"
+    )
 
 
 def test_execution_client_is_refused_before_any_node_builder(tmp_path, monkeypatch):
@@ -284,7 +310,15 @@ def test_execution_client_is_refused_before_any_node_builder(tmp_path, monkeypat
         pytest.fail("a node builder must never be reached")
 
     monkeypatch.setattr(node_ranking.LiveNodeBuilder, "from_config", refuse_builder)
-    config = LiveNodeConfig(exec_clients={"ALPACA": AlpacaExecutionClientConfig(api_key_env="FIXTURE_KEY_NAME", api_secret_env="FIXTURE_SECRET_NAME", account_id="ALPACA-FIXTURE")})
+    config = LiveNodeConfig(
+        exec_clients={
+            "ALPACA": AlpacaExecutionClientConfig(
+                api_key_env="FIXTURE_KEY_NAME",
+                api_secret_env="FIXTURE_SECRET_NAME",  # noqa: S106
+                account_id="ALPACA-FIXTURE",
+            )
+        }
+    )
     with pytest.raises(ValueError, match="data-only"):
         node_ranking.build(arguments, inputs=node_ranking.file_inputs(arguments), config=config)
 
@@ -292,7 +326,9 @@ def test_execution_client_is_refused_before_any_node_builder(tmp_path, monkeypat
 @pytest.mark.parametrize("slot,streams", [(1, 0), (3, 0), (2, 1)])
 def test_other_slots_and_an_existing_stream_are_refused_without_a_node(tmp_path, slot, streams):
     with pytest.raises(ValueError):
-        with reserve_stream(tmp_path / "lease", paper_slot=slot, existing_streams=streams, source="offline fixture"):
+        with reserve_stream(
+            tmp_path / "lease", paper_slot=slot, existing_streams=streams, source="offline fixture"
+        ):
             pytest.fail("lease must refuse")
     assert not (tmp_path / "lease").exists()
 
@@ -316,19 +352,33 @@ def test_modified_priming_file_is_named_before_the_lease(tmp_path, monkeypatch, 
 def test_missing_close_does_not_receive_a_score(tmp_path):
     def no_close(segment):
         original = fixture_inputs(segment)
-        return replace(original, references=dict.fromkeys(NAMES, ReferencePrices(None, START - NS, "fixture missing close")))
+        return replace(
+            original,
+            references=dict.fromkeys(
+                NAMES, ReferencePrices(None, START - NS, "fixture missing close")
+            ),
+        )
 
     host, clock = host_at(tmp_path, lambda timestamp: SCOPE, no_close)
     clock[0] = START
     host.on_clock(clock[0])
-    host.set_symbol("PENNY", references=ReferencePrices(None, 0, "ignored"), asset=AssetState(START - NS, SCOPE.end_ns, False, "common", "fixture"))
+    host.set_symbol(
+        "PENNY",
+        references=ReferencePrices(None, 0, "ignored"),
+        asset=AssetState(START - NS, SCOPE.end_ns, False, "common", "fixture"),
+    )
     generations = []
     for trade in ticks():
         clock[0] = trade.ts_init
         generation = host.on_trade(trade, facts=(True, ("@",)))
         if generation is not None:
             generations.append(generation)
-    assert generations and all(row.rank is None and row.score is None for generation in generations for row in generation.rows if row.symbol == "PENNY")
+    assert generations and all(
+        row.rank is None and row.score is None
+        for generation in generations
+        for row in generation.rows
+        if row.symbol == "PENNY"
+    )
 
 
 def test_boundary_gap_cannot_yield_a_rank(tmp_path):
@@ -336,27 +386,50 @@ def test_boundary_gap_cannot_yield_a_rank(tmp_path):
 
     def source(segment):
         original = fixture_inputs(segment)
-        table = replace(original.baseline, samples=tuple(replace(sample, segment=segment.name) for sample in original.baseline.samples))
+        table = replace(
+            original.baseline,
+            samples=tuple(
+                replace(sample, segment=segment.name) for sample in original.baseline.samples
+            ),
+        )
         return replace(original, baseline=table)
 
-    host, clock = host_at(tmp_path, lambda timestamp: first if timestamp < first.end_ns else second, source)
+    host, clock = host_at(
+        tmp_path, lambda timestamp: first if timestamp < first.end_ns else second, source
+    )
     clock[0] = START
     host.on_clock(clock[0])
     clock[0] = second.start_ns
     host.set_coverage(Coverage(CoverageState.DEGRADED, False))
     host.on_clock(clock[0])
-    host.set_symbol("PENNY", references=ReferencePrices(None, 0, "ignored"), asset=AssetState(second.start_ns, second.end_ns, False, "common", "fixture"))
+    host.set_symbol(
+        "PENNY",
+        references=ReferencePrices(None, 0, "ignored"),
+        asset=AssetState(second.start_ns, second.end_ns, False, "common", "fixture"),
+    )
     last = None
     shift = second.start_ns - START
     for original in ticks():
-        trade = TradeTick(original.instrument_id, original.price, original.size, original.aggressor_side, original.trade_id, original.ts_event + shift, original.ts_init + shift)
+        trade = TradeTick(
+            original.instrument_id,
+            original.price,
+            original.size,
+            original.aggressor_side,
+            original.trade_id,
+            original.ts_event + shift,
+            original.ts_init + shift,
+        )
         clock[0] = trade.ts_init
         last = host.on_trade(trade, facts=(True, ("@",))) or last
     assert last is not None
-    assert all(row.rank is None for row in last.rows), [(row.symbol, row.rank, row.score) for row in last.rows]
+    assert all(row.rank is None for row in last.rows), [
+        (row.symbol, row.rank, row.score) for row in last.rows
+    ]
 
 
-def test_daily_producer_uses_sip_split_prior_session_and_one_calibration_pacer(tmp_path, monkeypatch):
+def test_daily_producer_uses_sip_split_prior_session_and_one_calibration_pacer(
+    tmp_path, monkeypatch
+):
     from alpaca.data.enums import Adjustment, DataFeed
     from alpaca.data.timeframe import TimeFrame
     from test_ranking_inputs import artifact, staged
@@ -379,29 +452,53 @@ def test_daily_producer_uses_sip_split_prior_session_and_one_calibration_pacer(t
     class OfflineClient:
         def __init__(self, *, pacer, api_key, secret_key):
             assert pacer is pacers[0][1]
-            assert api_key == "offline-fixture-only" and secret_key == "offline-fixture-only"
+            assert api_key == "offline-fixture-only" and secret_key == "offline-fixture-only"  # noqa: S105
 
         def get_stock_bars(self, request):
             requests.append(request)
-            return SimpleNamespace(data={"AAPL": [SimpleNamespace(timestamp=datetime(2026, 11, 10, 0, tzinfo=ET), close=Decimal("10.50"))]})
+            return SimpleNamespace(
+                data={
+                    "AAPL": [
+                        SimpleNamespace(
+                            timestamp=datetime(2026, 11, 10, 0, tzinfo=ET), close=Decimal("10.50")
+                        )
+                    ]
+                }
+            )
 
     monkeypatch.setattr(ranking_inputs, "Pacer", make_pacer)
     monkeypatch.setattr(ranking_inputs, "PacedStockBars", OfflineClient)
     monkeypatch.setenv("FIXTURE_KEY_NAME", "offline-fixture-only")
     monkeypatch.setenv("FIXTURE_SECRET_NAME", "offline-fixture-only")
     output = tmp_path / "ranking-inputs"
-    result = ranking_inputs.main([
-        "--out", str(output),
-        "--universe-artifact", str(artifact(tmp_path, "AAPL", "IBM")),
-        "--listings-dir", str(staged(tmp_path)),
-        "--session", "2026-11-11",
-        "--api-key-env", "FIXTURE_KEY_NAME",
-        "--api-secret-env", "FIXTURE_SECRET_NAME",
-        "--parameters", str(parameter_file),
-    ])
+    result = ranking_inputs.main(
+        [
+            "--out",
+            str(output),
+            "--universe-artifact",
+            str(artifact(tmp_path, "AAPL", "IBM")),
+            "--listings-dir",
+            str(staged(tmp_path)),
+            "--session",
+            "2026-11-11",
+            "--api-key-env",
+            "FIXTURE_KEY_NAME",
+            "--api-secret-env",
+            "FIXTURE_SECRET_NAME",
+            "--parameters",
+            str(parameter_file),
+        ]
+    )
     assert result == 0 and len(pacers) == 1 and pacers[0][0] == expected_rate
-    assert requests and all(request.feed is DataFeed.SIP and request.adjustment is Adjustment.SPLIT and request.timeframe.value == TimeFrame.Day.value for request in requests)
-    assert all(request.start.astimezone(ET).date().isoformat() == "2026-11-10" for request in requests)
+    assert requests and all(
+        request.feed is DataFeed.SIP
+        and request.adjustment is Adjustment.SPLIT
+        and request.timeframe.value == TimeFrame.Day.value
+        for request in requests
+    )
+    assert all(
+        request.start.astimezone(ET).date().isoformat() == "2026-11-10" for request in requests
+    )
     references = json.loads((output / "references.json").read_text())
     assert references["closes"] == {"AAPL": "10.50"}
 
@@ -411,14 +508,28 @@ def test_empty_universe_refuses_before_daily_requests(tmp_path):
 
     path = tmp_path / "universe.json"
     path.write_text(json.dumps({"rows": []}))
-    daily = SimpleNamespace(daily_closes=lambda *arguments, **keywords: pytest.fail("no daily request is allowed for an empty universe"))
+    daily = SimpleNamespace(
+        daily_closes=lambda *arguments, **keywords: pytest.fail(
+            "no daily request is allowed for an empty universe"
+        )
+    )
     with pytest.raises(ValueError, match="no rows"):
-        ranking_inputs.produce(tmp_path / "out", universe_artifact=path, listings_dir=tmp_path / "absent", session=SCOPE.session_date, daily=daily)
+        ranking_inputs.produce(
+            tmp_path / "out",
+            universe_artifact=path,
+            listings_dir=tmp_path / "absent",
+            session=SCOPE.session_date,
+            daily=daily,
+        )
 
 
 def test_late_tick_cannot_resurrect_a_segment_retired_into_closed_time(tmp_path):
     post = replace(SCOPE, name="POST", end_ns=START + 300 * NS)
-    host, clock = host_at(tmp_path, lambda timestamp: post if timestamp < post.end_ns else None, source=lambda segment: None)
+    host, clock = host_at(
+        tmp_path,
+        lambda timestamp: post if timestamp < post.end_ns else None,
+        source=lambda segment: None,
+    )
     clock[0] = post.start_ns
     host.on_clock(clock[0])
     clock[0] = post.end_ns
