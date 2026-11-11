@@ -138,6 +138,7 @@ uv run --frozen python -m sextant.tradingview --research-dir /path/to/top100/lat
 uv run --frozen python -m sextant.tradingview --research-dir /path/to/top100/latest --keep-login --apply
 uv run --frozen python -m sextant.tradingview --forget-login
 uv run --frozen python -m sextant.tradingview --loop --research-dir /path/to/top100/latest --authorize
+uv run --frozen python -m sextant.tradingview --loop --research-dir /path/to/top100/latest --keep-login
 ```
 
 `--authorize --keep-login` with no `--research-dir` is the sign-in-only run: it
@@ -176,8 +177,10 @@ is what lets an unattended unit use it. A value that cannot be read stops with
 `--forget-login`, then `--authorize --keep-login`. `--forget-login` is the one
 command that deletes the local value, and `scripts/with-keys.sh` refuses this
 name, so no other command gets it in an environment. The store is per-user, not
-a same-UID isolation boundary. `--keep-login` is refused with `--loop`; the loop's
-own start and stop schedule stays a later change.
+a same-UID isolation boundary. `--loop --keep-login` holds one session on the
+stored login: the SDK refreshes it as ticks need and every rotation is written
+back; a login stop ends the loop with the owner step and a page, and an admitted
+run stays latched as for any failed tick.
 
 The sign-in uses only the official `https://mcp.tradingview.com/mcp` endpoint
 and an ephemeral loopback OAuth callback. Revocation is the owner's, in their

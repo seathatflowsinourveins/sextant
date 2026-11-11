@@ -116,11 +116,6 @@ def main(argv: list[str] | None = None) -> int:
             else "No stored TradingView sign-in was present."
         )
         return 0
-    if args.keep_login and args.loop:
-        print(
-            "Choose one: --loop runs the cadence cycle; --keep-login belongs to one owner session."
-        )
-        return 2
     if args.presets:
         try:
             print(
@@ -140,6 +135,7 @@ def main(argv: list[str] | None = None) -> int:
         return run_loop(
             research_dir=args.research_dir,
             authorize=args.authorize,
+            login=StoredLogin() if args.keep_login else None,
             registry=args.cadence_registry,
             state_root=args.cadence_root,
             max_age=args.max_age,
