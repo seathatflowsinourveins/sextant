@@ -16,6 +16,7 @@ from alpaca.trading.client import TradingClient
 from nautilus_trader.live.clients import DataClientFactory, ExecutionClientFactory
 from nautilus_trader.model import AccountId, AccountType, OmsType
 
+from .commission import paper_commission_resolver
 from .config import AlpacaDataClientConfig, AlpacaExecutionClientConfig, resolve_credential
 from .constants import VENUE
 from .data import AlpacaDataClient
@@ -63,7 +64,7 @@ class AlpacaExecutionClientFactory(ExecutionClientFactory):
     def create(*, name, config, cache, clock, trader_id) -> AlpacaExecutionClient:
         """Construct a fresh execution client; no network is opened here."""
         config = cast("AlpacaExecutionClientConfig", config)
-        return AlpacaExecutionClient(
+        client = AlpacaExecutionClient(
             name=name,
             config=config,
             cache=cache,
@@ -74,3 +75,10 @@ class AlpacaExecutionClientFactory(ExecutionClientFactory):
             account_type=AccountType.MARGIN,
             oms_type=OmsType.NETTING,
         )
+        # The sourced paper rows (#478) supply the fee hook; a refusal is kept for connect,
+        # which fails before credentials or SDK construction (adapter guide, startup).
+        try:
+            client.commission_for_fill = paper_commission_resolver(config.commission_rows or [])
+        except (TypeError, ValueError) as error:
+            client.commission_refusal = str(error)
+        return client

@@ -230,6 +230,7 @@ class AlpacaExecutionClient(ExecutionClient):
         self._forwarded: set[tuple[str, str]] = set()  # (venue id, execution id)
         # No invented commission: caller supplies an evidenced Money per execution.
         self.commission_for_fill: Callable[[dict], Money] | None = None
+        self.commission_refusal: str | None = None
 
     def _queue_action(self, operation, name, token: _Command | None = None):
         # NT's Python client queue is FIFO; await no wire receipt in its hook.
@@ -373,7 +374,8 @@ class AlpacaExecutionClient(ExecutionClient):
             raise ValueError("execution pacing rows unavailable")
         controls = Controls.from_rows(config.pacing_rows)
         if not callable(self.commission_for_fill):
-            raise ValueError("fill reports unavailable: commission evidence required")
+            refusal = f": {self.commission_refusal}" if self.commission_refusal else ""
+            raise ValueError(f"fill reports unavailable: commission evidence required{refusal}")
         key, secret = os.environ[config.api_key_env], os.environ[config.api_secret_env]
         sdk = TradingClient(key, secret, paper=True, raw_data=True)
         self.gateway = AccountGateway(

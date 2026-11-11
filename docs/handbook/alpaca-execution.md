@@ -28,8 +28,11 @@ still be cancelled. Stream callbacks keep only a weak client reference and
 dereference it on the node loop. Shutdown cancels the SDK coroutine on its own
 loop, closes the socket and joins the executor work, including stalled connects.
 
-The SDK omits fill commissions. Until an evidenced resolver or registry row
-exists, exact fill reports are UNAVAILABLE; never label an inferred fee as an
+The SDK omits fill commissions. The execution factory reads the two sourced
+paper rows in `lanes/paper/shared-node.params.json` through
+`sextant.alpaca.commission.paper_commission_resolver` and hands the client its
+`commission_for_fill` hook; a missing, invalid or non-paper row leaves fill
+reports UNAVAILABLE and connect refuses. Never label an inferred fee as an
 observed fee. Nonempty historical activities also need an evidenced identity
 mapping to stream executions. The registry authority belongs with the shared
 node's rows (`lanes/paper/shared-node.params.json`), not in a fixture default.
