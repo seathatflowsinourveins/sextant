@@ -158,6 +158,8 @@ def _run(venue, lost):
         finally:
             try:
                 node.dispose()
+            except Exception as exc:  # Keep failed cleanup in the caller's failure channel.
+                seen["error"] = str(exc)
             finally:
                 del node
                 gc.collect()

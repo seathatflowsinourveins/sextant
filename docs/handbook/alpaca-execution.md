@@ -169,3 +169,7 @@ acknowledged barrier; retain
 the exact stop line and all stop-state assertions. Sources: the manifest's native-node proof
 lifetime row, NT d53849b `python/tests/conftest.py:58-74,148-154`, `node/mod.rs:345-355`, and
 `python/logging.rs:303-315` (custody flake, 2026-11-11).
+Worker disposal failures must enter the caller's failure channel too: joining a thread
+does not re-raise its exception, and pytest normally reports that exception as a warning.
+The native-node proof lifetime row cites the Python and pytest runtime paths; disposal-failure
+mutants cover both worker helpers and a synchronous control (8f4de96 max-gate P1).

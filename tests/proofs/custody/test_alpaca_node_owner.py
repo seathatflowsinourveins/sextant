@@ -132,6 +132,8 @@ def _run_node(venue, *, claims=(), lookback=None):
         finally:
             try:
                 node.dispose()
+            except Exception as exc:  # Thread exceptions alone are only pytest warnings.
+                seen["error"] = str(exc)
             finally:
                 # Keep observations, not unsendable clients, across the thread boundary.
                 seen["clients"] = [
