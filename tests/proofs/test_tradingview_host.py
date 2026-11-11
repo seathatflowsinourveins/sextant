@@ -508,7 +508,10 @@ def test_host_ranks_match_direct_bar_fidelity_replay(tmp_path: Path) -> None:
         )
     expected = direct_ranks([item for poll in polls for item in poll.bars])
     with reserve_stream(
-        tmp_path / "leases", paper_slot=3, existing_streams=0, source="fixture"
+        tmp_path / "leases",
+        paper_slot=2,
+        existing_streams=0,
+        source="B's writer opens no market-data stream; fixture",
     ) as lease:
         host = BarFidelityHost(
             publisher(),
@@ -537,12 +540,15 @@ def test_host_ranks_match_direct_bar_fidelity_replay(tmp_path: Path) -> None:
         )
         assert published == sorted(expected[1])
         assert unit["watchlists"] == {"NS Ranked": ["NASDAQ:BBB", "NASDAQ:AAA"]}
-        assert unit["paper_slot"] == 3 and unit["display_only"] is True
+        assert unit["paper_slot"] == 2 and unit["display_only"] is True
 
 
 def test_host_refuses_lookahead_and_skips_stale_bars(tmp_path: Path) -> None:
     with reserve_stream(
-        tmp_path / "leases", paper_slot=3, existing_streams=0, source="fixture"
+        tmp_path / "leases",
+        paper_slot=2,
+        existing_streams=0,
+        source="B's writer opens no market-data stream; fixture",
     ) as lease:
         host = BarFidelityHost(
             publisher(),
@@ -572,7 +578,10 @@ def test_host_refuses_lookahead_and_skips_stale_bars(tmp_path: Path) -> None:
 
 def test_bar_closing_at_the_segment_end_is_skipped(tmp_path: Path) -> None:
     with reserve_stream(
-        tmp_path / "leases", paper_slot=3, existing_streams=0, source="fixture"
+        tmp_path / "leases",
+        paper_slot=2,
+        existing_streams=0,
+        source="B's writer opens no market-data stream; fixture",
     ) as lease:
         host = BarFidelityHost(
             publisher(),
@@ -614,7 +623,10 @@ def prime_two_minutes(host: BarFidelityHost) -> int:
 def test_publish_uses_the_heartbeat_receipt_clock(tmp_path: Path) -> None:
     """A receive clock after the market clock still publishes at the receipt."""
     with reserve_stream(
-        tmp_path / "leases", paper_slot=3, existing_streams=0, source="fixture"
+        tmp_path / "leases",
+        paper_slot=2,
+        existing_streams=0,
+        source="B's writer opens no market-data stream; fixture",
     ) as lease:
         host = BarFidelityHost(
             publisher(),
@@ -636,7 +648,10 @@ def test_publish_uses_the_heartbeat_receipt_clock(tmp_path: Path) -> None:
 def test_history_gap_stays_degraded_until_backfilled(tmp_path: Path) -> None:
     """A failed minute is never skipped silently: the prefix waits for its bar."""
     with reserve_stream(
-        tmp_path / "leases", paper_slot=3, existing_streams=0, source="fixture"
+        tmp_path / "leases",
+        paper_slot=2,
+        existing_streams=0,
+        source="B's writer opens no market-data stream; fixture",
     ) as lease:
         host = BarFidelityHost(
             publisher(),
@@ -707,7 +722,10 @@ def test_history_gap_stays_degraded_until_backfilled(tmp_path: Path) -> None:
 def test_revised_bar_invalidates_the_epoch(tmp_path: Path) -> None:
     """An identical duplicate is skipped; a changed bar needs a new epoch."""
     with reserve_stream(
-        tmp_path / "leases", paper_slot=3, existing_streams=0, source="fixture"
+        tmp_path / "leases",
+        paper_slot=2,
+        existing_streams=0,
+        source="B's writer opens no market-data stream; fixture",
     ) as lease:
         host = BarFidelityHost(
             publisher(),
@@ -733,7 +751,10 @@ def test_revised_bar_invalidates_the_epoch(tmp_path: Path) -> None:
 
 def test_partial_poll_never_clears_the_list(tmp_path: Path) -> None:
     with reserve_stream(
-        tmp_path / "leases", paper_slot=3, existing_streams=0, source="fixture"
+        tmp_path / "leases",
+        paper_slot=2,
+        existing_streams=0,
+        source="B's writer opens no market-data stream; fixture",
     ) as lease:
         host = BarFidelityHost(
             publisher(),
@@ -769,7 +790,10 @@ def test_partial_poll_never_clears_the_list(tmp_path: Path) -> None:
 
 def test_missing_mapping_never_clears_the_list(tmp_path: Path) -> None:
     with reserve_stream(
-        tmp_path / "leases", paper_slot=3, existing_streams=0, source="fixture"
+        tmp_path / "leases",
+        paper_slot=2,
+        existing_streams=0,
+        source="B's writer opens no market-data stream; fixture",
     ) as lease:
         host = BarFidelityHost(
             publisher(),
@@ -799,7 +823,10 @@ def test_missing_mapping_never_clears_the_list(tmp_path: Path) -> None:
 
 def test_anchor_price_uses_open_only_at_the_segment_start(tmp_path: Path) -> None:
     with reserve_stream(
-        tmp_path / "leases", paper_slot=3, existing_streams=0, source="fixture"
+        tmp_path / "leases",
+        paper_slot=2,
+        existing_streams=0,
+        source="B's writer opens no market-data stream; fixture",
     ) as lease:
         host = BarFidelityHost(
             publisher(),
@@ -943,7 +970,10 @@ def test_post_baseline_is_built_from_supplied_sessions() -> None:
 
 def test_post_anchor_marks_the_segment_covered(tmp_path: Path) -> None:
     with reserve_stream(
-        tmp_path / "leases", paper_slot=3, existing_streams=0, source="fixture"
+        tmp_path / "leases",
+        paper_slot=2,
+        existing_streams=0,
+        source="B's writer opens no market-data stream; fixture",
     ) as lease:
         host = BarFidelityHost(
             post_publisher(),

@@ -27,6 +27,7 @@ from sextant.execution.custody import CustodyError
 from sextant.ranking.generation import Coverage, CoverageState, RankingGeneration, generation_digest
 from sextant.ranking.registry import RegistryRow
 from sextant.tradingview.producer import (
+    SCOPE,
     Clocks,
     LiveProducer,
     reserve_stream,
@@ -65,7 +66,10 @@ def no_online_or_credentials(monkeypatch):
 @pytest.fixture
 def live(tmp_path):
     with reserve_stream(
-        tmp_path / "leases", paper_slot=3, existing_streams=0, source="synthetic stop receipt"
+        tmp_path / "leases",
+        paper_slot=2,
+        existing_streams=0,
+        source="B's writer opens no market-data stream; synthetic stop receipt",
     ) as lease:
         yield LiveProducer(publisher(), lease, sip_authority="synthetic SIP entitlement only")
 
@@ -124,7 +128,7 @@ def test_real_generation_keeps_scores_unknowns_full_universe_and_display_only(li
     )  # Entry flags never filter display.
     assert generation_digest(native) == result["generation_sha256"]
     assert result["params_hash"] == live.publisher.registry.params_hash
-    assert result["display_only"] is True and result["paper_slot"] == 3
+    assert result["display_only"] is True and result["paper_slot"] == 2
     assert "NS B-protected" not in result["watchlists"]
     assert (
         live.publish_unit(
@@ -331,28 +335,53 @@ def test_durable_publication_failure_preserves_the_previous_complete_file(
     assert set(tmp_path.iterdir()) == {tmp_path / "leases", path}
 
 
-@pytest.mark.parametrize("slot", (1, 2, 4, True, "3"))
-def test_slot_two_and_every_other_slot_refuse_before_a_lease(tmp_path, slot):
-    with pytest.raises(ValueError, match="slot 3"):
+@pytest.mark.parametrize("slot", (1, 3, 4, True, "2"))
+def test_slot_three_and_every_other_slot_refuse_before_a_lease(tmp_path, slot):
+    with pytest.raises(ValueError, match="slot 3 is revoked"):
         with reserve_stream(
-            tmp_path / "absent", paper_slot=slot, existing_streams=0, source="fixture"
+            tmp_path / "absent",
+            paper_slot=slot,
+            existing_streams=0,
+            source="B's writer opens no market-data stream; fixture",
         ):
             pytest.fail("wrong slot admitted")
     assert not (tmp_path / "absent").exists()
 
 
+def test_slot_two_reserves_the_ranking_host_market_data_stream(tmp_path):
+    source = "B's writer opens no market-data stream; slot 2's one stream is free"
+    with reserve_stream(
+        tmp_path / "leases", paper_slot=2, existing_streams=0, source=source
+    ) as lease:
+        assert lease.held
+        assert lease.scope == SCOPE
+
+
 def test_existing_external_stream_and_concurrent_process_refuse_a_second_stream(tmp_path):
     with pytest.raises(ValueError, match="second stream"):
-        with reserve_stream(tmp_path, paper_slot=3, existing_streams=1, source="fixture"):
+        with reserve_stream(
+            tmp_path,
+            paper_slot=2,
+            existing_streams=1,
+            source="B's writer opens no market-data stream; fixture",
+        ):
             pytest.fail("second stream admitted")
-    with reserve_stream(tmp_path, paper_slot=3, existing_streams=0, source="fixture"):
+    with reserve_stream(
+        tmp_path,
+        paper_slot=2,
+        existing_streams=0,
+        source="B's writer opens no market-data stream; fixture",
+    ):
         script = """
 from pathlib import Path
 import sys
 from sextant.execution.custody import CustodyError
 from sextant.tradingview.producer import reserve_stream
 try:
-    with reserve_stream(Path(sys.argv[1]), paper_slot=3, existing_streams=0, source='fixture'):
+    source = "B's writer opens no market-data stream; fixture"
+    with reserve_stream(
+        Path(sys.argv[1]), paper_slot=2, existing_streams=0, source=source
+    ):
         raise AssertionError('second reservation admitted')
 except CustodyError:
     print('second_stream_refused')
@@ -366,7 +395,12 @@ except CustodyError:
         )
         assert done.returncode == 0, done.stderr
         assert done.stdout.strip() == "second_stream_refused"
-    with reserve_stream(tmp_path, paper_slot=3, existing_streams=0, source="fixture") as lease:
+    with reserve_stream(
+        tmp_path,
+        paper_slot=2,
+        existing_streams=0,
+        source="B's writer opens no market-data stream; fixture",
+    ) as lease:
         assert lease.held
 
 

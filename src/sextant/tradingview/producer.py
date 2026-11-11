@@ -1,4 +1,4 @@
-"""Slot-3 offline live seam, adapted from tv-display-producer@ea9507545045.
+"""Slot-2 offline live seam, adapted from tv-display-producer@ea9507545045.
 
 Main owns ranking/validation; M2@abe8432 owns the two-clock interpretation.
 ADR-0021 owns J5. No transport, keys, orders, controller or schedule exists here.
@@ -24,9 +24,9 @@ from sextant.ranking.generation import Coverage, CoverageState
 from sextant.ranking.publisher import RankingPublisher, ranking_data_type
 from sextant.ranking.reader import GenerationReader
 from sextant.ranking.registry import RegistryRow
-from sextant.tradingview.inputs import QUALIFIED
+from sextant.tradingview.inputs import DISPLAY_PAPER_SLOT, QUALIFIED
 
-SCOPE = AccountScope("alpaca-market-data", "paper-slot-3")
+SCOPE = AccountScope("alpaca-market-data", "paper-slot-2")
 
 
 @contextmanager
@@ -34,8 +34,8 @@ def reserve_stream(
     root: Path, *, paper_slot: int, existing_streams: int, source: str
 ) -> Iterator[WriterLease]:
     """Reserve, never open; every host must use the same canonical lease root."""
-    if type(paper_slot) is not int or paper_slot != 3:
-        raise ValueError("only paper slot 3; slot 2 belongs to B")
+    if type(paper_slot) is not int or paper_slot != 2:
+        raise ValueError("only paper slot 2; slot 3 is revoked")
     if type(existing_streams) is not int or existing_streams != 0 or not source.strip():
         raise ValueError("sourced zero existing streams required; never a second stream")
     lease = WriterLease(SCOPE, root, "rank-live")
@@ -75,7 +75,7 @@ class LiveProducer:
             or publisher.sequence != 0
             or publisher.registry.top_n > 1000
         ):
-            raise ValueError("fresh slot-3 SIP publisher, entitlement and held lease required")
+            raise ValueError("fresh slot-2 SIP publisher, entitlement and held lease required")
         self.publisher, self.lease, self.sip_authority = publisher, lease, sip_authority
         self.reader = GenerationReader(
             publisher.registry,
@@ -189,7 +189,11 @@ class LiveProducer:
     def build_unit(
         self, *, now: int, symbol_map: Mapping[str, str | None], mapping_clocks: Clocks
     ) -> dict:
-        common = {"schema": "sextant.j5-ranked/1", "display_only": True, "paper_slot": 3}
+        common = {
+            "schema": "sextant.j5-ranked/1",
+            "display_only": True,
+            "paper_slot": DISPLAY_PAPER_SLOT,
+        }
         try:
             if not self._admit(mapping_clocks, now):
                 raise ValueError("mapping unavailable")

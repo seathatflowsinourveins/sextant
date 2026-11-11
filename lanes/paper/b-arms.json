@@ -1,0 +1,41 @@
+[
+  {
+    "arm_id": "b-house-start-v1",
+    "name": "B house start, as registered",
+    "lane": "paper-b",
+    "tier": "BROKER-PAPER",
+    "state": "REGISTERED",
+    "calibration_state": "UNCALIBRATED",
+    "stack": {
+      "fill": "recorded broker paper fills",
+      "fees": "SEC Section 31 and FINRA TAF, dated notices",
+      "latency": "recorded",
+      "random_seed": "shared by the pair"
+    },
+    "overrides": {},
+    "trial_ledger": "one cumulative ledger, ADR-0018",
+    "source": "lanes/paper/b-entry-parameters.json first_leg_max_move 0.03 (northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:configs/paper/profiles.yaml:138) and lanes/paper/b-gain-lock.params.json prearm_buffer_fraction 0.01 (northstar-trading@7c5f852a2816bbaa5896241a93bab9de7cf7bb4f:docs/adr/0019-managed-exits-and-ranked-reentry.md:251), both UNCALIBRATED starts; docs/handbook/ledger-merit.md; ADR-0018",
+    "registered_at": "2026-11-10"
+  },
+  {
+    "arm_id": "b-aggressive-early-entry-tight-trail-v1",
+    "name": "B aggressive: wider first-leg cap, tighter pre-arm floor",
+    "lane": "paper-b",
+    "tier": "BROKER-PAPER",
+    "state": "REGISTERED",
+    "calibration_state": "UNCALIBRATED",
+    "stack": {
+      "fill": "recorded broker paper fills",
+      "fees": "SEC Section 31 and FINRA TAF, dated notices",
+      "latency": "recorded",
+      "random_seed": "shared by the pair"
+    },
+    "overrides": {
+      "first_leg_max_move": "0.04",
+      "prearm_buffer_fraction": "0.005"
+    },
+    "trial_ledger": "one cumulative ledger, ADR-0018",
+    "source": "first_leg_max_move 0.04 is the next point above the house 0.03 on the recorded replay grid 0.02..0.20 step 0.01 (northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:configs/paper/profiles.yaml:141). A first leg is ready only while max(ask, last) <= quiet x (1 + first_leg_max_move) (src/sextant/entry/signals.py first_leg_ready), after a surge flag that needs a move of at least 0.02 above quiet (src/sextant/entry/surge.py:63). At 0.03 a still-rising tape is admitted between 1.02 and 1.03 x quiet; at 0.04 between 1.02 and 1.04 x quiet, a band twice as wide, and every instant the house arm is ready this arm is ready too, so it enters no later and at least as often. The grid's lowest point 0.02 admits only a subset of the house entries and none above the surge minimum, so it is not an aggressive direction. prearm_buffer_fraction 0.005 is the tightest point of the recorded grid {0.005, 0.01, 0.02} (northstar-trading@7c5f852a2816bbaa5896241a93bab9de7cf7bb4f:docs/adr/0019-managed-exits-and-ranked-reentry.md:251): buffer = max(one_tick, spread, f x entry, m x R_w) can only fall or stay, so the pre-arm trigger sits no lower than the house arm's. Registered, not run; its first run writes the ledger row under one writer (docs/handbook/ledger-merit.md)",
+    "registered_at": "2026-11-11"
+  }
+]

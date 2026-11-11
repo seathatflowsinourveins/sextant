@@ -132,10 +132,11 @@ def test_gain_lock_registry_carries_shared_starts_and_leaves_b_cost_unavailable(
     assert {row["name"] for row in rows} == shared | {"round_trip_cost"}
     assert len(rows) == len(shared) + 1
     for row in rows:
-        assert row["calibration_state"] == "UNCALIBRATED"
         assert row["source"] and row["last_change"]
         name = row["name"]
-        if name == "round_trip_cost":
-            assert row["value"] is None
+        if name == "round_trip_cost":  # ADR-0025:27: TCA sets it; no literal stands in
+            assert row["value"] is None and row["calibration_state"] == "UNAVAILABLE"
+            assert "0025-gain-protection-and-fast-exit.md:27" in row["source"]
         else:
+            assert row["calibration_state"] == "UNCALIBRATED"
             assert D(row["value"]) == starts[name]

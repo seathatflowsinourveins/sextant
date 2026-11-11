@@ -43,7 +43,10 @@ BOUNDS = DisplayBounds(Decimal("0.05"), Decimal("2"), 600)
 
 def fresh_j5(tmp_path: Path) -> dict:
     with reserve_stream(
-        tmp_path / "leases", paper_slot=3, existing_streams=0, source="fixture stop receipt"
+        tmp_path / "leases",
+        paper_slot=2,
+        existing_streams=0,
+        source="B's writer opens no market-data stream; fixture stop receipt",
     ) as lease:
         live = LiveProducer(publisher(), lease, sip_authority="fixture SIP entitlement only")
         warm(live)
@@ -148,7 +151,7 @@ def test_unavailable_j5_projects_to_unavailable_never_empty_lists():
     unavailable = {
         "schema": "sextant.j5-ranked/1",
         "display_only": True,
-        "paper_slot": 3,
+        "paper_slot": 2,
         "status": "unavailable",
         "watchlists": None,
         "reason": "fixture refusal",
@@ -171,6 +174,7 @@ def test_unavailable_j5_projects_to_unavailable_never_empty_lists():
         "expires",
         "lag",
         "coverage",
+        "revoked_slot",
     ],
 )
 def test_tampered_j5_is_unavailable(tmp_path: Path, tamper: str):
@@ -202,6 +206,8 @@ def test_tampered_j5_is_unavailable(tmp_path: Path, tamper: str):
         }
     elif tamper == "expires":
         j5["expires_at_ns"] = j5["generated_at_ns"]
+    elif tamper == "revoked_slot":
+        j5["paper_slot"] = 3
     elif tamper == "lag":
         cutoff = generation.ts_event + 601 * NS
         j5 = rebuild_generation(j5, input_cutoff=cutoff, known_at=cutoff, ts_init=cutoff)
@@ -266,7 +272,7 @@ def synthetic_j5(count: int) -> dict:
     return {
         "schema": "sextant.j5-ranked/1",
         "display_only": True,
-        "paper_slot": 3,
+        "paper_slot": 2,
         "status": "fresh",
         "generation_sha256": generation_digest(generation),
         "params_hash": params_hash,
