@@ -88,6 +88,10 @@ their bare names and existing `mcp-watchlist-...` aliases, ignores unknown names
 and requires exactly one identity for each admitted operation. Every call must
 still pass the operation's argument-key fence and discovered JSON Schema.
 Discovery is capability inventory, not authority to use new tools.
+`symbols.SymbolSearch`, a separate session for the producer's symbol map, admits
+one documented Read-only operation, `search_symbols` (keys `query` and
+`type_filter`), and none of the five above. ADR-0021's 2026-11-11 amendment admits it for
+the display symbol map only; its result feeds the display mapping and nothing else.
 
 | Category | Documented count | Not admitted by the membership adapter |
 |---|---|---|
@@ -385,7 +389,17 @@ not refuse an old file, because no maximum age has a source. Each tick receipt's
 only) is skipped and never guessed. The symbol map is the exact TradingView map. A
 directory name with no mapping, or with `null`, is left out of the display universe
 and counted in `universe_source` ("N of M directory symbols mapped, K unmapped
-omitted"); a map that resolves no name refuses. The three display bounds
+omitted"); a map that resolves no name refuses. The map is built by
+`python -m sextant.tradingview.symbols --nasdaq-listed ... --other-listed ...
+--symbol-map ... --authorize`, an owner-consented session that calls the
+official Read-only `search_symbols` once per directory name not yet in the map, as
+the earlier campaign took each exact symbol from that search. A name is mapped only
+when exactly one returned row is a `stock` whose qualified ticker equals the
+directory ticker, whose `currency_logoid` is `country/US` and whose venue is not
+the BOATS overnight venue (lead ruling LEAD-0201). No match or several record `null` and are counted in
+`symbol_map.receipt.json`. A failed or quota-limited call stops the run, keeps the
+progress and records nothing for that name. No TradingView page states a prefix for
+each US listing venue, so none is derived from the Exchange code. The three display bounds
 are metadata the bridge validates and never applies, read from
 `lanes/tradingview/display-bounds.params.json` (`--display-bounds`, sourced
 UNCALIBRATED rows); all three of `--gap-bound`, `--rvol-bound` and

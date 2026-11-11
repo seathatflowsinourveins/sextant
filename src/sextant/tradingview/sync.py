@@ -13,7 +13,7 @@ import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Any, Never
+from typing import Any, ClassVar, Never
 
 from jsonschema import Draft202012Validator
 from mcp import Client
@@ -38,6 +38,7 @@ AMBIGUOUS_TOOL_IDENTITY = "Ambiguous official tool identity"
 REPEATED_TOOLS_CURSOR = "Repeated tools/list cursor"
 INCOMPLETE_TOOL_DISCOVERY = "Incomplete tool discovery"
 TOOLS_UNAVAILABLE = "Required official watchlist tools unavailable"
+SEARCH_UNAVAILABLE = "Required official symbol search unavailable"
 RESEARCH_EXPIRED = "Research expired during sync; no further write"
 NON_DISPLAY_INPUT = "Non-display operation or incompatible official input schema"
 SESSION_REFUSED = "MCP session refused or interrupted; no automatic replay"
@@ -93,6 +94,7 @@ SAFE_STOP_MESSAGES = (
     REPEATED_TOOLS_CURSOR,
     INCOMPLETE_TOOL_DISCOVERY,
     TOOLS_UNAVAILABLE,
+    SEARCH_UNAVAILABLE,
     RESEARCH_EXPIRED,
     NON_DISPLAY_INPUT,
     SESSION_REFUSED,
@@ -270,6 +272,11 @@ def _documented_write(value: Any) -> bool:
 class OfficialTools:
     """Exact display allowlist, discovered schemas, serial pacing and safe errors."""
 
+    # The admitted operations and their argument keys; a subclass names its own set.
+    allowed: ClassVar[dict[str, set[str]]] = ALLOWED
+    aliases: ClassVar[dict[str, str]] = WIRE
+    unavailable: ClassVar[str] = TOOLS_UNAVAILABLE
+
     def __init__(
         self,
         client: Client,
@@ -295,8 +302,8 @@ class OfficialTools:
             for tool in page.tools:
                 if isinstance(tool.name, str) and _NAME.match(tool.name):
                     offered.add(tool.name)
-                name = WIRE.get(tool.name, tool.name)
-                if name in ALLOWED:
+                name = self.aliases.get(tool.name, tool.name)
+                if name in self.allowed:
                     if name in self.schemas:
                         raise SyncError(AMBIGUOUS_TOOL_IDENTITY, stage="tool list")
                     self.schemas[name], self.wire[name] = tool.input_schema, tool.name
@@ -308,16 +315,18 @@ class OfficialTools:
             seen.add(cursor)
         else:
             raise SyncError(INCOMPLETE_TOOL_DISCOVERY, stage="tool list")
-        if set(self.schemas) != set(ALLOWED):
-            required = set(WIRE)
+        if set(self.schemas) != set(self.allowed):
+            required = set(self.aliases)
             missing = sorted(required - set(self.wire.values()))[:8]
-            extra = sorted(raw for raw in offered if WIRE.get(raw, raw) not in ALLOWED)[:8]
+            extra = sorted(
+                raw for raw in offered if self.aliases.get(raw, raw) not in self.allowed
+            )[:8]
             detail = (
                 f"tool list extra {', '.join(extra) or 'none'}; "
                 f"missing {', '.join(missing) or 'none'}"
             )
             raise SyncError(
-                TOOLS_UNAVAILABLE,
+                self.unavailable,
                 stage="tool list",
                 detail=detail,
             )
@@ -328,8 +337,8 @@ class OfficialTools:
 
     def validate(self, name: str, arguments: dict[str, Any]) -> None:
         if (
-            name not in ALLOWED
-            or arguments.keys() - ALLOWED[name]
+            name not in self.allowed
+            or arguments.keys() - self.allowed[name]
             or name not in self.schemas
             or not Draft202012Validator(self.schemas[name]).is_valid(arguments)
         ):
