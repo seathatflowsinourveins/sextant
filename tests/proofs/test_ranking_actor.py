@@ -183,12 +183,24 @@ class Receiver(RankingDataActor):
 
 
 def run(
-    tmp_path: Path, *, fail_at=None, prime=priming, factory=None, host_cls=None, actor_cls=None
+    tmp_path: Path,
+    *,
+    fail_at=None,
+    prime=priming,
+    factory=None,
+    statuses=(),
+    host_cls=None,
+    actor_cls=None,
+    window: int = 3600,
+    extra=(),
 ) -> dict[str, Any]:
     tmp_path.mkdir(parents=True, exist_ok=True)
     catalog = ParquetDataCatalog(str(tmp_path))
-    catalog.write_instruments([equity(iid) for iid in IDS])
+    catalog.write_instruments([*(equity(iid) for iid in IDS), *extra])
     catalog.write_trade_ticks(ticks())
+    if statuses:
+        catalog.write_instrument_statuses(list(statuses))
+    status_ids = sorted({status.instrument_id for status in statuses}, key=str)
     config = BacktestRunConfig(
         venues=[
             BacktestVenueConfig(
@@ -205,6 +217,14 @@ def run(
                 catalog=DataCatalogConfig(path=str(tmp_path)),
                 instrument_id=InstrumentId.from_str("PENNY.ALPACA"),
             )
+        ]
+        + [
+            BacktestDataConfig(
+                data_type=NautilusDataType.InstrumentStatus,
+                catalog=DataCatalogConfig(path=str(tmp_path)),
+                instrument_ids=status_ids,
+            )
+            for _ in statuses[:1]
         ],
         engine=BacktestEngineConfig(bypass_logging=True, run_analysis=False),
         raise_exception=True,
@@ -225,6 +245,7 @@ def run(
         host_factory=cast(Any, factory or build),
         priming=prime,
         page=lambda reason, detail: pages.append((reason, detail)),
+        page_window_s=window,
     )
     bound = type("Bound", (actor_cls or Logged,), {"calls": log})
     actor = bound(actor_config)
@@ -349,6 +370,7 @@ def test_an_unknown_config_key_is_refused_by_name() -> None:
             feed="sip",
             host_factory=cast(Any, lambda: FakeHost([])),
             priming=priming,
+            page_window_s=3600,
             feeed="boats",
         )
     config = RankingActorConfig(  # the engine's own base fields still pass through
@@ -356,6 +378,7 @@ def test_an_unknown_config_key_is_refused_by_name() -> None:
         feed="sip",
         host_factory=cast(Any, lambda: FakeHost([])),
         priming=priming,
+        page_window_s=3600,
         log_events=False,
     )
     assert config.log_events is False
@@ -403,7 +426,7 @@ def test_the_pager_key_set_is_bounded_by_stage(tmp_path) -> None:  # F6
     out = run(tmp_path, host_cls=DistinctErrors)
     assert out["actor"].errors == {"on_trade": len(SECONDS)}
     assert [stage for stage, _ in out["pages"]] == ["on_trade"]  # one page, not one per type
-    assert out["actor"]._paged <= {"on_trade"}
+    assert set(out["actor"]._paged) <= {"on_trade"}
 
 
 def test_the_engine_base_fields_reach_the_config_through_new_not_init() -> None:
@@ -419,6 +442,7 @@ def test_the_engine_base_fields_reach_the_config_through_new_not_init() -> None:
         feed="sip",
         host_factory=cast(Any, lambda: FakeHost([])),
         priming=priming,
+        page_window_s=3600,
         actor_id=ActorId("RANKING-PROOF"),
         log_events=False,
         log_commands=False,
