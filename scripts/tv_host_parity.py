@@ -327,7 +327,10 @@ def main() -> int:
         tie_minutes = 0
         publish_clock = None
         with reserve_stream(
-            work / "parity-leases", paper_slot=3, existing_streams=0, source="parity witness only"
+            work / "parity-leases",
+            paper_slot=2,
+            existing_streams=0,
+            source="B's writer opens no market-data stream; parity witness only",
         ) as lease:
             host = BarFidelityHost(
                 publisher,

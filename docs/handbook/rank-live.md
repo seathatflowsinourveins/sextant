@@ -14,9 +14,11 @@ handoff; LEAD-1219-tv-pr3-skills.md, SHA-256
 
 ## Data path and sources
 
-The future host owns paper slot 3's **one** account-wide stream. It fans out
+The future host owns paper slot 2's **one** account-wide stream. It fans out
 native TradeTicks to main's `RankingPublisher`; no consumer creates another
-socket. Slot 2 is B's and refuses. `reserve_stream` uses the existing
+socket. B's writer opens only its trading stream and reads market data by REST,
+so slot 2's market-data stream is free; slot 3 is revoked (owner, 2026-11-10).
+`reserve_stream` uses the existing
 `WriterLease`/native nonblocking flock in a distinct market-data namespace.
 Every cooperating host must use the same canonical lease root and attest the
 external stream count before reserving; a local lock cannot detect another
@@ -122,7 +124,7 @@ deployment's ages stay UNAVAILABLE until sourced. The explicit snapshot allocati
 `snapshot_requests_per_minute` (>0 and <=200, no default; source: Alpaca's lowest
 documented data quota and native Pacer). Symbol groups are explicit inputs with
 no default size or undocumented maximum. `top_n` remains main's row, bounded by
-ADR-0021's 1,000-name limit. Fixed authorities are slot 3, one stream, and J5
+ADR-0021's 1,000-name limit. Fixed authorities are slot 2, one stream, and J5
 batches <=100. Missing operational authority stays unavailable.
 
 The owner replaced the five-minute proposal in lead **2026-11-08 19:49:24 EST,
