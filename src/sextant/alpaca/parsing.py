@@ -60,12 +60,7 @@ def _read(asset: Asset | Mapping[str, Any], name: str) -> Any:
 
 
 def parse_equity(asset: Asset | Mapping[str, Any], *, ts_init: int) -> Equity:
-    """Build an ALPACA-venue Equity from one raw or typed assets row.
-
-    Only the symbol and the five vendor flags are read; the client uses
-    ``raw_data=True`` so an exchange code the pinned SDK enum lacks cannot fail
-    the whole typed list (alpaca-py 0.44.0 ``alpaca/trading/client.py:394-397``).
-    """
+    """Build an ALPACA Equity from one row; reads the symbol and vendor flags."""
     symbol_value = _read(asset, "symbol")
     if not isinstance(symbol_value, str) or not symbol_value:
         raise ValueError("Alpaca asset row has no symbol")

@@ -1,14 +1,10 @@
 """Build Alpaca clients and the instrument provider from node configuration.
 
-Follows nautilus_trader@d53849b ``examples/live/_template/factories.py`` and
-``docs/developer_guide/python_adapters.md``: each static ``create`` returns a
-fresh client synchronously and opens no network resource. The data factory
-defers its ``TradingClient`` to the provider's first load; the execution factory
-owns the account identity and, as the template does, passes no instrument
-provider. ``AccountType.MARGIN`` and ``OmsType.NETTING`` follow the template and
-ADR-0008 B1. Credentials arrive only as environment-variable names. The client
-is always built with ``paper=True`` (alpaca-py ``alpaca/trading/client.py:80-82``
-selects the live URL only for ``paper=False``): this adapter has one home.
+Follows nautilus_trader@d53849b ``examples/live/_template/factories.py``: each
+``create`` returns a fresh client and opens no network resource; the data
+client's ``TradingClient`` waits for the provider's first load. MARGIN and
+NETTING follow the template and ADR-0008 B1. Always ``paper=True`` (alpaca-py
+``alpaca/trading/client.py:80-82`` picks live only for ``paper=False``).
 """
 
 from __future__ import annotations

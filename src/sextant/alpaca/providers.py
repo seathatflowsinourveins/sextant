@@ -1,13 +1,11 @@
 """Alpaca instrument provider: assets by id, or every US equity.
 
-Follows nautilus_trader@d53849b ``examples/live/_template/providers.py`` and
-``docs/developer_guide/python_adapters.md``: configuration and local state only;
-network work starts in the async load hooks, each blocking SDK call through
-``asyncio.to_thread``. The provider's client uses ``raw_data=True``: typed
-``get_all_assets`` validates the whole list at once
-(``alpaca/trading/client.py:394-397``), so one unlisted vendor value would fail
-every instrument. Each raw row is read and validated on its own; a row that
-cannot be parsed is skipped, counted and the count logged.
+Follows nautilus_trader@d53849b ``examples/live/_template/providers.py``: network
+work only in the async hooks, each SDK call via ``asyncio.to_thread``. Raw rows
+(``raw_data=True``) parse one by one, since a typed list fails whole
+(alpaca-py ``alpaca/trading/client.py:394-397``); a bad row is skipped and
+counted. An id answered 404 (``alpaca/common/rest.py:198-207``) stays unloaded,
+as in the engine's ``live/providers.py:97-108``; other SDK errors fail the load.
 """
 
 from __future__ import annotations
@@ -17,6 +15,7 @@ import time
 from collections.abc import Callable
 from typing import Any, cast, override
 
+from alpaca.common.exceptions import APIError
 from alpaca.trading.client import TradingClient
 from alpaca.trading.enums import AssetClass
 from alpaca.trading.requests import GetAssetsRequest
@@ -28,12 +27,7 @@ from .parsing import parse_equity
 
 
 class AlpacaInstrumentProvider(InstrumentProvider):
-    """Load Alpaca equity assets into the engine's instrument cache.
-
-    ``client_factory`` defers ``TradingClient`` construction to the first load:
-    the adapter guide requires a factory (and therefore a provider built by one)
-    to open no network resources, so credentials are resolved at load time.
-    """
+    """Load Alpaca equities; ``client_factory`` defers the client to first load."""
 
     def __init__(
         self,
@@ -89,12 +83,16 @@ class AlpacaInstrumentProvider(InstrumentProvider):
                     instrument_id.symbol.value,
                 )
                 self.add(parse_equity(row, ts_init=ts_init))
+            except APIError as error:
+                if error.status_code != 404:
+                    raise
+                skipped += 1
             except (AttributeError, KeyError, TypeError, ValueError):
                 skipped += 1
         if skipped:
             self._log.warning(
                 f"Skipped {skipped} of {len(instrument_ids)} Alpaca asset "
-                "lookup(s) that could not be parsed",
+                "lookup(s) not listed (404) or not parsed",
             )
 
     @override
@@ -103,13 +101,7 @@ class AlpacaInstrumentProvider(InstrumentProvider):
         instrument_id: InstrumentId,
         filters: dict | None = None,
     ) -> None:
-        """Load one instrument through the ID-list loader, or fail closed.
-
-        The signature follows nautilus_trader@d53849b
-        ``python/nautilus_trader/live/providers.py:110``. A single-instrument
-        request never guesses: an id the venue does not list raises instead of
-        leaving the data client to fail later on a different message.
-        """
+        """Load one id via the list loader (engine ``providers.py:110``), or raise."""
         if self.find(instrument_id) is not None:
             return
         await self.load_ids_async([instrument_id], filters)

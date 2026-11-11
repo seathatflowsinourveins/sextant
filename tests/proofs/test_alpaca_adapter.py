@@ -1,14 +1,8 @@
 """Proofs for the Alpaca adapter's provider, configs and factories.
 
-upstream checked: nautilus_trader@d53849b ``examples/live/_template/``,
-``docs/developer_guide/python_adapters.md``, ``docs/concepts/instruments/equity.md``,
-``crates/model/src/instruments/tick_scheme.rs:150-217``;
-alpaca-py@cc4cb3b7 ``alpaca/trading/{client,models,requests}.py``,
-``alpaca/data/enums.py``. Sub-penny tiers follow Alpaca "Orders at Alpaca"
-(https://docs.alpaca.markets/us/docs/orders-at-alpaca, updated 2026-10-13, read
-2026-11-10): two decimals at or above $1.00, four below.
-
-No network: clients are faked and no proof reads a real credential.
+upstream checked: nautilus_trader@d53849b ``examples/live/_template/``;
+alpaca-py@cc4cb3b7 ``alpaca/trading/client.py``, ``alpaca/common/rest.py``;
+sources per module docstring. No network and no real credential.
 """
 
 from __future__ import annotations
