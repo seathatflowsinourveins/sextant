@@ -79,6 +79,7 @@ WIDTH_ROWS = frozenset(
     {"alpaca_min_trail_fraction", "trail_atr_period", "trail_atr_bar_minutes", "trail_atr_multiple"}
 )
 NS = 1_000_000_000
+ABSENT = object()  # a config without the client row: refused, never read as None
 
 
 # The engine fields a caller may pass through (trading stub StrategyConfig :1021-1041): the
@@ -137,10 +138,10 @@ class BLifecycleConfig(StrategyConfig):
         if not isinstance(rank_gate, RegistryRow) or rank_gate.name != "rank_gate_enabled":
             raise ValueError("B needs the rank_gate_enabled registry row")
         # With the gate off no rank is read, so protection needs no consumer (lead 09:1x); the
-        # entry then has no session segment and is refused.
-        if not isinstance(consumer, RankingConsumer) and (consumer, rank_gate.value) != (
-            None,
-            False,
+        # entry then has no session segment and is refused. Only the bool False is off
+        # (ranking/registry.py:50-61): 0 == False in Python, so 0 and Decimal(0) are refused.
+        if not isinstance(consumer, RankingConsumer) and not (
+            consumer is None and rank_gate.value is False
         ):
             raise ValueError("B needs the reviewed RankingConsumer")
         if (
@@ -289,11 +290,19 @@ class BLifecycle(Strategy):
     def width_rows(self) -> Any:
         return self._config.width_rows
 
-    @property
-    def _client(self) -> ClientId | None:
-        """The venue's execution client for every command, or None where the venue routes."""
-        row = self._config.client_id
-        return None if row is None else ClientId(row)
+    def _route(self, book: _Book | None, **row: str) -> tuple[bool, ClientId | None]:
+        """The venue's execution client for a command, or None where the venue routes, resolved
+        before any of its bookkeeping (review s1p2b-eb33a6a). A row ``ClientId`` refuses or an
+        absent one sends nothing: one refusal naming ``client_id``, and the book re-arms on its
+        next price, so a restored row recovers (AGENTS.md:16, ADR-0007:17)."""
+        value = getattr(self._config, "client_id", ABSENT)
+        try:
+            return True, None if value is None else ClientId(cast(str, value))
+        except (TypeError, ValueError):
+            if book is not None:
+                book.rearm = True
+            self._record(kind="refuse", ts=self.clock.timestamp_ns(), reason="client_id", **row)
+            return False, None
 
     @property
     def native(self) -> Any:
@@ -419,6 +428,9 @@ class BLifecycle(Strategy):
         if sizing.refusal is not None:
             book.refused_flag = surge.flag_ts  # c_session.py: refused until a new flag
             return self._refuse(book, now, sizing.refusal)
+        routed, client = self._route(book, instrument=str(book.instrument_id))
+        if not routed:
+            return
         order = self.order_factory.limit(
             book.instrument_id,
             OrderSide.BUY,
@@ -434,7 +446,7 @@ class BLifecycle(Strategy):
             f"b-entry-ttl-{order.client_order_id}", expiry, callback=lambda _e: self._expire(iid)
         )
         outside = session_at(now) is not Session.RTH
-        self.submit_order(order, client_id=self._client, params={"extended_hours": outside})
+        self.submit_order(order, client_id=client, params={"extended_hours": outside})
 
     def _reprice(self, book: _Book, now: int) -> None:
         """Reprice up to the ask, never past ``entry_chase_bps`` above the first limit."""
@@ -606,6 +618,9 @@ class BLifecycle(Strategy):
             book.rearm = True
             self._page(book, now, "native_trail_fraction_invalid")  # ADR-0025's cap
             return None
+        routed, client = self._route(book, instrument=str(book.instrument_id))
+        if not routed:
+            return None
         width = book.width  # revalidated at each arm: the rows in force and the native cap
         bar = book.width_bar
         if width is not None and (
@@ -627,7 +642,7 @@ class BLifecycle(Strategy):
         )
         self._record(kind="protect", ts=now, order=str(order.client_order_id), quantity=str(shares))
         book.offsets[order.client_order_id] = bps
-        self.submit_order(order, client_id=self._client)
+        self.submit_order(order, client_id=client)
         return order.client_order_id
 
     # -- S1-4: width from completed bars, tighten-only modify -----------------------------
@@ -736,10 +751,14 @@ class BLifecycle(Strategy):
                 return self._left_to_complete(book, cid)
             if cid in book.exhausted:  # K+1 cancels were refused (ADR-0007:27): no more
                 return
+        routed, client = self._route(book, order=str(cid))  # before the cancel's record
+        if not routed:
+            return
+        if book is not None:
             book.cancelling.add(cid)  # an OrderUpdated clears PENDING_CANCEL (mod.rs:1314-1316)
             book.cancel_sent[cid] = self.clock.timestamp_ns()  # the retry's clock
             book.cancel_tries[cid] = book.cancel_tries.get(cid, 0) + 1
-        self.cancel_order(cid, client_id=self._client)
+        self.cancel_order(cid, client_id=client)
 
     def _left_to_complete(self, book: _Book, cid: ClientOrderId) -> None:
         if cid not in book.started:
@@ -752,7 +771,9 @@ class BLifecycle(Strategy):
     def _modify(self, cid: ClientOrderId, **change: Any) -> None:
         if not self._house(cid):
             return self._record(kind="guard_refused", order=str(cid))
-        self.modify_order(cid, client_id=self._client, **change)
+        routed, client = self._route(None, order=str(cid))  # a reprice retries on its own
+        if routed:
+            self.modify_order(cid, client_id=client, **change)
 
     def _page(self, book: _Book, now: int, reason: str) -> None:
         if book.paged != reason:  # one page per state, not one per event
@@ -779,10 +800,13 @@ class BLifecycle(Strategy):
         if order is not None and order.status is OrderStatus.SUBMITTED:
             due = now  # its retry waits for the acceptance event (_due_cancels)
         book.recancel[cid] = due
-        if due > now:  # on the clock too, so a quiet market still sends it
+        if order is None or order.status is not OrderStatus.SUBMITTED:
+            # On the clock too, so a quiet market still sends it; one already due fires at once
+            # from the engine's timer, never inside this callback (nautilus_trader rc8
+            # crates/common/src/clock/virtual.rs:327, live/clock.rs:215).
             name = f"b-recancel-{cid}-{book.cancel_tries.get(cid, 0)}"
             self.clock.set_time_alert_ns(
-                name, due, callback=lambda _e, b=book: self._due_cancels(b)
+                name, max(due, now), callback=lambda _e, b=book: self._due_cancels(b)
             )
 
     def _due_cancels(self, book: _Book) -> None:
