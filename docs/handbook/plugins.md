@@ -35,6 +35,6 @@ A plugin enters the `## Third-party plugins` section of `docs/manifest.md` only 
 
 No row, no install. A plugin that fails any line stays in `## Watching, not installed` with a named trigger. A scan is not a sandbox: the code still runs with the session's permissions, so the owner's sign-in, the secrets store and the live lane stay out of reach by `AGENTS.md`'s hard lines, not by the scan.
 
-## Why dsh adds no plugin yet
+## Admitted
 
-The screen found no gap the shelf does not already cover. The dsh lane's 25 pinned skills are the converged subset of the Claude shelf, and the session-level pack adds no consumer that needs a plugin's code. The two watches name the triggers that would change that.
+The first admission is test repair: `dsh-test-autofix` (yellow 58/100; shell, fs-read, env; it launches test processes), in the interactive `dsh-tui` profile only.

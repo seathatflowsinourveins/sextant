@@ -33,7 +33,8 @@
         "profiles": ["dsh-tui", "acp", "headless"],
         "plugins": [
           {"package": "dsh-goalloop-agentteams", "spec": "github:samirliu/dsh-goalloop-agentteams#6b4b1fad8cd61f98e6eedbb4f12ed10b5dc93f17"},
-          {"package": "sextant-dsh-review-cmd", "spec": "config/dsh/review-cmd"}
+          {"package": "sextant-dsh-review-cmd", "spec": "config/dsh/review-cmd"},
+          {"package": "dsh-test-autofix", "spec": "github:1250589385/dsh-test-autofix#2246371b2869db52c0f9a77098777d66dbdbad32", "profiles": ["dsh-tui"]}
         ]
       },
       "mcp_bundle": "config/dsh/mcp",
@@ -49,8 +50,8 @@
     },
     "muse": {
       "launch": "muse-launch.sh: --model, --reasoning-effort and --contributor-mode from Muse Code 1.4.6-R6000.1's own muse --help, exec --help and serve --help",
-      "shelf_and_mcp": "issue #256: one user config root ($XDG_CONFIG_HOME/muse, else ~/.config/muse), muse init scaffolds only AGENTS.md, no skill-root setting, and -c refuses the whole mcpServers map and any server it does not already hold",
-      "proof": "muse-launch fixture tests; one real muse exec session log, run.model.configured = muse-wonder-full-1.0"
+      "shelf_and_mcp": "#256: native Superpowers plugin, ten user skills and sextant-mcp; review-gated capabilities use Muse's separate approval command",
+      "proof": "muse plugins list --json; muse skills list --source plugin --json; muse skills list --source user --json; test_runtime_parity.py"
     }
   }
 }
