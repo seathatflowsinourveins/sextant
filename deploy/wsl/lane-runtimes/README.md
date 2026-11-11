@@ -31,7 +31,7 @@ orca agent launch --agent antigravity --surface terminal
 
 Orca supplies Antigravity's `--dangerously-skip-permissions`; explicit upstream denies still apply. It is a native process with the user's filesystem/network access. The retired runtimes have no tab: the installer no longer puts their commands on `PATH`.
 
-Orca's dsh agent launches plain `dsh-tui`, which `parity.sh` links to `dsh-tui-launch.sh`, built as `dsh-launch.sh` is: one strict `with-keys.sh` hop for the same three keys, telemetry off, keyless version probes, and `DSH_HOME` defaulting to `~/.dsh-full` unless the caller sets it.
+Orca's dsh agent launches plain `dsh-tui`, which `parity.sh` links to `dsh-tui-launch.sh`, built as `dsh-launch.sh` is: one strict `with-keys.sh` hop for the same three keys, the core dsh first on PATH so a leading `--patch` or `--dump-config` takes no second hop, telemetry off, keyless version probes, and `DSH_HOME` defaulting to `~/.dsh-full` unless the caller sets it. The preflight refuses to replace anything at either path that Sextant did not put there.
 
 AO 0.14.10 (`033d597032e448a0ea16c298350e36b099f74106`) defines `deepseek-harness` in `backend/internal/adapters/agent/deepseekharness/deepseekharness.go:59`: it resolves the bare `dsh` name on PATH (:228-246) and launches `dsh --profile headless` (:144). Select it with an explicit `ao spawn --project sextant --harness deepseek-harness` invocation. `just ao claim <PR>` keeps Codex (`backend/internal/adapters/agent/codex/codex.go:95`) and its Codex-reviewer refusal. `--agent` aliases `--harness` (`backend/internal/cli/spawn.go:224`), so each spawn selects one harness. The keyed `dsh` launcher is tracked in #272; work assignment to dsh waits for evidence once AO takes review-reply loops.
 

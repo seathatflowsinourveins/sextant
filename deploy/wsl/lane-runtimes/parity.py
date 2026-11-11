@@ -62,6 +62,32 @@ def _guard_roots(lane: Path, *roots: Path) -> None:
             )
 
 
+# Our own dsh-tui launchers by sha256: the 2026-11-10 host copy, then each tracked version.
+DSH_TUI_KNOWN = frozenset({
+    "01d2bb2d0bcd7ebc531664a2b224f46f1208fda9db0b59d69c9a5f8932e9d1ac",
+    "4e4b0839009917171c9a91ff632ad76885a8e058b0ec46296c7f1a541e0f430a",
+})  # fmt: skip
+TUI_ENTRY = "profiles/dsh-tui/node_modules/@deepseek-harness-tui/dsh-tui/bin/dsh-tui.js"
+
+
+def _dsh_tui_destinations(home: Path, prefix: Path) -> None:
+    """parity.sh installs and links over these two paths: accept only what Sextant put there."""
+    wrapper = prefix / "dsh-tui-launch.sh"
+    homes = {home / ".dsh", home / ".dsh-full", Path(os.environ.get("DSH_HOME") or home / ".dsh")}
+    ours = {wrapper, *(Path(os.path.abspath(dsh_home / TUI_ENTRY)) for dsh_home in homes)}
+    for path in (wrapper, home / ".local/bin/dsh-tui"):
+        if path.is_symlink():
+            if Path(os.path.normpath(path.parent / os.readlink(path))) in ours - {path}:
+                continue
+        elif not path.exists():
+            continue
+        elif path.is_file() and hashlib.sha256(path.read_bytes()).hexdigest() in DSH_TUI_KNOWN:
+            continue
+        raise Refused(
+            f"{path}: not absent, our link or a known dsh-tui launcher; refusing to replace it"
+        )
+
+
 def _dsh_roots(dsh_home: Path) -> None:
     roots = [dsh_home / "skills", dsh_home / "profiles"]
     for name in ("dsh-tui", *SPEC["runtimes"]["dsh"]["profiles"]):
@@ -463,6 +489,7 @@ def preflight(home: Path) -> None:
     )
     _codex_lane(home)
     _dsh_roots(Path(os.environ.get("DSH_HOME") or home / ".dsh"))
+    _dsh_tui_destinations(home, prefix)
     _antigravity_roots(home)
 
 

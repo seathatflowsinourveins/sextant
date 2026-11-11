@@ -73,8 +73,7 @@ profile_dir="$HOME/.dsh/profiles/dsh-tui"
 mkdir -p "$profile_dir"
 [ -f "$profile_dir/pnpm-workspace.yaml" ] || cp deploy/wsl/dsh/pnpm-workspace.yaml "$profile_dir/"
 dsh plugin --profile dsh-tui add --save-exact "${plugins[@]}" "$PWD/config/dsh"
-# Orca's dsh agent runs dsh-tui: the keyed launcher `just lane-runtimes` installs, never the raw keyless entry.
-ln -sfn "$HOME/.local/share/sextant-lane-runtimes/dsh-tui-launch.sh" "$HOME/.local/bin/dsh-tui"
+# Orca's dsh agent runs dsh-tui: lane-runtimes' parity.sh links it to the keyed launcher it installs.
 
 # Exactly the release checksums already reviewed in the sandbox Dockerfile.
 tool_archive=$(mktemp)

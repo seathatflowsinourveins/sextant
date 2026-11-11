@@ -12,6 +12,9 @@ export DSH_TELEMETRY_DISABLED=1 DSH_TELEMETRY_MODE=DISABLED
 export DSH_HOME="${DSH_HOME:-$HOME/.dsh-full}"
 real="$DSH_HOME/profiles/dsh-tui/node_modules/@deepseek-harness-tui/dsh-tui/bin/dsh-tui.js"
 prefix=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")
+# ns-native.sh:406's pinned core PATH: dsh-tui's own `dsh --profile` calls (leading --patch or --dump-config) reach
+# dsh-launch.sh's core dsh directly, not a second keyed hop through ~/.local/bin/dsh.
+export PATH="${prefix%/*}/sextant-agents/node_modules/.bin:$PATH"
 # Version probes do not require a credential.
 if [[ $# == 1 && ("$1" == --version || "$1" == -v || "$1" == -V) ]]; then exec "$real" "$@"; fi
 IFS= read -r repository < "$prefix/repository-path"

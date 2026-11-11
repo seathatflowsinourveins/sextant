@@ -4,6 +4,7 @@ Fixture proofs of the installer and launchers. Native host listings are recorded
 deploy/wsl/lane-runtimes/parity-receipts.json.
 """
 
+import hashlib
 import importlib.util
 import json
 import os
@@ -383,6 +384,100 @@ def test_plain_dsh_tui_is_keyed_in_one_strict_hop_on_the_enhanced_home_and_print
         "keyed", f"tui . home={tmp_path}/explicit {off}",
     ]  # fmt: skip
     assert not any(value in output or value in log.read_text() for value in values.values())
+
+
+def test_a_dump_config_launch_reaches_the_core_dsh_in_one_keyed_hop(tmp_path: Path) -> None:
+    keys = "--strict -k DEEPSEEK_API_KEY -k CONTEXT7_API_KEY -k EXA_API_KEY"
+    prefix, log, home = _keyed_layout(tmp_path, "dsh-tui-launch.sh", keys)
+    shutil.copyfile(RUNTIMES / "dsh-launch.sh", prefix / "dsh-launch.sh")
+    (prefix / "dsh-launch.sh").chmod(0o755)
+    (home / ".local/bin").mkdir(parents=True)
+    (home / ".local/bin/dsh").symlink_to(prefix / "dsh-launch.sh")  # the keyed shim
+    core = prefix.parent / "sextant-agents/node_modules"
+    _stub(core / "@deepseek-ai/dsh/lib/bin.js", f'echo "core dsh $*" >> "{log}"\n')
+    (core / ".bin").mkdir()
+    (core / ".bin/dsh").symlink_to("../@deepseek-ai/dsh/lib/bin.js")
+    # dsh-tui 0.19.0 bin/dsh-tui.js:872 spawns `dsh --profile` by name for leading dsh options.
+    _stub(home / ".dsh-full" / TUI_ENTRY, 'exec dsh --profile dsh-tui "$@"\n')
+    path = f"{home}/.local/bin:{os.environ['PATH']}"
+    env = {**os.environ, "HOME": str(home), "PATH": path}
+    env.pop("DSH_HOME", None)
+    subprocess.run([str(prefix / "dsh-tui-launch.sh"), "--dump-config"], check=True, env=env)
+    assert log.read_text().splitlines() == ["keyed", "core dsh --profile dsh-tui --dump-config"]
+
+
+TUI_WRAPPER = f"{LANE}/dsh-tui-launch.sh"
+
+
+@pytest.mark.parametrize("installer", ["install.sh", "parity.sh"])
+@pytest.mark.parametrize(
+    "relative, kind",
+    [(".local/bin/dsh-tui", "file"), (TUI_WRAPPER, "file"), (".local/bin/dsh-tui", "link")],
+)
+def test_an_unknown_dsh_tui_destination_is_refused_before_any_write(
+    tmp_path: Path, installer: str, relative: str, kind: str
+) -> None:
+    home = tmp_path / "home"
+    path = home / relative
+    path.parent.mkdir(parents=True)
+    if kind == "link":
+        path.symlink_to(_stub(tmp_path / "elsewhere/dsh-tui", "exit 0\n"))
+    else:
+        _stub(path, "echo the owner's own dsh-tui\n")
+    tools = tmp_path / "tools"
+    _stub(tools / "pnpm", "exit 0\n")
+    _python3(tools)
+    for command in ("npm", "curl", "install", "uv", "ln"):
+        _stub(tools / command, "exit 86\n")
+    before = _snapshot(tmp_path)
+    result = subprocess.run(
+        ["/bin/bash", str(RUNTIMES / installer)], capture_output=True, text=True,
+        env={"HOME": str(home), "PATH": f"{tools}:/usr/bin:/bin", "TMPDIR": str(tmp_path)},
+        check=False,
+    )  # fmt: skip
+    assert result.returncode != 0 and f"{path}: " in result.stderr
+    assert _snapshot(tmp_path) == before
+
+
+@pytest.mark.parametrize(
+    "relative, target",
+    [
+        (".local/bin/dsh-tui", TUI_WRAPPER),
+        (".local/bin/dsh-tui", f".dsh/{TUI_ENTRY}"),
+        (".local/bin/dsh-tui", f".dsh-full/{TUI_ENTRY}"),
+        (".local/bin/dsh-tui", None),
+        (TUI_WRAPPER, None),
+    ],
+)
+def test_absent_our_links_and_known_dsh_tui_launchers_are_accepted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, relative: str, target: str | None
+) -> None:
+    parity = _parity()
+    home = tmp_path / "home"
+    monkeypatch.setenv("DSH_HOME", str(home / ".dsh"))
+    parity.preflight(home)  # both destinations absent
+    path = home / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if target:
+        path.symlink_to(home / target)
+    else:  # a regular copy of a known launcher: the 2026-11-10 host copy or a tracked version
+        shutil.copyfile(RUNTIMES / "dsh-tui-launch.sh", path)
+    parity.preflight(home)
+    tracked = hashlib.sha256((RUNTIMES / "dsh-tui-launch.sh").read_bytes()).hexdigest()
+    assert tracked in parity.DSH_TUI_KNOWN
+    assert (
+        "01d2bb2d0bcd7ebc531664a2b224f46f1208fda9db0b59d69c9a5f8932e9d1ac" in parity.DSH_TUI_KNOWN
+    )
+
+
+def test_setup_leaves_the_dsh_tui_link_to_parity_after_the_wrapper_is_installed() -> None:
+    assert ".local/bin/dsh-tui" not in (ROOT / "deploy/wsl/setup.sh").read_text()
+    parity = (RUNTIMES / "parity.sh").read_text()
+    installed = parity.index('install -m 755 "$here/$runtime-launch.sh"')
+    assert installed < parity.index(
+        'ln -sfn "$prefix/dsh-tui-launch.sh" "$HOME/.local/bin/dsh-tui"'
+    )
+    assert "dsh-tui" in parity[parity.index("for runtime in") : installed]
 
 
 def test_antigravity_sessions_are_keyed_and_its_config_commands_are_keyless(
