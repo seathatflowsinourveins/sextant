@@ -1,0 +1,37 @@
+{
+  "schema": "tv-account.registry/2",
+  "rows": [
+    {
+      "name": "account_calls_per_utc_day",
+      "unit": "calls/UTC day",
+      "value": null,
+      "source": "LEAD-0243 section 2 and LEAD-0903 items 2-3, 2026-11-11: one account request budget including setup; no number supplied",
+      "calibration_state": "UNAVAILABLE",
+      "last_change": "2026-11-11"
+    },
+    {
+      "name": "account_state_path",
+      "unit": "path",
+      "value": "~/.local/state/sextant/tradingview/account.json",
+      "source": "LEAD-0903 item 2, 2026-11-11: one canonical durable account state",
+      "calibration_state": "FIXED",
+      "last_change": "2026-11-11"
+    },
+    {
+      "name": "account_request_min_interval_s",
+      "unit": "seconds/request",
+      "value": null,
+      "source": "LEAD-0903 item 3 / LEAD-0243, 2026-11-11: 0.75s hit quota and 1.5s suspended; require slower, safe number unavailable",
+      "calibration_state": "UNAVAILABLE",
+      "last_change": "2026-11-11"
+    },
+    {
+      "name": "account_request_timeout_s",
+      "unit": "seconds",
+      "value": null,
+      "source": "MCP SDK v2.3.0 2118f14f client/session.py:540-578; caller timeout supported, no measured value supplied (LEAD-0903)",
+      "calibration_state": "UNAVAILABLE",
+      "last_change": "2026-11-11"
+    }
+  ]
+}

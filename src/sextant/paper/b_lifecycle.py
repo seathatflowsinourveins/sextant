@@ -70,6 +70,7 @@ from sextant.paper.b_width import MAX_TRAIL_FRACTION, trail_fraction, trail_perc
 from sextant.paper.sessions import Session, session_at, session_start_ns
 from sextant.ranking.baseline import BaselineTable
 from sextant.ranking.consumer import RankingConsumer
+from sextant.ranking.heartbeat import heartbeat_signal
 from sextant.ranking.publisher import ranking_data_type
 from sextant.ranking.rank_gate import RankGateDecision, RankGateStatus, decide_rank_gate
 from sextant.ranking.registry import RegistryRow
@@ -252,6 +253,7 @@ class BLifecycle(Strategy):
         now = self.clock.timestamp_ns()
         if self.consumer is not None:
             self.subscribe_data(ranking_data_type(self.consumer.feed))
+            self.subscribe_signal(heartbeat_signal(self.consumer.feed))
         for iid, book in self.books.items():
             self.subscribe_trades(iid)
             self.subscribe_quotes(iid)
@@ -347,6 +349,13 @@ class BLifecycle(Strategy):
         now = self.clock.timestamp_ns()
         accepted = self.consumer.handle(data, now=now)
         self._record(kind="generation", ts=now, accepted=accepted, reason=self.consumer.reason)
+
+    def on_signal(self, signal: Any) -> None:
+        # Same native heartbeat receiver as ranking/consumer.py RankingDataActor.
+        if self.consumer is not None and signal.name == heartbeat_signal(self.consumer.feed):
+            self.consumer.accept_heartbeat(
+                at=signal.ts_event, received_ns=self.clock.timestamp_ns()
+            )
 
     def on_bar(self, bar: Bar) -> None:
         book = self.books.get(bar.bar_type.instrument_id)
