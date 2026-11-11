@@ -6,4 +6,6 @@ data, execution) so the same Strategy objects can run replay, sandbox and Alpaca
 broker paper. alpaca-py imports in this package stay absolute
 (``from alpaca.trading ...``): this package must never shadow the vendor
 package, and a proof in ``tests/proofs/test_alpaca_adapter.py`` holds that line.
+
+Source read 2026-11-10: NautilusTrader@d53849b examples/live/_template/__init__.py.
 """
