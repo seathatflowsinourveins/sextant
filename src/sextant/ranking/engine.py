@@ -102,6 +102,17 @@ def rank_movers(rows: Iterable[MoverRow]) -> tuple[MoverRow, ...]:
     return tuple(replace(row, rank=i) for i, row in enumerate(ordered, 1))
 
 
+# The live producer's price and volume mask (docs/handbook/rank-live.md:43, G/U/Z/6/M/9, the
+# literal in tradingview/producer.py, which a proof keeps equal); the engine's own closing-print
+# mask below ({"6", "M", "9"}) is a subset.
+EXCLUDED_CONDITIONS = frozenset({"G", "U", "Z", "6", "M", "9"})
+
+
+def price_counts(price_eligible: bool, conditions: tuple[str, ...]) -> bool:
+    """A print updates price only if its source says so and no mask condition marks it."""
+    return price_eligible is True and not EXCLUDED_CONDITIONS.intersection(conditions)
+
+
 def advance_mover(
     state: MoverState,
     tick: TradeTick,

@@ -193,14 +193,16 @@ def run(
     actor_cls=None,
     window: int = 3600,
     extra=(),
+    facts=None,
+    snapshot_window=None,
 ) -> dict[str, Any]:
     tmp_path.mkdir(parents=True, exist_ok=True)
     catalog = ParquetDataCatalog(str(tmp_path))
     catalog.write_instruments([*(equity(iid) for iid in IDS), *extra])
     catalog.write_trade_ticks(ticks())
-    if statuses:
-        catalog.write_instrument_statuses(list(statuses))
     status_ids = sorted({status.instrument_id for status in statuses}, key=str)
+    for iid in status_ids:  # the catalog writes one instrument per chunk
+        catalog.write_instrument_statuses([s for s in statuses if s.instrument_id == iid])
     config = BacktestRunConfig(
         venues=[
             BacktestVenueConfig(
@@ -246,6 +248,8 @@ def run(
         priming=prime,
         page=lambda reason, detail: pages.append((reason, detail)),
         page_window_s=window,
+        trade_facts=facts,
+        status_snapshot_window_s=snapshot_window,
     )
     bound = type("Bound", (actor_cls or Logged,), {"calls": log})
     actor = bound(actor_config)
@@ -356,9 +360,8 @@ def test_the_actor_opens_no_socket() -> None:
         "sextant",
     }
     calls = {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)}
-    assert calls.isdisjoint(
-        {"reconnect_socket", "subscribe_socket_state", "connect", "run_forever"}
-    )
+    # N1d observes the node's socket state (actors.md:273-345) but never drives a socket.
+    assert calls.isdisjoint({"reconnect_socket", "connect", "run_forever"})
 
 
 def test_an_unknown_config_key_is_refused_by_name() -> None:
@@ -371,6 +374,7 @@ def test_an_unknown_config_key_is_refused_by_name() -> None:
             host_factory=cast(Any, lambda: FakeHost([])),
             priming=priming,
             page_window_s=3600,
+            trade_facts=None,
             feeed="boats",
         )
     config = RankingActorConfig(  # the engine's own base fields still pass through
@@ -379,6 +383,7 @@ def test_an_unknown_config_key_is_refused_by_name() -> None:
         host_factory=cast(Any, lambda: FakeHost([])),
         priming=priming,
         page_window_s=3600,
+        trade_facts=None,
         log_events=False,
     )
     assert config.log_events is False
@@ -443,6 +448,7 @@ def test_the_engine_base_fields_reach_the_config_through_new_not_init() -> None:
         host_factory=cast(Any, lambda: FakeHost([])),
         priming=priming,
         page_window_s=3600,
+        trade_facts=None,
         actor_id=ActorId("RANKING-PROOF"),
         log_events=False,
         log_commands=False,
