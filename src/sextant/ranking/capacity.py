@@ -95,19 +95,28 @@ class CapacityActor(DataActor):
         self.queue_states: deque[dict[str, Any]] = deque(maxlen=window)
         self.dropped_buckets = self.dropped_queue_states = 0
         self.ticks = self.errors = self.writes = self.write_errors = 0
+        self.faults: dict[str, int] = {}
         self.stopped = False
 
     def on_start(self) -> None:
-        self.subscribe_trades(list(self._ids))
+        # Review F4: a registration that raises is counted per stage; the shared node runs on.
+        ids = list(self._ids)
+        self._guard("subscribe", lambda: self.subscribe_trades(ids))
         if self._quotes:
-            self.subscribe_quotes(list(self._ids))
+            self._guard("subscribe", lambda: self.subscribe_quotes(ids))
+        self._guard("queue_state", self.subscribe_queue_state)
+        every = timedelta(seconds=self._interval)
+        self._guard(
+            "timer",
+            lambda: self.clock.set_timer("capacity-receipt", every, callback=self._on_timer),
+        )
+
+    def _guard(self, stage: str, register: Any) -> None:
         try:
-            self.subscribe_queue_state()
+            register()
         except Exception:
             self.errors += 1
-        self.clock.set_timer(
-            "capacity-receipt", timedelta(seconds=self._interval), callback=self._on_timer
-        )
+            self.faults[stage] = self.faults.get(stage, 0) + 1
 
     def on_trade(self, trade: Any) -> None:
         self._count("trades", trade)
