@@ -19,7 +19,7 @@ from nautilus_trader.model import ClientOrderId, OrderStatus
 
 from .test_alpaca_client import client
 from .test_alpaca_execution import order
-from .test_alpaca_exits import _api
+from .test_alpaca_exits import _api, _cmd, _read
 
 CLASSES = ["2xx", "4xx", "5xx", "none"]
 
@@ -67,6 +67,37 @@ def test_post_response_classes(cls):
             node.generate_order_rejected.assert_called_once()
         else:  # SUBMITTED stays; the engine's own query reads the venue later.
             node.generate_order_rejected.assert_not_called()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("cls", CLASSES)
+def test_delete_response_classes(cls):
+    async def run():
+        node = client()
+        await node._submit_order(NS(order=order(), params={}))
+        venue = node.gateway.sdk
+        row = next(iter(venue.rows.values()))
+        if cls == "2xx":  # The attempt is acknowledged; the venue has not cancelled yet.
+            venue.delete = lambda path, body: venue.requests.append(("DELETE", path, {}))
+        else:
+            _answer(venue, "delete", cls, apply=False)
+        try:
+            await node._cancel_order(_cmd("cancel"))
+        except Exception:
+            assert cls in ("5xx", "none")
+        if cls == "4xx":
+            node.generate_order_cancel_rejected.assert_called_once()
+            assert not node._cancels
+            return
+        assert node._cancels == {row["id"]}  # 2xx is an attempt; 5xx/none are unknown.
+        row["status"] = "pending_cancel"
+        await _read(node, "cancel")
+        assert node._cancels == {row["id"]}  # Still waiting at the venue: kept.
+        row["status"] = "new"
+        await _read(node, "cancel")  # Authoritative: still working, so refused once.
+        node.generate_order_cancel_rejected.assert_called_once()
+        assert not node._cancels
 
     asyncio.run(run())
 

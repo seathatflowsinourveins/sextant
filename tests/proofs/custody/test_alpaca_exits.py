@@ -17,7 +17,7 @@ from typing import Any, cast
 
 import pytest
 import requests
-from nautilus_trader.model import ClientOrderId, OrderStatus
+from nautilus_trader.model import ClientOrderId, OrderSide, OrderStatus
 
 from sextant.alpaca.execution import AlpacaExecutionClient
 
@@ -129,6 +129,7 @@ def _sent(kind, how):
         if kind == "cancel":
             row_id = next(iter(node.gateway.sdk.rows))
             assert node._cancels == {row_id}  # Recorded at the send boundary.
+            await asyncio.gather(*tuple(node.gateway.tasks))  # the DELETE's own call ends
             await _read(node, kind)  # The authoritative read restores the working order.
             node.generate_order_cancel_rejected.assert_called_once()
             assert not node._cancels
@@ -295,3 +296,87 @@ def test_a_submit_refused_after_enqueue_never_reaches_the_wire():
         assert not node.gateway.pacer.queue
 
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("how", HOWS)
+def test_unsent_cancel_leaving_by_cancellation_is_refused_once(how):
+    _unsent("cancel", how)
+
+
+@pytest.mark.parametrize("how", HOWS)
+def test_sent_cancel_leaving_by_cancellation_keeps_its_evidence(how):
+    _sent("cancel", how)
+
+
+def test_cancel_cancelled_before_its_first_step_is_refused():
+    _first_step("cancel")
+
+
+def test_runner_teardown_refuses_an_unsent_cancel():
+    _teardown("cancel")
+
+
+def test_cancel_hook_while_closing_is_refused():
+    _closing("cancel")
+
+
+def test_a_venue_4xx_after_a_sent_cancel_is_a_refusal():
+    _venue_4xx("cancel")
+
+
+def test_an_acknowledged_delete_keeps_its_evidence_until_the_venue_confirms():
+    # Alpaca DELETE "Attempts to cancel an Open Order" (204): an attempt, not a cancel.
+    async def run():
+        node = client()
+        await node._submit_order(NS(order=order(side=OrderSide.BUY), params={}))
+        await node._cancel_order(_cmd("cancel"))
+        assert node.gateway.sdk.requests[-1][0] == "DELETE"
+        row_id = next(iter(node.gateway.sdk.rows))
+        assert node._cancels == {row_id}  # The 204 did not resolve it.
+        await _read(node, "cancel")  # The fake venue canceled it: confirmed terminal.
+        assert not node._cancels
+        node.generate_order_cancel_rejected.assert_not_called()
+
+    asyncio.run(run())
+
+
+def test_a_cancel_that_cannot_be_scheduled_is_refused_once():
+    _unscheduled("cancel")
+
+
+def _refused_after_enqueue(kind):
+    """The mutation's admission raises once it is queued: refused once, never sent."""
+
+    async def run():
+        node = client()
+        await node._submit_order(NS(order=order(), params={}))
+        admitted, calls = node._mutation_admitted, []
+
+        def raise_at_drain(command, row):  # call 1: the command's read; call 2: the pacer
+            calls.append(1)
+            if len(calls) == 2:
+                raise RuntimeError("fixture: admission failed after enqueue")
+            return admitted(command, row)
+
+        node._mutation_admitted = raise_at_drain
+        node.gateway.pacer.bucket.tokens = 0  # queued behind the pacer
+        await HOOK[kind](node, cast(Any, _cmd(kind)))
+        for _ in range(50):
+            await asyncio.sleep(0.001)
+            if node.gateway.pacer.queue:
+                break
+        node.gateway.pacer.bucket.tokens = node.gateway.pacer.bucket.burst
+        node.gateway.pacer.drain()
+        await asyncio.gather(*tuple(node._actions), return_exceptions=True)
+        node.gateway.pacer.drain()  # any later drain, from any caller
+        await asyncio.gather(*tuple(node.gateway.tasks))
+        assert len(calls) == 2
+        _refusal(node, kind).assert_called_once()
+        assert not [r for r in node.gateway.sdk.requests if r[0] == METHOD[kind].upper()]
+        assert not node.gateway.pacer.queue
+
+    asyncio.run(run())
+
+
+def test_a_cancel_refused_after_enqueue_never_reaches_the_wire():
+    _refused_after_enqueue("cancel")

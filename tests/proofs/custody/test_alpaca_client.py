@@ -10,7 +10,7 @@ from nautilus_trader.model import ClientOrderId, Money, OrderSide, OrderType, Pr
 
 from sextant.execution.pacer import AccountPacer
 
-from .test_alpaca_execution import boundary, order
+from .test_alpaca_execution import boundary, command, order
 
 
 def client_module():
@@ -339,6 +339,33 @@ def test_trade_stream_shutdown_cancels_pending_connect_and_joins(monkeypatch):
             loop, task = owner[0]
             if not loop.is_closed():
                 loop.call_soon_threadsafe(task.cancel)
+
+    asyncio.run(run())
+
+
+def test_partly_filled_entry_can_cancel_its_unfilled_remainder():
+    async def run():
+        node = client()
+        await node._submit_order(NS(order=order(), params={}))
+        row = next(iter(node.gateway.sdk.rows.values()))
+        row.update(status="partially_filled", filled_qty="1", filled_avg_price="0.1234")
+        update = {
+            "stream": "trade_updates",
+            "data": {
+                "event": "partial_fill",
+                "order": row,
+                "execution_id": "fixture-fill",
+                "price": "0.1234",
+                "qty": "1",
+                "timestamp": row["updated_at"],
+            },
+        }
+        with pytest.raises(client_module().IncompleteCoverage):
+            await node._on_trade_update(update)
+        await node._cancel_order(
+            command(client_order_id=ClientOrderId("fixture-entry"), venue_order_id=None)
+        )
+        assert node.gateway.sdk.requests[-1][0] == "DELETE"
 
     asyncio.run(run())
 
