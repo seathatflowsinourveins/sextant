@@ -24,22 +24,6 @@
     "last_change": "2026-11-06"
   },
   {
-    "name": "reserve_per_open_position",
-    "unit": "requests",
-    "value": null,
-    "source": "ADR-0007/0010; #51 supplies the reviewed authority; this shell supplies none",
-    "calibration_state": "UNAVAILABLE",
-    "last_change": "2026-11-06"
-  },
-  {
-    "name": "reserve_per_exiting_position",
-    "unit": "requests",
-    "value": null,
-    "source": "ADR-0007/0010; #51 supplies the reviewed authority; this shell supplies none",
-    "calibration_state": "UNAVAILABLE",
-    "last_change": "2026-11-06"
-  },
-  {
     "name": "paper_us_equity_commission_per_fill",
     "unit": "USD per fill",
     "value": "0",
