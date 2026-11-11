@@ -132,6 +132,10 @@ FILL page. A row whose order is listed with at least its cumulative quantity pas
 any other row is refused. A holding that no order report explains stops the start in the
 engine itself (`node/mod.rs:992-996`, `generate_missing_orders` off).
 
+Entry chase allowance never grants exit chase authority. The B exit mapping reads
+only B-scoped rows and keeps both exit chase fields unavailable, with gain-lock
+cost still unavailable.
+
 A failed startup reconciliation names its cause. The engine keeps only "Failed to get mass
 status" (`python/node.rs:676`), so each report generator records its requests, rows and
 first failure (class, HTTP status, our own reason text), and the order node writes them to
