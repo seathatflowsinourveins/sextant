@@ -27,7 +27,7 @@ from nautilus_trader.common import MessageBus
 from nautilus_trader.model import TradeTick
 
 from sextant.execution.state import write_atomic
-from sextant.ranking.baseline import BaselineTable
+from sextant.ranking.baseline import BaselineTable, closed_until
 from sextant.ranking.engine import ReferencePrices, Segment
 from sextant.ranking.generation import Coverage, CoverageState, RankingGeneration
 from sextant.ranking.node_actor import Priming
@@ -81,6 +81,7 @@ class SegmentedHost:
         self._current: SegmentInputs | None = None
         self.unrouted = 0
         self._pending_gaps: list[int] = []  # node-clock times of gaps no entered segment holds
+        self._retired_end: int | None = None  # the end of a segment retired into closed time
         self._reset_counts()
 
     def _reset_counts(self) -> None:
@@ -106,6 +107,10 @@ class SegmentedHost:
             self.unrouted += 1  # closed, or a segment this feed's publisher refuses
             return None
         entered = None
+        retired = self._retired_end
+        if self.segment is None and retired is not None and segment.start_ns < retired:
+            self.late += 1  # a print of a retired segment: its publisher and receipt are closed
+            return None
         if self.segment is None or segment.start_ns >= self.segment.end_ns:
             entered = self._enter(segment)
         elif segment.start_ns < self.segment.start_ns:
@@ -115,6 +120,26 @@ class SegmentedHost:
             self.unprimed += 1
             return entered
         return self._count(self.host.on_trade(tick, facts=facts)) or entered
+
+    def on_clock(self, now: int) -> tuple[RankingGeneration | None, int | None]:
+        """The node clock's turn (N2b-4): roll at a boundary even with no tick, and name the
+        next boundary, so a consumer never waits on a tick for the next segment's generation."""
+        segment = self._segment_of(now)
+        rankable = segment is not None and (segment.name == "OVERNIGHT") == (self.feed == "boats")
+        generation = None
+        if segment is not None and rankable:
+            if self.segment is None or segment.start_ns >= self.segment.end_ns:
+                generation = self._enter(segment)
+        elif self.segment is not None and now >= self.segment.end_ns:
+            self._write()  # the segment ended into one this feed does not rank
+            self._retired_end = self.segment.end_ns  # a later print of it stays late (Codex r1)
+            self.segment, self.host, self._current = None, None, None
+        if segment is not None:
+            return generation, segment.end_ns
+        until = closed_until(now)  # closed time keeps the alert chain (Codex r1)
+        following = self._segment_of(until)
+        early = following is not None and now < following.start_ns <= until
+        return generation, following.start_ns if following is not None and early else until
 
     def set_symbol(
         self, name: str, *, references: ReferencePrices, asset: AssetState | None
@@ -155,8 +180,10 @@ class SegmentedHost:
     def _enter(self, segment: Segment) -> RankingGeneration | None:
         if self.segment is not None:
             self._write()
+        closed_late = self.late if self.segment is None else 0  # retired-segment prints
         self.segment, self.host, self._current = segment, None, None
         self._reset_counts()
+        self.late = closed_late
         self.gaps = sum(at >= segment.start_ns for at in self._pending_gaps)
         self._pending_gaps.clear()  # an earlier one fell before this start: resubscribed since
         inputs = self._inputs(segment)

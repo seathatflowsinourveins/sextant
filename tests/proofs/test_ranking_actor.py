@@ -196,6 +196,7 @@ def run(
     facts=None,
     snapshot_window=None,
     heartbeat=None,
+    end=None,
 ) -> dict[str, Any]:
     tmp_path.mkdir(parents=True, exist_ok=True)
     catalog = ParquetDataCatalog(str(tmp_path))
@@ -233,6 +234,7 @@ def run(
         raise_exception=True,
         dispose_on_completion=False,
         start=START - NS,
+        end=end,
     )
     log: list[str] = []
     pages: list[tuple[str, str]] = []

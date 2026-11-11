@@ -236,6 +236,28 @@ class RankingActor(DataActor):
             self.subscribe_trades(list(self._ids))
         except Exception as exc:
             self._fault("subscribe", exc)
+        self._on_clock(None)
+
+    def _on_clock(self, _event: object) -> None:
+        """A host with ``on_clock`` (the one optional protocol addition, N2b-4) is called now
+        and again at the boundary it names, by a node-clock alert (``Clock.set_time_alert_ns``,
+        common/__init__.pyi:647-653; the alert pattern of docs/concepts/actors.md:131-151)."""
+        turn = getattr(self.host, "on_clock", None)
+        if turn is None or not self.primed:
+            return
+        now = self.clock.timestamp_ns()
+        try:
+            generation, boundary = turn(now)
+        except Exception as exc:
+            return self._fault("clock", exc)
+        self._publish(generation)
+        if boundary is not None and boundary > now:
+            try:
+                self.clock.set_time_alert_ns(
+                    f"ranking-boundary-{boundary}", boundary, callback=self._on_clock
+                )
+            except Exception as exc:
+                self._fault("clock", exc)
 
     def _reset_run(self) -> None:
         """A (re)start builds a new host: no evidence, lineage or pending state from an earlier
