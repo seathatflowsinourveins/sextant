@@ -2,6 +2,7 @@
 
 import asyncio
 import importlib.util
+from decimal import Decimal
 from types import SimpleNamespace as NS
 from unittest.mock import Mock
 
@@ -91,6 +92,122 @@ def client():
     return node
 
 
+def test_client_submit_and_confirmed_patch_keep_one_engine_id():
+    async def run():
+        node = client()
+        await node._submit_order(NS(order=order(), params={}))
+        node.generate_order_submitted.assert_called_once()
+        venue = node.gateway.sdk
+        old = next(iter(venue.rows.values()))
+        modify = command(
+            client_order_id=ClientOrderId("fixture-entry"),
+            venue_order_id=None,
+            price=Price.from_str("0.1235"),
+        )
+        await node._modify_order(modify)
+        node.generate_order_updated.assert_not_called()
+        successor = venue.confirm()
+        await node._on_trade_update(
+            {
+                "stream": "trade_updates",
+                "data": {
+                    "event": "new",
+                    "order": successor,
+                    "timestamp": successor["updated_at"],
+                },
+            }
+        )
+        node.generate_order_updated.assert_called_once()
+        report = node._handle_report.call_args.args[0]
+        assert report.client_order_id == ClientOrderId("fixture-entry")
+        assert str(report.venue_order_id) == successor["id"] != old["id"]
+        await node._cancel_order(modify)
+        assert venue.requests[-1][1].endswith(successor["id"])
+
+    asyncio.run(run())
+
+
+def test_native_trail_qty_and_offset_patch_and_executing_exit_guard():
+    async def run():
+        node = client()
+        trail = order(order_type=OrderType.TRAILING_STOP_MARKET, side=OrderSide.SELL)
+        node.cache.order.return_value = trail
+        await node._submit_order(NS(order=trail, params={}))
+        change = command(
+            client_order_id=trail.client_order_id,
+            venue_order_id=None,
+            quantity=Quantity.from_str("12"),
+            trigger_price=Price.from_str("0.12"),
+            params={"trailing_offset": Decimal("125")},
+        )
+        await node._modify_order(change)
+        body = node.gateway.sdk.requests[-1][2]
+        assert (body["trail"], body["qty"]) == ("1.25", "12")
+        row = node.gateway.sdk.confirm()
+        row.update(status="partially_filled", filled_qty="1")
+        node.gateway.sdk.rows[row["id"]] = row
+        await node._on_trade_update(
+            {
+                "stream": "trade_updates",
+                "data": {
+                    "event": "new",
+                    "order": row,
+                    "timestamp": row["updated_at"],
+                },
+            }
+        )
+        before = len([r for r in node.gateway.sdk.requests if r[0] != "GET"])
+        await node._cancel_order(change)
+        await node._modify_order(change)
+        assert len([r for r in node.gateway.sdk.requests if r[0] != "GET"]) == before
+        node.generate_order_cancel_rejected.assert_called_once()
+        node.generate_order_modify_rejected.assert_called_once()
+
+    asyncio.run(run())
+
+
+def test_owner_mutations_and_account_cancel_are_refused_without_wire():
+    async def run():
+        node = client()
+        owner = command(client_order_id=ClientOrderId("owner-entry"), venue_order_id=None)
+        await node._cancel_order(owner)
+        await node._modify_order(owner)
+        with pytest.raises(NotImplementedError):
+            await node._cancel_all_orders(NS())
+        await node._disconnect()
+        assert not node.gateway.sdk.requests
+
+    asyncio.run(run())
+
+
+def test_owner_successor_is_never_adopted_through_house_parent():
+    async def run():
+        node = client()
+        await node._submit_order(NS(order=order(), params={}))
+        old = next(iter(node.gateway.sdk.rows.values()))
+        owner = old | {
+            "id": "00000000-0000-0000-0000-000000000099",
+            "client_order_id": "owner-successor",
+            "replaces": old["id"],
+        }
+        await node._on_trade_update(
+            {
+                "stream": "trade_updates",
+                "data": {
+                    "event": "new",
+                    "order": owner,
+                    "timestamp": owner["updated_at"],
+                },
+            }
+        )
+        node.generate_order_updated.assert_not_called()
+        assert node._handle_report.call_args.args[0].client_order_id == ClientOrderId(
+            "owner-successor"
+        )
+
+    asyncio.run(run())
+
+
 @pytest.mark.parametrize(
     "event",
     [
@@ -149,6 +266,52 @@ def test_fake_venue_models_session_trigger_and_wash_refusal():
         venue.post("/orders", payload | {"extended_hours": True})
 
 
+def test_restarted_client_recovers_confirmed_house_successor():
+    async def run():
+        node = client()
+        await node._submit_order(NS(order=order(), params={}))
+        change = command(
+            client_order_id=ClientOrderId("fixture-entry"),
+            venue_order_id=None,
+            price=Price.from_str("0.1235"),
+        )
+        await node._modify_order(change)
+        row = node.gateway.sdk.confirm()
+        restored = client()
+        restored.gateway.sdk = node.gateway.sdk
+        report = await restored._generate_order_status_report(
+            NS(client_order_id=change.client_order_id, venue_order_id=row["id"])
+        )
+        assert report.client_order_id == change.client_order_id
+        assert restored._active["fixture-entry"] == row["id"]
+        await restored._cancel_order(change)
+        assert restored.gateway.sdk.requests[-1][1].endswith(row["id"])
+
+    asyncio.run(run())
+
+
+def test_order_queries_return_confirmed_successor_after_predecessor_lookup():
+    async def run():
+        node = client()
+        await node._submit_order(NS(order=order(), params={}))
+        old = next(iter(node.gateway.sdk.rows.values()))
+        change = command(
+            client_order_id=ClientOrderId("fixture-entry"),
+            venue_order_id=None,
+            price=Price.from_str("0.1235"),
+        )
+        await node._modify_order(change)
+        row = node.gateway.sdk.confirm()
+        node._active.clear()
+        report = await node._generate_order_status_report(
+            NS(client_order_id=change.client_order_id, venue_order_id=old["id"])
+        )
+        assert report is not None, "confirmed successor query must produce a report"
+        assert str(report.venue_order_id) == row["id"]
+
+    asyncio.run(run())
+
+
 def test_missing_fill_commission_is_unavailable_not_zero():
     async def run():
         node = client()
@@ -199,6 +362,78 @@ def test_stream_fill_with_explicit_evidence_uses_execution_not_order_totals():
         assert report.last_qty == Quantity.from_str("1")
         assert report.commission == Money.from_str("0.01 USD")
         assert report.client_order_id == ClientOrderId("fixture-entry")
+
+    asyncio.run(run())
+
+
+def test_trigger_during_pacing_deferral_revokes_mutation_admission():
+    async def run():
+        node = client()
+        trail = order(
+            order_type=OrderType.TRAILING_STOP_MARKET,
+            side=OrderSide.SELL,
+            is_triggered=False,
+            is_sell=True,
+            filled_qty=Quantity.from_str("0"),
+        )
+        node.cache.order.return_value = trail
+        await node._submit_order(NS(order=trail, params={}))
+        current = node._current
+
+        async def deplete(command):
+            row = await current(command)
+            node.gateway.pacer.bucket.tokens = 0
+            return row
+
+        node._current = deplete
+        change = command(
+            client_order_id=trail.client_order_id,
+            venue_order_id=None,
+            params={"trailing_offset": Decimal("125")},
+        )
+        task = asyncio.create_task(node._modify_order(change))
+        for _ in range(20):
+            await asyncio.sleep(0.001)
+            if node.gateway.pacer.queue:
+                break
+        assert node.gateway.pacer.queue
+        trail.is_triggered = True
+        node.gateway.pacer.bucket.tokens = 1
+        node.gateway.pacer.drain()
+        await task
+        assert not any(r[0] == "PATCH" for r in node.gateway.sdk.requests)
+        node.generate_order_modify_rejected.assert_called_once()
+
+    asyncio.run(run())
+
+
+def test_late_predecessor_acceptance_cannot_move_active_identity_back():
+    async def run():
+        node = client()
+        await node._submit_order(NS(order=order(), params={}))
+        stale = dict(next(iter(node.gateway.sdk.rows.values())))
+        change = command(
+            client_order_id=ClientOrderId("fixture-entry"),
+            venue_order_id=None,
+            price=Price.from_str("0.1235"),
+        )
+        await node._modify_order(change)
+        row = node.gateway.sdk.confirm()
+        await node._on_trade_update(
+            {
+                "stream": "trade_updates",
+                "data": {"event": "new", "order": row, "timestamp": row["updated_at"]},
+            }
+        )
+        node._handle_report.reset_mock()
+        await node._on_trade_update(
+            {
+                "stream": "trade_updates",
+                "data": {"event": "new", "order": stale, "timestamp": stale["updated_at"]},
+            }
+        )
+        assert node._active["fixture-entry"] == row["id"]
+        node._handle_report.assert_not_called()
 
     asyncio.run(run())
 
@@ -366,6 +601,26 @@ def test_partly_filled_entry_can_cancel_its_unfilled_remainder():
             command(client_order_id=ClientOrderId("fixture-entry"), venue_order_id=None)
         )
         assert node.gateway.sdk.requests[-1][0] == "DELETE"
+
+    asyncio.run(run())
+
+
+def test_malformed_trailing_offset_emits_local_modify_rejection():
+    async def run():
+        node = client()
+        trail = order(order_type=OrderType.TRAILING_STOP_MARKET, side=OrderSide.SELL)
+        node.cache.order.return_value = trail
+        await node._submit_order(NS(order=trail, params={}))
+        await node._modify_order(
+            command(
+                client_order_id=trail.client_order_id,
+                venue_order_id=None,
+                trigger_price=Price.from_str("0.12"),
+                params={"trailing_offset": "invalid-decimal"},
+            )
+        )
+        node.generate_order_modify_rejected.assert_called_once()
+        assert not any(r[0] == "PATCH" for r in node.gateway.sdk.requests)
 
     asyncio.run(run())
 

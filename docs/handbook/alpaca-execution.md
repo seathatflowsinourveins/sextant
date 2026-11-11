@@ -32,6 +32,12 @@ available funds clamped to total for a nonnegative account, locked derived after
 currency rounding. Raw buying power remains separately identified in account
 info. Sources: IBKR `execution/account.rs:397-419`, `types/balance.rs:149-172`.
 
+Successor binding uses only the venue-named identifier; similar order fields
+supply no lineage authority. The fake gives a pending successor its own venue
+identifier, so an independent order stays separate.
+Source: Alpaca replace reference above; E5 lead addendum, SHA-256
+`12adedf8056ad17fb9bb4d6b941b7f6f283a293bbfd61c41222b9c4d510aa9b8`.
+
 Nautilus's client command FIFO must not await a paced wire receipt. Schedule
 owned command tasks through `create_task`, as the pinned AX adapter does, and
 let the account gateway choose among ready requests. Shutdown cancels and joins
@@ -66,3 +72,15 @@ Every trade update passes one identity resolution before it is forwarded, fills
 included. Unknown lineage is incomplete coverage, never another order's id, and
 the active binding moves only forward by house successor number. Sources:
 alpaca-py `trading/enums.py:321-333`; reviews e5r3-99ac5bf and e5max-99ac5bf.
+
+Every safety fact a trade update carries (executing, terminal, refused) is recorded on
+arrival, keyed by the venue order id it names, before the first await. Lineage work after
+it only adds the stable binding, and every value read before an await is re-validated after
+it. A successor fill that arrives before its lineage is confirmed is incomplete coverage,
+held until any path confirms it, then forwarded once. Sources: review e5r4-266edf5, PR 588,
+NT Hyperliquid and Polymarket.
+
+One cancel and one replacement per order are unresolved at a time, each answered only by
+its own answer: its HTTP error, a terminal event or a confirmed replacement, a stream
+refusal, or a read issued after its own call ended. A read that refuses one owes the next
+stream refusal, which then answers nothing. Source: PR 569 gate reviews.

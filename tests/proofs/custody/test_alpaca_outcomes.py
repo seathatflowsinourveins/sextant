@@ -9,7 +9,7 @@ import asyncio
 from types import SimpleNamespace as NS
 
 import pytest
-from nautilus_trader.model import ClientOrderId
+from nautilus_trader.model import ClientOrderId, Price
 
 from .test_alpaca_client import client
 from .test_alpaca_execution import command, order
@@ -71,6 +71,28 @@ def _applied_then(venue, method, error):
 
 
 @pytest.mark.parametrize("failure", SENT_FAILURES)
+def test_sent_modify_with_lost_reply_stays_unresolved_never_rejected(failure):
+    async def run():
+        node = client()
+        await node._submit_order(NS(order=order(), params={}))
+        venue = node.gateway.sdk
+        error = failure()
+        _applied_then(venue, "patch", error)
+        change = command(
+            client_order_id=ClientOrderId("fixture-entry"),
+            venue_order_id=None,
+            price=Price.from_str("0.1235"),
+        )
+        with pytest.raises(type(error)):
+            await node._modify_order(change)  # The supervised task reports it unresolved.
+        assert [r[0] for r in venue.requests].count("PATCH") == 1
+        node.generate_order_modify_rejected.assert_not_called()
+        assert list(node._proposals) == ["fixture-entry-r1"], "outcome left for reconciliation"
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("failure", SENT_FAILURES)
 def test_sent_cancel_with_lost_reply_stays_unresolved_never_rejected(failure):
     async def run():
         node = client()
@@ -85,6 +107,52 @@ def test_sent_cancel_with_lost_reply_stays_unresolved_never_rejected(failure):
         assert [r[0] for r in venue.requests].count("DELETE") == 1
         node.generate_order_cancel_rejected.assert_not_called()
         node.generate_order_canceled.assert_not_called()
+
+    asyncio.run(run())
+
+
+def _change(price):
+    return command(
+        client_order_id=ClientOrderId("fixture-entry"),
+        venue_order_id=None,
+        price=Price.from_str(price),
+    )
+
+
+async def _lost_patch(node, *, applied):
+    """A PATCH answered 5xx; the venue either never applied it or holds it."""
+    await node._submit_order(NS(order=order(), params={}))
+    venue = node.gateway.sdk
+    patch = venue.patch
+
+    def answer_5xx(path, body):
+        venue.patch = patch
+        if applied:
+            patch(path, body)
+        else:
+            venue.requests.append(("PATCH", path, dict(body)))  # Reached the wire only.
+        raise _server_error()
+
+    venue.patch = answer_5xx
+    with pytest.raises(type(_server_error())):
+        await node._modify_order(_change("0.1235"))
+    assert list(node._proposals) == ["fixture-entry-r1"]
+    return venue
+
+
+def test_next_read_showing_the_order_unreplaced_settles_a_lost_patch():
+    # NT manager.rs check_inflight_orders queries a PENDING_UPDATE order; Alpaca's
+    # order statuses: an unreplaced order is neither pending_replace nor replaced.
+    async def run():
+        node = client()
+        venue = await _lost_patch(node, applied=False)
+        await node._modify_order(_change("0.1236"))
+        patches = [r for r in venue.requests if r[0] == "PATCH"]
+        assert [r[2]["client_order_id"] for r in patches] == [
+            "fixture-entry-r1",
+            "fixture-entry-r2",
+        ]
+        node.generate_order_modify_rejected.assert_not_called()
 
     asyncio.run(run())
 
