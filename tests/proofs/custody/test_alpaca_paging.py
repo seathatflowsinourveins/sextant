@@ -97,8 +97,9 @@ def test_a_listing_that_cannot_be_proven_contiguous_fails_closed():
         venue = node.gateway.sdk
         seed(venue, 700)
         venue.until_exclusive = True  # Rows at the boundary instant would then be skipped.
-        with pytest.raises(client_module().IncompleteCoverage, match="contiguous"):
+        with pytest.raises(client_module().IncompleteCoverage) as failure:
             await node._generate_order_status_reports(ALL)
+        assert "contiguous" in str(failure.value.failures[-1][1])
 
     asyncio.run(run())
 
@@ -107,8 +108,9 @@ def test_a_full_page_at_one_instant_makes_no_progress_and_fails_closed():
     async def run():
         node = client()
         seed(node.gateway.sdk, 600, stamp=lambda i: _stamp(1))
-        with pytest.raises(client_module().IncompleteCoverage, match="progress"):
+        with pytest.raises(client_module().IncompleteCoverage) as failure:
             await node._generate_order_status_reports(ALL)
+        assert "progress" in str(failure.value.failures[-1][1])
 
     asyncio.run(run())
 
@@ -118,8 +120,9 @@ def test_listing_is_bounded_by_the_registered_request_budget():
         node = client()
         node.gateway.pacer.controls = controls(request_budget=10)
         seed(node.gateway.sdk, 5200)
-        with pytest.raises(client_module().IncompleteCoverage, match="request budget"):
+        with pytest.raises(client_module().IncompleteCoverage) as failure:
             await node._generate_order_status_reports(ALL)
+        assert "request budget" in str(failure.value.failures[-1][1])
         assert len(listings(node.gateway.sdk)) == 10
 
     asyncio.run(run())

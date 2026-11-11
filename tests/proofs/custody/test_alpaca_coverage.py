@@ -37,7 +37,8 @@ def test_listing_at_the_venue_page_cap_pages_on_instead_of_refusing(count):
         node = client()
         venue = node.gateway.sdk
         for index in range(count):
-            _house(venue, f"fixture-entry-{index}")
+            stamp = f"2026-11-10T14:{index // 60 % 60:02d}:{index % 60:02d}Z"
+            _house(venue, f"fixture-entry-{index}", submitted=stamp)
         assert len(await node._generate_order_status_reports(_scan(True))) == count
         assert node.coverage_complete
 
