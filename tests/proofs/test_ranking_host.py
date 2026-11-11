@@ -89,9 +89,15 @@ def warm(host: RankingHost, now: list[int], names: tuple[str, ...] = UNIVERSE) -
     for second in (0, 60, 120, 180, 240, 300):
         for name in names:
             drive(host, now, START + second * NS, "0.50", name)
-    for second in (310, 320, 330, 340, 350, 360):
+    for second in (310, 320, 330, 340, 350):
         for name in names:
             drive(host, now, START + second * NS, "0.55" if name == "PENNY" else "0.50", name)
+    # The last mutation must itself publish: throttled trades revoke entry authority.
+    for name in names:
+        if name != "PENNY":
+            drive(host, now, START + 359 * NS, "0.50", name)
+    if "PENNY" in names:
+        drive(host, now, START + 360 * NS, "0.55", "PENNY")
 
 
 def wired(tmp_path: Path):
