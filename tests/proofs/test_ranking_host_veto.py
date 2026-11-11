@@ -2,6 +2,7 @@
 
 from collections.abc import Callable
 from dataclasses import replace
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -10,21 +11,21 @@ from test_ranking_host import GOOD, NS, REFS, SCOPE, START, UNIVERSE, tick, warm
 from sextant.ranking.engine import ReferencePrices
 from sextant.ranking.generation import Coverage, CoverageState
 from sextant.ranking.host import RankingHost
-
+from sextant.ranking.publisher import AssetState
 
 READY = Coverage(CoverageState.READY, True, 3, 3, 0, 0, 0)
 AT = START + 360 * NS
 TIMES = ("before_warm", "after_warm", "between_read_and_entry")
 
 
-def asset_setter(asset: object) -> Callable[[RankingHost], None]:
+def asset_setter(asset: AssetState | None) -> Callable[[RankingHost], None]:
     def setter(host: RankingHost) -> None:
         host.set_symbol("PENNY", references=REFS, asset=asset)
 
     return setter
 
 
-def coverage_setter(coverage: object) -> Callable[[RankingHost], None]:
+def coverage_setter(coverage: Coverage) -> Callable[[RankingHost], None]:
     def setter(host: RankingHost) -> None:
         host.set_coverage(coverage)
 
@@ -129,7 +130,8 @@ def test_missing_reference_publication_regression(tmp_path: Path) -> None:
     now[0] = AT + NS
     host.set_symbol("PENNY", references=ReferencePrices(None, START - NS, REFS.source), asset=GOOD)
     host.on_trade(tick(now[0], "0.56"))
-    assert host.publisher.states["PENNY"].latest.score is None
+    latest = host.publisher.states["PENNY"].latest
+    assert latest is not None and latest.score is None
     withdrawn(host, at=now[0])
     assert len(beats) == before_beats
     host.close()
@@ -202,7 +204,7 @@ def test_every_readiness_and_publish_exception_counts_pages_and_revokes(
     [
         ReferencePrices(None, START - NS, REFS.source),
         replace(REFS, known_at=SCOPE.end_ns),
-        replace(REFS, prior_close=REFS.prior_close * 2),
+        replace(REFS, prior_close=Decimal("1.00")),
     ],
 )
 def test_reference_changes_require_recomputed_evidence(tmp_path: Path, reference) -> None:
@@ -230,4 +232,45 @@ def test_a_throttled_trade_cannot_regrant_rank_but_a_fresh_publish_can(tmp_path:
     assert host.on_trade(tick(now[0], "0.57")) is not None
     assert host.entry_rank("PENNY", now=now[0]) == 1
     assert host.ranked_names(now=now[0]) == ("PENNY",)
+    host.close()
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("expected_symbols", Decimal(3)),
+        ("observed_symbols", Decimal(3)),
+        ("missing_symbols", False),
+        ("invalid_symbols", Decimal(0)),
+        ("late_symbols", False),
+    ],
+)
+def test_invalid_coverage_count_types_cannot_regrant_authority(
+    tmp_path: Path, field: str, value
+) -> None:
+    host, now, beats = wired(tmp_path)
+    warm(host, now)
+    before_beats = len(beats)
+    now[0] = AT + NS
+    host.set_coverage(replace(READY, **{field: value}))
+    withdrawn(host, at=now[0])
+    assert len(beats) == before_beats
+    host.close()
+
+
+@pytest.mark.parametrize(
+    "asset",
+    [
+        replace(GOOD, known_at=True),
+        replace(GOOD, source=["fixture"]),
+    ],
+)
+def test_invalid_asset_fields_cannot_regrant_authority(tmp_path: Path, asset) -> None:
+    host, now, beats = wired(tmp_path)
+    warm(host, now)
+    before_beats = len(beats)
+    now[0] = AT + NS
+    host.set_symbol("PENNY", references=REFS, asset=asset)
+    withdrawn(host, at=now[0])
+    assert len(beats) == before_beats
     host.close()
