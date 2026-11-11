@@ -1,18 +1,20 @@
-"""Deliver the converged shelf and lane MCP set to Codex, dsh and Antigravity (parity.json).
+"""Deliver the converged shelf and lane MCP set to Codex, dsh, Antigravity and Muse.
 
 Each runtime gets its own native format in its own lane home. Nothing goes to the shared
 ~/.agents/skills root, which blind legs also read. Rendered files carry environment-variable
 names only; keys reach a session at launch through scripts/with-keys.sh. A lane file or skill
-that differs from the pinned render is kept, reported and counted as a failure. Muse gets
-its launch pins from muse-launch.sh; its shelf and MCP set wait on their tracked issue, because
-Muse 1.4.6 has one user config root and its -c flag cannot add an MCP server.
+that differs from the pinned render is kept, reported and counted as a failure.
 """
 
 import argparse
+import fcntl
 import hashlib
 import json
 import os
+import re
+import shlex
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -117,6 +119,219 @@ def _antigravity_roots(home: Path) -> None:
     for root in (plugins, data):
         if root.is_dir():
             _guard_roots(lane, *root.rglob("*"))
+
+
+def _muse_roots(home: Path) -> tuple[Path, Path]:
+    config = Path(os.environ.get("XDG_CONFIG_HOME") or home / ".config") / "muse"
+    data = Path(os.environ.get("XDG_DATA_HOME") or home / ".local/share") / "muse"
+    managed = (config / "skills", data / "plugins")
+    _guard_roots(home, config, data, *managed)
+    for root in managed:
+        if root.is_dir():
+            _guard_roots(home, *root.rglob("*"))
+    return config, data
+
+
+def _muse_records(registry: Path) -> dict:
+    try:
+        state = _muse_read_json(registry)
+    except FileNotFoundError:
+        return {}
+    if state.get("version") != 1:
+        raise Refused(f"{registry}: unrecognized Muse plugin registry")
+    records = state.get("plugins")
+    if not isinstance(records, dict):
+        raise Refused(f"{registry}: missing Muse plugin records")
+    return records
+
+
+def _muse_read_json(path: Path) -> dict:
+    if not stat.S_ISREG(path.lstat().st_mode):
+        raise Refused(f"{path}: expected a regular Muse metadata file")
+    try:
+        document = json.loads(path.read_text())
+    except ValueError:
+        raise Refused(f"{path}: invalid Muse metadata") from None
+    if not isinstance(document, dict):
+        raise Refused(f"{path}: expected a Muse metadata object")
+    return document
+
+
+def _muse_inventory(root: Path, *, checkout_root: bool = False) -> dict[str, int]:
+    entries = {}
+
+    def visit(path: Path) -> None:
+        mode = path.lstat().st_mode
+        if not (stat.S_ISDIR(mode) or stat.S_ISREG(mode)):
+            raise Refused(f"{path}: expected a regular file or directory")
+        entries[str(path.relative_to(root))] = mode
+        if stat.S_ISDIR(mode):
+            for child in path.iterdir():
+                if not (checkout_root and path == root and child.name == ".git"):
+                    visit(child)
+
+    visit(root)
+    return entries
+
+
+def _muse_snapshot(root: Path, inventory: dict[str, int]) -> dict[str, list]:
+    entries = {}
+    for relative, mode in inventory.items():
+        digest = None
+        if stat.S_ISREG(mode):
+            with (root / relative).open("rb") as file:
+                digest = hashlib.file_digest(file, "sha256").hexdigest()
+        entries[relative] = [mode, digest]
+    return entries
+
+
+def _muse_package(data: Path, source: Path, root: Path, record: object) -> tuple[Path, str]:
+    name = root.name
+    if not isinstance(record, dict):
+        raise Refused(f"{name}: missing Muse plugin record")
+    recorded = record.get("package_sha256")
+    if not isinstance(recorded, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", recorded):
+        raise Refused(f"{name}: missing or invalid Muse package digest")
+    version = root / recorded.removeprefix("sha256:")
+    package = version / "package"
+    if (
+        record.get("id") != name
+        or record.get("enabled") is not True
+        or record.get("source") != {"provenance": "native-local", "path": str(source)}
+        or record.get("cache_path") != str(package.relative_to(data))
+        or set(root.iterdir()) != {version}
+        or not {package} <= set(version.iterdir()) <= {package, version / "agent-definitions"}
+    ):
+        raise Refused(f"{name}: Muse record or cache layout differs")
+    return package, recorded
+
+
+def _muse_payload(entries: dict, root: Path, package: Path) -> dict:
+    prefix = str(package.relative_to(root))
+    return {
+        str(Path(path).relative_to(prefix)): entry
+        for path, entry in entries.items()
+        if Path(path).is_relative_to(prefix)
+    }
+
+
+def _muse_plugin(muse: list[str], source: Path, name: str, data: Path, receipt: Path) -> str:
+    # rpm --verify compares installed files with the previous installation's package metadata.
+    # Muse's native hash lacks modes. Bind the native record to the complete installed inventory.
+    registry = data / "plugins/installed.json"
+    _guard_roots(receipt.parent, receipt)
+    records = _muse_records(registry)
+    root = data / "plugins/cache/local" / name
+    incoming = _muse_snapshot(source, _muse_inventory(source, checkout_root=True))
+    if name in records or root.exists() or receipt.exists():
+        package, digest = _muse_package(data, source, root, records.get(name))
+        expected = _muse_read_json(receipt)
+        inventory = _muse_inventory(root)
+        entries = expected.get("entries")
+        try:
+            matches = (
+                expected["package_sha256"] == digest
+                and isinstance(entries, dict)
+                and {path: entry[0] for path, entry in entries.items()} == inventory
+                and entries == _muse_snapshot(root, inventory)
+            )
+        except (TypeError, KeyError, IndexError):
+            matches = False
+        if not matches:
+            raise Refused(f"{name}: installed Muse package differs from its receipt")
+        if _muse_payload(entries, root, package) == incoming:
+            return "unchanged"
+    _native([*muse, "plugins", "install", str(source), "--scope", "user", "--json"])
+    package, digest = _muse_package(data, source, root, _muse_records(registry).get(name))
+    installed = _muse_snapshot(root, _muse_inventory(root))
+    if _muse_payload(installed, root, package) != incoming:
+        raise Refused(f"{name}: Muse did not install the complete incoming package")
+    evidence = {"package_sha256": digest, "entries": installed}
+    _publish(receipt, json.dumps(evidence, sort_keys=True) + "\n", 0o600)
+    return "installed"
+
+
+def _muse_bundle(cache: Path, home: Path, bridge: Path, repository: Path) -> Path:
+    plugin, servers, files = cache / "muse-mcp", [], {}
+    _guard_roots(cache, plugin, plugin / ".muse-plugin", plugin / "mcp")
+    for name, server in SPEC["mcp"].items():
+        argv = [str(bridge), server["url"]] if "url" in server else _command(server, home)
+        if "key" in server:
+            scheme = f"{server['scheme']} " if server.get("scheme") else ""
+            key = "${" + server["key"] + "}"
+            argv += ["--header", f"{server['header']}: {scheme}{key}"]
+            argv[:0] = [
+                str(repository / "scripts/with-keys.sh"),
+                "--strict",
+                "-k",
+                server["key"],
+                "--",
+            ]
+        if "url" in server:
+            argv += ["--silent", "--transport", "http-only"]
+        if server.get("env"):
+            argv[:0] = ["env", *(f"{key}={value}" for key, value in server["env"].items())]
+        relative = f"mcp/{name}.sh"
+        script = "#!/usr/bin/env bash\nset -euo pipefail\nexec " + shlex.join(argv) + "\n"
+        files[relative] = (script, 0o755)
+        servers.append({"id": name, "transport": "stdio", "command": ["bash", relative]})
+    manifest = {
+        "schemaVersion": 1,
+        "name": "sextant-mcp",
+        "version": "1.0.0",
+        "displayName": "Sextant lane MCP",
+        "description": "Sextant lane MCP",
+        "compat": {"source": "native", "manifestDir": ".muse-plugin"},
+        "capabilities": {"mcpServers": servers},
+    }
+    files[".muse-plugin/plugin.json"] = (json.dumps(manifest, indent=2) + "\n", 0o644)
+    if plugin.exists():
+        inventory = _muse_inventory(plugin)
+        if inventory.keys() - {".", ".muse-plugin", "mcp"} - files.keys():
+            raise Refused(f"{plugin}: contains paths outside the generated bundle")
+        for relative, (_text, mode) in files.items():
+            if relative in inventory and inventory[relative] != stat.S_IFREG | mode:
+                raise Refused(f"{plugin / relative}: differs from the pinned mode")
+    for relative, (text, mode) in files.items():
+        write_owned(plugin / relative, text, mode=mode)
+    return plugin
+
+
+def install_muse(
+    skills: dict[str, Path],
+    cache: Path,
+    home: Path,
+    muse: list[str],
+    bridge: Path,
+    repository: Path,
+) -> list[str]:
+    config, data = _muse_roots(home)
+    lock = cache / "muse-parity.lock"
+    _guard_roots(cache, lock)
+    with lock.open("a") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        states = [
+            _muse_plugin(
+                muse, cache / "superpowers", "superpowers", data, cache / "muse-superpowers.json"
+            )
+        ]
+        superpowers = set(SPEC["shelf"]["superpowers@superpowers-dev"]["skills"])
+        for name, source in skills.items():
+            if name in superpowers:
+                continue
+            destination = config / "skills" / name
+            if not destination.exists():
+                _native([*muse, "skills", "install", str(source), "--scope", "user", "--json"])
+                states.append("installed")
+            elif _tree(destination) == _tree(source):
+                states.append("unchanged")
+            else:
+                raise Refused(f"{destination}: differs from the pinned skill")
+        bundle = _muse_bundle(cache, home, bridge, repository)
+        states.append(
+            _muse_plugin(muse, bundle, "sextant-mcp", data, cache / "muse-sextant-mcp.json")
+        )
+        return states
 
 
 def _names(key: str, row: dict) -> list[str]:
@@ -486,7 +701,12 @@ def preflight(home: Path) -> None:
         cache / "antigravity/skills",
         cache / "antigravity/plugin.json",
         cache / "antigravity/LICENSE.tradermonty",
+        cache / "muse-mcp",
+        cache / "muse-superpowers.json",
+        cache / "muse-sextant-mcp.json",
+        cache / "muse-parity.lock",
     )
+    _muse_roots(home)
     _codex_lane(home)
     _dsh_roots(Path(os.environ.get("DSH_HOME") or home / ".dsh"))
     _dsh_tui_destinations(home, prefix)
@@ -495,7 +715,9 @@ def preflight(home: Path) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--runtime", action="append", choices=("codex", "dsh", "antigravity"))
+    parser.add_argument(
+        "--runtime", action="append", choices=("codex", "dsh", "antigravity", "muse")
+    )
     parser.add_argument("--check-roots", action="store_true", help="read-only installer preflight")
     args = parser.parse_args()
     home = Path.home()
@@ -526,6 +748,14 @@ def main() -> int:
             home,
             [str(prefix / "bin/antigravity/antigravity")],
             prefix / "mcp-bridge/node_modules/.bin/mcp-remote",
+        ),
+        "muse": lambda skills: install_muse(
+            skills,
+            cache,
+            home,
+            [str(home / ".local/bin/muse")],
+            prefix / "mcp-bridge/node_modules/.bin/mcp-remote",
+            repository,
         ),
     }
     try:
