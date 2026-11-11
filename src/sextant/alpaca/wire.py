@@ -157,6 +157,14 @@ class AccountGateway:
                     future.set_result(result)
 
         def allowed():
+            try:
+                return admit()
+            except Exception as exc:  # contained: a failed check refuses only its own request
+                if not future.done():
+                    future.set_exception(exc)
+                return False
+
+        def admit():
             if future.done():
                 return False
             if kind == ActionKind.SUBMIT:

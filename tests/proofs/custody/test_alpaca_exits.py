@@ -270,3 +270,28 @@ def test_a_venue_4xx_after_a_sent_submit_is_a_rejection():
 
 def test_a_submit_that_cannot_be_scheduled_is_denied_once():
     _unscheduled("submit")
+
+
+def test_a_submit_refused_after_enqueue_never_reaches_the_wire():
+    """Admission raises once the POST is queued (review of PR 552): the refusal withdraws it."""
+
+    async def run():
+        node, calls = client(), []
+        counts = node.gateway.position_counts
+
+        def raise_once():  # call 1: the pacer's reserve check; call 2: admission at drain
+            calls.append(1)
+            if len(calls) == 2:
+                raise RuntimeError("fixture: admission failed after enqueue")
+            return counts()
+
+        node.gateway.position_counts = raise_once
+        await HOOK["submit"](node, cast(Any, _cmd("submit")))
+        await asyncio.gather(*tuple(node._actions), return_exceptions=True)
+        node.generate_order_rejected.assert_called_once()
+        node.gateway.pacer.drain()  # any later drain, from any caller
+        await asyncio.gather(*tuple(node.gateway.tasks))  # the wire call runs in a thread
+        assert not node.gateway.sdk.requests, "a rejected submit reached the venue"
+        assert not node.gateway.pacer.queue
+
+    asyncio.run(run())

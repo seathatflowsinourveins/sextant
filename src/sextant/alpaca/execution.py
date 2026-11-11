@@ -217,7 +217,12 @@ class AlpacaExecutionClient(ExecutionClient):
                 token.settled = True
 
     def _refuse(self, token: _Command, reason: str) -> None:
-        """Apply a definite refusal once: nothing left, or the venue said no (4xx)."""
+        """Apply a definite refusal once: nothing left, or the venue said no (4xx).
+
+        Refusing an unsent command withdraws it in the same act, so a request it left queued
+        in the pacer is dropped at admission and never reaches the wire (review of PR 552)."""
+        if not token.sent:
+            token.withdrawn = True
         if token.settled:
             if token.sent:
                 self.late_answers += 1  # An earlier authoritative answer already settled it.
