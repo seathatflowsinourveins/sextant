@@ -22,6 +22,8 @@ KNOWN_REPEATS = {"Practice or pick": None, "Paper-search MCP": 2}
 RETIRED = (
     "A PR cannot change its own checks. PR code runs on a local ephemeral JIT runner",
     "All three required-review families use local one-job JIT runners",
+    "C live main: SIP feed, witness entry and broker-held trail",
+    "C receipt diagnostics and durable trial-before-receipt publication",
     "C's opt-in full-universe SIP tap: one socket, tap-only measurement symbols, guarded abort",
     "C's request-rate log line: pacer wiring and data calls, every 60 s",
     "EdgarTools documents and 8-K parsers behind archived SEC bytes",
