@@ -14,6 +14,8 @@ from types import SimpleNamespace as NS
 
 import pytest
 
+from sextant.paper import node_order
+
 from .test_alpaca_client import client, client_module
 from .test_alpaca_execution import order
 from .test_alpaca_exits import _api
@@ -79,3 +81,69 @@ def test_a_failed_start_writes_the_cause_to_the_receipt_and_one_error_line(tmp_p
     (line,) = [x for x in err.splitlines() if "startup reconciliation failed" in x]
     assert line.startswith("order node ERROR") and "stage=fills" in line
     assert "IncompleteCoverage" in line and STRAY["order_id"] not in line + json.dumps(body)
+
+
+# Gate fsc-9788f30 P2 (review-gpt.md sha256 589b2452...): the recorder never replaces, wraps or
+# suppresses the generator's exception, and never changes a result.
+
+
+def _raising(error):
+    async def generator(self, command):
+        raise error
+
+    return client_module()._traced("positions")(generator)
+
+
+def test_an_unhashable_key_error_surfaces_unchanged_and_is_still_named():
+    async def run():
+        node, error = client(), KeyError(["symbol"])
+        with pytest.raises(KeyError) as raised:
+            await _raising(error)(node, SCOPE)
+        assert raised.value is error
+        entry = node.report_trace["positions"]
+        assert entry["error"] == "KeyError" and entry["failures"] == 1
+
+    asyncio.run(run())
+
+
+def test_a_failing_recorder_never_replaces_the_original_exception(monkeypatch):
+    def broken(error):
+        raise RuntimeError("recorder fault")
+
+    monkeypatch.setattr(client_module(), "_reason", broken)
+
+    async def run():
+        node, error = client(), ValueError("Alpaca order report requires order type and side")
+        with pytest.raises(ValueError) as raised:
+            await _raising(error)(node, SCOPE)
+        assert raised.value is error
+        entry = node.report_trace["positions"]
+        assert entry["error"] == "ValueError" and entry["recorder_error"] == "RuntimeError"
+
+    asyncio.run(run())
+
+
+def test_a_count_that_cannot_be_taken_changes_no_result():
+    class Uncountable(list):
+        def __len__(self):
+            raise RuntimeError("fixture length fault")
+
+    async def run():
+        node, result = client(), Uncountable()
+
+        async def answer(*args, **kwargs):
+            return result
+
+        node.gateway.call = answer
+
+        async def reads(self, command):
+            return await self._call(None, "get", "/positions")
+
+        assert await client_module()._traced("positions")(reads)(node, SCOPE) is result
+
+    asyncio.run(run())
+
+
+def test_a_malformed_trace_never_raises_from_the_node():
+    broken = NS(report_trace={"orders": {"error": "ValueError", "requests": None}})
+    node_order.startup_cause([broken])  # Must not raise; the run's own failure stands.
