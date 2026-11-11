@@ -77,6 +77,7 @@ class CapacityActor(DataActor):
         self._last_init: dict[str, int] = {}
         self.queue_states: list[dict[str, Any]] = []
         self.ticks = self.errors = self.writes = self.write_errors = 0
+        self.stopped = False
 
     def on_start(self) -> None:
         self.subscribe_trades(list(self._ids))
@@ -116,6 +117,7 @@ class CapacityActor(DataActor):
             self.clock.cancel_timer("capacity-receipt")
         except Exception:
             self.errors += 1
+        self.stopped = True
         self._write(final=True)
 
     def _count(self, channel: str, tick: Any) -> None:
@@ -146,7 +148,8 @@ class CapacityActor(DataActor):
             handler["max"] = spent if handler["max"] is None else max(handler["max"], spent)
 
     def _on_timer(self, _event: Any) -> None:
-        self._write(final=False)
+        if not self.stopped:  # a timer event queued before the stop never overwrites it
+            self._write(final=False)
 
     def _write(self, *, final: bool) -> None:
         try:

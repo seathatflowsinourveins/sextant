@@ -84,7 +84,7 @@ TRADES += [trade(START + NS + j * 5 * MS, (j + 1) * US, 100 + j) for j in range(
 QUOTES = [quote(START + 600 * MS + k * MS, k * MS) for k in range(1, 5)]
 
 
-def run(tmp_path: Path, receipt: Path, **kwargs: Any) -> CapacityActor:
+def run(tmp_path: Path, receipt: Path, cls=CapacityActor, **kwargs: Any) -> CapacityActor:
     store = tmp_path / "catalog"
     store.mkdir(parents=True, exist_ok=True)
     catalog = ParquetDataCatalog(str(store))
@@ -113,7 +113,7 @@ def run(tmp_path: Path, receipt: Path, **kwargs: Any) -> CapacityActor:
         start=START - NS,
     )
     kwargs.setdefault("quotes", True)
-    actor = CapacityActor(
+    actor = cls(
         CapacityActorConfig(
             instrument_ids=(PENNY,), receipt_path=receipt, receipt_interval_s=1, **kwargs
         )
@@ -185,3 +185,15 @@ def test_the_actor_holds_no_socket_and_places_nothing() -> None:
     assert names.isdisjoint(
         {"submit_order", "modify_order", "cancel_order", "order_factory", "reconnect_socket"}
     )
+
+
+def test_a_timer_write_after_stop_never_replaces_the_final_receipt(tmp_path) -> None:
+    # A live node can dispatch a receipt timer event queued before the stop after on_stop.
+    class Late(CapacityActor):
+        def on_stop(self) -> None:
+            super().on_stop()
+            self._on_timer(None)
+
+    receipt = tmp_path / "late" / "capacity.json"
+    run(tmp_path, receipt, cls=Late)
+    assert json.loads(receipt.read_text())["final"] is True
