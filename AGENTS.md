@@ -5,6 +5,8 @@ One focus, in `docs/design.md`'s words: rank the most potential extreme movers a
 ## Rule 1: never self-invent
 Everything here comes from a SOTA source: a maintained repo or framework at a pinned commit, a runtime or SDK, an official docs page with its read date, converged research, or, for trading, an upstream template or a cited paper. That covers the harness, the automation, the skills, the research method itself, and every strategy, option design and Jev judgment.
 - Find how the upstream does it and adopt that. Fit the need to the upstream's shape.
+- Upstream first: before a build, the brief names what the official upstream already ships for it (file and line at the pin, or the docs page with its read date) and one verdict, use as is, build on, or keep ours, with where it was searched; `scripts/brief_check.py` refuses a code brief without them. A part that rebuilds a shipped piece is re-scoped to use it. Never rebuild what is already built: install and integrate the upstream cleanly (owner, 2026-11-11).
+- The official upstream is the engine's own repository, the broker's own organisation and the vendor's own tool. Any other repository is a candidate until a recorded end-to-end run and evaluation (owner, 2026-11-11).
 - Every PR names its source in the template's Upstream references and follows or adds a row in `docs/manifest.md`. `dangerfile.js` in `source` and the `review` check refuse it otherwise.
 - If no source exists, do not build it. Say so and stop. Only the owner can make an exception, and its manifest row says where you looked.
 

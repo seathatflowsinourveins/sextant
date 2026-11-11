@@ -39,7 +39,8 @@ def test_a_brief_without_the_section_is_refused() -> None:
 def test_each_empty_field_is_refused_by_name() -> None:
     for field in ("Shipped piece", "Verdict", "Where searched"):
         lines = [
-            f"- {field}:" if line.startswith(f"- {field}:") else line for line in FILLED.splitlines()
+            f"- {field}:" if line.startswith(f"- {field}:") else line
+            for line in FILLED.splitlines()
         ]
         result = _check("\n".join(lines))
         assert result.returncode == 1, field
@@ -68,5 +69,7 @@ def test_template_and_manifest_carry_the_practice() -> None:
     assert "file:line at the pinned commit" in references
     assert "use as is, build on or keep ours" in references
     manifest = (ROOT / "docs/manifest.md").read_text()
-    row = next(line for line in manifest.splitlines() if line.startswith("| Upstream-first brief |"))
+    row = next(
+        line for line in manifest.splitlines() if line.startswith("| Upstream-first brief |")
+    )
     assert "2026-11-11" in row and "review-rules.md" in row and "test_upstream_first.py" in row
