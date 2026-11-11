@@ -38,6 +38,7 @@ from nautilus_trader.indicators import AverageTrueRange
 from nautilus_trader.model import (
     Bar,
     BarType,
+    ClientId,
     ClientOrderId,
     ContingencyType,
     CustomData,
@@ -119,6 +120,7 @@ class BLifecycleConfig(StrategyConfig):
         native_trail_fraction: Decimal | None = None,
         width_rows: Mapping[str, Decimal] | None = None,
         trail_reduce_only: bool = True,
+        client_id: str | None = None,
         **engine: object,
     ) -> None:
         unknown = sorted(set(engine) - ENGINE_FIELDS)
@@ -168,6 +170,13 @@ class BLifecycleConfig(StrategyConfig):
         if not isinstance(trail_reduce_only, bool):
             raise ValueError("trail_reduce_only must be True or False")
         self.trail_reduce_only = trail_reduce_only
+        # The venue's row for the execution client named on every command: unset on Alpaca (the
+        # venue routes); "IB" on Interactive Brokers, whose client the node routes by the venue
+        # it is configured for (nautilus_trader rc8 crates/live/src/node/builder.rs:719-772),
+        # as upstream names it (examples/live/interactive_brokers/exec_tester.py:116).
+        if client_id is not None and (not isinstance(client_id, str) or not client_id):
+            raise ValueError("client_id must be a non-empty string or None")
+        self.client_id = client_id
 
 
 @dataclass(slots=True)
@@ -279,6 +288,12 @@ class BLifecycle(Strategy):
     @property
     def width_rows(self) -> Any:
         return self._config.width_rows
+
+    @property
+    def _client(self) -> ClientId | None:
+        """The venue's execution client for every command, or None where the venue routes."""
+        row = self._config.client_id
+        return None if row is None else ClientId(row)
 
     @property
     def native(self) -> Any:
@@ -419,7 +434,7 @@ class BLifecycle(Strategy):
             f"b-entry-ttl-{order.client_order_id}", expiry, callback=lambda _e: self._expire(iid)
         )
         outside = session_at(now) is not Session.RTH
-        self.submit_order(order, params={"extended_hours": outside})
+        self.submit_order(order, client_id=self._client, params={"extended_hours": outside})
 
     def _reprice(self, book: _Book, now: int) -> None:
         """Reprice up to the ask, never past ``entry_chase_bps`` above the first limit."""
@@ -612,7 +627,7 @@ class BLifecycle(Strategy):
         )
         self._record(kind="protect", ts=now, order=str(order.client_order_id), quantity=str(shares))
         book.offsets[order.client_order_id] = bps
-        self.submit_order(order)
+        self.submit_order(order, client_id=self._client)
         return order.client_order_id
 
     # -- S1-4: width from completed bars, tighten-only modify -----------------------------
@@ -724,7 +739,7 @@ class BLifecycle(Strategy):
             book.cancelling.add(cid)  # an OrderUpdated clears PENDING_CANCEL (mod.rs:1314-1316)
             book.cancel_sent[cid] = self.clock.timestamp_ns()  # the retry's clock
             book.cancel_tries[cid] = book.cancel_tries.get(cid, 0) + 1
-        self.cancel_order(cid)
+        self.cancel_order(cid, client_id=self._client)
 
     def _left_to_complete(self, book: _Book, cid: ClientOrderId) -> None:
         if cid not in book.started:
@@ -737,7 +752,7 @@ class BLifecycle(Strategy):
     def _modify(self, cid: ClientOrderId, **change: Any) -> None:
         if not self._house(cid):
             return self._record(kind="guard_refused", order=str(cid))
-        self.modify_order(cid, **change)
+        self.modify_order(cid, client_id=self._client, **change)
 
     def _page(self, book: _Book, now: int, reason: str) -> None:
         if book.paged != reason:  # one page per state, not one per event
