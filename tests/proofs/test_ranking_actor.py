@@ -132,7 +132,7 @@ class FakeHost:
         self.references[name] = references.prior_close
         self.publisher.set_symbol(name, references=references, asset=asset)
 
-    def on_trade(self, tick: TradeTick):
+    def on_trade(self, tick: TradeTick, *, facts=None):
         self._thread()
         self.calls += 1
         self.log.append("trade")
@@ -408,7 +408,7 @@ def test_a_repeated_trade_generation_is_never_published_twice(tmp_path) -> None:
             super().__init__(log, fail_at)
             self.previous = None
 
-        def on_trade(self, tick):
+        def on_trade(self, tick, *, facts=None):
             generation = super().on_trade(tick)
             if self.calls == 3:
                 return self.previous  # an earlier generation handed back
@@ -424,7 +424,7 @@ def test_a_repeated_trade_generation_is_never_published_twice(tmp_path) -> None:
 
 def test_the_pager_key_set_is_bounded_by_stage(tmp_path) -> None:  # F6
     class DistinctErrors(FakeHost):
-        def on_trade(self, tick):
+        def on_trade(self, tick, *, facts=None):
             self.calls += 1
             raise type(f"ProviderFailure{self.calls}", (RuntimeError,), {})("fixture")
 

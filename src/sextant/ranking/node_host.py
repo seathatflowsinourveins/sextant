@@ -29,7 +29,7 @@ from dataclasses import replace
 
 from nautilus_trader.model import TradeTick
 
-from sextant.ranking.engine import ReferencePrices
+from sextant.ranking.engine import ReferencePrices, price_counts
 from sextant.ranking.generation import Coverage, CoverageState, RankingGeneration
 from sextant.ranking.publisher import AssetState, RankingPublisher
 
@@ -65,13 +65,20 @@ class NodeRankingHost:
         self.publish_errors = 0
         self.last_error: str | None = None
 
-    def on_trade(self, tick: TradeTick) -> RankingGeneration | None:
+    def on_trade(
+        self, tick: TradeTick, *, facts: tuple[bool, tuple[str, ...]] | None
+    ) -> RankingGeneration | None:
+        """``facts`` is the Actor's one read of the print's (vendor flag, conditions); unknown
+        facts move neither price nor volume (engine.py advance_mover's masks; N1e)."""
         publisher, name = self.publisher, str(tick.instrument_id.symbol)
         if name not in publisher.states:
             self.ignored_trades += 1  # publisher.py:119 would raise; nothing new to publish
             return None
+        eligible, conditions = (False, ()) if facts is None else (price_counts(*facts), facts[1])
         try:
-            publisher.on_trade(tick)
+            publisher.on_trade(
+                tick, price_eligible=eligible, volume_eligible=eligible, conditions=conditions
+            )
         except Exception as exc:
             self.ingress_errors += 1
             self.last_error = f"on_trade: {type(exc).__name__}"

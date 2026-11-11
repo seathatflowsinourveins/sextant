@@ -169,6 +169,7 @@ def test_the_node_entry_can_reset_when_the_client_reports_no_socket_state(tmp_pa
     out = run(tmp_path, host_cls=Evidence, facts=regular, actor_cls=Entry)
     assert moves(out) == [("PENNY", False, 0), ("PENNY", None, 200), ("PENNY", False, 240)]
     assert out["actor"].evidence()["resets"] == 1
+    assert out["log"].count("coverage") == 2  # priming, then DEGRADED before the reset (#537)
 
 
 def test_a_name_outside_the_universe_is_ignored(tmp_path) -> None:

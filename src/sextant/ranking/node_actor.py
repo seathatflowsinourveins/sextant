@@ -30,7 +30,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Protocol
 
-from nautilus_trader.common import DataActor, SocketStateChanged
+from nautilus_trader.common import DataActor, SocketState, SocketStateChanged
 from nautilus_trader.config import DataActorConfig
 from nautilus_trader.model import (
     CustomData,
@@ -40,6 +40,7 @@ from nautilus_trader.model import (
     TradeTick,
 )
 
+from sextant.alpaca.stream_facts import AlpacaTradeFacts, StreamFacts
 from sextant.ranking.engine import ReferencePrices, price_counts
 from sextant.ranking.generation import Coverage, CoverageState, RankingGeneration
 from sextant.ranking.publisher import AssetState, ranking_data_type
@@ -83,7 +84,9 @@ def classify(status: InstrumentStatus) -> bool | None:
 class RankingHostProtocol(Protocol):
     """RankingHost's surface at 8850b79 (host.py:173-205), injected so N1 runs on main."""
 
-    def on_trade(self, tick: TradeTick) -> RankingGeneration | None: ...
+    def on_trade(
+        self, tick: TradeTick, *, facts: tuple[bool, tuple[str, ...]] | None
+    ) -> RankingGeneration | None: ...
 
     def set_symbol(
         self, name: str, *, references: ReferencePrices, asset: AssetState | None
@@ -169,7 +172,7 @@ class RankingActor(DataActor):
         self._halted: dict[str, bool | None] = {str(iid.symbol): None for iid in self._ids}
         self._watch_from: int | None = None  # node time the status subscription went active
         self._subscribed_at: int | None = None  # ... first, never moved by a reset (2e)
-        self.cleared_by_print = self.resets = 0
+        self.cleared_by_print = self.resets = self.stream_gaps = 0
         snapshot = config.status_snapshot_window_s
         self._snapshot_ns = None if snapshot is None else snapshot * NS
         self.snapshot_statuses: dict[str, int] | None = None if snapshot is None else {}
@@ -213,6 +216,9 @@ class RankingActor(DataActor):
         for name in sorted(self._early):  # kept, never dropped (review F1)
             self._move(name, *self._early.pop(name), stage="instrument_status")
         try:  # a registration failure faults and pages; the shared node runs on (review F4)
+            if isinstance(self._facts, StreamFacts):  # the client's facts and gaps (N1e)
+                self.subscribe_data(self._facts.facts_type)
+                self.subscribe_data(self._facts.gap_type)
             self.subscribe_socket_state()  # a reported transport change is a stream gap
             self.watch_statuses()
             self.subscribe_trades(list(self._ids))
@@ -225,6 +231,9 @@ class RankingActor(DataActor):
         self.host, self.primed, self._primed = None, False, {}
         self._halted = dict.fromkeys(self._halted)  # every name unknown again
         self._watch_from = self._subscribed_at = self._lineage = self._last = None
+        self._received = False  # no print, status or fact yet: a connect then is no gap
+        if isinstance(self._facts, StreamFacts):  # no earlier run's conditions (P2)
+            self._facts.clear()
         if self.snapshot_statuses is not None:  # the 2e recorder counts this run only (P2)
             self.snapshot_statuses = {}
         for pending in (self._status_seen, self._early, self._veto, self._retired):
@@ -237,6 +246,7 @@ class RankingActor(DataActor):
 
     def on_instrument_status(self, status: InstrumentStatus) -> None:
         """A halt sets halted, a resume clears it, anything else from halted stays halted."""
+        self._received = True
         name = str(status.instrument_id.symbol)
         why = f"instrument status {status.action.name}"
         if not self.primed:
@@ -262,26 +272,63 @@ class RankingActor(DataActor):
             self.snapshot_statuses[action] = self.snapshot_statuses.get(action, 0) + 1
 
     def on_socket_state(self, event: SocketStateChanged) -> None:
-        self.reset_evidence(f"socket {event.state}")  # either state: the stream had a gap
+        """A LiveNode relays a network client's CONNECTED or DISCONNECTED (crates/live node
+        mod.rs publish_socket_state_change; crates/network sink.rs). Any event after which
+        prints may have been missed follows the gap rule. Only a connect while this run has
+        received nothing (no print, status or fact) is exempt (lead ruling 04:3x; #537 P1)."""
+        if event.state != SocketState.CONNECTED or self._received:
+            self.reset_evidence(f"socket {event.state}")
 
-    def reset_evidence(self, reason: str = "stream gap reported by the node entry") -> None:
-        """Every name unknown again; prints count only after this moment."""
-        if self.host is None or not self.primed:
-            return
+    def reset_evidence(
+        self, reason: str = "stream gap reported by the node entry", *, since: int | None = None
+    ) -> None:
+        """A gap: DEGRADED first, then every name unknown; prints count only after ``since``
+        (default: now). The node entry's own call takes the same path (#537 P2)."""
+        if self.host is not None and self.primed:
+            self._gap(reason, since=since)
+
+    def _reset_names(self, reason: str, since: int | None) -> None:
         self.resets += 1
         now = self.clock.timestamp_ns()
         if self._watch_from is not None:
-            self._watch_from = now
+            self._watch_from = now if since is None else since
         for name in sorted(self._halted):
             self._move(name, None, now, reason)
 
-    def _clear_on_print(self, trade: TradeTick) -> None:
+    def on_data(self, data) -> None:
+        """The data client's per-trade facts and stream gaps (N1e, DESIGN-N1E)."""
+        self._received = True
+        source = self._facts
+        if not isinstance(source, StreamFacts) or self.host is None or not self.primed:
+            return
+        kind = data.data_type.type_name
+        if kind == source.facts_type.type_name and isinstance(data.data, AlpacaTradeFacts):
+            if data.data.instrument_id in self._ids:
+                source.record(data.data)
+        elif kind == source.gap_type.type_name:
+            self.stream_gaps += 1
+            self.reset_evidence("stream reconnect", since=data.data.ts_init)
+
+    def _gap(self, reason: str, *, since: int | None) -> None:
+        """A stream gap: DEGRADED for the rest of the segment (LEAD-0033 2e) is published
+        first, so no per-name reset below can publish a READY generation that still ranks a
+        name not yet reset (gate review of #531). Then every name is unknown and the watch
+        restarts at the new connection's receipt time."""
+        assert self.host is not None
+        try:
+            generation = self.host.set_coverage(Coverage(CoverageState.DEGRADED, False))
+        except Exception as exc:
+            self._fault("set_coverage", exc)
+        else:
+            self._publish(generation)
+        self._reset_names(reason, since)
+
+    def _clear_on_print(self, trade: TradeTick, facts: tuple[bool, tuple[str, ...]] | None) -> None:
         name, start = str(trade.instrument_id.symbol), self._watch_from
         if trade.instrument_id not in self._ids or self._halted.get(name, True) is not None:
             return  # outside the universe, halted (a print never clears), or already clear
-        if start is None or self._facts is None or min(trade.ts_event, trade.ts_init) <= start:
+        if start is None or min(trade.ts_event, trade.ts_init) <= start:
             return
-        facts = self._facts(trade)
         if facts is None or not price_counts(*facts):
             return
         self.cleared_by_print += 1
@@ -331,17 +378,23 @@ class RankingActor(DataActor):
         )
 
     def on_trade(self, trade: TradeTick) -> None:
+        self._received = True
         host = self.host
         if host is None or not self.primed:
             return
         for name in sorted(self._veto):  # retry a refused halt state before the next tick
             self._apply(name, *self._veto[name], "instrument_status")
-        try:  # before the host, so this print's own generation already sees the evidence
-            self._clear_on_print(trade)
+        facts = None  # read once: the evidence and the host see the same facts (N1e)
+        try:
+            facts = None if self._facts is None else self._facts(trade)
         except Exception as exc:
             self._fault("trade_facts", exc)
+        try:  # before the host, so this print's own generation already sees the evidence
+            self._clear_on_print(trade, facts)
+        except Exception as exc:
+            self._fault("evidence", exc)
         try:
-            generation = host.on_trade(trade)
+            generation = host.on_trade(trade, facts=facts)
         except Exception as exc:
             return self._fault("on_trade", exc)
         self._publish(generation)
