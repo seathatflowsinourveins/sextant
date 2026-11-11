@@ -261,3 +261,23 @@ def test_the_bucket_window_has_no_default() -> None:
                 receipt_interval_s=1,
                 bucket_window_s=cast(Any, bad),
             )
+
+
+def test_a_failing_subscription_is_counted_and_the_node_keeps_running(tmp_path) -> None:  # F4
+    class Unavailable(CapacityActor):
+        def subscribe_trades(self, instrument_id, client_id=None, params=None) -> None:
+            raise OSError("fixture subscription registration unavailable")
+
+    actor = run(tmp_path, tmp_path / "capacity.json", cls=Unavailable)
+    assert actor.faults["subscribe"] == 1 and actor.ticks == len(QUOTES)  # quotes still count
+    assert actor.writes >= 1  # the timer and the final receipt still run
+
+
+def test_a_failing_timer_registration_is_counted_and_the_node_keeps_running(tmp_path) -> None:
+    class NoTimer(CapacityActor):
+        def __init__(self, config) -> None:
+            super().__init__(config)
+            self._interval = 0  # the engine refuses a zero interval at registration
+
+    actor = run(tmp_path, tmp_path / "capacity.json", cls=NoTimer)
+    assert actor.faults["timer"] == 1 and actor.ticks == len(TRADES) + len(QUOTES)
