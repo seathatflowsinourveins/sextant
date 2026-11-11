@@ -307,18 +307,17 @@ def test_fetcher_builds_the_table_from_a_complete_raw_response() -> None:
     pre_value = table.cumulative("SPY", "PRE", 60)
     assert pre_value is not None
     assert pre_value.dollar_volume == D(20) and pre_value.sessions == 3
-    quiet = table.cumulative("SPY", "RTH", 60)
-    assert quiet is not None and quiet.dollar_volume == D(0) and quiet.sessions == 3
-    assert table.cumulative("SPY", "POST", 0) is None
-    assert table.cumulative("SPY", "POST", 60) is not None
+    # No RTH or POST bar in a complete response: no baseline for those segments.
+    assert table.cumulative("SPY", "RTH", 60) is None
+    assert not table.covers("SPY", "RTH") and not table.covers("SPY", "POST")
     assert "explicit complete coverage" in table.provenance
 
 
-def test_fetcher_refuses_a_response_missing_a_requested_day() -> None:
+def test_fetcher_refuses_a_session_with_no_bars_for_any_symbol() -> None:
     response = {
         "SPY": [raw_bar(FETCH_DAYS[0], 4, 0), raw_bar(FETCH_DAYS[2], 4, 0)],
     }
-    with pytest.raises(ValueError, match="missing requested session"):
+    with pytest.raises(ValueError, match=r"missing requested session .* for every"):
         fetch(FakeClient(response))
 
 
@@ -329,23 +328,54 @@ def test_fetcher_refuses_a_bar_outside_the_requested_sessions() -> None:
         fetch(FakeClient(response))
 
 
-def test_fetcher_treats_a_complete_empty_response_as_a_quiet_window() -> None:
+def test_fetcher_gives_no_baseline_for_a_complete_empty_response() -> None:
     table = fetch(FakeClient({}))
 
-    value = table.cumulative("SPY", "PRE", 60)
-    assert value is not None
-    assert value.dollar_volume == D(0)
-    assert value.sessions == 3
+    assert table.samples == ()
+    assert table.cumulative("SPY", "PRE", 60) is None
 
 
-def test_fetcher_refuses_a_response_missing_a_requested_symbol() -> None:
-    response = {"SPY": [raw_bar(day, 4, 0) for day in FETCH_DAYS]}
-    with pytest.raises(ValueError, match="missing requested symbol"):
-        fetch_baseline(
-            FakeClient(response),
-            ("SPY", "QQQ"),
-            as_of=FETCH_AS_OF,
-            prior_sessions=3,
-            known_at=FETCH_KNOWN_AT,
-            feed="sip",
-        )
+def fetch_two(response: dict[str, list[dict[str, Any]]]) -> BaselineTable:
+    return fetch_baseline(
+        FakeClient(response),
+        ("SPY", "QQQ"),
+        as_of=FETCH_AS_OF,
+        prior_sessions=3,
+        known_at=FETCH_KNOWN_AT,
+        feed="sip",
+    )
+
+
+def test_fetcher_gives_no_baseline_to_a_symbol_absent_from_a_complete_response() -> None:
+    table = fetch_two({"SPY": [raw_bar(day, 4, 0) for day in FETCH_DAYS]})
+
+    assert table.covers("SPY", "PRE")
+    assert all(not table.covers("QQQ", segment) for segment in ("PRE", "RTH", "POST"))
+    assert (
+        table.samples == fetch(FakeClient({"SPY": [raw_bar(d, 4, 0) for d in FETCH_DAYS]})).samples
+    )
+
+
+def test_fetcher_keeps_a_zero_for_a_traded_symbol_quiet_on_one_day() -> None:
+    table = fetch_two(
+        {
+            "SPY": [raw_bar(day, 4, 0) for day in FETCH_DAYS],
+            "QQQ": [raw_bar(FETCH_DAYS[0], 4, 0)],
+        }
+    )
+
+    assert table.sessions("QQQ", "PRE") == tuple(day.isoformat() for day in FETCH_DAYS)
+    value = table.cumulative("QQQ", "PRE", 60)
+    assert value is not None and value.dollar_volume == D(0) and value.sessions == 3
+
+
+def test_a_post_close_minute_alone_gives_no_post_baseline() -> None:
+    response = {"SPY": [raw_bar(day, 4, 0) for day in FETCH_DAYS] + [raw_bar(FETCH_DAYS[0], 16, 0)]}
+
+    assert not fetch(FakeClient(response)).covers("SPY", "POST")
+
+
+def test_fetcher_still_refuses_bars_for_an_unrequested_symbol() -> None:
+    response = {"QQQ": [raw_bar(day, 4, 0) for day in FETCH_DAYS]}
+    with pytest.raises(ValueError, match="outside declared coverage"):
+        fetch(FakeClient(response))

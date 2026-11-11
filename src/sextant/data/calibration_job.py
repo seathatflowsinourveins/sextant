@@ -31,7 +31,7 @@ from sextant.data.alpaca_history import (
     timestamp,
 )
 from sextant.data.baseline_bars import BarsClient, prior_xnys_sessions
-from sextant.data.baseline_recipe import load_universe, run
+from sextant.data.baseline_recipe import MANIFEST_NAME, coverage_line, load_universe, run
 from sextant.paper.sessions import ET
 from sextant.ranking.baseline import segment_start
 
@@ -223,6 +223,9 @@ def main(
             source="k2_universe",
             universe=universe,
         )
+        manifest = args.data_dir / "baselines" / MANIFEST_NAME
+        baseline_sha256 = hashlib.sha256(manifest.read_bytes()).hexdigest()
+        print(f"calibration-data: {coverage_line(baseline)}", flush=True)
         files = [
             archive(client, args.data_dir, symbol, session, kind, feed, moment, now_ns=now_ns)
             for session in sessions
@@ -230,6 +233,13 @@ def main(
             for feed in ("sip", "boats")
             for kind in ("quotes", "bars")
         ]
+        # An empty window is a fact about the symbol, not a failed read: each one is
+        # a validated, fully paged zero-row partition, counted here per feed and kind.
+        empty: dict[str, int] = {}
+        for record in files:
+            if record["rows"] == 0:
+                key = f"{record['feed']}/{record['kind']}"
+                empty[key] = empty.get(key, 0) + 1
         receipt = {
             "schema": "sextant.calibration-inputs/1",
             "status": "UNCALIBRATED",
@@ -243,7 +253,9 @@ def main(
             "prior_sessions": count,
             "calls_per_minute": str(rate),
             "baseline": baseline,
+            "baseline_manifest_sha256": baseline_sha256,
             "files": files,
+            "empty_windows": dict(sorted(empty.items())),
             "coverage": "vendor responses only; empty windows are not calibration evidence",
             "survivor_only": True,
             "pit_verified": False,

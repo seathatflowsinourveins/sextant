@@ -8,13 +8,17 @@ import json
 import os
 import subprocess
 import sys
+from collections.abc import Sequence
 from datetime import UTC, date, datetime, time, timedelta
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
 import pytest
 from alpaca.data.enums import DataFeed
+from nautilus_trader.model import AggressorSide, InstrumentId, Price, Quantity, TradeId, TradeTick
+from test_ranking import registry  # the mechanism-only fixture registry
 
 from sextant.data import baseline_recipe as recipe
 from sextant.data.baseline_bars import prior_xnys_sessions
@@ -29,7 +33,10 @@ from sextant.data.baseline_recipe import (
     verify,
 )
 from sextant.ranking.baseline import BaselineTable, load_baseline
+from sextant.ranking.baseline_coverage import coverage_receipt, partition_covered
+from sextant.ranking.engine import MoverState, ReferencePrices, Segment, advance_mover, rank_movers
 
+D = Decimal
 NS = 1_000_000_000
 ET = ZoneInfo("America/New_York")
 AS_OF = date(2026, 11, 9)
@@ -81,13 +88,18 @@ DAYTIME_BARS = daytime_rows()
 class FakeBars:
     """A fake data client: one window of bars per feed, filtered by the request."""
 
-    def __init__(self, *, omit: str | None = None, empty: bool = False) -> None:
+    def __init__(
+        self, *, omit: str | None = None, empty: bool = False, fail: DataFeed | None = None
+    ) -> None:
         self.omit = omit
         self.empty = empty
+        self.fail = fail
         self.requests: list[Any] = []
 
     def get_stock_bars(self, request: Any) -> dict[str, list[dict[str, object]]]:
         self.requests.append(request)
+        if request.feed == self.fail:
+            raise RuntimeError("offline batch failed before its last page")
         if self.empty:
             return {}
         requested = request.symbol_or_symbols
@@ -220,21 +232,147 @@ def test_verify_refuses_a_segment_file_that_holds_two_segments() -> None:
         verify({**tables, "PRE": mixed}, SYMBOLS)
 
 
-def test_an_incomplete_fetch_is_refused_before_anything_is_published(tmp_path) -> None:
-    out = tmp_path / "baselines"
+def published(out: Path) -> dict[str, bytes]:
+    return {path.name: path.read_bytes() for path in out.iterdir()}
 
-    with pytest.raises(ValueError):
-        run(
-            FakeBars(omit="MF"),
-            SYMBOLS,
-            out,
-            command=[*COMMAND],
-            as_of=AS_OF,
-            known_at=KNOWN_AT,
-            prior_sessions=2,
-        )
+
+def publish_fixture(client: Any, out: Path, symbols: Sequence[str], known_at: int = KNOWN_AT):
+    return run(
+        client, symbols, out, command=COMMAND, as_of=AS_OF, known_at=known_at, prior_sessions=2
+    )
+
+
+@pytest.mark.parametrize("feed", [DataFeed.BOATS, DataFeed.SIP])
+def test_a_failed_batch_is_refused_and_keeps_the_previous_files(tmp_path, feed) -> None:
+    out = tmp_path / "baselines"
+    publish_fixture(FakeBars(), out, SYMBOLS)
+    before = published(out)
+
+    with pytest.raises(RuntimeError, match="before its last page"):
+        publish_fixture(FakeBars(fail=feed), out, SYMBOLS, KNOWN_AT + 1)
+
+    assert published(out) == before
+
+
+def test_a_dropped_session_is_refused_before_anything_is_published(tmp_path, monkeypatch) -> None:
+    out = tmp_path / "baselines"
+    dropped = {
+        symbol: [bar for bar in bars if bar["t"].date() != SESSIONS[0]]  # type: ignore[attr-defined]
+        for symbol, bars in DAYTIME_BARS.items()
+    }
+    monkeypatch.setitem(globals(), "DAYTIME_BARS", dropped)
+
+    with pytest.raises(ValueError, match="for every requested symbol"):
+        publish_fixture(FakeBars(), out, SYMBOLS)
 
     assert not out.exists()
+
+
+BROAD = tuple(f"M{index:02d}" for index in range(100))
+QUIET_OVERNIGHT = ("M07", "M42", "M99")
+
+
+class BroadBars:
+    """The 2026-11-11 shape: 100 movers, a few with no overnight-session bars."""
+
+    def __init__(self, quiet: Sequence[str] = QUIET_OVERNIGHT) -> None:
+        self.quiet = tuple(quiet)
+
+    def get_stock_bars(self, request: Any) -> dict[str, list[dict[str, object]]]:
+        overnight = request.feed == DataFeed.BOATS
+        template = OVERNIGHT_BARS["AAPL"] if overnight else DAYTIME_BARS["AAPL"]
+        return {
+            symbol: list(template)
+            for symbol in request.symbol_or_symbols
+            if not (overnight and symbol in self.quiet)
+        }
+
+
+def test_a_broad_universe_with_quiet_overnight_names_publishes_and_records_them(tmp_path) -> None:
+    out = tmp_path / "baselines"
+
+    manifest = publish_fixture(BroadBars(), out, BROAD)
+
+    written = json.loads((out / "manifest.json").read_text())
+    assert written == manifest
+    assert written["symbols"] == list(BROAD)
+    overnight = written["coverage"]["OVERNIGHT"]
+    assert overnight["without_baseline"] == list(QUIET_OVERNIGHT)
+    assert overnight["with_baseline"] == 97
+    assert "fully paged" in overnight["reason"]
+    traded = sorted(set(BROAD) - set(QUIET_OVERNIGHT))
+    assert written["files"]["overnight.json"]["symbols"] == traded
+    for name in ("PRE", "RTH", "POST"):
+        assert written["coverage"][name]["without_baseline"] == []
+        assert written["coverage"][name]["with_baseline"] == 100
+    loaded = load_baseline(recipe.verified_baseline_text(out / "overnight.json"))
+    assert sorted({sample.symbol for sample in loaded.samples}) == traded
+
+
+def test_a_change_in_the_quiet_names_changes_the_manifest_bytes(tmp_path) -> None:
+    publish_fixture(BroadBars(), tmp_path / "a", BROAD)
+    publish_fixture(BroadBars(("M07", "M42")), tmp_path / "b", BROAD)
+
+    def digest(name: str) -> str:
+        return hashlib.sha256((tmp_path / name / "manifest.json").read_bytes()).hexdigest()
+
+    assert digest("a") != digest("b")
+
+
+def test_a_segment_where_no_symbol_traded_refuses_and_keeps_the_previous_files(tmp_path) -> None:
+    out = tmp_path / "baselines"
+    publish_fixture(BroadBars(), out, BROAD)
+    before = published(out)
+
+    with pytest.raises(recipe.BaselineFlagged, match="empty_segment"):
+        publish_fixture(BroadBars(BROAD), out, BROAD, KNOWN_AT + 1)
+
+    assert published(out) == before
+
+
+def trade(name: str, at: int, price: str) -> TradeTick:
+    return TradeTick(
+        InstrumentId.from_str(name + ".ALPACA"),
+        Price.from_str(price),
+        Quantity.from_str("10"),
+        AggressorSide.BUY,
+        TradeId(str(at)),
+        at,
+        at + 1,
+    )
+
+
+def test_the_reader_treats_a_quiet_name_as_baseline_unknown(tmp_path) -> None:
+    out = tmp_path / "baselines"
+    publish_fixture(BroadBars(), out, BROAD)
+    table = load_baseline(recipe.verified_baseline_text(out / "overnight.json"))
+    names = ("M41.ALPACA", "M42.ALPACA")
+
+    assert partition_covered(table, names, "OVERNIGHT") == (("M41.ALPACA",), ("M42.ALPACA",))
+    assert coverage_receipt(table, names, "OVERNIGHT")["M42.ALPACA"]["state"] == "baseline_missing"
+    start = nanos(moment(date(2026, 11, 9), 20))
+    segment = Segment("OVERNIGHT", date(2026, 11, 10), start, start + 28_800 * NS, "fixture XNYS")
+    rows = {}
+    for name in ("M41", "M42"):
+        state = MoverState()
+        for second, price in ((0, "1.00"), (1500, "1.00"), (1860, "1.00"), (1920, "1.10")):
+            state, row = advance_mover(
+                state,
+                trade(name, start + second * NS, price),
+                ReferencePrices(D("1.00"), KNOWN_AT, "fixture official close"),
+                table,
+                segment=segment,
+                feed="boats",
+                registry=registry(),
+            )
+            rows[name] = row
+    quiet, traded = rows["M42"], rows["M41"]
+    assert quiet is not None and traded is not None
+    assert "baseline_unknown" in quiet.observations["unknown_reasons"]
+    assert quiet.score is None and quiet.dvol_ratio is None
+    assert "baseline_unknown" not in traded.observations["unknown_reasons"]
+    assert traded.dvol_ratio is not None and traded.score is not None
+    assert [row.symbol for row in rank_movers([quiet, traded])] == ["M41"]
 
 
 def test_publish_refuses_before_writing_when_a_table_is_wrong(tmp_path) -> None:
@@ -428,7 +566,7 @@ def test_an_empty_refresh_leaves_the_active_set_untouched_and_exits_nonzero(
     assert not [path for path in out.parent.iterdir() if path.name.startswith(f".{out.name}")]
     warning = capsys.readouterr().err
     assert "warning: baseline flags" in warning
-    assert '"zero_filled"' in warning
+    assert '"empty_segment"' in warning
 
 
 def test_verified_text_proves_the_manifest_commits_to_the_bytes(tmp_path) -> None:
