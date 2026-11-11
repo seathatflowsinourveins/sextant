@@ -37,7 +37,8 @@ def changed(name, **fields):
 
 
 def build(commission_rows, monkeypatch):
-    monkeypatch.setattr(execution.Controls, "from_rows", lambda rows: controls())
+    fixture_controls = controls()
+    monkeypatch.setattr(execution.Controls, "from_rows", lambda rows: fixture_controls)
     config = AlpacaExecutionClientConfig(
         api_key_env="FIXTURE_KEY",
         api_secret_env="FIXTURE_SECRET",  # noqa: S106 - environment variable name, not a key.
@@ -68,7 +69,7 @@ def test_factory_passes_the_sourced_paper_commission_hook_and_connect_proceeds(m
     assert callable(hook)
     assert hook({"order": {"asset_class": "us_equity"}}) == Money.from_str("0 USD")
     client._do_query_account = AsyncMock()
-    client.create_task = lambda coroutine, name: coroutine.close()
+    setattr(client, "create_task", lambda coroutine, name: coroutine.close())  # noqa: B010
     asyncio.run(client._connect())
     sdk.assert_called_once()
 

@@ -74,6 +74,7 @@ class AlpacaExecutionClientConfig(ExecutionClientConfig):
         account_id: str,
         house_prefix: str | None = None,
         pacing_rows: list[dict[str, Any]] | None = None,
+        commission_rows: list[dict[str, Any]] | None = None,
         **kwargs: Any,
     ) -> None:
         _refuse_unknown(kwargs, _EXECUTION_COMMON_FIELDS, type(self).__name__)
@@ -86,3 +87,4 @@ class AlpacaExecutionClientConfig(ExecutionClientConfig):
         self.account_id = account.value
         self.house_prefix = house_prefix
         self.pacing_rows = pacing_rows
+        self.commission_rows = commission_rows
