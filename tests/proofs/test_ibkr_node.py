@@ -6,6 +6,7 @@ test_interactive_brokers_factories.py:142-190``), and every ``run`` uses a recor
 """
 
 import json
+import re
 import threading
 from decimal import Decimal
 from pathlib import Path
@@ -54,7 +55,8 @@ def _argv(tmp_path: Path, *extra: str, **changes: str) -> list[str]:
 def _registry(tmp_path: Path, state: str, text: str | None = None) -> Path:
     path = tmp_path / f"ibkr-{state}.toml"
     source = (ROOT / "lanes/paper/ibkr.toml").read_text()
-    path.write_text(text or source.replace('state = "OFF"', f'state = "{state}"', 1))
+    top = re.sub(r'^state = "[A-Z]+"', f'state = "{state}"', source, count=1, flags=re.M)
+    path.write_text(text or top)
     return path
 
 
@@ -217,11 +219,14 @@ def test_start_refusals_write_the_receipt_and_never_build(
 
 
 @pytest.mark.parametrize("send_orders", [False, True])
-def test_the_committed_registry_keeps_the_lane_off(tmp_path: Path, send_orders: bool) -> None:
+def test_the_committed_registry_turns_the_lane_on(tmp_path: Path, send_orders: bool) -> None:
+    # ON for the paper account only; without the key the start still refuses.
     argv = _argv(tmp_path, *(["--send-orders"] if send_orders else []))
     argv[argv.index("--registry") + 1] = str(ROOT / "lanes/paper/ibkr.toml")
-    assert _run(tmp_path, argv, {ENV: CODE}) == (2, [])
-    assert _receipt(tmp_path)["reason"] == "lane_off"
+    assert _run(tmp_path, argv, {}) == (2, [])
+    # An order-sending start with the default (SELL-resting) profile is refused by name first.
+    reason = "no sourced continuous custody fence" if send_orders else "account"
+    assert _receipt(tmp_path)["reason"] == reason
 
 
 def test_a_held_writer_lease_refuses_the_start(tmp_path: Path) -> None:

@@ -1,6 +1,7 @@
-# Offline inventory/registry. src/sextant/paper/node_ibkr.py reads these starts and refuses every
-# start while state is OFF; only a reviewed change after the owner's first-login word sets ON.
-state = "OFF"
+# Registry for src/sextant/paper/node_ibkr.py, which refuses every start while state is OFF. ON for the
+# paper account only: the owner completed the paper gateway login on 2026-11-11; the login
+# stays the owner's.
+state = "ON"
 lane = "ibkr-paper"
 
 [sources]
