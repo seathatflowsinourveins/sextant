@@ -138,10 +138,10 @@ class BLifecycleConfig(StrategyConfig):
         if not isinstance(rank_gate, RegistryRow) or rank_gate.name != "rank_gate_enabled":
             raise ValueError("B needs the rank_gate_enabled registry row")
         # With the gate off no rank is read, so protection needs no consumer (lead 09:1x); the
-        # entry then has no session segment and is refused.
-        if not isinstance(consumer, RankingConsumer) and (consumer, rank_gate.value) != (
-            None,
-            False,
+        # entry then has no session segment and is refused. Only the bool False is off
+        # (ranking/registry.py:50-61): 0 == False in Python, so 0 and Decimal(0) are refused.
+        if not isinstance(consumer, RankingConsumer) and not (
+            consumer is None and rank_gate.value is False
         ):
             raise ValueError("B needs the reviewed RankingConsumer")
         if (
