@@ -100,7 +100,7 @@ class RankingActor(DataActor):
         self.published = 0
         self.errors: dict[str, int] = {}
         self.last_error: str | None = None
-        self._paged: set[tuple[str, str]] = set()
+        self._paged: set[str] = set()  # one key per stage: a fixed, bounded set (review F6)
         self._lineage: tuple[str, int] | None = None  # the last published (epoch, sequence)
         self._retired: set[str] = set()
 
@@ -173,13 +173,13 @@ class RankingActor(DataActor):
         self.errors[stage] = self.errors.get(stage, 0) + 1
         kind = type(exc).__name__
         self.last_error = f"{stage}: {kind}"
-        if (stage, kind) in self._paged or self._page is None:
+        if stage in self._paged or self._page is None:
             return
-        self._paged.add((stage, kind))
+        self._paged.add(stage)
         try:
             self._page(stage, kind)
         except Exception:  # a broken pager never stops the Actor either
             self.errors["page"] = self.errors.get("page", 0) + 1
 
     def _clear(self, stage: str) -> None:
-        self._paged = {key for key in self._paged if key[0] != stage}
+        self._paged.discard(stage)
