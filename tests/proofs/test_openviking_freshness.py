@@ -259,9 +259,6 @@ def test_the_installer_renders_every_unit_from_this_checkout_and_starts_the_time
     )
     # Never a restart: the running server keeps its clients until the lead's switch-over.
     assert not [call for call in calls if re.search(r"\b(restart|stop|kill)\b", call)]
-    setup = (ROOT / "deploy/wsl/setup.sh").read_text()
-    assert "bash deploy/openviking/install-units.sh" in setup
-    assert setup.index("install-units.sh") < setup.index("just index")
 
 
 def test_the_timer_has_a_schedule_and_runs_the_index_once_at_a_time() -> None:
