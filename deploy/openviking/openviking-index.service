@@ -1,0 +1,11 @@
+# The research index follows main: deploy/openviking/index.sh, run by sextant-openviking-index.timer.
+# A oneshot service under a timer, the shape of the git-maintenance@.service user unit that git writes
+# here (`git maintenance start`, git-maintenance(1)). It addresses the server only through ovcli.conf.
+[Unit]
+Description=Sextant research index follows main
+After=sextant-openviking.service
+
+[Service]
+Type=oneshot
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/bash %h/sextant/deploy/openviking/index.sh
