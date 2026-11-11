@@ -129,7 +129,8 @@ def test_a_fork_on_a_governed_path_fails_the_gate() -> None:
 def test_every_owner_on_its_own_path_passes_the_gate() -> None:
     for surface, rule in _danger().items():
         for owner in rule["owners"]:
-            assert _failures(_cite(owner), (_sample(rule["paths"]),)) == [], (surface, owner)
+            sources = f"{_cite(owner)} src/client.py:12 BUILD ON"
+            assert _failures(sources, (_sample(rule["paths"]),)) == [], (surface, owner)
 
 
 def test_ao_owner_on_its_claim_path_passes_the_gate() -> None:
@@ -154,15 +155,17 @@ def test_each_retrieval_upstream_alone_owns_the_setup_path() -> None:
 
 def test_the_alpaca_adapter_is_broker_code() -> None:
     path = ("src/sextant/alpaca/data.py",)
-    found = _failures(f"example/fork@v1 {SHA}", path)
+    found = _failures(f"example/fork@v1 {SHA} src/client.py:12 BUILD ON", path)
     assert any("broker" in failure and "authority" in failure.lower() for failure in found)
     for owner in ("nautechsystems/nautilus_trader", "alpacahq/alpaca-py"):
-        assert _failures(_cite(owner), path) == [], owner
+        sources = f"{_cite(owner)} src/client.py:12 BUILD ON"
+        assert _failures(sources, path) == [], owner
 
 
 def test_a_pinned_blob_url_cites_its_owner() -> None:
     sources = (
         f"https://github.com/nautechsystems/nautilus_trader/blob/{SHA}/engine.py, read 2026-11-09"
+        " engine.py:12 BUILD ON"
     )
     assert _failures(sources, ("src/sextant/exits/engine.py",)) == []
 
