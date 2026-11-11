@@ -28,7 +28,7 @@ from collections.abc import Callable
 from dataclasses import replace
 from decimal import Decimal
 
-from nautilus_trader.model import TradeTick
+from nautilus_trader.model import Price, Quantity, TradeTick
 
 from sextant.ranking.engine import MoverState, ReferencePrices, price_counts
 from sextant.ranking.generation import Coverage, CoverageState, RankingGeneration
@@ -61,7 +61,12 @@ Identity = tuple[str, Decimal, Decimal]  # trade id (exchange + original id), pr
 def _find(state: MoverState, identity: Identity) -> str:
     """Where a print is while it still feeds a feature (a window bucket or its anchor):
     ``inside`` on a full match of id, price and size; ``mismatched`` when only the id matches,
-    so the amendment does not name the stored print; ``outside`` otherwise (lead 04:2x)."""
+    so the amendment does not name the stored print; ``outside`` otherwise (lead 04:2x).
+
+    The identity keeps the vendor's raw price and size. The stored tick holds them as the data
+    client built it, ``Price.from_decimal_dp(raw, instrument precision)`` (alpaca/data.py
+    ``_Stock``), and every equity has precision 4 (alpaca/parsing.py). So the raw values pass
+    through that same constructor at the tick's own precision before the comparison."""
     key, price, size = identity
     found = "outside"
     for window in (state.history, state.volume_history):
@@ -71,7 +76,9 @@ def _find(state: MoverState, identity: Identity) -> str:
         for tick in ticks:
             if tick.trade_id.value != key:
                 continue
-            if tick.price.as_decimal() == price and tick.size.as_decimal() == size:
+            sent_price = Price.from_decimal_dp(price, tick.price.precision)
+            sent_size = Quantity.from_decimal_dp(size, tick.size.precision)
+            if tick.price == sent_price and tick.size == sent_size:
                 return "inside"
             found = "mismatched"
     return found
