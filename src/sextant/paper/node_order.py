@@ -36,6 +36,7 @@ import json
 import os
 import sys
 import threading
+import time
 from collections.abc import Callable, Mapping
 from contextlib import ExitStack
 from dataclasses import dataclass, field, replace
@@ -63,6 +64,7 @@ from sextant.entry.parameters import EntryParameters
 from sextant.execution.custody import AccountScope, CustodyError, WriterLease
 from sextant.execution.pacer import ActionKind
 from sextant.execution.state import write_atomic
+from sextant.paper import node_rank
 from sextant.paper.b_lifecycle import BLifecycle, BLifecycleConfig, Journal
 from sextant.paper.b_protector import load_b_parameters
 from sextant.paper.b_protector_main import (
@@ -72,6 +74,7 @@ from sextant.paper.b_protector_main import (
 )
 from sextant.paper.config import PaperAccount
 from sextant.paper.decision_record import DecisionLog, Row
+from sextant.ranking import node_ranking
 from sextant.ranking.consumer import RankingConsumer
 from sextant.ranking.registry import RANK_GATE_ENABLED
 
@@ -129,6 +132,7 @@ class OrderArguments:
     lease_source: str
     universe: tuple[InstrumentId, ...] = ()  # the claim list, read after the leases
     universe_source: str = "not read"
+    ranking: node_ranking.RankingArguments | None = None
 
 
 def _rows(path: Path) -> list[dict[str, Any]]:
@@ -219,6 +223,8 @@ def parse(argv: list[str] | None = None) -> OrderArguments:
         ("--lease-source", str),
     ):
         required.add_argument(flag, type=kind, required=True)
+    for flag in ("--ranking-universe-artifact", "--ranking-baseline-dir", "--ranking-inputs-dir"):
+        parser.add_argument(flag, type=Path)
     raw = parser.parse_args(argv)
     if raw.paper_slot != 2:  # slot 1 is the owner's account, slot 3 is revoked (AGENTS.md)
         raise OrderModeRefused("paper_slot", f"only paper slot 2, not {raw.paper_slot}")
@@ -231,6 +237,10 @@ def parse(argv: list[str] | None = None) -> OrderArguments:
     if account.lane != "alpaca-paper-b":
         raise OrderModeRefused("registries", "the account config is not Paper B's")
     rows = load_rows(raw)
+    try:
+        ranking = node_rank.load(raw)
+    except (ValueError, OSError, KeyError, TypeError) as error:
+        raise OrderModeRefused("ranking", str(error)) from error
     return OrderArguments(
         account,
         rows,
@@ -243,6 +253,7 @@ def parse(argv: list[str] | None = None) -> OrderArguments:
         raw.stream_lease_root,
         raw.existing_streams,
         raw.lease_source,
+        ranking=ranking,
     )
 
 
@@ -478,6 +489,24 @@ def build(
     exec_factory: Any = AlpacaExecutionClientFactory,
     timing: Mapping[str, float] | None = None,
 ) -> tuple[LiveNode, GatedBLifecycle]:
+    loaded_ids = args.universe
+    if args.ranking is not None:
+        names = set(args.ranking.universe)
+        if not {iid.symbol.value for iid in args.universe} <= names:
+            raise OrderModeRefused("ranking_universe", "claims absent from ranking universe")
+        if len(names) > QUEUE:
+            raise OrderModeRefused(
+                "ranking_capacity",
+                "full universe exceeds startup queue; "
+                "requires the separately reviewed chunked-load part",
+            )
+        loaded_ids = tuple(InstrumentId(Symbol(n), VENUE) for n in sorted(names))
+        if consumer is not None:
+            raise OrderModeRefused("ranking_consumer", "in-node composition owns its consumer")
+        try:
+            consumer = node_rank.consumer(args.ranking, now=time.time_ns())
+        except ValueError as error:
+            raise OrderModeRefused("ranking", str(error)) from error
     # The Strategy first, so a refused config leaves no node built on this thread.
     strategy = GatedBLifecycle(strategy_config(args, consumer=consumer, journal=journal))
     config = node_config(args, **dict(timing or {}))
@@ -489,7 +518,7 @@ def build(
         api_key_env=args.api_key_env,
         api_secret_env=args.api_secret_env,
         feed=DEFAULT_FEED,
-        instrument_provider=InstrumentProviderConfig(load_ids=[str(i) for i in args.universe]),
+        instrument_provider=InstrumentProviderConfig(load_ids=[str(i) for i in loaded_ids]),
     )
     node = (
         LiveNodeBuilder.from_config(NODE_NAME, config)
@@ -500,6 +529,8 @@ def build(
     strategy.gate = gate
     try:
         node.add_strategy(strategy)
+        if args.ranking is not None:
+            node_ranking.attach(node, args.ranking, inputs=node_ranking.file_inputs(args.ranking))
     except Exception:
         node.dispose()
         raise
