@@ -294,7 +294,7 @@ class BLifecycle(Strategy):
         """The venue's execution client for a command, or None where the venue routes, resolved
         before any of its bookkeeping (review s1p2b-eb33a6a). A row ``ClientId`` refuses or an
         absent one sends nothing: one refusal naming ``client_id``, and the book re-arms on its
-        next price, so a restored row recovers (AGENTS.md:14, ADR-0007:17)."""
+        next price, so a restored row recovers (AGENTS.md:16, ADR-0007:17)."""
         value = getattr(self._config, "client_id", ABSENT)
         try:
             return True, None if value is None else ClientId(cast(str, value))
