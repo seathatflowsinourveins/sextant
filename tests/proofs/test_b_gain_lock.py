@@ -1,5 +1,5 @@
 import json
-from dataclasses import replace
+from dataclasses import fields, replace
 from decimal import Decimal as D
 from pathlib import Path
 from typing import Any
@@ -123,12 +123,8 @@ def test_gain_lock_registry_carries_shared_starts_and_leaves_b_cost_unavailable(
     root = Path(__file__).resolve().parents[2]
     rows = json.loads((root / "lanes/paper/b-gain-lock.params.json").read_text())
     starts = {row.name: row.start for row in REGISTRY}
-    shared = {
-        "gain_lock_giveback_fraction",
-        "prearm_buffer_fraction",
-        "prearm_range_multiple",
-        "prearm_range_window_s",
-    }
+    # B's exit file carries every ExitParams row except chase_cap_fraction (its entry-file home)
+    shared = {f.name for f in fields(ExitParams)} - {"chase_cap_fraction"}
     assert {row["name"] for row in rows} == shared | {"round_trip_cost"}
     assert len(rows) == len(shared) + 1
     for row in rows:
@@ -137,6 +133,8 @@ def test_gain_lock_registry_carries_shared_starts_and_leaves_b_cost_unavailable(
         if name == "round_trip_cost":  # ADR-0025:27: TCA sets it; no literal stands in
             assert row["value"] is None and row["calibration_state"] == "UNAVAILABLE"
             assert "0025-gain-protection-and-fast-exit.md:27" in row["source"]
+        elif starts[name] is None:  # no start at either pin: the chase stays off
+            assert row["value"] is None and row["calibration_state"] == "UNAVAILABLE"
         else:
             assert row["calibration_state"] == "UNCALIBRATED"
             assert D(row["value"]) == starts[name]
