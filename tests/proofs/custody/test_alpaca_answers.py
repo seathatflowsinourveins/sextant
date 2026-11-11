@@ -67,6 +67,23 @@ def test_a_submit_the_venue_already_shows_is_not_rejected_by_a_late_422():
     asyncio.run(run())
 
 
+def test_a_read_during_a_running_patch_settles_nothing_and_the_late_422_refuses_once():
+    # PR 569 rule: a read issued while the PATCH runs answers nothing; its own 422 does.
+    async def run():
+        async def read(node):
+            node.cache.order.return_value = order(status=OrderStatus.PENDING_UPDATE)
+            await node._generate_order_status_report(
+                NS(client_order_id=ClientOrderId("fixture-entry"), venue_order_id=None)
+            )
+            node.generate_order_modify_rejected.assert_not_called()
+
+        node = await _first_answer_then_422("modify", read)
+        node.generate_order_modify_rejected.assert_called_once()
+        assert node.late_answers == 0 and not node._proposals
+
+    asyncio.run(run())
+
+
 def test_a_cancel_the_stream_refused_is_not_rejected_again_by_a_late_422():
     async def run():
         async def stream(node):

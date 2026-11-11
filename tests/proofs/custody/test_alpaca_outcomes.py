@@ -157,6 +157,81 @@ def test_next_read_showing_the_order_unreplaced_settles_a_lost_patch():
     asyncio.run(run())
 
 
+def test_engine_order_query_settles_a_lost_patch_from_the_venue_read():
+    async def run():
+        node = client()
+        await _lost_patch(node, applied=False)
+        report = await node._generate_order_status_report(
+            NS(client_order_id=ClientOrderId("fixture-entry"), venue_order_id=None)
+        )
+        assert report is not None and not node._proposals
+
+    asyncio.run(run())
+
+
+def test_order_still_pending_replace_keeps_the_lost_patch_unresolved():
+    async def run():
+        node = client()
+        venue = await _lost_patch(node, applied=True)
+        parent = next(iter(venue.rows.values()))
+        parent["status"] = "pending_replace"  # Alpaca: waiting to be replaced.
+        await node._modify_order(_change("0.1236"))
+        assert [r[0] for r in venue.requests].count("PATCH") == 1
+        assert list(node._proposals) == ["fixture-entry-r1"]
+        node.generate_order_modify_rejected.assert_called_once()
+
+    asyncio.run(run())
+
+
+def test_confirmed_successor_settles_a_lost_patch_and_the_next_modify_targets_it():
+    async def run():
+        node = client()
+        venue = await _lost_patch(node, applied=True)
+        successor = venue.confirm()
+        await node._modify_order(_change("0.1236"))
+        assert not any(k == "fixture-entry-r1" for k in node._proposals)
+        assert venue.requests[-1][:2] == ("PATCH", f"/orders/{successor['id']}")
+        assert node._active["fixture-entry"] == successor["id"]
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("venue_state", ["confirmed", "pending_replace"])
+def test_read_never_rejects_a_modify_the_venue_applied_or_still_holds(venue_state):
+    async def run():
+        from nautilus_trader.model import OrderStatus
+
+        node = client()
+        venue = await _lost_patch(node, applied=True)
+        node.cache.order.return_value = order(status=OrderStatus.PENDING_UPDATE)
+        if venue_state == "confirmed":
+            venue.confirm()
+        await node._generate_order_status_report(
+            NS(client_order_id=ClientOrderId("fixture-entry"), venue_order_id=None)
+        )
+        node.generate_order_modify_rejected.assert_not_called()
+        assert node.generate_order_updated.called == (venue_state == "confirmed")
+
+    asyncio.run(run())
+
+
+def test_read_returns_an_unchanged_order_to_its_venue_state_after_a_lost_patch():
+    # manager.rs:1935-1939 would close a PENDING_UPDATE order after its retries.
+    async def run():
+        from nautilus_trader.model import OrderStatus
+
+        node = client()
+        await _lost_patch(node, applied=False)
+        node.cache.order.return_value = order(status=OrderStatus.PENDING_UPDATE)
+        await node._generate_order_status_report(
+            NS(client_order_id=ClientOrderId("fixture-entry"), venue_order_id=None)
+        )
+        node.generate_order_modify_rejected.assert_called_once()
+        assert not node._proposals
+
+    asyncio.run(run())
+
+
 @pytest.mark.parametrize("applied", [False, True])
 def test_read_returns_a_working_order_to_its_venue_state_after_a_lost_delete(applied):
     async def run():
@@ -216,6 +291,54 @@ def _lose(venue, method, error):
 
 
 @pytest.mark.parametrize("kind", ANY_FAILURE)
+def test_sent_delete_lost_to_any_failure_is_restored_by_the_next_read(kind):
+    # Review e5fix-2a7d367 P1: a transport-lost DELETE left the order locally CANCELED.
+    async def run():
+        from nautilus_trader.model import OrderStatus
+
+        node = client()
+        await node._submit_order(NS(order=order(), params={}))
+        venue = node.gateway.sdk
+        error = _requests_failure(kind)
+        _lose(venue, "delete", error)
+        with pytest.raises(type(error)):
+            await node._cancel_order(
+                command(client_order_id=ClientOrderId("fixture-entry"), venue_order_id=None)
+            )
+        node.generate_order_cancel_rejected.assert_not_called()
+        node.cache.order.return_value = order(status=OrderStatus.PENDING_CANCEL)
+        await node._generate_order_status_report(
+            NS(client_order_id=ClientOrderId("fixture-entry"), venue_order_id=None)
+        )
+        assert next(iter(venue.rows.values()))["status"] == "new"
+        node.generate_order_cancel_rejected.assert_called_once()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("kind", ANY_FAILURE)
+def test_sent_patch_lost_to_any_failure_is_restored_by_the_next_read(kind):
+    async def run():
+        from nautilus_trader.model import OrderStatus
+
+        node = client()
+        await node._submit_order(NS(order=order(), params={}))
+        error = _requests_failure(kind)
+        _lose(node.gateway.sdk, "patch", error)
+        with pytest.raises(type(error)):
+            await node._modify_order(_change("0.1235"))
+        node.generate_order_modify_rejected.assert_not_called()
+        assert list(node._proposals) == ["fixture-entry-r1"]
+        node.cache.order.return_value = order(status=OrderStatus.PENDING_UPDATE)
+        await node._generate_order_status_report(
+            NS(client_order_id=ClientOrderId("fixture-entry"), venue_order_id=None)
+        )
+        node.generate_order_modify_rejected.assert_called_once()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("kind", ANY_FAILURE)
 def test_sent_post_lost_to_any_failure_stays_unresolved(kind):
     async def run():
         node = client()
@@ -251,5 +374,16 @@ def test_a_failure_before_the_wire_is_a_local_refusal_whatever_its_type(hook):
                 NS(order=order(client_order_id=ClientOrderId("fixture-next")), params={})
             )
             node.generate_order_rejected.assert_called_once()
+
+    asyncio.run(run())
+
+
+def test_a_modify_failing_before_the_wire_is_a_local_refusal_whatever_its_type():
+    async def run():
+        node = client()
+        await _gateway_gone(node)
+        await node._modify_order(_change("0.1235"))
+        node.generate_order_modify_rejected.assert_called_once()
+        assert not node._proposals
 
     asyncio.run(run())

@@ -380,3 +380,37 @@ def _refused_after_enqueue(kind):
 
 def test_a_cancel_refused_after_enqueue_never_reaches_the_wire():
     _refused_after_enqueue("cancel")
+
+
+@pytest.mark.parametrize("exit_by", ["cancelled_sent", "venue_4xx"])
+def test_modify_specific_exits_keep_or_release_the_proposal(exit_by):
+    # Unsent, first-step, closing and teardown exits are the same code as submit/cancel.
+    async def run():
+        node = client()
+        if exit_by == "venue_4xx":
+            await node._submit_order(NS(order=order(), params={}))
+            node.gateway.sdk.patch = lambda path, body: (_ for _ in ()).throw(_api(422))
+            await node._modify_order(_cmd("modify"))
+            node.generate_order_modify_rejected.assert_called_once()
+            assert not node._proposals  # The venue refused: the reservation is released.
+            return
+        task, release = await _park(node, "modify", sent=True)
+        try:
+            await _leave(node, task, "disconnect", release)
+        finally:
+            release.set()
+        node.generate_order_modify_rejected.assert_not_called()
+        assert list(node._proposals) == ["fixture-entry-r1"]  # Kept for an answer.
+        await _read(node, "modify")  # The order is unchanged at the venue: restored.
+        node.generate_order_modify_rejected.assert_called_once()
+        assert not node._proposals
+
+    asyncio.run(run())
+
+
+def test_a_modify_that_cannot_be_scheduled_is_refused_once():
+    _unscheduled("modify")
+
+
+def test_a_modify_refused_after_enqueue_never_reaches_the_wire():
+    _refused_after_enqueue("modify")
