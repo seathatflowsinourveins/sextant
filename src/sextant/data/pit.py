@@ -13,15 +13,15 @@ These estimates are unverified for historical availability: callers must set
 attrs["pit_verified"] = "false" on policy-timed rows (Global Constraints).
 """
 
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta
 from functools import cache
 from zoneinfo import ZoneInfo
 
+from nautilus_trader.core.datetime import dt_to_unix_nanos
 from pandas.tseries.holiday import USFederalHolidayCalendar
 
 _NS = 10**9
 _ET = ZoneInfo("America/New_York")
-_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 
 # E11, 17 CFR 232.13(a)(4): 3/4/5 (2003) and Schedule 14N (2010) predate this backfill.
@@ -60,8 +60,7 @@ NEWS_MIN_LAG_S = 180
 
 
 def _to_ns(instant: datetime) -> int:
-    delta = instant.astimezone(UTC) - _EPOCH
-    return (delta.days * 86400 + delta.seconds) * _NS + delta.microseconds * 1000
+    return dt_to_unix_nanos(instant)
 
 
 def _at_et(day: date, clock: time) -> int:

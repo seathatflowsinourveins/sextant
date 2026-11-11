@@ -35,6 +35,8 @@ from datetime import UTC, date, datetime
 from types import MappingProxyType
 from typing import Any
 
+from nautilus_trader.core.datetime import dt_to_unix_nanos
+
 __all__ = [
     "CATALYST_FORMS",
     "MAX_BODY",
@@ -57,7 +59,6 @@ _OWNERS = frozenset({"include", "exclude", "only"})
 # 8-K submission is ~161 KB; this bound only refuses a runaway body. It is a
 # transport bound, not a trading tunable.
 MAX_BODY = 64 * 1024 * 1024
-_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 Fetch = Callable[[str], bytes]
 Clock = Callable[[], datetime]
 
@@ -73,8 +74,7 @@ class ReadFailure(Exception):
 def _to_ns(value: datetime) -> int:
     if not isinstance(value, datetime) or value.tzinfo is None:
         raise ValueError("a timezone-aware datetime is required")
-    delta = value.astimezone(UTC) - _EPOCH
-    return (delta.days * 86400 + delta.seconds) * 1_000_000_000 + delta.microseconds * 1000
+    return dt_to_unix_nanos(value)
 
 
 def _sha(raw: bytes) -> str:
