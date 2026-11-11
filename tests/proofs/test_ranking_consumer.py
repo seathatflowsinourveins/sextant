@@ -442,3 +442,11 @@ def test_the_consumer_cannot_reach_order_broker_or_account_surfaces() -> None:
     for surface in (RankingConsumer, RawBusHost, RankingDataActor):
         assert not hasattr(surface, "submit_order")
         assert not hasattr(surface, "cancel_order")
+
+
+def test_the_actor_config_refuses_an_unknown_key_and_passes_an_engine_field() -> None:
+    entry = consumer(publisher())
+    with pytest.raises(TypeError, match="consumers"):
+        RankingDataActorConfig(consumer=entry, consumers=entry)  # a misspelling, never swallowed
+    config = RankingDataActorConfig(consumer=entry, log_events=False)
+    assert config.log_events is False and config.consumer is entry
