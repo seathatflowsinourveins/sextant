@@ -282,12 +282,19 @@ def test_conforming_post_cutover_src_pr_passes(sources: str) -> None:
     )
 
 
-@pytest.mark.parametrize("file_list", ["modified", "deleted"])
-def test_post_cutover_rule_also_reads_modified_and_deleted_src(file_list: str) -> None:
+@pytest.mark.parametrize(
+    ("modified", "deleted"),
+    [(("src/sextant/ranking/client.py",), ()), ((), ("src/sextant/ranking/client.py",))],
+    ids=["modified", "deleted"],
+)
+def test_post_cutover_rule_also_reads_modified_and_deleted_src(
+    modified: tuple[str, ...], deleted: tuple[str, ...]
+) -> None:
     found = _failures(
         _body(),
         created_at="2026-11-11T15:35:12Z",
-        **{file_list: ("src/sextant/ranking/client.py",)},
+        modified=modified,
+        deleted=deleted,
     )
     assert any("path:line" in failure for failure in found)
 
