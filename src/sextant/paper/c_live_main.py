@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import hashlib
 import json
 import os
 import re
@@ -228,6 +229,8 @@ class RunRecord:
     flags: int = 0
     receipt_id: str = ""
     armings: list[dict[str, Any]] = field(default_factory=list)
+    segment_snapshots: list[dict[str, Any]] = field(default_factory=list)
+    trial_file: dict[str, str] | None = None
 
 
 def load_account_config(path: Path) -> PaperAccount:
@@ -481,6 +484,10 @@ def _write_receipt(
         "receipt_id": run.receipt_id,
         "symbols": list(symbols),
         "arming": run.armings,
+        "snapshot": run.snapshot,
+        "segment_snapshots": run.segment_snapshots,
+        "flags": run.flags,
+        "trial_file": run.trial_file,
         "commands": run.commands,
         "protection_cid": run.protection_cid,
         "errors": run.errors,
@@ -1565,9 +1572,9 @@ def main(
                 for index, intent in enumerate(intents):
                     try:
                         current_equity, current_buying_power = _read_balance(client)
-                    except LiveRefusal:
+                    except LiveRefusal as exc:
                         for remaining in intents[index:]:
-                            session.refuse(remaining)
+                            session.refuse(remaining, f"balance_read_failed: {exc}")
                         return
                     session.enter(
                         intent,
@@ -1676,7 +1683,16 @@ def main(
                 snapshot, failure, stopped, boundary = run_segment(
                     current, current_baseline, current_instruments, final_config
                 )
-                run.snapshot = snapshot
+                run.snapshot = {
+                    key: {
+                        name: str(value) if isinstance(value, Decimal) else value
+                        for name, value in row.items()
+                    }
+                    if isinstance(row, dict)
+                    else row
+                    for key, row in snapshot.items()
+                }
+                run.segment_snapshots.append({"segment": current.name, "snapshot": run.snapshot})
                 run.flags += _flag_count(snapshot)
                 if failure is not None or stopped:
                     break
@@ -1767,6 +1783,29 @@ def main(
         if failure is not None:
             run.errors.append(failure)
         run.stopped_ns = now_ns()
+        trial_written = False
+        try:
+            trial_path = Path(ledger_path) if ledger_path is not None else Path(WITNESS_PATH)
+            # TrialLog.append checkpoints through fsync, atomic replace and directory
+            # fsync before returning. A published receipt must already have its row.
+            _record_trial(
+                ledger_path=trial_path,
+                run=run,
+                baseline=final_baseline,
+                symbols=current_symbols,
+                segment=final_segment_obj,
+                entry_params_hash=params.params_hash,
+                failure=failure,
+            )
+            trial_written = True
+            run.trial_file = {
+                "path": str(trial_path.resolve()),
+                "sha256": hashlib.sha256(trial_path.read_bytes()).hexdigest(),
+            }
+        except Exception as exc:
+            run.errors.append(f"trial ledger refused: {type(exc).__name__}: {exc}")
+            print(run.errors[-1], file=sys.stderr)
+            trial_written = False
         stamp = tap_stamp or datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
         try:
             receipt = _write_receipt(
@@ -1789,23 +1828,7 @@ def main(
                 file=sys.stderr,
             )
 
-        try:
-            _record_trial(
-                ledger_path=Path(ledger_path) if ledger_path is not None else Path(WITNESS_PATH),
-                run=run,
-                baseline=final_baseline,
-                symbols=current_symbols,
-                segment=final_segment_obj,
-                entry_params_hash=params.params_hash,
-                failure=failure,
-            )
-        except Exception as exc:
-            print(
-                f"trial ledger refused: {type(exc).__name__}: {exc}",
-                file=sys.stderr,
-            )
-            return 1
-        return 0 if failure is None and receipt_written else 1
+        return 0 if failure is None and receipt_written and trial_written else 1
     finally:
         if session_tap is not None:
             session_tap.stop()

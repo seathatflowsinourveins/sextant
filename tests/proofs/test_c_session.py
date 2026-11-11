@@ -328,6 +328,8 @@ def test_no_order_before_a_qualifying_surge_and_the_flag_arms_the_entry() -> Non
         "pending_cid": None,
         "filled_qty": D("0"),
         "protection": None,
+        "entry_status": "unarmed",
+        "refusals": [],
     }
 
     flag(h)
@@ -486,3 +488,128 @@ def test_expiry_refuses_the_order_at_the_window_edge() -> None:
 
     assert h.submitted == []
     assert h.session.snapshot()[str(AAA)]["pending_cid"] is None
+
+
+def test_refusal_records_keep_a_cleared_chase_gate() -> None:
+    h = make_harness(AAA, params=fixture_params())
+    warm(h)
+    first_leg_run(h)
+    ask_quote(h, 38, ask="1.0400")
+    ask_quote(h, 39)
+
+    assert len(h.submitted) == 1
+    refusals = h.session.snapshot()[str(AAA)]["refusals"]
+    chase = next(row for row in refusals if row["reason"] == "chase_cap")
+    assert chase["flag_ts"] == START + 33 * SEC
+    assert chase["first_ns"] == START + 38 * SEC
+    assert chase["count"] == 1
+
+
+def test_refusal_records_explain_sizing_and_balance_failures() -> None:
+    for buying_power, failure, reason in (
+        ("1", None, "sizing: hard_limit below one share"),
+        ("10000", "account read failed", "balance_read_failed"),
+    ):
+        h = make_harness(AAA, broker_buying_power=buying_power)
+        h.broker.failure = failure
+        entered(h)
+        state = h.session.snapshot()[str(AAA)]
+        assert h.submitted == []
+        assert any(row["reason"] == reason for row in state["refusals"])
+
+
+def test_refusal_records_explain_readiness_and_full_capacity() -> None:
+    h = make_harness(AAA, BBB, slot_count=1)
+    warm(h, (AAA, BBB))
+    ask_quote(h, 33, (AAA, BBB))
+    first_leg_run(h, (AAA, BBB))
+    ask_quote(h, 38, (AAA, BBB))
+
+    assert len(h.submitted) == 1
+    reasons = {row["reason"] for row in h.session.snapshot()[str(BBB)]["refusals"]}
+    assert {"first_leg_not_ready", "slots_full"} <= reasons
+
+
+def test_refusal_records_explain_stale_quotes() -> None:
+    h = make_harness(AAA)
+    warm(h)
+    h.clock.at(40)
+    h.quote(quote(32, "1.0400", "1.0600"))
+    state = h.session.snapshot()[str(AAA)]
+    assert state["entry_status"] == "stale_quote"
+    assert any(row["reason"] == "stale_quote" for row in state["refusals"])
+
+
+def test_refusal_records_explain_expired_and_stale_intents() -> None:
+    for stale_quote, reason in ((False, "intent_expired"), (True, "stale_quote")):
+        h = make_harness(AAA)
+        warm(h)
+        first_leg_run(h)
+        h.clock.at(38)
+        h.session.on_quote(quote(38, "1.0200", "1.0300"))
+        intent = h.session.take_ready()[0]
+        # Check each independent consume/enter refusal using the real clocks.
+        moment = intent.expiry_ns if not stale_quote else START + 44 * SEC
+        if stale_quote:
+            from dataclasses import replace
+
+            intent = replace(intent, expiry_ns=START + 50 * SEC)
+        h.session.enter(intent, equity=D("10000"), buying_power=D("10000"), now=moment)
+        assert h.submitted == []
+        assert any(row["reason"] == reason for row in h.session.snapshot()[str(AAA)]["refusals"])
+
+
+def test_refusal_records_show_the_first_leg_state_at_the_gate() -> None:
+    h = make_harness(AAA)
+    warm(h)
+    ask_quote(h, 33)
+    row = next(
+        row
+        for row in h.session.snapshot()[str(AAA)]["refusals"]
+        if row["reason"] == "first_leg_not_ready"
+    )
+    assert row["first_leg_trades"] == 0
+    assert row["first_leg_span_ns"] == 0
+    assert D(row["ask"]) == D("1.03")
+    assert D(row["quiet_price"]) == D("1.00")
+    assert row["trade_fresh"] is True
+
+
+def test_refusal_records_explain_a_held_symbol_and_consumption_expiry() -> None:
+    from dataclasses import replace
+
+    h = make_harness(AAA)
+    warm(h)
+    first_leg_run(h)
+    h.session.config = replace(h.session.config, held_symbols=frozenset({str(AAA)}))
+    ask_quote(h, 38)
+    assert h.submitted == []
+    assert any(row["reason"] == "held_symbol" for row in h.session.snapshot()[str(AAA)]["refusals"])
+    h.session.config = replace(h.session.config, held_symbols=frozenset())
+    h.session.on_quote(quote(38, "1.0200", "1.0300"))
+    assert h.session.take_ready(START + 40 * SEC) == ()
+    assert any(
+        row["reason"] == "intent_expired" for row in h.session.snapshot()[str(AAA)]["refusals"]
+    )
+
+
+def test_an_armed_symbol_without_a_new_quote_explains_why_it_waited() -> None:
+    h = make_harness(AAA)
+    warm(h)
+    assert h.session.snapshot()[str(AAA)]["entry_status"] == "awaiting_quote"
+    assert h.submitted == []
+
+
+def test_readiness_refusals_retain_the_trade_price_behind_the_gate() -> None:
+    h = make_harness(AAA)
+    warm(h)
+    first_leg_run(h, price="1.0400")
+    ask_quote(h, 38)
+    row = next(
+        row
+        for row in h.session.snapshot()[str(AAA)]["refusals"]
+        if row["reason"] == "first_leg_not_ready"
+    )
+    assert D(row["last_trade_price"]) == D("1.04")
+    assert row["first_leg_trades"] == 5
+    assert h.submitted == []
