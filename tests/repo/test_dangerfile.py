@@ -4,6 +4,8 @@ import json
 import subprocess
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).parents[2]
 MANIFEST = (
     "| Practice or pick | Source, pinned | How it is applied | Proof |\n"
@@ -24,10 +26,12 @@ const fails = [];
 const pending = [];
 const danger = {
   github: {
-    pr: { body: input.body, user: { login: input.login } },
+    pr: { body: input.body, user: { login: input.login }, created_at: input.created_at },
     utils: { fileContents: async () => input.manifest },
   },
-  git: { created_files: input.created, modified_files: [] },
+  git: {
+    created_files: input.created, modified_files: input.modified, deleted_files: input.deleted,
+  },
 };
 const api = { danger, fail: (m) => fails.push(m), schedule: (p) => pending.push(p()) };
 vm.runInNewContext(fs.readFileSync(process.argv[1], "utf8"), { require: () => api });
@@ -50,11 +54,23 @@ def _failures(
     login: str = "someone",
     created: tuple[str, ...] = (),
     manifest: str = MANIFEST,
+    *,
+    created_at: str = "2026-11-11T15:35:10Z",
+    modified: tuple[str, ...] = (),
+    deleted: tuple[str, ...] = (),
 ) -> list[str]:
     done = subprocess.run(
         ["node", "-e", HARNESS, str(ROOT / "dangerfile.js")],
         input=json.dumps(
-            {"body": body, "login": login, "created": list(created), "manifest": manifest}
+            {
+                "body": body,
+                "login": login,
+                "created": list(created),
+                "modified": list(modified),
+                "deleted": list(deleted),
+                "manifest": manifest,
+                "created_at": created_at,
+            }
         ),
         capture_output=True,
         text=True,
@@ -187,3 +203,143 @@ def test_a_lookalike_owner_does_not_pass_for_its_prefix() -> None:
     body = _body(sources="not-nautechsystems/nautilus_trader@v1 " + "c" * 40)
     found = _failures(body, created=("src/sextant/exits/engine.py",))
     assert any("engine" in failure and "authority" in failure.lower() for failure in found)
+
+
+@pytest.mark.parametrize(
+    ("sources", "missing"),
+    [
+        ("a/b@v1 " + "c" * 40 + " BUILD ON", "path:line"),
+        ("a/b@v1 " + "c" * 40 + " src/client.py:12", "verdict"),
+        ("doi:10.1234/abc src/client.py:12 BUILD ON", "pinned source"),
+        ("a/b@v1 abc1234 src/client.py:12 BUILD ON", "pinned source"),
+        ("https://x.dev/page src/client.py:12 BUILD ON", "pinned source"),
+        ("a/b@v1 " + "c" * 40 + " https://x.dev:443 BUILD ON", "path:line"),
+        ("a/b@v1 " + "c" * 40 + " src/client.py:0 BUILD ON", "path:line"),
+        ("a/b@v1 " + "c" * 40 + " src/client.py:12 REBUILD", "verdict"),
+        ("a/b@v1 " + "c" * 40 + " src/client.py:12 KEEP OURS", "Where searched"),
+        (
+            "a/b@v1 " + "c" * 40 + " src/client.py:12 KEEP OURS\n- Where searched: ",
+            "Where searched",
+        ),
+        (
+            "a/b@v1 " + "c" * 40 + " <!-- src/client.py:12 BUILD ON -->",
+            "path:line",
+        ),
+    ],
+)
+def test_post_cutover_src_pr_names_missing_upstream_evidence(sources: str, missing: str) -> None:
+    found = _failures(
+        _body(sources=sources),
+        created=("src/sextant/ranking/client.py",),
+        created_at="2026-11-11T15:35:12Z",
+    )
+    assert any("Never self-invent" in failure and missing in failure for failure in found)
+
+
+@pytest.mark.parametrize(
+    "created_at", ["2026-11-11T15:35:10Z", "2026-11-11T15:35:11Z", "2026-11-11T10:35:11-05:00"]
+)
+def test_src_pr_created_no_later_than_cutover_keeps_the_old_rule(created_at: str) -> None:
+    assert (
+        _failures(_body(), created=("src/sextant/ranking/client.py",), created_at=created_at) == []
+    )
+
+
+@pytest.mark.parametrize("created_at", ["2026-11-11T15:35:11.001Z", "2026-11-11T10:35:12-05:00"])
+def test_cutover_uses_the_creation_instant(created_at: str) -> None:
+    found = _failures(_body(), created=("src/sextant/ranking/client.py",), created_at=created_at)
+    assert any("path:line" in failure for failure in found)
+
+
+@pytest.mark.parametrize(
+    "path", ["docs/design.md", "tests/proofs/test_client.py", "dangerfile.js", "src/other.py"]
+)
+def test_post_cutover_pr_without_sextant_src_keeps_the_old_rule(path: str) -> None:
+    assert _failures(_body(), created=(path,), created_at="2026-11-11T15:35:12Z") == []
+
+
+@pytest.mark.parametrize(
+    "sources",
+    [
+        "a/b@v1 " + "c" * 40 + " src/client.py:12 USE AS IS",
+        "[a/b](https://github.com/a/b)@v1 `" + "c" * 40 + "` `src/client.py:12` BUILD ON",
+        "https://x.dev/page, read 2026-11-11 `src/client.py:12` build on",
+        "a/b@v1 " + "c" * 40 + " README.md:1 KEEP OURS\n- Where searched: src/; client",
+    ],
+)
+def test_conforming_post_cutover_src_pr_passes(sources: str) -> None:
+    assert (
+        _failures(
+            _body(sources=sources),
+            created=("src/sextant/ranking/client.py",),
+            created_at="2026-11-11T15:35:12Z",
+        )
+        == []
+    )
+
+
+@pytest.mark.parametrize("file_list", ["modified", "deleted"])
+def test_post_cutover_rule_also_reads_modified_and_deleted_src(file_list: str) -> None:
+    found = _failures(
+        _body(),
+        created_at="2026-11-11T15:35:12Z",
+        **{file_list: ("src/sextant/ranking/client.py",)},
+    )
+    assert any("path:line" in failure for failure in found)
+
+
+def test_post_cutover_dependabot_generated_body_keeps_its_exemption() -> None:
+    assert (
+        _failures(
+            "Bumps a from 1 to 2.",
+            login="dependabot[bot]",
+            created=("src/sextant/exits/engine.py",),
+            created_at="2026-11-11T15:35:12Z",
+        )
+        == []
+    )
+
+
+@pytest.mark.parametrize("separator", ["\n\n", "\n- ", "\n* ", "\n1. ", "\n| "])
+@pytest.mark.parametrize(
+    ("second", "missing"),
+    [
+        ("d/e@v2 " + "d" * 40 + " BUILD ON", "path:line"),
+        ("d/e@v2 " + "d" * 40 + " src/clock.py:45", "verdict"),
+        ("doi:10.1234/abc src/clock.py:45 BUILD ON", "pinned source"),
+        ("d/e@v2 " + "d" * 40 + " src/clock.py:45 KEEP OURS", "Where searched"),
+    ],
+)
+def test_each_mechanism_entry_needs_its_own_evidence(
+    separator: str, second: str, missing: str
+) -> None:
+    first = "a/b@v1 " + "c" * 40 + " src/client.py:12 BUILD ON"
+    found = _failures(
+        _body(sources=first + separator + second),
+        created=("src/sextant/ranking/client.py",),
+        created_at="2026-11-11T15:35:12Z",
+    )
+    assert any(missing in failure for failure in found)
+
+
+@pytest.mark.parametrize(
+    "sources",
+    [
+        "- Client: a/b@v1 " + "c" * 40 + " src/client.py:12 BUILD ON\n"
+        "- Clock: d/e@v2 " + "d" * 40 + " src/clock.py:45 USE AS IS",
+        "| Mechanism | Upstream | Verdict |\n|---|---|---|\n"
+        "| Client | a/b@v1 " + "c" * 40 + " src/client.py:12 | BUILD ON |\n"
+        "| Clock | d/e@v2 " + "d" * 40 + " src/clock.py:45 | USE AS IS |",
+        "- Shipped piece: a/b@v1 " + "c" * 40 + " src/client.py:12\n"
+        "- Verdict: KEEP OURS\n- Where searched: src/ and docs/; client",
+    ],
+)
+def test_complete_mechanism_entries_pass(sources: str) -> None:
+    assert (
+        _failures(
+            _body(sources=sources),
+            created=("src/sextant/ranking/client.py",),
+            created_at="2026-11-11T15:35:12Z",
+        )
+        == []
+    )
