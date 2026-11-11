@@ -2598,3 +2598,78 @@ def test_the_keep_login_cli_prints_no_token_code_or_callback(
         assert login.document is not None
         assert login.document.tokens.refresh_token == ROTATED_REFRESH
     assert_no_secret(out + err + caplog.text, tmp_path)
+
+
+def sign_in_cli(monkeypatch: pytest.MonkeyPatch, login):
+    cli = importlib.import_module("sextant.tradingview.__main__")
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("a sign-in-only run reads and writes no list", pytrace=False)
+
+    monkeypatch.setattr(cli, "StoredLogin", lambda: login)
+    for name in ("read_research_inputs", "sync_research", "OfficialTools", "run_loop"):
+        monkeypatch.setattr(cli, name, forbidden)
+    return cli
+
+
+def test_sign_in_only_keeps_the_login_and_touches_no_list(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capfd, caplog
+):
+    """Addition 6: --authorize --keep-login with no display unit stores the sign-in only."""
+    import logging
+
+    caplog.set_level(logging.DEBUG)
+    events: list[str] = []
+    login = MemoryLogin(events)
+    service = oauth_service(events, refresh=answer(500, {}))
+    wired_session(monkeypatch, service, events)
+    cli = sign_in_cli(monkeypatch, login)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    capfd.readouterr()
+    assert cli.main(["--authorize", "--keep-login"]) == 0
+    out, err = capfd.readouterr()
+    assert events.count("consent") == 1
+    assert events.index("consent") < events.index("save") < events.index("session")
+    assert login.document is not None
+    assert login.document.tokens.refresh_token == FRESH_REFRESH
+    assert out == getattr(cli, "SIGNED_IN", "<cli.SIGNED_IN is not defined>") + "\n"
+    assert err == ""
+    assert_no_secret(out + err + caplog.text, tmp_path)
+
+
+def test_sign_in_only_writes_the_real_store_through_its_own_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capfd
+):
+    a_registered_login(tmp_path).forget()  # skips where the systemd-creds store is absent
+    events: list[str] = []
+    login = stored_login().StoredLogin(home=tmp_path)
+    wired_session(monkeypatch, oauth_service(events, refresh=answer(500, {})), events)
+    cli = sign_in_cli(monkeypatch, login)
+    try:
+        assert cli.main(["--authorize", "--keep-login"]) == 0
+        stored = login.load()
+        assert stored is not None
+        assert stored.tokens.access_token == FRESH_ACCESS
+        path = tmp_path / ".config" / "sextant" / "credentials" / LOGIN_NAME
+        assert (path.stat().st_mode & 0o777) == 0o600
+        out, err = capfd.readouterr()
+        assert_no_secret(out + err, tmp_path)
+    finally:
+        login.forget()
+
+
+@pytest.mark.parametrize(
+    ("argv", "name"),
+    [
+        (["--authorize"], "SIGN_IN_NEEDS_KEEP_LOGIN"),
+        (["--authorize", "--keep-login", "--apply"], "SIGN_IN_CHANGES_NO_LIST"),
+    ],
+)
+def test_sign_in_only_needs_keep_login_and_changes_no_list(
+    monkeypatch: pytest.MonkeyPatch, capsys, argv: list[str], name: str
+):
+    cli = sign_in_cli(monkeypatch, object())
+    monkeypatch.setattr(cli, "official_client", lambda *a, **k: pytest.fail("no session"))
+    assert cli.main(argv) == 2
+    assert capsys.readouterr().out == getattr(cli, name, f"<cli.{name} is not defined>") + "\n"
