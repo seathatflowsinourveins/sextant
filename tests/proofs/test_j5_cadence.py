@@ -56,7 +56,7 @@ def unit(now, members=("NASDAQ:A",)):
         "schema": "sextant.j5-ranked/1",
         "status": "fresh",
         "display_only": True,
-        "paper_slot": 3,
+        "paper_slot": 2,
         "generated_at_ns": _ns(now),
         "expires_at_ns": _ns(now) + 2 * NS,
         "generation_sha256": "a" * 64,
@@ -104,7 +104,7 @@ def display_unit(now, movers=("NASDAQ:A",), focus=("NASDAQ:A",)):
         "schema": "sextant.display-admission/1",
         "status": "fresh",
         "display_only": True,
-        "paper_slot": 3,
+        "paper_slot": 2,
         "generated_at_ns": _ns(now),
         "expires_at_ns": _ns(now) + 2 * NS,
         "watchlists": {"NS movers": list(movers), "NS focus": list(focus)},
@@ -146,6 +146,23 @@ def test_j5_display_admission_keeps_both_lists_and_claims_a_cross_list_move(tmp_
         usage_source="synthetic display admission",
     )
     assert empty is None
+
+
+def test_j5_display_admission_with_the_revoked_label_is_refused(tmp_path):
+    """A display view still labelled with the revoked third account claims nothing."""
+    now = at()
+    gate = policy(tmp_path, baseline={"NS movers": ["NASDAQ:A", "NASDAQ:B"], "NS focus": []})
+    stale_label = display_unit(now, ("NASDAQ:A",), ("NASDAQ:B",))
+    stale_label["paper_slot"] = 3
+    assert (
+        gate.claim(
+            stale_label,
+            now=now,
+            weekly_usage_pct=Decimal(30),
+            usage_source="synthetic display admission",
+        )
+        is None
+    )
 
 
 def test_j5_syncs_only_changed_membership_not_order_or_score(tmp_path):
@@ -348,7 +365,7 @@ def test_j5_registry_requires_every_sourced_uncalibrated_row(tmp_path, bad):
 
 
 @pytest.mark.parametrize(
-    "bad", ("stale", "future", "slot2", "unavailable", "unknown_members", "alias")
+    "bad", ("stale", "future", "revoked_slot3", "unavailable", "unknown_members", "alias")
 )
 def test_j5_never_admits_stale_or_invalid_producer_input(tmp_path, bad):
     gate = policy(tmp_path)
@@ -358,8 +375,8 @@ def test_j5_never_admits_stale_or_invalid_producer_input(tmp_path, bad):
         doc["expires_at_ns"] = _ns(now)
     elif bad == "future":
         doc["generated_at_ns"] = _ns(now) + 1
-    elif bad == "slot2":
-        doc["paper_slot"] = 2
+    elif bad == "revoked_slot3":
+        doc["paper_slot"] = 3
     elif bad == "unavailable":
         doc["status"] = "unavailable"
     elif bad == "unknown_members":

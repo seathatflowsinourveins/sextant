@@ -128,7 +128,7 @@ def test_real_generation_keeps_scores_unknowns_full_universe_and_display_only(li
     )  # Entry flags never filter display.
     assert generation_digest(native) == result["generation_sha256"]
     assert result["params_hash"] == live.publisher.registry.params_hash
-    assert result["display_only"] is True and result["paper_slot"] == 3
+    assert result["display_only"] is True and result["paper_slot"] == 2
     assert "NS B-protected" not in result["watchlists"]
     assert (
         live.publish_unit(

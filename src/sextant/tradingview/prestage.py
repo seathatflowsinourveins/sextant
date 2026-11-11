@@ -70,6 +70,7 @@ ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_CADENCE_REGISTRY = ROOT / "lanes/tradingview/j5-cadence.params.json"
 DEFAULT_K2_REGISTRY = ROOT / "lanes/tradingview/k2-ranking.params.json"
 DEFAULT_PRESTAGE_PARAMETERS = ROOT / "lanes/tradingview/prestage-parameters.json"
+DEFAULT_DISPLAY_BOUNDS = ROOT / "lanes/tradingview/display-bounds.params.json"
 DEFAULT_STATE_ROOT = Path.home() / "sextant-data" / "tradingview-prestage"
 STREAM_SOURCE = "REST-only bar-fidelity display host; zero streams opened on slot 2"
 SIP_AUTHORITY = "slot-2 SIP market-data entitlement; REST-only display host"
@@ -82,7 +83,7 @@ ASSET_SOURCE = (
 PROVENANCE = "alpaca_sip_raw_1min prior XNYS sessions; bar fidelity streaming one segment"
 KEY_NAMES = ("ALPACA_PAPER_2_API_KEY", "ALPACA_PAPER_2_SECRET_KEY")
 BUDGET_NAME = "prestage_request_budget"
-BOUNDS = frozenset({"gap_bound", "rvol_bound", "max_age_s"})
+BOUNDS = {"gap_bound": "fraction", "rvol_bound": "ratio", "max_age_s": "seconds"}
 
 
 class PrestageError(ValueError):
@@ -319,6 +320,44 @@ def load_request_budget(path: Path = DEFAULT_PRESTAGE_PARAMETERS) -> int:
             "are on record; record both in lanes/tradingview/prestage-parameters.json (Rule 2)"
         )
     return value
+
+
+def load_display_bounds(path: Path = DEFAULT_DISPLAY_BOUNDS) -> DisplayBounds:
+    """The three display bounds from their sourced registry rows; never a code literal."""
+    refusal = PrestageError(
+        f"the display bounds in {path} need exactly one sourced row each for "
+        f"{', '.join(BOUNDS)} (Rule 2)"
+    )
+    raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    rows = raw.get("rows") if raw.get("schema") == "tv-display-bounds.registry/1" else None
+    if (
+        not isinstance(rows, list)
+        or not all(isinstance(row, dict) and isinstance(row.get("name"), str) for row in rows)
+        or sorted(row["name"] for row in rows) != sorted(BOUNDS)
+    ):
+        raise refusal
+    values: dict[str, Any] = {}
+    for row in rows:
+        name, value, source = row["name"], row.get("value"), row.get("source")
+        try:
+            date.fromisoformat(row.get("last_change"))
+        except (TypeError, ValueError):
+            raise refusal from None
+        if (
+            row.get("unit") != BOUNDS[name]
+            or row.get("calibration_state") not in {"UNCALIBRATED", "CALIBRATED"}
+            or not isinstance(source, str)
+            or not source.strip()
+            or type(value) is not (int if name == "max_age_s" else str)
+        ):
+            raise refusal
+        values[name] = value
+    try:
+        return DisplayBounds(
+            Decimal(values["gap_bound"]), Decimal(values["rvol_bound"]), values["max_age_s"]
+        )
+    except (ArithmeticError, ValueError):
+        raise refusal from None
 
 
 def operator_source(lease: Any, *, requests_per_minute: int) -> AlpacaSource:
@@ -705,9 +744,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--nasdaq-listed", type=Path, required=True)
     parser.add_argument("--other-listed", type=Path, required=True)
     parser.add_argument("--symbol-map", type=Path, required=True, dest="symbol_map_path")
-    parser.add_argument("--gap-bound", type=Decimal, required=True)
-    parser.add_argument("--rvol-bound", type=Decimal, required=True)
-    parser.add_argument("--bounds-max-age-s", type=int, required=True)
+    parser.add_argument("--display-bounds", type=Path, default=DEFAULT_DISPLAY_BOUNDS)
+    parser.add_argument("--gap-bound", type=Decimal)
+    parser.add_argument("--rvol-bound", type=Decimal)
+    parser.add_argument("--bounds-max-age-s", type=int)
     parser.add_argument("--k2-registry", type=Path, default=DEFAULT_K2_REGISTRY)
     parser.add_argument("--cadence-registry", type=Path, default=DEFAULT_CADENCE_REGISTRY)
     parser.add_argument("--state-root", type=Path, default=DEFAULT_STATE_ROOT)
@@ -715,7 +755,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--once", action="store_true")
     args = parser.parse_args(argv)
     try:
-        bounds = DisplayBounds(args.gap_bound, args.rvol_bound, args.bounds_max_age_s)
+        explicit = (args.gap_bound, args.rvol_bound, args.bounds_max_age_s)
+        if all(value is None for value in explicit):
+            bounds = load_display_bounds(args.display_bounds)
+        elif any(value is None for value in explicit):
+            raise PrestageError("explicit display bounds need all three bound flags")
+        else:
+            bounds = DisplayBounds(args.gap_bound, args.rvol_bound, args.bounds_max_age_s)
         return run(
             research_dir=args.research_dir,
             nasdaq_listed=args.nasdaq_listed,
