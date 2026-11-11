@@ -19,7 +19,6 @@ def ages():
     )
 
 
-
 def replay(tmp_path, *, mid=False, gap=False):
     """The production attach function and B receiver on a native offline engine."""
     from decimal import Decimal
@@ -112,7 +111,6 @@ def replay(tmp_path, *, mid=False, gap=False):
         engine.dispose()
 
 
-
 def test_native_generation_and_heartbeat_reach_b_consumer(tmp_path):
     from test_ranking import NS, START
 
@@ -125,7 +123,6 @@ def test_native_generation_and_heartbeat_reach_b_consumer(tmp_path):
     assert actor.host.observed is True
 
 
-
 @pytest.mark.parametrize("case", ["mid", "gap"])
 def test_segment_observation_vetoes_b_consumer(tmp_path, case):
     from test_ranking import NS, START
@@ -134,7 +131,6 @@ def test_segment_observation_vetoes_b_consumer(tmp_path, case):
     assert entry.entry_rank("PENNY", now=START + 360 * NS) is None
     assert isinstance(actor.host, SegmentedHost)
     assert actor.host.observed is False
-
 
 
 @pytest.mark.parametrize("which", ["generation", "heartbeat"])
@@ -155,4 +151,3 @@ def test_native_consumer_ages_veto(tmp_path, which):
         entry.accept_heartbeat(at=at + 3 * NS, received_ns=at + 3 * NS)
     assert entry.entry_rank("PENNY", now=at + 3 * NS) is None
     assert entry.reason == f"entry_{which}_stale"
-

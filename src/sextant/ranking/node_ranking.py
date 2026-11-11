@@ -260,6 +260,22 @@ def build(
         .add_data_client(CLIENT_NAME, factory, args.data)
         .build()
     )
+    return node, attach(node, args, inputs=inputs, segment_of=segment_of)
+
+
+def attach(
+    node: Any,
+    args: RankingArguments,
+    *,
+    inputs: Callable[[Segment], SegmentInputs | None],
+    segment_of: Callable[[int], Segment | None] = lambda ts: segment_start(ts)[0],
+) -> RankingActor:
+    """Attach the existing composition to a node; never creates a client or a bus.
+
+    rc8 d53849b2 python/nautilus_trader/live/__init__.pyi:1126 and
+    python/nautilus_trader/backtest/__init__.pyi:492 (add_actor);
+    docs/concepts/message_bus.md:55-65,180-239 supplies the native transport.
+    """
     sessions: list[SegmentedHost] = []
 
     def host() -> SegmentedHost:  # on the node thread, in the Actor's on_start
@@ -292,7 +308,7 @@ def build(
         )
     )
     node.add_actor(actor)
-    return node, actor
+    return actor
 
 
 def run(
