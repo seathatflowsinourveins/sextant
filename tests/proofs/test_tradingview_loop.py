@@ -126,7 +126,7 @@ def test_loop_admission_view_carries_both_lists_and_the_generation_clocks(tmp_pa
     doc = module._admission(inputs)
     assert doc["schema"] == "sextant.display-admission/1"
     assert doc["status"] == "fresh" and doc["display_only"] is True
-    assert doc["paper_slot"] == 3
+    assert doc["paper_slot"] == 2
     assert doc["generated_at_ns"] == _ns("2026-11-06T14:29:00+00:00")
     assert doc["expires_at_ns"] == _ns(inputs.expires_at)
     assert doc["watchlists"] == {

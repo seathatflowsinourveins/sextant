@@ -24,7 +24,7 @@ from sextant.ranking.generation import Coverage, CoverageState
 from sextant.ranking.publisher import RankingPublisher, ranking_data_type
 from sextant.ranking.reader import GenerationReader
 from sextant.ranking.registry import RegistryRow
-from sextant.tradingview.inputs import QUALIFIED
+from sextant.tradingview.inputs import DISPLAY_PAPER_SLOT, QUALIFIED
 
 SCOPE = AccountScope("alpaca-market-data", "paper-slot-2")
 
@@ -189,7 +189,11 @@ class LiveProducer:
     def build_unit(
         self, *, now: int, symbol_map: Mapping[str, str | None], mapping_clocks: Clocks
     ) -> dict:
-        common = {"schema": "sextant.j5-ranked/1", "display_only": True, "paper_slot": 3}
+        common = {
+            "schema": "sextant.j5-ranked/1",
+            "display_only": True,
+            "paper_slot": DISPLAY_PAPER_SLOT,
+        }
         try:
             if not self._admit(mapping_clocks, now):
                 raise ValueError("mapping unavailable")

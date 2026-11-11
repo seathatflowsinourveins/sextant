@@ -183,8 +183,12 @@ against the broker's current lists rather than the previous session's. The defau
 must use the same canonical root. `--weekly-usage-pct`/`--usage-source` exist to
 supply the Windows controller's sourced number; when unset, the process states
 that it has no Claude surface and the 900s branch is not exercised. The loop
-needs one complete display unit; projecting the slot-3 `sextant.j5-ranked/1`
+needs one complete display unit; projecting the `sextant.j5-ranked/1`
 document into that unit is the bridge's job and is not part of this change.
+Every display unit and admission view carries `paper_slot: 2`, the account
+whose data key feeds it; slot 3 was revoked on 2026-11-10 (owner, D-46). The
+producer writes that label, and the bridge, the cadence claim and the loop's
+admission view refuse any other, the revoked 3 included.
 
 ## Display parameter registry
 
@@ -357,8 +361,7 @@ scripts/with-keys.sh --strict \
   uv run --frozen python -m sextant.tradingview.prestage \
   --research-dir "$HOME/sextant-data/tradingview-prestage/unit" \
   --nasdaq-listed nasdaqlisted.txt --other-listed otherlisted.txt \
-  --symbol-map symbol_map.json \
-  --gap-bound 0.05 --rvol-bound 2 --bounds-max-age-s 600
+  --symbol-map symbol_map.json
 ```
 
 `--strict` refuses a missing or empty key. The process reads only
@@ -366,15 +369,19 @@ scripts/with-keys.sh --strict \
 and passes them to the SDK; no key enters a file, flag, URL or log.
 
 The request budget is its own row in
-`lanes/tradingview/prestage-parameters.json`, never a K2 row. It has no value
-or authority today: the 2026-11-10 C REST-rate measure found no REST-call
-records, so no peak exists to derive one. The entry point refuses to start
-until a measured value and authority are recorded (AGENTS.md Rule 2).
+`lanes/tradingview/prestage-parameters.json`, never a K2 row: 200 requests per
+minute, UNCALIBRATED, the lead's 2026-11-11 ruling. The row cites its bound and
+measurement; it is the producer's share of a key that Paper B's reads and the
+nightly calibration job also use. A row without a value, a REVIEWED scope or a
+source still refuses (AGENTS.md Rule 2).
 
 The directory texts are the public NASDAQ Trader files read on the lane's
 published date; the symbol map is the operator's exact TradingView map and must
-cover the whole filtered universe; the three bounds are the caller-supplied
-display metadata from the bridge (there is no default authority). `--once`
+cover the whole filtered universe (no shipped source). The three display bounds
+are metadata the bridge validates and never applies, read from
+`lanes/tradingview/display-bounds.params.json` (`--display-bounds`, sourced
+UNCALIBRATED rows); all three of `--gap-bound`, `--rvol-bound` and
+`--bounds-max-age-s` replace the file, and only some refuse. `--once`
 publishes one tick and exits, nonzero if that tick is refused. Otherwise it
 sleeps the J5 cadence floor (150 s in the 07:00–10:30 and 15:00–16:00 ET onset
 windows, 300 s elsewhere in 04:00–20:00 ET; the 900 s weekly-usage floor never

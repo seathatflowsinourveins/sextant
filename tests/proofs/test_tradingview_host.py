@@ -540,7 +540,7 @@ def test_host_ranks_match_direct_bar_fidelity_replay(tmp_path: Path) -> None:
         )
         assert published == sorted(expected[1])
         assert unit["watchlists"] == {"NS Ranked": ["NASDAQ:BBB", "NASDAQ:AAA"]}
-        assert unit["paper_slot"] == 3 and unit["display_only"] is True
+        assert unit["paper_slot"] == 2 and unit["display_only"] is True
 
 
 def test_host_refuses_lookahead_and_skips_stale_bars(tmp_path: Path) -> None:
