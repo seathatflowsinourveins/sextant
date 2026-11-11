@@ -1,6 +1,7 @@
 """Offline E4 witness through NautilusTrader's ALPACA sandbox shell."""
 
 import asyncio
+import re
 import threading
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -88,8 +89,9 @@ class StandInSocket:
         for channel, rows in rows_by_channel:
             if channel not in self.stream.delivered and "AAPL" in payload.get(channel, ()):
                 if channel == self.bad_channel:
-                    size = "s" if channel == "trades" else "v"
-                    await self.stream._dispatch({**rows[0], size: -1, "t": _WireTimestamp()})
+                    size = {"quotes": "bs", "trades": "s", "bars": "v"}[channel]
+                    bad_row = QUOTE if channel == "quotes" else rows[0]
+                    await self.stream._dispatch({**bad_row, size: -1, "t": _WireTimestamp()})
                     later = _WireTimestamp(START + timedelta(seconds=1))
                     await self.stream._dispatch({**QUOTE, "t": later})
                 for row in rows:
@@ -412,7 +414,7 @@ def offline_client(**kwargs):
     )
 
 
-def test_disconnect_reraises_first_handler_conversion_failure(monkeypatch):
+def test_disconnect_reraises_first_handler_failure(monkeypatch):
     from unittest.mock import AsyncMock
 
     from alpaca.data.models import Quote
@@ -443,7 +445,7 @@ def test_disconnect_reraises_first_handler_conversion_failure(monkeypatch):
         try:
             assert not stream._should_run
         finally:
-            with pytest.raises(ValueError, match="nonnegative whole count"):
+            with pytest.raises(KeyError, match="UNREGISTERED"):
                 await client._disconnect()
 
     asyncio.run(check())
@@ -462,21 +464,30 @@ def test_trade_id_is_bounded_without_claiming_aggressor():
     assert tick.aggressor_side == AggressorSide.NO_AGGRESSOR
 
 
-@pytest.mark.parametrize("channel", ["trades", "bars"])
-def test_bad_stream_row_is_counted_and_later_quotes_reach_strategy(channel):
+@pytest.mark.parametrize("channel", ["quotes", "trades", "bars"])
+def test_bad_stream_row_is_counted_and_later_quotes_reach_strategy(channel, capfd):
     from nautilus_trader.core import dt_to_unix_nanos
 
     strategy, stream, _history, client = asyncio.run(run_shell(bad_channel=channel))
     quotes = [event for event, _ in strategy.events if isinstance(event, QuoteTick)]
-    assert [quote.ts_event for quote in quotes] == [
+    assert sorted(quote.ts_event for quote in quotes) == [
         dt_to_unix_nanos(START),
         dt_to_unix_nanos(START + timedelta(seconds=1)),
     ]
     assert sum(isinstance(event, TradeTick) for event, _ in strategy.events) == 1
     assert sum(isinstance(event, Bar) for event, _ in strategy.events) == 1
+    assert client.dropped_quote_count == len(INVALID_QUOTES) + int(channel == "quotes")
     assert client.dropped_trade_count == int(channel == "trades")
     assert client.dropped_bar_count == int(channel == "bars")
     assert stream.closed.is_set()
+    client._log.flush()
+    captured = capfd.readouterr()
+    text = re.sub(r"\x1b\[[0-9;]*m", "", captured.out + captured.err)
+    errors = [line for line in text.splitlines() if f"Dropped Alpaca {channel} row" in line]
+    assert len(errors) == 1
+    assert "[ERROR]" in errors[0]
+    assert INSTRUMENT_ID.symbol.value in errors[0]
+    assert "nonnegative whole count" in errors[0]
 
 
 def test_daily_bar_close_and_request_windows_across_both_dst_changes():

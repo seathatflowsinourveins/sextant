@@ -15,7 +15,6 @@ import asyncio
 import os
 import time
 from collections.abc import Awaitable, Callable
-from contextlib import suppress
 from dataclasses import dataclass
 from datetime import timedelta
 from decimal import Decimal
@@ -349,24 +348,34 @@ class AlpacaDataClient(MarketDataClient):
                 return
             receipt = time.time_ns()
             tick: _Tick | None = None
+            conversion_error: Exception | None = None
             try:
                 stock, key = stocks[row.symbol]
                 if channel == "quotes" and isinstance(row, Quote):
-                    tick = _quote_tick(row, stock, receipt)
+                    try:
+                        tick = _quote_tick(row, stock, receipt)
+                    except Exception as error:
+                        conversion_error = error
                 elif channel == "trades" and isinstance(row, Trade):
                     # rc8 Architect AX handles trade and candle parse errors per row.
-                    with suppress(ArithmeticError, TypeError, ValueError):
+                    try:
                         tick = _trade_tick(row, stock, receipt)
+                    except Exception as error:
+                        conversion_error = error
                 elif isinstance(key, BarType) and isinstance(row, StockBar):
-                    with suppress(ArithmeticError, TypeError, ValueError):
+                    try:
                         tick = _bar(row, stock, key, receipt)
+                    except Exception as error:
+                        conversion_error = error
                 else:
                     raise TypeError("Unexpected Alpaca market data model")
             except Exception as error:
                 self._handler_failure = error
                 await stream.stop_ws()
                 return
-            owner.call_soon_threadsafe(self._publish, channel, stock.symbol, key, tick)
+            owner.call_soon_threadsafe(
+                self._publish, channel, stock.symbol, key, tick, conversion_error
+            )
 
         # alpaca-py installs these handlers before its wire send and retains
         # them for reconnect. Accept the earliest queued tick from each handler.
@@ -374,10 +383,17 @@ class AlpacaDataClient(MarketDataClient):
         await self._change_subscription(stream, stream.register, channel, tuple(stocks), receive)
 
     def _publish(
-        self, channel: str, symbol: str, key: InstrumentId | BarType, tick: _Tick | None
+        self,
+        channel: str,
+        symbol: str,
+        key: InstrumentId | BarType,
+        tick: _Tick | None,
+        conversion_error: Exception | None = None,
     ) -> None:
         if tick is None:
             self._dropped_counts[channel] += 1
+            if conversion_error is not None:
+                self._log.error(f"Dropped Alpaca {channel} row for {symbol}: {conversion_error}")
         elif not self._closing and self._active[channel].get(symbol) == key:
             self._handle_data(tick)
 
