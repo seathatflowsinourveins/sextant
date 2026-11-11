@@ -133,13 +133,48 @@ The following commands are owner-session steps, **not run by this worker**:
 ```sh
 uv run --frozen python -m sextant.tradingview --research-dir /path/to/top100/latest --authorize
 uv run --frozen python -m sextant.tradingview --research-dir /path/to/top100/latest --authorize --apply
+uv run --frozen python -m sextant.tradingview --research-dir /path/to/top100/latest --authorize --keep-login --apply
+uv run --frozen python -m sextant.tradingview --research-dir /path/to/top100/latest --keep-login --apply
+uv run --frozen python -m sextant.tradingview --forget-login
 uv run --frozen python -m sextant.tradingview --loop --research-dir /path/to/top100/latest --authorize
 ```
 
-Each process requires explicit owner consent in the browser. It uses only the
-official `https://mcp.tradingview.com/mcp` endpoint and an ephemeral loopback
-OAuth callback. Tokens and client registration stay in RAM and clear at exit;
-there is no persistence flag or file/keychain/environment credential fallback.
+By default each process requires explicit owner consent in the browser and
+keeps tokens and client registration in RAM, clearing at exit; unflagged runs
+and the tests stay RAM-only. The optional `--keep-login` makes the sign-in last:
+the official SDK's tokens and client registration are kept as one JSON line in
+the repo's existing encrypted store,
+`~/.config/sextant/credentials/TRADINGVIEW_MCP_OAUTH`, encrypted at rest by
+`systemd-creds` with the host key ([ADR-0028](adr/0028-local-keys.md)). A
+sync-written value reaches the store over `--sealed-stdin` and is read only
+through `ns_systemd_read`: there is no plain file, environment variable, argv
+value, log line or value on stdout. Every token issue and refresh writes the
+rotated value back through the same store, and a stored access token past its
+lifetime refreshes through the stored refresh token, so a later run normally
+needs no browser. The stored login is deleted only when the token endpoint
+refuses the refresh with an RFC 6749 section 5.2 code that means the grant is
+dead (`invalid_grant`, `invalid_client` or `unauthorized_client`, on 400 or
+401); under `--authorize` one owner browser sign-in then runs, and it never
+loops or retries the refused token. A 5xx, a 429, a transport failure or any
+other answer stops the run, pages on stderr and leaves the stored value for the
+next run. The authorization server publishes its token endpoint on another host,
+so before a stored login's first refresh the sync runs the SDK's discovery from
+the issuer bound to the stored registration (else the server's protected-resource
+well-known); a refresh never goes to the SDK's fallback `<server>/token`, and
+without the published metadata the run stops the same way. A browser opens only under `--authorize`: with `--keep-login` alone a
+missing, refused or unusable login stops with its owner step and a page, which
+is what lets an unattended unit use it. A value that cannot be read stops with
+`--forget-login`, then `--authorize --keep-login`. `--forget-login` is the one
+command that deletes the local value, and `scripts/with-keys.sh` refuses this
+name, so no other command gets it in an environment. The store is per-user, not
+a same-UID isolation boundary. `--keep-login` is refused with `--loop`; the loop's
+own start and stop schedule stays a later change.
+
+The sign-in uses only the official `https://mcp.tradingview.com/mcp` endpoint
+and an ephemeral loopback OAuth callback. Revocation is the owner's, in their
+own TradingView account where the OAuth consent was given: revoke the
+authorised MCP client there and run `--forget-login`. Local deletion alone is
+not server revocation.
 The owner must ensure only one sync process runs at a time: there is no
 cross-process lock, and concurrent processes are unsupported. The in-process
 limiter and logging guard do not confer cross-process ownership. Run it on the
