@@ -87,6 +87,7 @@ class SegmentedHost:
     def _reset_counts(self) -> None:
         self.observed = False
         self.gaps = self.generations = self.late = self.unprimed = 0
+        self.amendments = {"inside": 0, "outside": 0, "unprimed": 0}
         self._last: RankingGeneration | None = None
 
     def actor_priming(self) -> Priming:
@@ -155,6 +156,16 @@ class SegmentedHost:
                 name, references=self._current.references[name], asset=self._asset(name)
             )
         )
+
+    def on_amendment(self, name: str, key: str) -> RankingGeneration | None:
+        """A correction or cancel, for the current segment's adapter (N1f)."""
+        if self.host is None:
+            self.amendments["unprimed"] += 1
+            return None
+        before = self.host.amendments_inside
+        generation = self._count(self.host.on_amendment(name, key))
+        self.amendments["inside" if self.host.amendments_inside > before else "outside"] += 1
+        return generation
 
     def set_coverage(self, coverage: Coverage) -> RankingGeneration | None:
         """Coverage is this host's observation; a non-READY word from the Actor is a gap.
@@ -257,6 +268,7 @@ class SegmentedHost:
             "late": self.late,
             "unrouted": self.unrouted,
             "unprimed": self.unprimed,
+            "amendments": dict(self.amendments),
             "faults": {}
             if host is None
             else {

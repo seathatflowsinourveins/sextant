@@ -28,19 +28,25 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
-from typing import Protocol
+from typing import Any, Protocol
 
 from nautilus_trader.common import DataActor, SocketState, SocketStateChanged
 from nautilus_trader.config import DataActorConfig
 from nautilus_trader.model import (
     CustomData,
+    DataType,
     InstrumentId,
     InstrumentStatus,
     MarketStatusAction,
     TradeTick,
 )
 
-from sextant.alpaca.stream_facts import AlpacaTradeFacts, StreamFacts
+from sextant.alpaca.stream_facts import (
+    AMENDMENTS,
+    AlpacaTradeFacts,
+    StreamFacts,
+    vendor_trade_id,
+)
 from sextant.ranking.engine import ReferencePrices, price_counts
 from sextant.ranking.generation import Coverage, CoverageState, RankingGeneration
 from sextant.ranking.heartbeat import HeartbeatEmitter, heartbeat_signal
@@ -181,6 +187,7 @@ class RankingActor(DataActor):
         self._watch_from: int | None = None  # node time the status subscription went active
         self._subscribed_at: int | None = None  # ... first, never moved by a reset (2e)
         self.cleared_by_print = self.cleared_by_status = self.resets = self.stream_gaps = 0
+        self.ignored_amendments = 0
         snapshot = config.status_snapshot_window_s
         self._snapshot_ns = None if snapshot is None else snapshot * NS
         self.snapshot_statuses: dict[str, int] | None = None if snapshot is None else {}
@@ -231,6 +238,8 @@ class RankingActor(DataActor):
             if isinstance(self._facts, StreamFacts):  # the client's facts and gaps (N1e)
                 self.subscribe_data(self._facts.facts_type)
                 self.subscribe_data(self._facts.gap_type)
+                for kind in AMENDMENTS:  # corrections and cancels (N1f)
+                    self.subscribe_data(DataType(kind, metadata={"feed": self._facts.feed}))
             self.subscribe_socket_state()  # a reported transport change is a stream gap
             self.watch_statuses()
             self.subscribe_trades(list(self._ids))
@@ -339,6 +348,8 @@ class RankingActor(DataActor):
         if kind == source.facts_type.type_name and isinstance(data.data, AlpacaTradeFacts):
             if data.data.instrument_id in self._ids:
                 source.record(data.data)
+        elif kind in AMENDMENTS:
+            self._amend(data.data)
         elif kind == source.gap_type.type_name:
             self.stream_gaps += 1
             self.reset_evidence("stream reconnect", since=data.data.ts_init)
@@ -356,6 +367,22 @@ class RankingActor(DataActor):
         else:
             self._publish(generation)
         self._reset_names(reason, since)
+
+    def _amend(self, event: Any) -> None:
+        """A correction or cancel names its original print; the host withholds that name's rank
+        while its live windows contain the print (LEAD-2357 1b, N1f)."""
+        turn = getattr(self.host, "on_amendment", None)
+        if event.instrument_id not in self._ids:
+            self.ignored_amendments += 1
+            return
+        if turn is None:
+            return
+        key = vendor_trade_id(event.exchange, event.original_id)
+        try:
+            generation = turn(str(event.instrument_id.symbol), key)
+        except Exception as exc:
+            return self._fault("amendment", exc)
+        self._publish(generation)
 
     def _clear_on_print(self, trade: TradeTick, facts: tuple[bool, tuple[str, ...]] | None) -> None:
         name, start = str(trade.instrument_id.symbol), self._watch_from

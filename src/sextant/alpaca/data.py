@@ -73,12 +73,17 @@ from nautilus_trader.model import (
     Venue,
 )
 
-from sextant.alpaca.stream_facts import AlpacaStreamGap, facts_type, gap_type, trade_facts
+from sextant.alpaca.stream_facts import (
+    AlpacaStreamGap,
+    facts_type,
+    gap_type,
+    trade_facts,
+    vendor_trade_id,
+)
 from sextant.alpaca.trade_updates import _trade_update
 
 _NY = ZoneInfo("America/New_York")
 _STREAM_STOP_TIMEOUT_S = 5.0  # E4 dsh build 48cb220, shutdown bound.
-_TRADE_ID_MAX = 36  # NautilusTrader rc8 crates/model/src/identifiers/trade_id.rs:50.
 _ROUND_LOT_SHARES = 100  # Alpaca's quote sizes and the incumbent SIP normalization.
 type _Tick = QuoteTick | TradeTick | Bar | InstrumentStatus | CustomData
 type _StreamOwner = tuple[asyncio.AbstractEventLoop, asyncio.Task[None]]
@@ -820,15 +825,13 @@ def _quote_tick(row: Quote, stock: _Stock, receipt: int | None = None) -> QuoteT
 def _trade_tick(row: Trade, stock: _Stock, receipt: int | None = None) -> TradeTick:
     if row.id is None:
         raise ValueError("Alpaca trade is missing its vendor ID")
-    exchange = getattr(row.exchange, "value", row.exchange)
-    trade_id = f"{exchange}-{row.id}" if exchange else str(row.id)
     event = dt_to_unix_nanos(row.timestamp)
     return TradeTick(
         stock.id,
         stock.price(row.price),
         stock.quantity(row.size),
         AggressorSide.NO_AGGRESSOR,
-        TradeId(trade_id[:_TRADE_ID_MAX]),
+        TradeId(vendor_trade_id(row.exchange, row.id)),
         event,
         event if receipt is None else receipt,
     )

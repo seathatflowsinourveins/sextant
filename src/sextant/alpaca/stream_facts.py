@@ -36,6 +36,16 @@ class AlpacaStreamGap:
     ts_init: int
 
 
+TRADE_ID_MAX = 36  # NautilusTrader rc8 crates/model/src/identifiers/trade_id.rs:50
+AMENDMENTS = ("AlpacaTradeCorrection", "AlpacaTradeCancel")  # trade_updates.py data types
+
+
+def vendor_trade_id(exchange: object, trade_id: object) -> str:
+    """The engine ``TradeId`` value of a vendor print: the data client's one rule (N1f)."""
+    venue = getattr(exchange, "value", exchange)
+    return (f"{venue}-{trade_id}" if venue else str(trade_id))[:TRADE_ID_MAX]
+
+
 def facts_type(feed: str) -> DataType:
     return DataType("AlpacaTradeFacts", metadata={"feed": feed})
 

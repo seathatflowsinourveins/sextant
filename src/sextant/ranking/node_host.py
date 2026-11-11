@@ -29,7 +29,7 @@ from dataclasses import replace
 
 from nautilus_trader.model import TradeTick
 
-from sextant.ranking.engine import ReferencePrices, price_counts
+from sextant.ranking.engine import MoverState, ReferencePrices, price_counts
 from sextant.ranking.generation import Coverage, CoverageState, RankingGeneration
 from sextant.ranking.publisher import AssetState, RankingPublisher
 
@@ -54,6 +54,17 @@ def _well_formed(asset: AssetState) -> bool:
     )
 
 
+def _contains(state: MoverState, key: str) -> bool:
+    """A print still feeds a feature while it is in a window bucket or is its anchor."""
+    for window in (state.history, state.volume_history):
+        ticks = [tick for bucket in window.buckets for tick in bucket.ticks]
+        if window.anchor is not None:
+            ticks.append(window.anchor)
+        if any(tick.trade_id.value == key for tick in ticks):
+            return True
+    return False
+
+
 class NodeRankingHost:
     def __init__(self, publisher: RankingPublisher, *, clock: Callable[[], int]) -> None:
         if publisher.heartbeat is not None:
@@ -63,6 +74,8 @@ class NodeRankingHost:
         self.tainted: set[str] = set()
         self.ingress_errors = self.ignored_trades = self.malformed_assets = 0
         self.publish_errors = 0
+        self.amended: dict[str, set[str]] = {}  # pending corrected prints per name (N1f)
+        self.amendments_inside = self.amendments_outside = 0
         self.last_error: str | None = None
 
     def on_trade(
@@ -86,10 +99,34 @@ class NodeRankingHost:
             state = publisher.states[name]
             publisher.states[name] = replace(state, latest=None, segment_covered=False)
             return self._publish(force=True)  # rule 1 withdraws that name's rank
+        self._hold(name)
         state = publisher.states[name]
         if name in self.tainted and state.segment_covered:  # a late print at the segment start
             publisher.states[name] = replace(state, latest=None, segment_covered=False)  # (G2)
         return self._publish(force=False)
+
+    def on_amendment(self, name: str, key: str) -> RankingGeneration | None:
+        """A correction or cancel: withhold the name while a live window holds the print."""
+        if name not in self.publisher.states or not _contains(self.publisher.states[name], key):
+            self.amendments_outside += 1
+            return None
+        self.amendments_inside += 1
+        self.amended.setdefault(name, set()).add(key)
+        self._hold(name)
+        return self._publish(force=True)  # a withdrawal publishes at once
+
+    def _hold(self, name: str) -> None:
+        """Keep the row unranked while any pending print is contained; then let it stand."""
+        pending = self.amended.get(name)
+        if not pending:
+            return
+        state = self.publisher.states[name]
+        pending = {key for key in pending if _contains(state, key)}
+        if pending:
+            self.amended[name] = pending
+            self.publisher.states[name] = replace(state, latest=None)
+        else:
+            del self.amended[name]
 
     def set_symbol(
         self, name: str, *, references: ReferencePrices, asset: AssetState | None
