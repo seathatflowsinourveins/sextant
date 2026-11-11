@@ -57,7 +57,7 @@ from nautilus_trader.model import InstrumentId, Symbol, TraderId
 
 from sextant.alpaca.config import AlpacaDataClientConfig, AlpacaExecutionClientConfig
 from sextant.alpaca.constants import DEFAULT_FEED, VENUE
-from sextant.alpaca.execution import execution_engine_config
+from sextant.alpaca.execution import _TERMINAL, execution_engine_config
 from sextant.alpaca.factories import AlpacaDataClientFactory, AlpacaExecutionClientFactory
 from sextant.entry.parameters import EntryParameters
 from sextant.execution.custody import AccountScope, CustodyError, WriterLease
@@ -313,20 +313,54 @@ class Gate:
             if str(order.client_order_id).startswith((HOUSE_PREFIX, self.old_prefix))
         ]
         withheld = [row for client in self.clients for row, _ in client.withheld_positions]
-        withheld_house = [
-            row
-            for client in self.clients
-            for row, _ in client.withheld
-            if str(row.get("client_order_id", "")).startswith((HOUSE_PREFIX, self.old_prefix))
-        ]
+        # A withheld row is withheld whatever its status (its name is not claimed); only a row
+        # that has not ended is open. Alpaca's terminal statuses (execution.py _TERMINAL) are
+        # the engine's closed set (rc8 crates/model/src/enums.rs:1489-1500) plus "replaced",
+        # which ends only its own row: its whole lineage is walked (_lineage).
+        rows = [row for client in self.clients for row, _ in client.withheld]
+        by_id = {row.get("id"): row for row in rows}
+        ends, unresolved = {}, 0
+        for row in rows:
+            if not str(row.get("client_order_id", "")).startswith((HOUSE_PREFIX, self.old_prefix)):
+                continue
+            state, last = _lineage(row, by_id)
+            if state == "unresolved":
+                unresolved += 1
+            elif state == "open":
+                ends[id(last)] = last  # one lineage counts once, however many rows lead into it
         self.counts = {
             "open_positions": len(positions),
-            "open_house_orders": len(house) + len(withheld_house),
+            "open_house_orders": len(house) + len(ends),
             "withheld_holdings": len(withheld),
+            "unresolved_replacements": unresolved,
         }
-        names = ("not_flat", "house_order_open", "holding_outside_claims")
-        values = (len(positions), self.counts["open_house_orders"], len(withheld))
+        names = ("not_flat", "house_order_open", "holding_outside_claims", "replacement_unresolved")
+        values = (len(positions), self.counts["open_house_orders"], len(withheld), unresolved)
         return [name for name, count in zip(names, values, strict=True) if count]
+
+
+def _lineage(row: dict[str, Any], by_id: Mapping[Any, dict[str, Any]]) -> tuple[str, Any]:
+    """Walk a replacement lineage through Alpaca's ``replaced_by`` link (alpaca-py cc4cb3b7
+    ``alpaca/trading/models.py:223``; a successor may carry any client id, ``requests.py:300``),
+    following a populated link on ANY status, so a terminal-looking middle never ends it early.
+
+    ``("open", last)`` when any visited row is working or of unknown status; otherwise
+    ``("unresolved", last)`` for a link to a row not in the same listing, a cycle, a link that is
+    not a string, or a last row ``replaced`` with no link; ``("ended", last)`` only when every
+    visited row is terminal and the last has no link. It only reads; nothing is sent or changed."""
+    seen, working = {id(row)}, False
+    while True:
+        working = working or row.get("status") not in _TERMINAL
+        key = row.get("replaced_by")
+        if key is None or key == "":
+            if working:
+                return "open", row
+            return ("unresolved" if row.get("status") == "replaced" else "ended"), row
+        successor = by_id.get(key) if isinstance(key, str) else None
+        if successor is None or id(successor) in seen:
+            return ("open" if working else "unresolved"), row
+        seen.add(id(successor))
+        row = successor
 
 
 def account_matches(number: object) -> bool:
