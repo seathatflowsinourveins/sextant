@@ -253,7 +253,7 @@ All source paths below are at the northstar-trading pin above and in ADR-0021/26
 | Snapshot lag | ≤600s | `research.py:_envelope` |
 | Unmapped / rejected names | ≤5 distinct in each budget across the pair | `research.py:MAX_UNCONFIRMED_RESEARCH/verify_readback_sync` |
 | Parent / movers size | ≤100; mapped movers nonempty; focus has no subset veto | `research.py:_candidates/_display_inputs` |
-| Tool spacing / discovery | 0.75s, below documented ~100/min; ≤100 discovery pages | `sync.py:OfficialTools` |
+| Tool spacing / discovery | Account registry required; ≤100 sync discovery pages | LEAD-0903; account registry below |
 | Owner callback / HTTP timeouts | callback 300s; poll 1s; HTTP 30s/read 60s | `auth.py:OwnerCallback/_official_client` |
 | EMA | 10/30; first-close seed; confirmed closes; optional reset time | `presets/ema_cross.pine` |
 | Hurst / flow proxy | 128 returns, R/S lags 4/8/16/32; flow 50 bars; thresholds .55/.50/.30 | `presets/hurst_vpin.pine` |
@@ -483,3 +483,20 @@ stream is opened, no TradingView call is made, and no order or controller exists
 `deploy/tradingview/sextant-tradingview-prestage.service` runs this command, with
 `--ranked-view-dir`, as a long-running user service; the bounds come from the
 registry file above, and its installer installs and enables the producer alone.
+
+## Account-wide MCP request guard, 2026-11-11
+
+LEAD-0243/0903 require one account state and an explicit lead clear after quota.
+`account.py` and `lanes/tradingview/account.params.json` share count, stop and
+last-call time with display sync. Missing/unreadable state or alternate registry
+refuses; flock and atomic writes preserve usage across restarts. The MCP SDK
+v2.3.0 dispatcher guard charges setup, notifications and tool requests before
+dispatch, preflights before transport, and latches uncertain outcomes across
+midnight/clock jumps. Unknown sync schemas stop and page. Both incident rates
+(0.75s/1.5s) failed, so spacing must exceed both; all numeric rows remain
+null/UNAVAILABLE. Fixture values confer no operating authority.
+
+Lead-only offline commands: `python -m sextant.tradingview.account init --lead
+NAME --authority RECORD` provisions initially latched state once; `clear` with
+the same arguments records who/when without resetting usage, cache or spacing.
+No operating-state command, service call, probe or activation was performed.

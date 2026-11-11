@@ -2,6 +2,12 @@
 
 What we do and where the practice comes from. Nothing enters the harness without a row. A practice we stop using is deleted; git keeps the history. `just prove` runs every proof whose claim holds in a host checkout; the devcontainer build runs the container proofs and the maintainer runs the GitHub-settings proofs with the admin token. CI publishes the count.
 
+## HTTP gate
+
+| Pick | Source / verdict | Application | Proof |
+|---|---|---|---|
+| TradingView HTTP gate | BUILD ON httpx2@2.16.0 `_client.py:1877-1883`, `_transports/base.py:64-83`; MCP SDK@v2.3.0 `2118f14f8a19bc158d8a1cf90af58d85d187f849` `client/streamable_http.py:224-273,704-705,713-790`, `client/auth/utils.py:202-239`, `client/auth/oauth2.py:631-718`; mcp-types@2.3.0 `_types.py:1411-1430` (Tool schemas). | HTTP hooks; SDK decoding; GET/DELETE 405 continues; canonical Tool schema metadata is excluded from refusal checks, unknown answers remain fail-closed | `test_tradingview_account.py::test_http_requests_are_charged_spaced_and_blocked_after_quota`, `::test_optional_get_or_delete_405_does_not_stop_the_account`, `::test_tool_schema_error_property_is_metadata_not_a_quota_answer`, `::test_first_discovery_after_open_uses_real_spacing_without_writer_refusal` |
+
 ## In use
 
 | Practice or pick | Source, pinned | How it is applied | Proof |
