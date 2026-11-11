@@ -131,3 +131,7 @@ commission hook, and with a deterministic reconciliation trade id. The client re
 FILL page. A row whose order is listed with at least its cumulative quantity passes;
 any other row is refused. A holding that no order report explains stops the start in the
 engine itself (`node/mod.rs:992-996`, `generate_missing_orders` off).
+
+Entry chase allowance never grants exit chase authority. The B exit mapping reads
+only B-scoped rows and keeps both exit chase fields unavailable, with gain-lock
+cost still unavailable.
