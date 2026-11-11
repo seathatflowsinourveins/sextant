@@ -18,6 +18,8 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).parents[2]
 SCRIPT = ROOT / "scripts" / "compact_context.py"
 CAP = 10_000
@@ -177,6 +179,57 @@ def test_hook_input_agent_type_selects_the_role(tmp_path: Path) -> None:
     assert out.returncode == 0, out.stderr
     assert _pointer("tracker") in out.stdout
     assert "LEAD-STATE.md" not in out.stdout
+
+
+@pytest.mark.parametrize("mode", ["session-start", "pre-compact"])
+@pytest.mark.parametrize("agent_type", ["lead", "worker", "Explore", None])
+def test_subagent_gets_only_worker_context(
+    tmp_path: Path, mode: str, agent_type: str | None
+) -> None:
+    # Documented common agent_id marks a subagent, even with an inherited role.
+    payload = {"agent_id": "agent-proof", "agent_type": agent_type}
+    if agent_type is None:
+        payload.pop("agent_type")
+    if mode == "session-start":
+        payload.update(hook_event_name="SessionStart", source="compact")
+    else:
+        payload.update(hook_event_name="PreCompact", trigger="auto", custom_instructions=None)
+    out = _run(mode, home=_home(tmp_path), stdin=json.dumps(payload))
+    assert out.returncode == 0, out.stderr
+    assert "LEAD-STATE.md" not in out.stdout
+    assert "As lead:" not in out.stdout
+    assert "worker" in out.stdout
+    for role in ROLE_FILES:
+        assert _pointer(role) not in out.stdout
+
+
+@pytest.mark.parametrize("mode", ["session-start", "pre-compact"])
+def test_main_session_keeps_its_lead_role(tmp_path: Path, mode: str) -> None:
+    out = _run(mode, home=_home(tmp_path), stdin='{"agent_type": "lead"}')
+    assert out.returncode == 0, out.stderr
+    expected = "Role: lead" if mode == "session-start" else "As lead:"
+    assert expected in out.stdout
+    if mode == "session-start":
+        assert _pointer("lead") in out.stdout
+
+
+@pytest.mark.parametrize("role_args", [("--role", "tracker"), ("--role=tracker",)])
+@pytest.mark.parametrize("mode", ["session-start", "pre-compact"])
+def test_explicit_role_wins_over_subagent_input(
+    tmp_path: Path, mode: str, role_args: tuple[str, ...]
+) -> None:
+    out = _run(
+        mode,
+        *role_args,
+        home=_home(tmp_path),
+        stdin='{"agent_id": "agent-proof", "agent_type": "lead"}',
+    )
+    assert out.returncode == 0, out.stderr
+    assert "LEAD-STATE.md" not in out.stdout
+    assert "As lead:" not in out.stdout
+    assert "tracker" in out.stdout
+    if mode == "session-start":
+        assert _pointer("tracker") in out.stdout
 
 
 def test_unknown_role_lists_every_known_role(tmp_path: Path) -> None:

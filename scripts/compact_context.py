@@ -6,6 +6,8 @@ compaction"; code.claude.com/docs/en/hooks.md, SessionStart and PreCompact;
 code.claude.com/docs/en/best-practices.md, "Keep cost and context down";
 code.claude.com/docs/en/settings-reference.md, `idleCompaction`. All read
 2026-11-09. Authority: LEAD-2228 section N1; LEAD-2313 item 2.
+Subagent identity: code.claude.com/docs/en/hooks#common-input-fields,
+`agent_id` and `agent_type`, read 2026-11-11.
 
 The hook modes print only. They never read a state file's contents, never print
 an environment variable's value, make no network call and write no repository
@@ -123,6 +125,9 @@ def _role_from(args: list[str], stdin_text: str) -> str | None:
         payload = json.loads(stdin_text)
     except (json.JSONDecodeError, TypeError):
         return None
+    # The documented subagent/teammate id must not grant a coordination role.
+    if isinstance(payload, dict) and "agent_id" in payload:
+        return "worker"
     agent = payload.get("agent_type") if isinstance(payload, dict) else None
     if isinstance(agent, str) and agent in ROLES:
         return agent
