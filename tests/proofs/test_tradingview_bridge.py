@@ -43,7 +43,10 @@ BOUNDS = DisplayBounds(Decimal("0.05"), Decimal("2"), 600)
 
 def fresh_j5(tmp_path: Path) -> dict:
     with reserve_stream(
-        tmp_path / "leases", paper_slot=3, existing_streams=0, source="fixture stop receipt"
+        tmp_path / "leases",
+        paper_slot=2,
+        existing_streams=0,
+        source="B's writer opens no market-data stream; fixture stop receipt",
     ) as lease:
         live = LiveProducer(publisher(), lease, sip_authority="fixture SIP entitlement only")
         warm(live)
