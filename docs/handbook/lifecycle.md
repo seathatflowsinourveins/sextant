@@ -50,6 +50,8 @@ The `gh` CLI reads review threads and failed job logs natively ([manual](https:/
 - **A map names the exact head it was read at and checks that head again before hand-off.** A line map at an unstated head is not a map. [The ecosystem map](ecosystem.md#cite)
 - **A page added, renamed or removed under `docs/` needs `scripts/ecosystem_index.py --write` in the same PR.** `llms.txt` is generated, and a stale index failed an IBKR part-2 `ci-local` run on 2026-11-11. [The ecosystem map](ecosystem.md#session-start); [the index script](../../scripts/ecosystem_index.py)
 - **The lead starts a worker through the dispatch scripts, never `orca terminal create`.** A terminal the lead creates does not appear in the owner's window, so the owner can neither see nor steer it. [Board and worktrees](#board-and-worktrees)
+- **A new repository is created from the harness template on GitHub's side, so no push to `main` is needed.** `gh repo create --template seathatflowsinourveins/sextant-harness` makes the repository and its first commit in one GitHub-side step ([GitHub CLI manual](https://cli.github.com/manual/gh_repo_create), read 2026-11-11). [Landing](../../AGENTS.md#landing)
+- **An action denied in one session is never handed to another session.** A denial is a guard's answer, not a routing problem: the lead's 12:17 request to a peer for a refused push was withdrawn at 12:24, and the deny rules stayed unchanged (D-66, D-67). [Hard lines](../../AGENTS.md#hard-lines)
 
 ## Board and worktrees
 
