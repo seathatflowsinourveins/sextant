@@ -51,7 +51,7 @@
 ## Sessions
 
 - Follow the XNYS calendar with actual early closes; outside regular hours every order is LIMIT-only, and A's tiers trade at half risk. [ADR-0002](../adr/0002-philosophy-and-lanes.md)
-- Paper runs 24/5 and carries no conservative profile: each arm runs the full factor stack, every factor set has a paired with/without arm, and paper P&L alone still decides nothing. Replay and evaluation run 24/7, with closed markets used for replay, stress, reflection and proposals. [ADR-0018](../adr/0018-evidence-and-learning-loop.md)
+- Paper runs 24/5 and carries no conservative profile: each arm runs the full factor stack, every factor set has a paired with/without arm, and paper P&L alone still decides nothing. Replay and evaluation run 24/7, with closed markets used for replay, stress, reflection and proposals. [ADR-0018](../adr/0018-evidence-and-learning-loop.md) Read asset listings with the pinned SDK's `raw_data` option and validate selector fields per row: a new vendor enum must skip and count that row, with one run warning and a receipt count, while valid peers remain usable. Keep account/order responses typed. [Pinned SDK and regression proofs](../manifest.md) (C universe listing lesson, 2026-11-10).
 - Ask which clock a number came from — historical minute bars end at start + 1 minute, daily bars at the next New York midnight, live bars at receipt — and never clamp a signed skew. [ADR-0013](../adr/0013-us-equity-data-stack.md)
 
 ## Evidence and learning

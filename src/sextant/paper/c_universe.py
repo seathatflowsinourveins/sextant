@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import logging
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
@@ -23,13 +24,14 @@ from functools import cache
 from pathlib import Path
 from time import time_ns
 from typing import Any, Protocol
+from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from alpaca.common.enums import Sort
 from alpaca.data.enums import Adjustment, DataFeed
 from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
-from alpaca.trading.enums import AssetClass, AssetStatus
+from alpaca.trading.enums import AssetClass, AssetExchange, AssetStatus
 from alpaca.trading.requests import GetAssetsRequest
 from exchange_calendars import get_calendar
 
@@ -55,6 +57,22 @@ class Trading(Protocol):
 
 class MarketData(Protocol):
     def get_stock_bars(self, request_params: StockBarsRequest) -> Any: ...
+
+
+@dataclass(slots=True)
+class AssetSkips:
+    """Count unrecognized listing rows and warn once across a run's scans."""
+
+    count: int = 0
+    logged: bool = False
+
+    def record(self, count: int) -> None:
+        self.count += count
+        if count and not self.logged:
+            logging.getLogger(__name__).warning(
+                "Skipped %s unrecognized asset rows; cumulative count is in the receipt", count
+            )
+            self.logged = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,26 +149,42 @@ def _attribute(row: Any, name: str) -> bool:
     return any(str(item).lower() == name for item in values)
 
 
-def select_universe(assets: Iterable[Any], session: str) -> list[UniverseSymbol]:
+def select_universe(
+    assets: Iterable[Any], session: str, *, asset_skips: AssetSkips | None = None
+) -> list[UniverseSymbol]:
     """Keep active, tradeable NMS symbols; the US_EQUITY class already excludes OTC."""
     _check_session(session)
     chosen: dict[str, UniverseSymbol] = {}
+    skipped = 0
     for asset in assets:
+        try:
+            AssetExchange(_enum_value(_field(asset, "exchange")))
+            AssetStatus(_enum_value(_field(asset, "status")))
+            AssetClass(_enum_value(_field(asset, "asset_class", "class")))
+            if not isinstance(_field(asset, "tradable"), bool):
+                raise ValueError("unknown tradability")
+            symbol = symbol_name(_field(asset, "symbol"))
+            instrument_id = _field(asset, "id")
+            if not isinstance(instrument_id, (str, UUID)) or not str(instrument_id):
+                raise ValueError("missing asset identity")
+            attributes = _field(asset, "attributes")
+            if attributes is not None and (
+                not isinstance(attributes, list)
+                or any(not isinstance(value, str) for value in attributes)
+            ):
+                raise ValueError("unknown attributes")
+            for flag in ("overnight_tradable", "overnight_halted"):
+                value = _field(asset, flag)
+                if value is not None and not isinstance(value, bool):
+                    raise ValueError("unknown overnight eligibility")
+        except (TypeError, ValueError):
+            skipped += 1
+            continue
         if _enum_value(_field(asset, "status")) != AssetStatus.ACTIVE.value:
             continue
         if _enum_value(_field(asset, "asset_class", "class")) != AssetClass.US_EQUITY.value:
             continue
         if _field(asset, "tradable") is not True:
-            continue
-        symbol = _field(asset, "symbol")
-        instrument_id = _field(asset, "id")
-        if not isinstance(symbol, str) or not symbol:
-            continue
-        if instrument_id is None or not str(instrument_id):
-            continue
-        try:
-            symbol = symbol_name(symbol)
-        except ValueError:
             continue
         overnight_tradable = _field(asset, "overnight_tradable") is True or _attribute(
             asset, "overnight_tradable"
@@ -161,6 +195,7 @@ def select_universe(assets: Iterable[Any], session: str) -> list[UniverseSymbol]
             if _field(asset, "overnight_halted") is True or _attribute(asset, "overnight_halted"):
                 continue
         chosen[symbol] = UniverseSymbol(symbol, str(instrument_id), overnight_tradable)
+    (asset_skips if asset_skips is not None else AssetSkips()).record(skipped)
     return sorted(chosen.values(), key=lambda row: row.symbol)
 
 
@@ -279,10 +314,11 @@ def rank_universe(
     session: str,
     *,
     now: datetime | None = None,
+    asset_skips: AssetSkips | None = None,
 ) -> list[Ranked]:
     _check_session(session)
     request = GetAssetsRequest(status=AssetStatus.ACTIVE, asset_class=AssetClass.US_EQUITY)
-    universe = select_universe(trading.get_all_assets(request), session)
+    universe = select_universe(trading.get_all_assets(request), session, asset_skips=asset_skips)
     rows: list[Ranked] = []
     if not universe:
         return rows
@@ -354,10 +390,14 @@ def scan(
 ) -> dict[str, Any]:
     if limit is not None and limit < 1:
         raise ValueError("limit must be positive")
-    rows = rank_universe(trading, data, session, now=now)
+    asset_skips = AssetSkips()
+    rows = rank_universe(trading, data, session, now=now, asset_skips=asset_skips)
     if limit is not None:
         rows = rows[:limit]
-    return build_payload(session, time_ns() if generated_ns is None else generated_ns, rows)
+    return {
+        **build_payload(session, time_ns() if generated_ns is None else generated_ns, rows),
+        "asset_rows_skipped": asset_skips.count,
+    }
 
 
 def _positive_int(value: str) -> int:
