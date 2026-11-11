@@ -1,0 +1,58 @@
+[
+  {
+    "name": "first_leg_window_s",
+    "unit": "seconds a first-leg candidate stays eligible",
+    "value": "120",
+    "source": "northstar-lanes@00203275944a22655b3e14b221cfde9a265d549a:src/northstar_lanes/registry.py:48 (`first_leg_window_s: int = 120`, the shared start C also runs); docs/adr/0004-entry.md:12 (N1, setups)",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-10"
+  },
+  {
+    "name": "first_leg_trades_count",
+    "unit": "eligible trades",
+    "value": "5",
+    "source": "northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:configs/paper/profiles.yaml:113-116 (value 5; LOCAL PRIOR + UNCALIBRATED; replay_range 2..20 step 1); docs/adr/0004-entry.md:12 (N1) and :30 (the six starts need a reviewed registry change; fixtures supply no authority)",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-10"
+  },
+  {
+    "name": "first_leg_span_s",
+    "unit": "seconds",
+    "value": "2",
+    "source": "northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:configs/paper/profiles.yaml:125-129 (value 2 s; LOCAL PRIOR + UNCALIBRATED; replay_range 0.5..10 step 0.5); docs/adr/0004-entry.md:12 (N1) and :30",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-10"
+  },
+  {
+    "name": "first_leg_max_move",
+    "unit": "fraction of quiet price",
+    "value": "0.03",
+    "source": "northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:configs/paper/profiles.yaml:137-148 (value 0.03; LOCAL PRIOR + UNCALIBRATED; replay_range 0.02..0.20 step 0.01; a local 1.5 factor over the lanes 2% minimum); docs/adr/0004-entry.md:12 (N1) and :30",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-10"
+  },
+  {
+    "name": "entry_max_vwap_extension_atr",
+    "unit": "ATR22(5m) multiples",
+    "value": "2",
+    "source": "northstar-trading@7c5f852a2816bbaa5896241a93bab9de7cf7bb4f:docs/adr/0019-managed-exits-and-ranked-reentry.md:299 (paper start 2 on the grid {1, 2, 3}, owner-directed and UNCALIBRATED); northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:configs/paper/profiles.yaml:149-159 (the 0 there is a labels-only guard bound, not the paper start); docs/adr/0004-entry.md:16 (N2) and :30",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-10"
+  },
+  {
+    "name": "entry_chase_bps",
+    "unit": "bps above the first reserved limit",
+    "value": "0",
+    "source": "northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:configs/paper/profiles.yaml:161-166 (GUARD BOUND + UNCALIBRATED; replay_range fixed 0; bound northstar-trading@5870b936f6fd1a553810b25c3b13aae6c00c2b5f:src/northstar_trading/strategies/premarket_gap/first_leg.py:66-76,140,565-576); docs/adr/0004-entry.md:19 (N4) and :30",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-10"
+  },
+  {
+    "name": "entry_ttl_s",
+    "unit": "seconds from reservation",
+    "value": "1",
+    "source": "northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:configs/paper/profiles.yaml:173-178 (GUARD BOUND + UNCALIBRATED; replay_range fixed 1; bound northstar-trading@5870b936f6fd1a553810b25c3b13aae6c00c2b5f:src/northstar_trading/strategies/premarket_gap/first_leg.py:86-89,119-125,141,565-576); docs/adr/0004-entry.md:19 (N4) and :30",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-10"
+  }
+]

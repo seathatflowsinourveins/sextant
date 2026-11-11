@@ -1,0 +1,18 @@
+[
+  {
+    "name": "chase_cap_fraction",
+    "unit": "fraction of entry",
+    "value": "0.01",
+    "source": "northstar-trading@7c5f852a2816bbaa5896241a93bab9de7cf7bb4f:docs/adr/0019-managed-exits-and-ranked-reentry.md:296 (owner-directed 1% chase cap, UNCALIBRATED) and :290 (the stop distance carries chase_cap_fraction x entry); northstar-lanes@00203275944a22655b3e14b221cfde9a265d549a:docs/adr/0006-exit-engine.md:95 (limit = max(bid, last x (1 - chase_cap_fraction))); docs/adr/0005-exit-engine.md X5 (the shared CHASE row)",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-10"
+  },
+  {
+    "name": "chase_min_interval_s",
+    "unit": "seconds between re-pricings of one chase",
+    "value": null,
+    "source": "MISSING: no start at either pin. looked: northstar-lanes@00203275944a:docs/adr/0006-exit-engine.md:95,137; northstar-trading@7c5f852a:docs/adr/0019-managed-exits-and-ranked-reentry.md (chase described, no cadence); northstar-trading@8256c16c:src/northstar_trading/strategies/exit_manager/config.py:65-67 (a chase lifetime and attempts, not an interval); src/sextant/exits/policy.py CHASE pair. Not guessed.",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-10"
+  }
+]

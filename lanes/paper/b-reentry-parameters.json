@@ -1,0 +1,218 @@
+[
+  {
+    "name": "cooldown_seconds",
+    "unit": "seconds counted from the flat receipt",
+    "value": "600",
+    "source": "northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:configs/paper/profiles.yaml:55 (600 s, \"lead's call, spec §8\", changed_at null); northstar-trading@7c5f852a2816bbaa5896241a93bab9de7cf7bb4f:docs/adr/0019-managed-exits-and-ranked-reentry.md:321 (the cooldown row gates every re-entry after a fast sell); docs/adr/0006 (R1)",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-10"
+  },
+  {
+    "name": "retry_rank_band",
+    "unit": "rank band",
+    "value": null,
+    "source": "MISSING: no start at either pin. looked: northstar-lanes@00203275944a:docs/adr/0007-reentry-and-rotation.md:47,79,102; northstar-trading@8256c16c:configs/paper/profiles.yaml:53 (rotation_rank_gap is another row); docs/adr/0006 (R2). Not guessed.",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-10"
+  },
+  {
+    "name": "rotation_rank_band",
+    "unit": "rank band",
+    "value": null,
+    "source": "MISSING: no start at either pin. looked: northstar-lanes@00203275944a:docs/adr/0007-reentry-and-rotation.md:103; northstar-trading@8256c16c:configs/paper/profiles.yaml:53; docs/adr/0006 (R2). Not guessed.",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-10"
+  },
+  {
+    "name": "reentry_min_confidence",
+    "unit": "confidence",
+    "value": null,
+    "source": "MISSING: no start at either pin. looked: northstar-lanes@00203275944a:docs/adr/0007-reentry-and-rotation.md:87,89,109; docs/adr/0006 (Confidence). Not guessed.",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-10"
+  },
+  {
+    "name": "confidence_size_floor",
+    "unit": "risk multiplier",
+    "value": null,
+    "source": "MISSING: no start at either pin. looked: docs/adr/0004-entry.md:22,30; northstar-lanes@00203275944a:docs/adr/0007-reentry-and-rotation.md:109; lanes/sim/entry-parameters.json (C's unscored first leg, not this floor); docs/adr/0006 (Confidence). Not guessed.",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-10"
+  },
+  {
+    "name": "rotation_lift_margin_bps",
+    "unit": "basis points of notional",
+    "value": null,
+    "source": "MISSING: no start at either pin. looked: northstar-lanes@00203275944a:docs/adr/0007-reentry-and-rotation.md:63,142 (the 40 bps lift is a synthetic fixture); docs/adr/0006 (R4). Not guessed.",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-10"
+  },
+  {
+    "name": "rotation_score_ratio",
+    "unit": "score ratio",
+    "value": null,
+    "source": "MISSING: no start at either pin. looked: docs/adr/0004-entry.md:24,30; northstar-lanes@00203275944a:docs/adr/0007-reentry-and-rotation.md:104; docs/adr/0006 (R4). Not guessed.",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-10"
+  },
+  {
+    "name": "whipsaw_stopouts_max",
+    "unit": "consecutive pre-arm stop-outs",
+    "value": "2",
+    "source": "northstar-lanes@00203275944a22655b3e14b221cfde9a265d549a:docs/adr/0007-reentry-and-rotation.md:140 (CLRO witness: after two consecutive pre-arm stop-outs a rising re-entry is refused); northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:docs/research/2026-10-31-s4-sizing-replay/inputs/observations.jsonl (two pre-arm stop-outs set whipsaw_breaker true, one leaves it false); docs/adr/0006 (R3a)",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-10"
+  },
+  {
+    "name": "reclaim_lookback_s",
+    "unit": "seconds",
+    "value": "300",
+    "source": "northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:docs/research/2026-10-31-s4-sizing-replay/inputs/observations.jsonl:74 (\"reclaim: no dip to <level> (segment VWAP) within 300 s\"); docs/adr/0004-entry.md:14 (the touch must fall within reclaim_lookback_s); docs/adr/0006 (R3)",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-10"
+  },
+  {
+    "name": "reclaim_trades_count",
+    "unit": "eligible trades",
+    "value": "3",
+    "source": "northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:docs/research/2026-10-31-s4-sizing-replay/inputs/observations.jsonl:73 (\"reclaim: not yet 3 eligible trades above the level over >= 1 s\"); northstar-trading@7c5f852a2816bbaa5896241a93bab9de7cf7bb4f:docs/adr/0019-managed-exits-and-ranked-reentry.md:300 (3 eligible trades above the segment VWAP, after trading below it); docs/adr/0006 (R3)",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-10"
+  },
+  {
+    "name": "reclaim_trades_span_s",
+    "unit": "seconds",
+    "value": "1",
+    "source": "northstar-trading@7c5f852a2816bbaa5896241a93bab9de7cf7bb4f:docs/adr/0019-managed-exits-and-ranked-reentry.md:300 (over >= 1 s); northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:docs/research/2026-10-31-s4-sizing-replay/inputs/observations.jsonl:73 (the same 1 s span); docs/adr/0006 (R3)",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-10"
+  },
+  {
+    "name": "reclaim_max_above_buffers",
+    "unit": "buffers",
+    "value": null,
+    "source": "MISSING: no start at either pin. looked: docs/adr/0004-entry.md:14 (domain only),30; northstar-lanes@00203275944a:docs/adr/0007-reentry-and-rotation.md:52; docs/adr/0006 (R3). Not guessed.",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-10"
+  },
+  {
+    "name": "reclaim_hold_s",
+    "unit": "seconds",
+    "value": null,
+    "source": "MISSING: no start at either pin. looked: docs/adr/0004-entry.md:15,30; northstar-lanes@00203275944a:docs/adr/0007-reentry-and-rotation.md:57; docs/adr/0006 (R3). Not guessed.",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-10"
+  },
+  {
+    "name": "reentry_max",
+    "unit": "campaign attempts; live only",
+    "value": "1",
+    "source": "northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:configs/paper/profiles.yaml:50 (1, owner direction 2026-10-29 + lead call); northstar-lanes@00203275944a22655b3e14b221cfde9a265d549a:docs/adr/0007-reentry-and-rotation.md:98 (R6 paper_unbounded has no cap: the row is live-only and does not gate paper); docs/adr/0006 (R6)",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-10"
+  },
+  {
+    "name": "flush_min_depth",
+    "unit": "fraction of the sell price",
+    "value": "0.03",
+    "source": "northstar-lanes@00203275944a22655b3e14b221cfde9a265d549a:docs/adr/0007-reentry-and-rotation.md:135 (the INO oversell witness reports the setup at flush_min_depth 0.03, on the grid {0.015, 0.03, 0.05}); docs/adr/0006 (R3b)",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-10"
+  },
+  {
+    "name": "flush_window_s",
+    "unit": "seconds",
+    "value": null,
+    "source": "MISSING: no start at either pin. looked: northstar-lanes@00203275944a:docs/adr/0007-reentry-and-rotation.md:68,104; docs/adr/0006 (R3b). Not guessed.",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-10"
+  },
+  {
+    "name": "climax_window_s",
+    "unit": "seconds",
+    "value": "60",
+    "source": "northstar-lanes@00203275944a22655b3e14b221cfde9a265d549a:docs/m2b-classified-flow.md:113 (captured INO analysis cell: `climax_window_s=60`; an analysis-cell start, not a production calibration); docs/adr/0006 (R3b)",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-10"
+  },
+  {
+    "name": "climax_ratio",
+    "unit": "sell-volume multiple",
+    "value": null,
+    "source": "MISSING: no start at either pin. looked: northstar-lanes@00203275944a:docs/adr/0007-reentry-and-rotation.md:70,105; docs/adr/0006 (R3b). Not guessed.",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-10"
+  },
+  {
+    "name": "oversell_hold_s",
+    "unit": "seconds",
+    "value": null,
+    "source": "MISSING: no start at either pin. looked: northstar-lanes@00203275944a:docs/adr/0007-reentry-and-rotation.md:71,104; docs/adr/0006 (R3b). Not guessed.",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-10"
+  },
+  {
+    "name": "buy_flow_ratio",
+    "unit": "classified buy/sell ratio",
+    "value": null,
+    "source": "MISSING: no start at either pin. looked: northstar-lanes@00203275944a:docs/adr/0007-reentry-and-rotation.md:72,106; northstar-lanes@00203275944a:docs/m2b-classified-flow.md:113 (windows only); docs/adr/0006 (R3b). Not guessed.",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-10"
+  },
+  {
+    "name": "flow_window_s",
+    "unit": "seconds",
+    "value": "10",
+    "source": "northstar-lanes@00203275944a22655b3e14b221cfde9a265d549a:docs/m2b-classified-flow.md:113 (captured INO analysis cell: `flow_window_s=10`; an analysis-cell start, not a production calibration); docs/adr/0006 (R3b)",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-10"
+  },
+  {
+    "name": "oversell_max_above_buffers",
+    "unit": "buffers",
+    "value": null,
+    "source": "MISSING: no start at either pin. looked: northstar-lanes@00203275944a:docs/adr/0007-reentry-and-rotation.md:80,107; docs/adr/0006 (R3b). Not guessed.",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-10"
+  },
+  {
+    "name": "chase_cap_fraction",
+    "unit": "fraction of entry",
+    "value": "0.01",
+    "source": "northstar-trading@7c5f852a2816bbaa5896241a93bab9de7cf7bb4f:docs/adr/0019-managed-exits-and-ranked-reentry.md:296 (owner-directed 1% chase cap, UNCALIBRATED) and :290 (the re-entry chase prices from the same cap); northstar-lanes@00203275944a22655b3e14b221cfde9a265d549a:docs/adr/0006-exit-engine.md:95; docs/adr/0006 (R3b, the re-entry chase uses the shared chase rows)",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-10"
+  },
+  {
+    "name": "catalyst_live_window_s",
+    "unit": "seconds",
+    "value": null,
+    "source": "MISSING: no start at either pin. looked: northstar-lanes@00203275944a:docs/adr/0007-reentry-and-rotation.md:87,109; docs/adr/0006 (Confidence). Not guessed.",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-10"
+  },
+  {
+    "name": "climax_scale",
+    "unit": "confidence multiplier",
+    "value": null,
+    "source": "MISSING: no start at either pin. looked: northstar-lanes@00203275944a:docs/adr/0007-reentry-and-rotation.md:108; docs/adr/0006 (Confidence). Not guessed.",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-10"
+  },
+  {
+    "name": "flow_scale",
+    "unit": "confidence multiplier",
+    "value": null,
+    "source": "MISSING: no start at either pin. looked: northstar-lanes@00203275944a:docs/adr/0007-reentry-and-rotation.md:108; docs/adr/0006 (Confidence). Not guessed.",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-10"
+  },
+  {
+    "name": "climax_baseline_min",
+    "unit": "minutes",
+    "value": "30",
+    "source": "northstar-lanes@00203275944a22655b3e14b221cfde9a265d549a:src/northstar_lanes/parameters.py:73 (`climax_baseline_min` default 30) and docs/m2b-classified-flow.md:113 (the captured INO analysis cell uses 30); docs/adr/0006 (Confidence)",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-10"
+  }
+]

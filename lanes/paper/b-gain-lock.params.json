@@ -34,8 +34,8 @@
   {
     "name": "round_trip_cost",
     "unit": "expected per-share round-trip cost, including spread, size/session slippage and fees",
-    "value": null,
-    "source": "docs/adr/0025-gain-protection-and-fast-exit.md, Expected fill; northstar-trading@paper 8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:docs/research/2026-11-03-b-gain-protection-replay.md, Sections 1 and 7; B cost awaits TCA",
+    "value": "0.01",
+    "source": "One exit tick, the slippage term ADR-0019 fixes: northstar-trading@7c5f852a2816bbaa5896241a93bab9de7cf7bb4f:docs/adr/0019-managed-exits-and-ranked-reentry.md:94 (when the row is unset, c_RT is the cited SEC Section 31 and FINRA TAF sell-side fees plus one tick of exit slippage; an explicit row value wins) and docs/adr/0019-managed-exits-and-ranked-reentry.md:310 (the c_RT slippage term stays at one tick; the arming threshold's noise term carries the spread); docs/adr/0005-exit-engine.md:28 (c_RT = entry x sec31_rate + min(qty x taf_per_share, taf_cap) / qty + one tick); the sell-side fees are sub-tick at B's band, and the replay that set the arming behavior ran with the row unset on that same fee-plus-tick estimate (northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa:docs/research/2026-11-03-b-gain-protection-replay.md:63). TCA still owns a measured override (docs/adr/0025-gain-protection-and-fast-exit.md:27)",
     "calibration_state": "UNCALIBRATED",
     "last_change": "2026-11-10"
   }

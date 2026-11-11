@@ -119,7 +119,7 @@ def test_a_nonfinite_decimal_is_rejected():
         advance(confirmation_price=D("NaN"))
 
 
-def test_gain_lock_registry_carries_shared_starts_and_leaves_b_cost_unavailable():
+def test_gain_lock_registry_carries_shared_starts_and_b_one_tick_cost():
     root = Path(__file__).resolve().parents[2]
     rows = json.loads((root / "lanes/paper/b-gain-lock.params.json").read_text())
     starts = {row.name: row.start for row in REGISTRY}
@@ -136,6 +136,9 @@ def test_gain_lock_registry_carries_shared_starts_and_leaves_b_cost_unavailable(
         assert row["source"] and row["last_change"]
         name = row["name"]
         if name == "round_trip_cost":
-            assert row["value"] is None
+            # B's arming threshold needs a cost: ADR-0019 fixes its slippage term at one tick.
+            assert D(row["value"]) == D("0.01")
+            assert "0019-managed-exits-and-ranked-reentry.md:94" in row["source"]
+            assert "0019-managed-exits-and-ranked-reentry.md:310" in row["source"]
         else:
             assert D(row["value"]) == starts[name]
