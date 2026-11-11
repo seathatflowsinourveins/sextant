@@ -1,0 +1,52 @@
+{
+  "weknora": {
+    "repository": "Tencent/WeKnora",
+    "tag": "v0.9.0",
+    "commit": "f17ee8a8da901bd658a4cb25f40b5fd41adbfdd7",
+    "published": "2026-10-29T06:59:12Z",
+    "cooldown_until": "2026-11-12T06:59:12Z",
+    "files": {
+      "docker-compose.yml": "715d5e3f0e9daca1b3d8ceec7fcd7c63f711a97773df33b9c9a35d681794c4e4",
+      "config/config.yaml": "a748d14035c31464f1861f2cfc110f4a057832a1ef0159352d8b155dbb1f9fd5"
+    },
+    "images": {
+      "app": "wechatopenai/weknora-app:v0.9.0@sha256:25b20959b7456f7842ef55ed4feff3694dbd0c6f8af4117c1fb3c5dec6bdf14d",
+      "frontend": "wechatopenai/weknora-ui:v0.9.0@sha256:df26705d866997db07f3da78dabedc4f594b383566a3996810c166a5c6bee393",
+      "docreader": "wechatopenai/weknora-docreader:v0.9.0@sha256:8c71ec3cc2e291829c3938d2c7dc5f921c1d10551c8774bf844c83bc4aa3cb84",
+      "postgres": "paradedb/paradedb:v0.25.11-pg17@sha256:78d65750f0f88a56548526201bcab9910f83b90fe929cdbf979890f3f80b0f95",
+      "redis": "redis:7.0-alpine@sha256:c9d92d840fd011c908f040592857c724ae6d877f2aba5c40ad963276507386b2"
+    },
+    "url": "http://127.0.0.1:21937/api/v1"
+  },
+  "dsh-weknora": {
+    "package": "@wxg-prc-cpg/dsh-weknora",
+    "version": "0.1.0",
+    "spec": "github:Tencent/WeKnora#f17ee8a8da901bd658a4cb25f40b5fd41adbfdd7&path:/packages/dsh-weknora",
+    "allow_build": "@wxg-prc-cpg/dsh-weknora@https://codeload.github.com/Tencent/WeKnora/tar.gz/f17ee8a8da901bd658a4cb25f40b5fd41adbfdd7#path:/packages/dsh-weknora",
+    "integrity": "sha512-XPasjtITrXdrv0k3AySyzJJjdyQwBZKgTBBLuLGhXgVgFkzwBRZAOKMaeTZ8Wu5Hb9Zb2rRBJaCi/HozMsVlew=="
+  },
+  "embedding": {
+    "repository": "ggml-org/embeddinggemma-2-GGUF",
+    "revision": "6ea3e3a309d12a4779cfda98b8c19800d2d5da71",
+    "file": "embeddinggemma-2-Q8_0.gguf",
+    "sha256": "2188ac1deca4b77dffefd603c2776a9d76d9d74ec01841392982ebb840b09135",
+    "image": "ghcr.io/ggml-org/llama.cpp:server-b11960@sha256:8052c13edd987de8858f8150031e025ac3d66823f09cf3ec8220899c4abce220",
+    "args": "--embedding -c 32768 -b 8192 -ub 8192",
+    "dimension": 768,
+    "endpoint": "http://embeddings:8080/v1"
+  },
+  "corpus": {
+    "nautilus_trader": {
+      "repository": "nautechsystems/nautilus_trader",
+      "tag": "v2.0.0rc8",
+      "commit": "d53849b216e20f2c122ca01b4dd0da377638b186",
+      "path": "docs"
+    },
+    "alpaca-py": {
+      "repository": "alpacahq/alpaca-py",
+      "tag": "v0.44.0",
+      "commit": "cc4cb3b7ba50ae250e621983c2779047fb16bb28",
+      "path": "docs"
+    }
+  }
+}

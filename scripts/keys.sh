@@ -59,6 +59,12 @@ KNOWN=(
   # (northstar@0243050704565abaf3a95f0f09613cb974a331e5:scripts/keys.sh:77-78, GITHUB_APP_*_KEY_B64).
   SEXTANT_GITHUB_APP_KEY_B64
   SEXTANT_LEDGER_DEPLOY_KEY_B64 # the ledger branch's one writer (#102): base64 of an ed25519 deploy key, read only by `just ledger-append`
+  WEKNORA_DB_PASSWORD # local research retrieval (deploy/weknora/README.md); no trading authority
+  WEKNORA_REDIS_PASSWORD
+  WEKNORA_JWT_SECRET
+  WEKNORA_SYSTEM_AES_KEY
+  WEKNORA_ADMIN_PASSWORD # the ingest's login
+  WEKNORA_API_KEY # `retrieve` only, for dsh workers
 )
 
 [[ "$(uname -s)" == Linux ]] || {
