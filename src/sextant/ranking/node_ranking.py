@@ -37,6 +37,7 @@ from sextant.data.baseline_recipe import (
     load_universe,
     verified_baseline_text,
 )
+from sextant.ranking import node_parameters
 from sextant.ranking.baseline import BaselineTable, load_baseline, segment_start
 from sextant.ranking.engine import ReferencePrices, Segment
 from sextant.ranking.node_actor import RankingActor, RankingActorConfig
@@ -80,9 +81,10 @@ class RankingArguments:
     duration_s: int
     receipt_dir: Path
     page_window_s: int
-    status_snapshot_window_s: int
+    status_snapshot_window_s: int | None  # None: the 2e recorder stays off
     data: AlpacaDataClientConfig
     inputs: RankingInputs
+    parameters: dict[str, tuple[int | None, str]] | None = None  # value and origin (F7)
 
 
 def parse(argv: list[str] | None = None) -> tuple[RankingArguments, argparse.Namespace]:
@@ -97,8 +99,6 @@ def parse(argv: list[str] | None = None) -> tuple[RankingArguments, argparse.Nam
         ("--registry", Path),
         ("--duration-s", positive),
         ("--receipt-dir", Path),
-        ("--page-window-s", positive),
-        ("--status-snapshot-window-s", positive),
         ("--feed", str),
         ("--api-key-env", str),
         ("--api-secret-env", str),
@@ -108,6 +108,10 @@ def parse(argv: list[str] | None = None) -> tuple[RankingArguments, argparse.Nam
         ("--lease-source", str),
     ):
         required.add_argument(flag, type=kind, required=True)
+    overrides = parser.add_argument_group("explicit overrides of a registry row (recorded)")
+    overrides.add_argument("--page-window-s", type=positive)
+    overrides.add_argument("--status-snapshot-window-s", type=positive)
+    overrides.add_argument("--parameters", type=Path, default=node_parameters.DEFAULT_PATH)
     raw = parser.parse_args(argv)
     if raw.feed != "sip":
         raise RankingRefused("the ranking mode ranks the sip feed's PRE, RTH and POST only")
@@ -132,6 +136,13 @@ def load_inputs(raw: argparse.Namespace) -> RankingArguments:
     if failures:
         raise RankingRefused("invalid priming inputs: " + "; ".join(failures))
     symbols, digest = loaded["universe"]
+    rows = node_parameters.load(raw.parameters)
+    resolved = {
+        name: node_parameters.resolve(rows, name, getattr(raw, name))
+        for name in ("page_window_s", "status_snapshot_window_s")
+    }
+    if resolved["page_window_s"][0] is None:
+        raise RankingRefused("no registry value for page_window_s: pass an explicit override")
     if loaded["ranking inputs"][1] != digest["sha256"]:
         raise RankingRefused("invalid priming inputs: ranking inputs are for another universe")
     return RankingArguments(
@@ -141,12 +152,13 @@ def load_inputs(raw: argparse.Namespace) -> RankingArguments:
         loaded["registry"],
         raw.duration_s,
         raw.receipt_dir,
-        raw.page_window_s,
-        raw.status_snapshot_window_s,
+        int(resolved["page_window_s"][0] or 0),
+        resolved["status_snapshot_window_s"][0],
         AlpacaDataClientConfig(
             api_key_env=raw.api_key_env, api_secret_env=raw.api_secret_env, feed=raw.feed
         ),
         loaded["ranking inputs"][0],
+        resolved,
     )
 
 
@@ -290,6 +302,8 @@ def run(
     if lease is None:
         raise ValueError("the market-data lease is required: no lease, no start")
     with lease:
+        if args.parameters is not None:
+            node_parameters.write_receipt(args.receipt_dir, args.parameters)
         node, _ = build(args, inputs=inputs, factory=factory, config=config)
         timer = threading.Timer(args.duration_s, node.handle().stop)
         timer.daemon = True

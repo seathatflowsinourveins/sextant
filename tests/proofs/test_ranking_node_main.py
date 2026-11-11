@@ -90,8 +90,6 @@ def test_a_missing_lease_is_refused(tmp_path) -> None:
         "--universe",
         "--duration-s",
         "--receipt-dir",
-        "--receipt-interval-s",
-        "--bucket-window-s",
         "--feed",
         "--api-key-env",
         "--api-secret-env",
@@ -171,6 +169,8 @@ def test_start_and_stop_on_the_duration_leave_the_final_receipt(tmp_path) -> Non
     receipt = node_main.run(args, lease=lease(), factory=StandInFactory, config=config)
     body = json.loads(receipt.read_text())
     assert events == ["enter", "exit"] and body["final"] is True
+    recorded = json.loads((receipt.parent / "parameters-receipt.json").read_text())
+    assert recorded["bucket_window_s"] == {"value": 60, "origin": "override"}
     assert body["ticks"] >= 1 and body["errors"] == 0
 
 
@@ -188,3 +188,14 @@ def test_the_entry_has_no_order_path() -> None:
             "submit_order",
         }
     )
+
+
+def test_the_windows_come_from_their_rows_and_a_flag_is_a_recorded_override(tmp_path) -> None:
+    args, _ = node_main.parse(argv(tmp_path, "--receipt-interval-s"))
+    assert args.receipt_interval_s == 60  # the UNCALIBRATED row, not a flag
+    assert args.parameters is not None
+    assert args.parameters["receipt_interval_s"] == (60, "registry")
+    assert args.parameters["bucket_window_s"] == (60, "override")
+    (tmp_path / "again").mkdir()
+    with pytest.raises(ValueError, match="bucket_window_s"):  # UNAVAILABLE: refuse, never guess
+        node_main.parse(argv(tmp_path / "again", "--bucket-window-s"))

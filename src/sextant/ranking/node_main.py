@@ -31,6 +31,7 @@ from nautilus_trader.model import InstrumentId, Symbol, TraderId
 from sextant.alpaca.config import AlpacaDataClientConfig
 from sextant.alpaca.constants import VENUE
 from sextant.alpaca.factories import AlpacaDataClientFactory
+from sextant.ranking import node_parameters
 from sextant.ranking.capacity import CapacityActor, CapacityActorConfig
 
 NODE_NAME = "ranking-node"
@@ -53,6 +54,7 @@ class Arguments:
     bucket_window_s: int
     quotes: bool
     data: AlpacaDataClientConfig
+    parameters: dict[str, tuple[int | None, str]] | None = None  # value and origin (F7)
 
 
 @dataclass(frozen=True)
@@ -90,8 +92,6 @@ def parse(argv: list[str] | None = None) -> tuple[Arguments, LeaseArguments]:
     required.add_argument("--universe", type=Path, required=True)
     required.add_argument("--duration-s", type=_positive, required=True)
     required.add_argument("--receipt-dir", type=Path, required=True)
-    required.add_argument("--receipt-interval-s", type=_positive, required=True)
-    required.add_argument("--bucket-window-s", type=_positive, required=True)
     required.add_argument("--feed", required=True)
     required.add_argument("--api-key-env", required=True)
     required.add_argument("--api-secret-env", required=True)
@@ -100,7 +100,19 @@ def parse(argv: list[str] | None = None) -> tuple[Arguments, LeaseArguments]:
     required.add_argument("--existing-streams", type=int, required=True)
     required.add_argument("--lease-source", required=True)
     parser.add_argument("--quotes", action="store_true", help="also count quotes")
+    overrides = parser.add_argument_group("explicit overrides of a registry row (recorded)")
+    overrides.add_argument("--receipt-interval-s", type=_positive)
+    overrides.add_argument("--bucket-window-s", type=_positive)
+    overrides.add_argument("--parameters", type=Path, default=node_parameters.DEFAULT_PATH)
     raw = parser.parse_args(argv)
+    rows = node_parameters.load(raw.parameters)
+    resolved = {
+        name: node_parameters.resolve(rows, name, getattr(raw, name))
+        for name in ("receipt_interval_s", "bucket_window_s")
+    }
+    missing = [name for name, (value, _) in resolved.items() if value is None]
+    if missing:  # no source for the window: the capacity mode refuses rather than guess
+        raise ValueError(f"no registry value for {missing}: pass an explicit override")
     data = AlpacaDataClientConfig(
         api_key_env=raw.api_key_env, api_secret_env=raw.api_secret_env, feed=raw.feed
     )
@@ -108,10 +120,11 @@ def parse(argv: list[str] | None = None) -> tuple[Arguments, LeaseArguments]:
         read_universe(raw.universe),
         raw.duration_s,
         raw.receipt_dir,
-        raw.receipt_interval_s,
-        raw.bucket_window_s,
+        int(resolved["receipt_interval_s"][0] or 0),
+        int(resolved["bucket_window_s"][0] or 0),
         raw.quotes,
         data,
+        resolved,
     )
     lease = LeaseArguments(raw.lease_root, raw.paper_slot, raw.existing_streams, raw.lease_source)
     return args, lease
@@ -161,6 +174,8 @@ def run(
     if lease is None:
         raise ValueError("the market-data lease is required: no lease, no start")
     with lease:
+        if args.parameters is not None:
+            node_parameters.write_receipt(args.receipt_dir, args.parameters)
         node, _ = build(args, factory=factory, config=config)
         timer = threading.Timer(args.duration_s, node.handle().stop)
         timer.daemon = True

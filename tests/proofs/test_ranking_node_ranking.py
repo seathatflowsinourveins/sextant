@@ -143,8 +143,6 @@ def test_the_inputs_that_have_producers_are_loaded_and_checked(tmp_path) -> None
         "--registry",
         "--duration-s",
         "--receipt-dir",
-        "--page-window-s",
-        "--status-snapshot-window-s",
         "--feed",
         "--api-key-env",
         "--api-secret-env",
@@ -227,3 +225,17 @@ def args_session_date(now: int):
     from datetime import UTC, datetime
 
     return datetime.fromtimestamp(now // NS, tz=UTC).date()
+
+
+def test_the_ranking_windows_come_from_their_rows(tmp_path) -> None:
+    args, _ = node_ranking.parse(argv(tmp_path, "--page-window-s", "--status-snapshot-window-s"))
+    assert args.page_window_s == 14400  # the UNCALIBRATED row
+    assert args.status_snapshot_window_s is None  # UNAVAILABLE: the 2e recorder stays off
+    assert args.parameters == {
+        "page_window_s": (14400, "registry"),
+        "status_snapshot_window_s": (None, "unavailable"),
+    }
+    (tmp_path / "again").mkdir()
+    args, _ = node_ranking.parse(argv(tmp_path / "again"))
+    assert args.parameters is not None
+    assert args.parameters["status_snapshot_window_s"] == (60, "override")
