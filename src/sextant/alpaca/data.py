@@ -3,7 +3,7 @@
 NautilusTrader d53849b: examples/live/_template/data.py, the Python adapter
 guide and live/__init__.pyi. alpaca-py cc4cb3b: data/live/{stock,websocket}.py,
 data/historical/stock.py and data/requests.py. Receipt and bar clocks follow
-Sextant ADR-0013 and the existing alpaca_feed.py thread boundary.
+Sextant ADR-0013 and the former alpaca_feed.py thread boundary (1252eb9f).
 Thread hand-off uses Python 3.13 asyncio's call_soon_threadsafe
 (https://docs.python.org/3.13/library/asyncio-eventloop.html#asyncio.loop.call_soon_threadsafe,
 read 2026-11-10).
