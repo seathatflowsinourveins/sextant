@@ -35,8 +35,6 @@ def argv(tmp_path: Path, *drop: str, duration: str = "600") -> list[str]:
         "--universe": str(universe),
         "--duration-s": duration,
         "--receipt-dir": str(tmp_path / "receipts"),
-        "--receipt-interval-s": "1",
-        "--bucket-window-s": "60",
         "--feed": "sip",
         "--api-key-env": "FIXTURE_KEY_NAME",
         "--api-secret-env": "FIXTURE_SECRET_NAME",
@@ -90,8 +88,6 @@ def test_a_missing_lease_is_refused(tmp_path) -> None:
         "--universe",
         "--duration-s",
         "--receipt-dir",
-        "--receipt-interval-s",
-        "--bucket-window-s",
         "--feed",
         "--api-key-env",
         "--api-secret-env",
@@ -171,6 +167,8 @@ def test_start_and_stop_on_the_duration_leave_the_final_receipt(tmp_path) -> Non
     receipt = node_main.run(args, lease=lease(), factory=StandInFactory, config=config)
     body = json.loads(receipt.read_text())
     assert events == ["enter", "exit"] and body["final"] is True
+    recorded = json.loads((receipt.parent / "parameters-receipt.json").read_text())
+    assert recorded["bucket_window_s"] == {"value": 3, "origin": "derived: --duration-s + 1"}
     assert body["ticks"] >= 1 and body["errors"] == 0
 
 
@@ -188,3 +186,15 @@ def test_the_entry_has_no_order_path() -> None:
             "submit_order",
         }
     )
+
+
+def test_the_windows_come_from_their_rows_and_no_flag_overrides_them(tmp_path) -> None:
+    args, _ = node_main.parse(argv(tmp_path))
+    assert args.receipt_interval_s == 60  # the UNCALIBRATED row
+    assert args.bucket_window_s == 601  # every second of the 600 s run, never a tunable
+    assert args.parameters is not None
+    assert args.parameters["receipt_interval_s"] == (60, "registry")
+    for flag, row in node_main.RETIRED.items():  # lead ruling 04:2x: refused by the row's name
+        (tmp_path / flag.strip("-")).mkdir()
+        with pytest.raises(ValueError, match=row):
+            node_main.parse([*argv(tmp_path / flag.strip("-")), flag, "60"])

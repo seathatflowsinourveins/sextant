@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import sys
 import threading
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
@@ -31,12 +32,19 @@ from nautilus_trader.model import InstrumentId, Symbol, TraderId
 from sextant.alpaca.config import AlpacaDataClientConfig
 from sextant.alpaca.constants import VENUE
 from sextant.alpaca.factories import AlpacaDataClientFactory
+from sextant.ranking import node_parameters
 from sextant.ranking.capacity import CapacityActor, CapacityActorConfig
 
 NODE_NAME = "ranking-node"
 CLIENT_NAME = "ALPACA"
 TRADER_ID = TraderId.from_str("RANKING-001")  # the ranking host's bus identity (host.py)
 RECEIPT_NAME = "capacity.json"
+# Window flags that no longer exist (lead 04:2x): refused by the row they used to override.
+RETIRED = {
+    "--receipt-interval-s": "receipt_interval_s",
+    "--bucket-window-s": "bucket_window_s",
+    "--parameters": "the committed parameter registry",
+}
 _SYMBOL = re.compile(r"[A-Z][A-Z0-9.]{0,9}")
 
 
@@ -53,6 +61,7 @@ class Arguments:
     bucket_window_s: int
     quotes: bool
     data: AlpacaDataClientConfig
+    parameters: dict[str, tuple[int | None, str]] | None = None  # value and origin (F7)
 
 
 @dataclass(frozen=True)
@@ -90,8 +99,6 @@ def parse(argv: list[str] | None = None) -> tuple[Arguments, LeaseArguments]:
     required.add_argument("--universe", type=Path, required=True)
     required.add_argument("--duration-s", type=_positive, required=True)
     required.add_argument("--receipt-dir", type=Path, required=True)
-    required.add_argument("--receipt-interval-s", type=_positive, required=True)
-    required.add_argument("--bucket-window-s", type=_positive, required=True)
     required.add_argument("--feed", required=True)
     required.add_argument("--api-key-env", required=True)
     required.add_argument("--api-secret-env", required=True)
@@ -100,7 +107,17 @@ def parse(argv: list[str] | None = None) -> tuple[Arguments, LeaseArguments]:
     required.add_argument("--existing-streams", type=int, required=True)
     required.add_argument("--lease-source", required=True)
     parser.add_argument("--quotes", action="store_true", help="also count quotes")
+    node_parameters.refuse_retired(sys.argv[1:] if argv is None else argv, RETIRED)
     raw = parser.parse_args(argv)
+    rows = node_parameters.load()  # the committed rows only: no override (lead 04:2x)
+    resolved: dict[str, tuple[int | None, str]] = {
+        "receipt_interval_s": node_parameters.resolve(rows, "receipt_interval_s"),
+        # Not a tunable: every closed second of the run is kept. A run of D seconds touches at
+        # most D + 1 whole seconds, so the bound never drops one (dropped_buckets checks it).
+        "bucket_window_s": (raw.duration_s + 1, "derived: --duration-s + 1"),
+    }
+    if resolved["receipt_interval_s"][0] is None:
+        raise ValueError("no registry value for receipt_interval_s")
     data = AlpacaDataClientConfig(
         api_key_env=raw.api_key_env, api_secret_env=raw.api_secret_env, feed=raw.feed
     )
@@ -108,10 +125,11 @@ def parse(argv: list[str] | None = None) -> tuple[Arguments, LeaseArguments]:
         read_universe(raw.universe),
         raw.duration_s,
         raw.receipt_dir,
-        raw.receipt_interval_s,
-        raw.bucket_window_s,
+        int(resolved["receipt_interval_s"][0] or 0),
+        int(resolved["bucket_window_s"][0] or 0),
         raw.quotes,
         data,
+        resolved,
     )
     lease = LeaseArguments(raw.lease_root, raw.paper_slot, raw.existing_streams, raw.lease_source)
     return args, lease
@@ -161,6 +179,8 @@ def run(
     if lease is None:
         raise ValueError("the market-data lease is required: no lease, no start")
     with lease:
+        if args.parameters is not None:
+            node_parameters.write_receipt(args.receipt_dir, args.parameters)
         node, _ = build(args, factory=factory, config=config)
         timer = threading.Timer(args.duration_s, node.handle().stop)
         timer.daemon = True
