@@ -433,6 +433,13 @@ boundary, and moves to the next supported segment; after POST it waits for the
 next 04:00 ET open.
 Overnight is not produced until #138 supplies a BOATS baseline.
 
+`--ranked-view-dir DIR` also writes `DIR/ranked.html` and `DIR/ranked.json` each
+tick: every directory name with an official close, ranked with no TradingView map,
+so an unmapped name shows by its plain ticker; the unit files do not change. The
+page is script-free, mode 600, reloads at the cadence floor, reads STALE past the
+display `max_age_s` and UNAVAILABLE with the reason on a refused or idle tick. If the
+producer stops, compare its "Stale after" time with the clock.
+
 Each tick fetches the current segment's completed SIP minutes (the in-progress
 minute is never replayed) and passes every completed minute through the
 bar-fidelity host. The publication clock is read again after the replay, so a

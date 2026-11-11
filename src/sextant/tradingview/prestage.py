@@ -21,7 +21,7 @@ import os
 import time
 from array import array
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime, timedelta
 from datetime import time as clock_time
 from decimal import Decimal
@@ -60,6 +60,7 @@ from sextant.tradingview.host import BarFidelityHost, load_symbol_map
 from sextant.tradingview.inputs import read_research_inputs
 from sextant.tradingview.listings import creation_time
 from sextant.tradingview.producer import Clocks, reserve_stream
+from sextant.tradingview.ranked_view import generation_view, view_document, write_view
 
 NS = 1_000_000_000
 MINUTE_NS = 60 * NS
@@ -444,42 +445,46 @@ def _chunks(names: Sequence[str], size: int) -> Iterable[Sequence[str]]:
         yield names[index : index + size]
 
 
-def publish_tick(
-    *,
-    lease: Any,
-    source: Source,
-    segment: Segment,
-    baseline: FiveSessionBaseline,
-    symbols: Sequence[str],
-    prior_closes: Mapping[str, Decimal],
-    prior_close_ns: int,
-    symbol_map: Mapping[str, str],
-    registry: Registry,
-    epoch: str,
-    universe_source: str,
-    now_ns: int,
-    unit_dir: Path,
-    j5_path: Path,
-    bounds: DisplayBounds,
-    max_age: int = 1_200,
-    clock: Callable[[], int] | None = None,
-    feed: str = "sip",
-) -> dict[str, Any]:
-    """Replay the current segment once and publish one complete unit.
+@dataclass
+class RankedView:
+    """The opt-in local page: every directory name ranked with no TradingView map.
 
-    When ``clock`` is supplied it is read again after the replay, so the unit is
-    stamped and validated with the time the fetch actually finished.
+    The unit keeps its mapped universe; this second publisher shares the tick's
+    bars, so an unmapped name shows by its plain ticker. Idle until ``baseline``.
     """
-    if segment.name not in SUPPORTED:
-        raise PrestageError(f"the producer does not write {segment.name} units")
-    if not segment.start_ns <= now_ns < segment.end_ns:
-        raise PrestageError("the publish clock is outside the supplied segment")
-    start = datetime.fromtimestamp(segment.start_ns / NS, ET)
-    completed_end_ns = now_ns - now_ns % MINUTE_NS
-    if completed_end_ns <= segment.start_ns:
-        raise PrestageError("no completed minute bars for this segment")
-    end = datetime.fromtimestamp(completed_end_ns / NS, ET)
-    bars = source.minute_bars(symbols, start=start, end=end)
+
+    directory: Path
+    max_age_s: int
+    cadence_registry: Path = DEFAULT_CADENCE_REGISTRY
+    state_root: Path = DEFAULT_STATE_ROOT
+    symbols: tuple[str, ...] = ()
+    closes: dict[str, Decimal] = field(default_factory=dict)
+    baseline: FiveSessionBaseline | None = None
+    universe_source: str = ""
+    written: bool = False
+    previous: Any = None
+
+    def write(self, now_ns: int, reason: str | None = None, generation: Any = None) -> None:
+        self.previous = generation or self.previous
+        refresh = cadence_floor(
+            datetime.fromtimestamp(now_ns / NS, UTC),
+            registry=self.cadence_registry,
+            state_root=self.state_root,
+        )
+        document = view_document(
+            self.previous,
+            reason=reason,
+            max_age_s=self.max_age_s,
+            refresh_s=refresh,
+            written_at_ns=now_ns,
+        )
+        write_view(self.directory, document, now_ns=now_ns)
+        self.written = True
+
+
+def _completed(
+    bars: Iterable[Bar], segment: Segment, completed_end_ns: int
+) -> dict[int, list[Bar]]:
     by_minute: dict[int, list[Bar]] = {}
     for item in bars:
         if (
@@ -489,13 +494,28 @@ def publish_tick(
         ):
             continue
         by_minute.setdefault(item.close_ns, []).append(item)
-    clocks = sorted(by_minute)
-    if not clocks:
-        raise PrestageError("no completed minute bars for this segment")
-    latest_close_ns = clocks[-1]
+    return by_minute
 
+
+def _replay(
+    *,
+    lease: Any,
+    trader: str,
+    segment: Segment,
+    baseline: FiveSessionBaseline,
+    symbols: Sequence[str],
+    prior_closes: Mapping[str, Decimal],
+    prior_close_ns: int,
+    symbol_map: Mapping[str, str | None],
+    registry: Registry,
+    epoch: str,
+    universe_source: str,
+    feed: str,
+    by_minute: Mapping[int, list[Bar]],
+) -> tuple[RankingPublisher, BarFidelityHost, int]:
+    """One fresh publisher and host fed every completed minute in clock order."""
     publisher = RankingPublisher(
-        bus=MessageBus(TraderId.from_str(f"TV-PRODUCER-{segment.name}-001")),
+        bus=MessageBus(TraderId.from_str(trader)),
         epoch=epoch,
         feed=feed,
         segment=segment,
@@ -516,25 +536,17 @@ def publish_tick(
         sip_authority=SIP_AUTHORITY,
         symbol_map=dict(symbol_map),
     )
-
     ingested = 0
-    for close_ns in clocks:
+    for close_ns in sorted(by_minute):
         ingested += host.ingest(
             BarPoll(bars=tuple(by_minute[close_ns]), requested=tuple(symbols)),
             market_ns=close_ns,
             received_ns=close_ns,
         )
+    return publisher, host, ingested
 
-    publication_ns = now_ns if clock is None else int(clock())
-    if not segment.start_ns <= publication_ns < segment.end_ns:
-        raise PrestageError(f"the {segment.name} segment closed before the tick could publish")
-    if publication_ns < latest_close_ns:
-        raise PrestageError(
-            "the publication clock moved behind the replayed bars: "
-            f"{publication_ns} < {latest_close_ns}"
-        )
-    publish_clock_ns = publication_ns
-    max_age_ns = registry.seconds("input_max_age_s")
+
+def _drop_stale(publisher: RankingPublisher, publish_clock_ns: int, max_age_ns: int) -> None:
     for name, state in list(publisher.states.items()):
         if state.latest is None:
             continue
@@ -546,6 +558,121 @@ def publish_tick(
             or (type(price_ns) is int and publish_clock_ns - price_ns > max_age_ns)
         ):
             publisher.states[name] = replace(state, latest=None)
+
+
+def publish_tick(
+    *,
+    lease: Any,
+    source: Source,
+    segment: Segment,
+    baseline: FiveSessionBaseline,
+    symbols: Sequence[str],
+    prior_closes: Mapping[str, Decimal],
+    prior_close_ns: int,
+    symbol_map: Mapping[str, str],
+    registry: Registry,
+    epoch: str,
+    universe_source: str,
+    now_ns: int,
+    unit_dir: Path,
+    j5_path: Path,
+    bounds: DisplayBounds,
+    max_age: int = 1_200,
+    clock: Callable[[], int] | None = None,
+    feed: str = "sip",
+    view: RankedView | None = None,
+) -> dict[str, Any]:
+    """Replay the current segment once and publish one complete unit.
+
+    When ``clock`` is supplied it is read again after the replay, so the unit is
+    stamped and validated with the time the fetch actually finished. A ``view``
+    ranks its universe from the same fetch; the unit sees only its own bars.
+    """
+    if segment.name not in SUPPORTED:
+        raise PrestageError(f"the producer does not write {segment.name} units")
+    if not segment.start_ns <= now_ns < segment.end_ns:
+        raise PrestageError("the publish clock is outside the supplied segment")
+    start = datetime.fromtimestamp(segment.start_ns / NS, ET)
+    completed_end_ns = now_ns - now_ns % MINUTE_NS
+    if completed_end_ns <= segment.start_ns:
+        raise PrestageError("no completed minute bars for this segment")
+    end = datetime.fromtimestamp(completed_end_ns / NS, ET)
+    if view is not None and view.baseline is None:
+        view = None
+    unit_names = frozenset(symbols)
+    fetch = tuple(symbols)
+    if view is not None:
+        fetch += tuple(name for name in view.symbols if name not in unit_names)
+    bars = source.minute_bars(fetch, start=start, end=end)
+    by_minute = _completed(
+        bars if view is None else (item for item in bars if item.symbol in unit_names),
+        segment,
+        completed_end_ns,
+    )
+    clocks = sorted(by_minute)
+    if not clocks:
+        raise PrestageError("no completed minute bars for this segment")
+    latest_close_ns = clocks[-1]
+
+    publisher, host, ingested = _replay(
+        lease=lease,
+        trader=f"TV-PRODUCER-{segment.name}-001",
+        segment=segment,
+        baseline=baseline,
+        symbols=symbols,
+        prior_closes=prior_closes,
+        prior_close_ns=prior_close_ns,
+        symbol_map=symbol_map,
+        registry=registry,
+        epoch=epoch,
+        universe_source=universe_source,
+        feed=feed,
+        by_minute=by_minute,
+    )
+
+    publication_ns = now_ns if clock is None else int(clock())
+    if not segment.start_ns <= publication_ns < segment.end_ns:
+        raise PrestageError(f"the {segment.name} segment closed before the tick could publish")
+    if publication_ns < latest_close_ns:
+        raise PrestageError(
+            "the publication clock moved behind the replayed bars: "
+            f"{publication_ns} < {latest_close_ns}"
+        )
+    publish_clock_ns = publication_ns
+    max_age_ns = registry.seconds("input_max_age_s")
+    _drop_stale(publisher, publish_clock_ns, max_age_ns)
+    if view is not None and view.baseline is not None:
+        view_names = frozenset(view.symbols)
+        view_publisher, _, _ = _replay(
+            lease=lease,
+            trader=f"TV-VIEW-{segment.name}-001",
+            segment=segment,
+            baseline=view.baseline,
+            symbols=view.symbols,
+            prior_closes=view.closes,
+            prior_close_ns=prior_close_ns,
+            symbol_map=dict.fromkeys(view.symbols),
+            registry=registry,
+            epoch=f"{epoch}-view",
+            universe_source=view.universe_source,
+            feed=feed,
+            by_minute=_completed(
+                (item for item in bars if item.symbol in view_names), segment, completed_end_ns
+            ),
+        )
+        _drop_stale(view_publisher, publish_clock_ns, max_age_ns)
+        generation = view_publisher.publish(now=publish_clock_ns)
+        if generation is None:
+            raise PrestageError("the ranked view publisher returned no generation")
+        view.write(
+            publish_clock_ns,
+            generation=generation_view(
+                generation,
+                segment=segment.name,
+                top_n=int(registry.top_n),
+                universe_source=view.universe_source,
+            ),
+        )
 
     if not host.heartbeat(at=latest_close_ns, received_ns=publish_clock_ns):
         raise PrestageError("the bar-fidelity heartbeat was refused")
@@ -617,8 +744,13 @@ def run(
     sleep: Callable[[float], None] = time.sleep,
     source_factory: Callable[[Any], Source] | None = None,
     page: Callable[[str], None] = print,
+    ranked_view_dir: Path | None = None,
 ) -> int:
-    """Refresh one segment's unit on the registry cadence until the display closes."""
+    """Refresh one segment's unit on the registry cadence until the display closes.
+
+    ``ranked_view_dir`` opts in to the local ranked page (``RankedView``); without
+    it nothing here reads or requests anything more than before.
+    """
     if type(max_age) is not int or not 1 <= max_age <= 3_600:
         raise PrestageError("max_age is 1..3600 seconds")
     registry_path = Path(k2_registry)
@@ -632,6 +764,14 @@ def run(
         Path(cadence_registry),
         page=lambda _: None,
     )
+    view: RankedView | None = None
+    directory: tuple[str, ...] = ()
+    if ranked_view_dir is not None:
+        texts = (Path(path).read_text(encoding="utf-8") for path in (nasdaq_listed, other_listed))
+        directory = build_universe(*texts)
+        view = RankedView(
+            Path(ranked_view_dir), bounds.max_age_s, Path(cadence_registry), state_root
+        )
     refused: set[tuple[date, str]] = set()
     while True:
         now_ns = int(clock())
@@ -643,6 +783,8 @@ def run(
                 else f"{segment.name} is not produced until #138 supplies a BOATS baseline"
             )
             page(f"TV producer idle: {reason}; no unit written.")
+            if view is not None:
+                view.write(now_ns, f"the producer is idle: {reason}")
             if once:
                 return 0
             sleep(max(0.0, (_next_display_open(now_ns) - now_ns) / NS))
@@ -694,16 +836,44 @@ def run(
                     f"TV producer skipped the {segment.name} segment on "
                     f"{segment.session_date.isoformat()}: {error}; no unit written."
                 )
+                if view is not None:
+                    view.write(now_ns, f"the producer skipped the {segment.name} segment: {error}")
                 if once:
                     return 1
                 refused_ns = int(clock())
                 sleep(max(0.0, (segment.end_ns - refused_ns) / NS))
                 continue
+            if view is not None:
+                view.baseline = None
+                view.write(now_ns, f"building the {segment.name} directory baseline")
+                try:
+                    view.baseline = build_segment_baseline(
+                        source,
+                        segment=segment,
+                        symbols=directory,
+                        sessions=sessions,
+                        known_at=_at(sessions[-1], 20),
+                    )
+                    view.symbols, view.closes = collect_references(
+                        source, day=reference_day, symbols=directory
+                    )
+                    view.universe_source = (
+                        f"{len(view.symbols)} of {len(directory)} directory symbols with a "
+                        f"{reference_day.isoformat()} SIP official close; no TradingView map "
+                        f"applied; NOT PIT membership; {listing}"
+                    )
+                except (PrestageError, ValueError, APIError) as error:
+                    view.baseline = None
+                    view.write(
+                        now_ns, f"the ranked view skipped the {segment.name} segment: {error}"
+                    )
             last_start = int(clock())
             while True:
                 now_ns = int(clock())
                 if now_ns >= segment.end_ns:
                     break
+                if view is not None:
+                    view.written = False
                 try:
                     registry = load_registry(registry_path)
                     receipt = publish_tick(
@@ -724,10 +894,13 @@ def run(
                         bounds=bounds,
                         max_age=max_age,
                         clock=clock,
+                        view=view,
                     )
                     page(json.dumps(receipt, sort_keys=True, default=str))
                 except (PrestageError, ValueError, APIError) as error:
                     page(f"TV producer skipped a tick: {error}")
+                    if view is not None and view.baseline is not None and not view.written:
+                        view.write(now_ns, f"the producer refused the tick: {error}")
                     if once:
                         return 1
                 if once:
@@ -763,6 +936,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--state-root", type=Path, default=DEFAULT_STATE_ROOT)
     parser.add_argument("--max-age", type=int, default=1_200)
     parser.add_argument("--once", action="store_true")
+    parser.add_argument("--ranked-view-dir", type=Path)
     args = parser.parse_args(argv)
     try:
         explicit = (args.gap_bound, args.rvol_bound, args.bounds_max_age_s)
@@ -783,6 +957,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             state_root=args.state_root,
             max_age=args.max_age,
             once=args.once,
+            ranked_view_dir=args.ranked_view_dir,
         )
     except (PrestageError, ValueError) as error:
         print(f"TV producer stopped: {error}")
