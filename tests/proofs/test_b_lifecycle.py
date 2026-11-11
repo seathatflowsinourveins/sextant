@@ -130,6 +130,7 @@ def run_node(
     extra=(),
     cls=BLifecycle,
     start=AT - NS,
+    bars=(),
     risk=None,
     **kwargs: Any,
 ):
@@ -141,6 +142,8 @@ def run_node(
     catalog.write_trade_ticks([t if isinstance(t, TradeTick) else trade(t) for t in trades])
     if quotes:
         catalog.write_quote_ticks(list(quotes))
+    if bars:
+        catalog.write_bars(list(bars))
     data = [NautilusDataType.TradeTick] + [NautilusDataType.QuoteTick] * bool(quotes)
     config = BacktestRunConfig(
         venues=[
@@ -158,6 +161,15 @@ def run_node(
                 data_type=kind, catalog=DataCatalogConfig(path=str(tmp_path)), instrument_id=PENNY
             )
             for kind in data
+        ]
+        + [
+            BacktestDataConfig(
+                data_type=NautilusDataType.Bar,
+                catalog=DataCatalogConfig(path=str(tmp_path)),
+                instrument_id=PENNY,
+                bar_types=[str(first.bar_type)],
+            )
+            for first in bars[:1]
         ],
         engine=BacktestEngineConfig(bypass_logging=True, run_analysis=False, risk_engine=risk),
         raise_exception=True,
