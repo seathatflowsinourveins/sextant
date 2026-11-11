@@ -37,6 +37,13 @@ ANTIGRAVITY_NATIVE_ROOTS = (
 )  # fmt: skip
 
 
+@pytest.fixture(autouse=True)
+def _isolated_runtime_home_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Use each proof's temporary home unless it supplies an explicit runtime root."""
+    for name in ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "DSH_HOME"):
+        monkeypatch.delenv(name, raising=False)
+
+
 def _parity() -> ModuleType:
     spec = importlib.util.spec_from_file_location("parity", RUNTIMES / "parity.py")
     assert spec is not None and spec.loader is not None
