@@ -13,6 +13,8 @@ the lease and before any node, naming it: today the prior close and the asset se
 from __future__ import annotations
 
 import argparse
+import json
+import sys
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -26,7 +28,12 @@ from sextant.alpaca.config import AlpacaDataClientConfig
 from sextant.alpaca.constants import VENUE
 from sextant.alpaca.factories import AlpacaDataClientFactory
 from sextant.alpaca.stream_facts import StreamFacts
-from sextant.data.baseline_recipe import load_universe, verified_baseline_text
+from sextant.data.baseline_recipe import (
+    FEEDS,
+    MANIFEST_NAME,
+    load_universe,
+    verified_baseline_text,
+)
 from sextant.ranking.baseline import BaselineTable, load_baseline, segment_start
 from sextant.ranking.engine import Segment
 from sextant.ranking.node_actor import RankingActor, RankingActorConfig
@@ -101,7 +108,7 @@ def load_inputs(raw: argparse.Namespace) -> RankingArguments:
     failures: list[str] = []
     for name, load in (
         ("universe", lambda: load_universe(raw.universe_artifact)),
-        ("baselines", lambda: _baselines(raw.baseline_dir)),
+        ("baselines", lambda: _baselines(raw.baseline_dir, loaded.get("universe"))),
         ("registry", lambda: load_registry(raw.registry)),
     ):
         try:
@@ -126,11 +133,31 @@ def load_inputs(raw: argparse.Namespace) -> RankingArguments:
     )
 
 
-def _baselines(directory: Path) -> dict[str, BaselineTable]:
-    return {
+def _baselines(directory: Path, universe: Any) -> dict[str, BaselineTable]:
+    """The four files, once the manifest ties them to the selected universe artifact (the
+    calibration job writes its digest: calibration_job.py ``universe=universe``) and each file
+    to its segment's feed (baseline_recipe ``FEEDS``), all before the lease (Codex r1)."""
+    if universe is None:
+        raise ValueError("no valid universe artifact to tie the baseline manifest to")
+    manifest = json.loads((directory / MANIFEST_NAME).read_text(encoding="utf-8"))
+    tied = manifest.get("universe") if isinstance(manifest, dict) else None
+    if not isinstance(tied, dict) or tied.get("sha256") != universe[1]["sha256"]:
+        raise ValueError("the baseline manifest's universe digest is not the selected artifact's")
+    tables = {
         name.upper(): load_baseline(verified_baseline_text(directory / f"{name}.json"))
         for name in SEGMENTS
     }
+    wrong = sorted(name for name, table in tables.items() if table.feed != FEEDS[name])
+    if wrong:
+        raise ValueError(f"baseline files of another feed: {', '.join(wrong)}")
+    return tables
+
+
+def page(stage: str, kind: str) -> None:
+    """The mode's pager: one line on stderr, the unit's journal, as main's display loop pages
+    (tradingview/loop.py ``_page``). Neither the data-only entry nor main's ranking host has a
+    transport, and no alert route reads this line yet."""
+    print(f"ranking page {stage}: {kind}", file=sys.stderr, flush=True)
 
 
 def build(
@@ -172,6 +199,7 @@ def build(
             host_factory=host,
             priming=lambda: sessions[-1].actor_priming(),
             page_window_s=args.page_window_s,
+            page=page,
             trade_facts=StreamFacts(args.data.feed),
             status_snapshot_window_s=args.status_snapshot_window_s,
             heartbeat_registry=args.registry,

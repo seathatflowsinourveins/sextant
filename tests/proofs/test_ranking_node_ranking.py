@@ -59,7 +59,8 @@ def produced_files(tmp_path: Path) -> dict[str, Path]:
         text = dump_baseline(table("boats" if name == "overnight" else "sip"))
         (baselines / f"{name}.json").write_text(text)
         files[f"{name}.json"] = {"sha256": hashlib.sha256(text.encode()).hexdigest()}
-    (baselines / "manifest.json").write_text(json.dumps({"files": files}))
+    universe = {"path": str(artifact), "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest()}
+    (baselines / "manifest.json").write_text(json.dumps({"files": files, "universe": universe}))
     return {"artifact": artifact, "baselines": baselines}
 
 
