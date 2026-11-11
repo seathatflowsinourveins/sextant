@@ -10,6 +10,7 @@ import asyncio
 import hashlib
 import json
 import time
+from datetime import date
 from decimal import Decimal as D
 from pathlib import Path
 from typing import Any
@@ -22,8 +23,10 @@ from nautilus_trader.live.clients import DataClientFactory
 from nautilus_trader.model import Venue
 from test_alpaca_data import ProofProvider
 from test_alpaca_stream_facts import DROP, Stream
+from test_ranking_inputs import Daily, staged
 
 from sextant.alpaca.data import AlpacaDataClient
+from sextant.data import ranking_inputs
 from sextant.ranking import node_ranking
 from sextant.ranking.baseline import BaselineSample, BaselineTable, dump_baseline
 from sextant.ranking.engine import ReferencePrices, Segment
@@ -61,7 +64,15 @@ def produced_files(tmp_path: Path) -> dict[str, Path]:
         files[f"{name}.json"] = {"sha256": hashlib.sha256(text.encode()).hexdigest()}
     universe = {"path": str(artifact), "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest()}
     (baselines / "manifest.json").write_text(json.dumps({"files": files, "universe": universe}))
-    return {"artifact": artifact, "baselines": baselines}
+    inputs = tmp_path / "ranking-inputs"  # what sextant.data.ranking_inputs writes (N2b-3)
+    ranking_inputs.produce(
+        inputs,
+        universe_artifact=artifact,
+        listings_dir=staged(tmp_path),
+        session=date(2026, 11, 11),
+        daily=Daily({"AAPL": D("10.50")}),
+    )
+    return {"artifact": artifact, "baselines": baselines, "inputs": inputs}
 
 
 def argv(tmp_path: Path, *drop: str) -> list[str]:
@@ -69,6 +80,7 @@ def argv(tmp_path: Path, *drop: str) -> list[str]:
     values = {
         "--universe-artifact": str(files["artifact"]),
         "--baseline-dir": str(files["baselines"]),
+        "--ranking-inputs-dir": str(files["inputs"]),
         "--registry": str(REGISTRY),
         "--duration-s": "600",
         "--receipt-dir": str(tmp_path / "receipts"),
@@ -89,11 +101,28 @@ def argv(tmp_path: Path, *drop: str) -> list[str]:
     return out
 
 
-def test_the_mode_refuses_naming_every_input_without_a_producer(tmp_path) -> None:
-    with pytest.raises(node_ranking.RankingRefused) as refused:
-        node_ranking.main(argv(tmp_path))
-    assert "prior close" in str(refused.value) and "asset security type" in str(refused.value)
+def test_the_mode_refuses_without_verified_ranking_inputs(tmp_path) -> None:
+    args = argv(tmp_path)
+    (tmp_path / "ranking-inputs" / "manifest.json").unlink()  # no commit record
+    with pytest.raises(node_ranking.RankingRefused, match="ranking inputs"):
+        node_ranking.main(args)
     assert not (tmp_path / "locks").exists() and not (tmp_path / "receipts").exists()
+
+
+def test_the_inputs_prime_pre_and_rth_of_their_session_only(tmp_path) -> None:
+    args, _ = node_ranking.parse(argv(tmp_path))
+    inputs = node_ranking.file_inputs(args)
+
+    def segment(name: str, day: date) -> Segment:
+        return Segment(name, day, 1_000 * NS, 2_000 * NS, "fixture")
+
+    pre = inputs(segment("PRE", date(2026, 11, 11)))
+    assert pre is not None and pre.references["AAPL"].prior_close == D("10.50")
+    assert pre.references["AAPL"].known_at == args.inputs.known_at
+    assert pre.assets["AAPL"].security_type == "common" and pre.assets["AAPL"].halted is None
+    assert inputs(segment("RTH", date(2026, 11, 11))) is not None
+    assert inputs(segment("POST", date(2026, 11, 11))) is None  # its close is not known yet
+    assert inputs(segment("PRE", date(2026, 11, 12))) is None  # another session's inputs
 
 
 def test_the_inputs_that_have_producers_are_loaded_and_checked(tmp_path) -> None:
@@ -110,6 +139,7 @@ def test_the_inputs_that_have_producers_are_loaded_and_checked(tmp_path) -> None
     [
         "--universe-artifact",
         "--baseline-dir",
+        "--ranking-inputs-dir",
         "--registry",
         "--duration-s",
         "--receipt-dir",

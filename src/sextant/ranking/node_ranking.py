@@ -6,8 +6,9 @@ entry (``node_main``: no execution client, the Alpaca data client through
 the node heartbeat. Every argument is required. Priming inputs come only from files an
 existing job on main writes (DESIGN-N2B2-BUILD section 6): the K2 universe artifact
 (``paper.c_universe``), the calibration job's per-segment baselines with their manifest, and
-the committed K2 ranking registry. An input with no producer on main refuses the start before
-the lease and before any node, naming it: today the prior close and the asset security type.
+the committed K2 ranking registry, and the ranking inputs (prior closes, asset security
+types) that ``sextant.data.ranking_inputs`` writes beside the baselines (N2b-3). A missing or
+unverified input refuses the start before the lease and before any node, naming it.
 """
 
 from __future__ import annotations
@@ -18,6 +19,8 @@ import sys
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import date
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -35,7 +38,7 @@ from sextant.data.baseline_recipe import (
     verified_baseline_text,
 )
 from sextant.ranking.baseline import BaselineTable, load_baseline, segment_start
-from sextant.ranking.engine import Segment
+from sextant.ranking.engine import ReferencePrices, Segment
 from sextant.ranking.node_actor import RankingActor, RankingActorConfig
 from sextant.ranking.node_main import (
     CLIENT_NAME,
@@ -46,14 +49,22 @@ from sextant.ranking.node_main import (
 )
 from sextant.ranking.node_main import _positive as positive
 from sextant.ranking.node_session import SegmentedHost, SegmentInputs
+from sextant.ranking.publisher import AssetState
 from sextant.ranking.registry import Registry
 
 SEGMENTS = ("pre", "rth", "post", "overnight")  # the calibration job's baseline files
-# Inputs the entry path needs that no job on main writes to a file (DESIGN-N2B2-BUILD 6).
-MISSING = (
-    "prior close: no job on main writes an official split-adjusted completed close",
-    "asset security type: the K2 universe artifact carries none",
-)
+INPUT_FILES = ("references.json", "assets.json")  # sextant.data.ranking_inputs (N2b-3)
+PRIMED = ("PRE", "RTH")  # POST's close is the same session's, known only at the POST start
+
+
+@dataclass(frozen=True)
+class RankingInputs:
+    session: date
+    known_at: int
+    closes: dict[str, Decimal]
+    types: dict[str, str]
+    reference_source: str
+    asset_source: str
 
 
 class RankingRefused(ValueError):
@@ -71,6 +82,7 @@ class RankingArguments:
     page_window_s: int
     status_snapshot_window_s: int
     data: AlpacaDataClientConfig
+    inputs: RankingInputs
 
 
 def parse(argv: list[str] | None = None) -> tuple[RankingArguments, argparse.Namespace]:
@@ -81,6 +93,7 @@ def parse(argv: list[str] | None = None) -> tuple[RankingArguments, argparse.Nam
     for flag, kind in (
         ("--universe-artifact", Path),
         ("--baseline-dir", Path),
+        ("--ranking-inputs-dir", Path),
         ("--registry", Path),
         ("--duration-s", positive),
         ("--receipt-dir", Path),
@@ -110,6 +123,7 @@ def load_inputs(raw: argparse.Namespace) -> RankingArguments:
         ("universe", lambda: load_universe(raw.universe_artifact)),
         ("baselines", lambda: _baselines(raw.baseline_dir, loaded.get("universe"))),
         ("registry", lambda: load_registry(raw.registry)),
+        ("ranking inputs", lambda: _ranking_inputs(raw.ranking_inputs_dir)),
     ):
         try:
             loaded[name] = load()
@@ -118,6 +132,8 @@ def load_inputs(raw: argparse.Namespace) -> RankingArguments:
     if failures:
         raise RankingRefused("invalid priming inputs: " + "; ".join(failures))
     symbols, digest = loaded["universe"]
+    if loaded["ranking inputs"][1] != digest["sha256"]:
+        raise RankingRefused("invalid priming inputs: ranking inputs are for another universe")
     return RankingArguments(
         tuple(symbols),
         f"K2 universe artifact {digest['path']} sha256 {digest['sha256']}; NOT PIT",
@@ -130,7 +146,59 @@ def load_inputs(raw: argparse.Namespace) -> RankingArguments:
         AlpacaDataClientConfig(
             api_key_env=raw.api_key_env, api_secret_env=raw.api_secret_env, feed=raw.feed
         ),
+        loaded["ranking inputs"][0],
     )
+
+
+def _ranking_inputs(directory: Path) -> tuple[RankingInputs, str]:
+    """Both files, only as their manifest commits them (the baselines' rule)."""
+    references, assets = (
+        json.loads(verified_baseline_text(directory / name)) for name in INPUT_FILES
+    )
+    if (references["session"], references["universe_sha256"]) != (
+        assets["session"],
+        assets["universe_sha256"],
+    ):
+        raise ValueError("the two ranking input files disagree on session or universe")
+    inputs = RankingInputs(
+        date.fromisoformat(references["session"]),
+        int(references["known_at"]),
+        {name: Decimal(close) for name, close in references["closes"].items()},
+        {name: row["security_type"] for name, row in assets["types"].items()},
+        references["source"],
+        assets["source"],
+    )
+    return inputs, references["universe_sha256"]
+
+
+def file_inputs(args: RankingArguments) -> Callable[[Segment], SegmentInputs | None]:
+    """PRE and RTH of the inputs' session; any other segment is unprimed (counted)."""
+    ranking = args.inputs
+
+    def inputs(segment: Segment) -> SegmentInputs | None:
+        if segment.name not in PRIMED or segment.session_date != ranking.session:
+            return None
+        return SegmentInputs(
+            baseline=args.baselines[segment.name],
+            references={
+                name: ReferencePrices(
+                    ranking.closes.get(name), ranking.known_at, ranking.reference_source
+                )
+                for name in args.universe
+            },
+            assets={
+                name: AssetState(
+                    ranking.known_at,
+                    segment.end_ns,
+                    None,
+                    ranking.types.get(name, "unknown"),
+                    ranking.asset_source,
+                )
+                for name in args.universe
+            },
+        )
+
+    return inputs
 
 
 def _baselines(directory: Path, universe: Any) -> dict[str, BaselineTable]:
@@ -235,8 +303,16 @@ def run(
 
 
 def main(argv: list[str] | None = None) -> Path:
-    parse(argv)  # every argument and every input that has a producer is checked first
-    raise RankingRefused("missing priming inputs: " + "; ".join(MISSING))
+    from sextant.tradingview.producer import reserve_stream
+
+    args, raw = parse(argv)  # every argument and every input is checked before the lease
+    reserved = reserve_stream(
+        raw.lease_root,
+        paper_slot=raw.paper_slot,
+        existing_streams=raw.existing_streams,
+        source=raw.lease_source,
+    )
+    return run(args, lease=reserved, inputs=file_inputs(args))
 
 
 if __name__ == "__main__":
