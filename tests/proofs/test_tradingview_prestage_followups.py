@@ -204,3 +204,13 @@ def test_the_entry_point_reads_the_slot_two_pair_and_names_no_revoked_slot() -> 
         assert token not in prestage_source
     assert producer.SCOPE.account == "paper-slot-2"
     assert "paper_slot=2" in prestage_source
+
+
+def test_the_3a_arrival_note_is_gone_once_the_loop_ships() -> None:
+    root = Path(__file__).parents[2]
+    docs = (root / "docs/tradingview.md").read_text()
+    manifest = (root / "docs/manifest.md").read_text()
+
+    assert "This part ships the unit publication step" not in docs
+    assert "arrive with the next part" not in docs
+    assert "arrive in the next part" not in manifest
