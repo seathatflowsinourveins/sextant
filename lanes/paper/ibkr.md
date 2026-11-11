@@ -61,3 +61,16 @@ shared request pacing, unknown-state recovery, and cumulative-ledger session rec
 
 Gateway startup/login still waits for #38's ready/old-custodian stop receipt and owner handover.
 No broker connection, stream, order, enabled unit or automatic startup is supplied here.
+
+**Node entry (#470).** `python -m sextant.paper.node_ibkr` builds the paper node from the engine's
+own Interactive Brokers data and execution factories and its built-in `ExecTester` in one of the
+adapter's execution profiles (`lifecycle`, `cancel-modify`, `stop`, `stop-limit`, `trailing`,
+`bracket`); no execution client of ours. It dry-runs unless `--send-orders` is given, takes the
+account from a key NAME (`--account-id-env`), refuses live ports 4001/7496 and any non-`D` code,
+takes the account's writer lease, runs on the main thread, and refuses every start while this
+registry's `state` is OFF. `tests/proofs/test_ibkr_node.py` proves each refusal without a connection.
+
+Both tester stop switches are false, leaving tester orders/holdings in place. `--send-orders`
+refuses foreign open/inflight orders or holdings for the instrument after native reconciliation,
+before strategies start. Native logging is bypassed; semantic argument refusals write receipts.
+See the [custody lesson](../../docs/handbook/ibkr-tester.md) for sources and offline proofs.
