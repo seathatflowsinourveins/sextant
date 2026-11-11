@@ -13,7 +13,7 @@ import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Any, Never
+from typing import Any, ClassVar, Never
 
 from jsonschema import Draft202012Validator
 from mcp import Client
@@ -239,6 +239,10 @@ def _documented_write(value: Any) -> bool:
 class OfficialTools:
     """Exact display allowlist, discovered schemas, serial pacing and safe errors."""
 
+    # The admitted operations and their argument keys; a subclass names its own set.
+    allowed: ClassVar[dict[str, set[str]]] = ALLOWED
+    aliases: ClassVar[dict[str, str]] = WIRE
+
     def __init__(
         self,
         client: Client,
@@ -264,8 +268,8 @@ class OfficialTools:
             for tool in page.tools:
                 if isinstance(tool.name, str) and _NAME.match(tool.name):
                     offered.add(tool.name)
-                name = WIRE.get(tool.name, tool.name)
-                if name in ALLOWED:
+                name = self.aliases.get(tool.name, tool.name)
+                if name in self.allowed:
                     if name in self.schemas:
                         raise SyncError(AMBIGUOUS_TOOL_IDENTITY, stage="tool list")
                     self.schemas[name], self.wire[name] = tool.input_schema, tool.name
@@ -277,10 +281,12 @@ class OfficialTools:
             seen.add(cursor)
         else:
             raise SyncError(INCOMPLETE_TOOL_DISCOVERY, stage="tool list")
-        if set(self.schemas) != set(ALLOWED):
-            required = set(WIRE)
+        if set(self.schemas) != set(self.allowed):
+            required = set(self.aliases)
             missing = sorted(required - set(self.wire.values()))[:8]
-            extra = sorted(raw for raw in offered if WIRE.get(raw, raw) not in ALLOWED)[:8]
+            extra = sorted(
+                raw for raw in offered if self.aliases.get(raw, raw) not in self.allowed
+            )[:8]
             detail = (
                 f"tool list extra {', '.join(extra) or 'none'}; "
                 f"missing {', '.join(missing) or 'none'}"
@@ -297,8 +303,8 @@ class OfficialTools:
 
     def validate(self, name: str, arguments: dict[str, Any]) -> None:
         if (
-            name not in ALLOWED
-            or arguments.keys() - ALLOWED[name]
+            name not in self.allowed
+            or arguments.keys() - self.allowed[name]
             or name not in self.schemas
             or not Draft202012Validator(self.schemas[name]).is_valid(arguments)
         ):
