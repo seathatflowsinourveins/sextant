@@ -191,8 +191,9 @@ The owner must ensure only one sync process runs at a time: there is no
 cross-process lock, and concurrent processes are unsupported. The in-process
 limiter and logging guard do not confer cross-process ownership. Run it on the
 display schedule, independently of the trade clock. `deploy/tradingview/` holds a
-one-session user service and weekday timer for this loop; the lead installs and starts
-them after merge, and each start still needs the owner's browser consent.
+one-display-session user service and weekday timer that run this loop with the
+stored sign-in (`--loop --keep-login`, no browser); the lead installs and starts
+them after merge.
 
 Input is one resolved producer unit: `top100.json` (`morning-pack.candidates/1`),
 `focus.json` (`top100.focus/1`) and `display-lists.json` (`ns-display-lists/1`).

@@ -119,18 +119,21 @@ def test_no_unit_carries_a_token_code_or_callback_address(name: str) -> None:
     for forbidden in ("127.0.0.1", "localhost", "http://", "https://", "callback", "redirect"):
         assert forbidden not in body.lower()
     assert not re.search(r"\b(code|state|token|oauth|bearer|refresh)\b", body, re.IGNORECASE)
-    assert "--keep-login" not in body and "--forget-login" not in body
+    assert "--forget-login" not in body and "--authorize" not in body
     environment = [line for line in body.splitlines() if line.startswith("Environment=")]
     assert len(environment) <= 1
     names = {item.split("=", 1)[0] for line in environment for item in shlex.split(line[12:])}
     assert names <= {"PATH", "PYTHONUNBUFFERED"}, names
 
 
-def test_sync_unit_runs_without_keys_or_stored_login() -> None:
+def test_sync_unit_uses_the_stored_sign_in_and_never_a_browser() -> None:
     command = _command(DEPLOY / SYNC)
     assert "with-keys" not in " ".join(command)
     assert "-k" not in command
     assert command[:2] == ["%h/.local/bin/uv", "run"]
+    args = _module_args(command, "sextant.tradingview")
+    assert "--loop" in args and "--keep-login" in args
+    assert "--authorize" not in args
 
 
 def test_bounds_and_memory_limits_have_no_default_in_the_committed_units() -> None:
@@ -155,10 +158,10 @@ def test_restart_policy_follows_each_module() -> None:
     assert producer["Service"]["Type"] == "simple"
     assert producer["Service"]["Restart"] == "on-failure"
     assert producer["Install"]["WantedBy"] == "default.target"
-    # The loop exits 0 at the display close and 2 on a latch or a missed owner consent;
-    # restarting would request owner consent again unattended, so systemd's default stays.
+    # The loop exits 0 at the display close (never restarted by on-failure); a latched run is
+    # refused again before any session opens, and the stored sign-in needs no browser.
     assert sync["Service"]["Type"] == "simple"
-    assert "Restart" not in sync["Service"]
+    assert sync["Service"]["Restart"] == "on-failure"
     assert "Install" not in sync
     for unit in (producer, sync):
         assert unit["Service"]["WorkingDirectory"] == "%h/sextant"
@@ -272,10 +275,33 @@ def test_rendered_sync_command_parses_with_the_sync_parser(
     assert done.returncode == 0, done.stderr
     args = _module_args(_command(units / SYNC), "sextant.tradingview")
     seen: dict[str, Any] = {}
+
+    class _NoStore:
+        """Never touches the key store: the proof reads no stored sign-in."""
+
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        def present(self) -> bool:
+            return True
+
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setattr(cli, "StoredLogin", _NoStore, raising=False)
     monkeypatch.setattr(cli, "run_loop", lambda **kwargs: seen.update(kwargs) or 0)
-    assert cli.main(args) == 0
+    try:
+        code = cli.main(args)
+    except SystemExit as stop:  # argparse refuses an option the parser does not define
+        code = f"argparse exit {stop.code}"
+    if not seen:
+        pytest.fail(
+            "the sync unit's `--loop --keep-login` is not accepted by "
+            f"`python -m sextant.tradingview` on this tree ({code}); this PR lands after "
+            "the stored-login loop PR"
+        )
+    assert code == 0
     assert seen["research_dir"] == Path(UNIT_DIR)
-    assert seen["authorize"] is True
+    assert not seen["authorize"]  # no browser consent from the service
+    assert seen.get("keep_login") is True or seen.get("login") is not None
     assert seen["registry"] == loop.DEFAULT_REGISTRY
     assert seen["state_root"] == loop.DEFAULT_STATE_ROOT
     assert seen["usage_source"] == loop.NO_CLAUDE_USAGE
