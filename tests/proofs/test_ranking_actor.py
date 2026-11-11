@@ -197,11 +197,15 @@ def run(
     snapshot_window=None,
     heartbeat=None,
     end=None,
+    trades=None,
 ) -> dict[str, Any]:
     tmp_path.mkdir(parents=True, exist_ok=True)
     catalog = ParquetDataCatalog(str(tmp_path))
     catalog.write_instruments([*(equity(iid) for iid in IDS), *extra])
-    catalog.write_trade_ticks(ticks())
+    tape = ticks() if trades is None else trades
+    trade_ids = sorted({tick.instrument_id for tick in tape}, key=str)
+    for iid in trade_ids:  # one instrument per chunk
+        catalog.write_trade_ticks([tick for tick in tape if tick.instrument_id == iid])
     status_ids = sorted({status.instrument_id for status in statuses}, key=str)
     for iid in status_ids:  # the catalog writes one instrument per chunk
         catalog.write_instrument_statuses([s for s in statuses if s.instrument_id == iid])
@@ -219,8 +223,9 @@ def run(
             BacktestDataConfig(
                 data_type=NautilusDataType.TradeTick,
                 catalog=DataCatalogConfig(path=str(tmp_path)),
-                instrument_id=InstrumentId.from_str("PENNY.ALPACA"),
+                instrument_id=iid,
             )
+            for iid in trade_ids
         ]
         + [
             BacktestDataConfig(

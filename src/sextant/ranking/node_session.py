@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
 
@@ -87,6 +88,10 @@ class SegmentedHost:
     def _reset_counts(self) -> None:
         self.observed = False
         self.gaps = self.generations = self.late = self.unprimed = 0
+        self.amendments = {"inside": 0, "outside": 0, "unprimed": 0}
+        self.amendment_notional = {"inside": Decimal(0), "outside": Decimal(0)}
+        self.mismatched, self.mismatched_notional = 0, Decimal(0)  # an id match, not the print
+        self._amended_names: set[str] = set()
         self._last: RankingGeneration | None = None
 
     def actor_priming(self) -> Priming:
@@ -155,6 +160,43 @@ class SegmentedHost:
                 name, references=self._current.references[name], asset=self._asset(name)
             )
         )
+
+    def on_amendment(
+        self,
+        name: str,
+        key: str,
+        *,
+        price: Decimal,
+        size: Decimal,
+        notional: Decimal | None = None,
+    ) -> RankingGeneration | None:
+        """A correction or cancel, for the current segment's adapter (N1f). The records' own
+        notional is summed for the receipt only: the segment's cumulative dollar volume keeps a
+        corrected print until the segment ends (a known limit, lead ruling 03:35)."""
+        self._amended_names.add(name)
+        if self.host is None:
+            self.amendments["unprimed"] += 1
+            return None
+        host = self.host
+        before = host.amendments_inside, host.amendments_mismatched, host.amendments_unprimed
+        generation = self._count(host.on_amendment(name, key, price=price, size=size))
+        if host.amendments_unprimed > before[2]:
+            self.amendments["unprimed"] += 1  # the named print has no raw vendor record
+            return generation
+        if host.amendments_mismatched > before[1]:
+            self.mismatched += 1  # its own class: the id names a print of another price or size
+            self.mismatched_notional += notional or Decimal(0)
+            return generation
+        side = "inside" if host.amendments_inside > before[0] else "outside"
+        self.amendments[side] += 1
+        if notional is not None:
+            self.amendment_notional[side] += notional
+        return generation
+
+    def on_vendor_print(self, tick: TradeTick, *, price: Decimal, size: Decimal) -> None:
+        """The raw vendor values of a print, for the current segment's adapter (N1f)."""
+        if self.host is not None:
+            self.host.on_vendor_print(tick, price=price, size=size)
 
     def set_coverage(self, coverage: Coverage) -> RankingGeneration | None:
         """Coverage is this host's observation; a non-READY word from the Actor is a gap.
@@ -257,6 +299,13 @@ class SegmentedHost:
             "late": self.late,
             "unrouted": self.unrouted,
             "unprimed": self.unprimed,
+            "amendments": dict(self.amendments),
+            "amendment_notional": {k: format(v, "f") for k, v in self.amendment_notional.items()},
+            "amended_names": len(self._amended_names),
+            "amendments_mismatched": {
+                "count": self.mismatched,
+                "notional": format(self.mismatched_notional, "f"),
+            },
             "faults": {}
             if host is None
             else {
