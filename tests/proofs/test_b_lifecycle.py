@@ -262,4 +262,4 @@ def test_the_strategy_has_no_forbidden_order_path() -> None:
         for node in ast.walk(ast.parse(MODULE.read_text()))
         if isinstance(node, ast.Attribute)
     }
-    assert names.isdisjoint(FORBIDDEN | ENTRY_PATH)  # S1-1: ranking in, no order path at all
+    assert names.isdisjoint(FORBIDDEN)  # S1-2 adds ENTRY_PATH: the entry's own commands
