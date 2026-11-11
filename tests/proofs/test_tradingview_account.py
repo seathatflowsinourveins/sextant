@@ -7,6 +7,7 @@ import time
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from itertools import pairwise
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -471,3 +472,58 @@ def test_tool_schema_error_property_is_metadata_not_a_quota_answer(field):
     )
     assert Account().snapshot()["quota_stop"] is False
     Account().preflight()
+
+
+@pytest.fixture
+def attended_registry(tmp_path, monkeypatch):
+    """Use shipped authority unchanged; isolate only the durable state location."""
+    shipped = Path(__file__).resolve().parents[2] / "lanes/tradingview/account.params.json"
+    data = json.loads(shipped.read_text())
+    for row in data["rows"]:
+        if row["name"] == "account_state_path":
+            row["value"] = str(tmp_path / "state.json")
+    path = tmp_path / "attended.params.json"
+    path.write_text(json.dumps(data))
+    monkeypatch.setattr(account, "DEFAULT_PARAMETERS", path)
+    return data
+
+
+def test_attended_registry_stops_before_request_183(attended_registry):
+    async def exercise():
+        item = Account()
+        for _ in range(182):
+            await item.request(success)
+        with pytest.raises(AccountError, match="budget exhausted"):
+            await item.request(success)
+        assert item.snapshot()["calls"] == 182
+
+    asyncio.run(exercise())
+
+
+def test_attended_registry_spaces_requests_six_seconds_across_clients(attended_registry):
+    asyncio.run(Account().request(success))
+    first = datetime.fromisoformat(Account().snapshot()["last_call"])
+    asyncio.run(Account().request(success))
+    second = datetime.fromisoformat(Account().snapshot()["last_call"])
+    assert second - first == timedelta(seconds=6)
+
+
+def test_attended_registry_uses_sourced_sdk_timeout(attended_registry):
+    assert Account().timeout() == 30
+
+
+def test_attended_registry_records_uncalibrated_authority(attended_registry):
+    for row in attended_registry["rows"]:
+        if row["name"] == "account_state_path":
+            continue
+        assert row["calibration_state"] == "UNCALIBRATED"
+        assert row["last_change"] == "2026-11-11"
+        for source in (
+            "LEAD-1614",
+            "7e92258392599bd6b3e6295c58327de88199150c503c8cf113561450ccbddec0",
+            "https://www.tradingview.com/mcp/docs",
+            "read 2026-11-11",
+            "REQUEST-NEED.md",
+            "f4d025e77dfc5fb9aa7385a17bda3dc59ea8b0447e1f5e094c121dfb4a5d1409",
+        ):
+            assert source in row["source"]
