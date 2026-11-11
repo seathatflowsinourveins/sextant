@@ -125,6 +125,7 @@ class Recording(BLifecycle):
     def __init__(self, config) -> None:
         super().__init__(config)
         self.sent: list[tuple[str, Any, Any]] = []
+        self.modifies: list[dict[str, Any]] = []  # every argument of each modify command
 
     def submit_order(self, order, position_id=None, client_id=None, params=None) -> None:
         self.sent.append(("submit", order.client_order_id, params))
@@ -140,6 +141,10 @@ class Recording(BLifecycle):
         params=None,
     ) -> None:
         self.sent.append(("modify", client_order_id, price))
+        self.modifies.append(
+            dict(cid=client_order_id, quantity=quantity, price=price, trigger=trigger_price)
+            | dict(params=params)
+        )
         super().modify_order(client_order_id, quantity, price, trigger_price, client_id, params)
 
     def cancel_order(self, client_order_id, client_id=None, params=None) -> None:
@@ -166,7 +171,7 @@ class OwnerStandIn(Strategy):
             self.submit_order(order)
 
 
-def run_entry(tmp_path, *, tape=TAPE, quotes=QUOTES, **kwargs: Any):
+def run_entry(tmp_path, *, tape=TAPE, quotes=QUOTES, extra_trades=(), **kwargs: Any):
     kwargs.setdefault("entry_params", PARAMS)
     kwargs.setdefault("exit_params", EXIT)
     kwargs.setdefault("commission_rate", D(0))
@@ -183,7 +188,7 @@ def run_entry(tmp_path, *, tape=TAPE, quotes=QUOTES, **kwargs: Any):
     journal, _, orders = run_node(
         tmp_path / "catalog",
         lambda pub: [(AT, generation(pub))],
-        ticks(tape),
+        ticks(tape) + list(extra_trades),
         quotes=quotes,
         cls=Captured,
         start=at(tape[0][0]) - NS,

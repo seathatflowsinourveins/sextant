@@ -27,15 +27,17 @@ each session change writes one record. Every cancel or modify goes through the h
 from __future__ import annotations
 
 from collections import deque
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from decimal import ROUND_FLOOR, Decimal
 from pathlib import Path
 from typing import Any, cast
 
 from nautilus_trader.config import StrategyConfig
+from nautilus_trader.indicators import AverageTrueRange
 from nautilus_trader.model import (
     Bar,
+    BarType,
     ClientOrderId,
     CustomData,
     Equity,
@@ -53,13 +55,14 @@ from nautilus_trader.model import (
 )
 from nautilus_trader.trading import Strategy
 
+from sextant.entry.indicators import DecimalATR
 from sextant.entry.orders import limit_price, within_chase
 from sextant.entry.parameters import FIRST_LEG, SIZING, EntryParameters
 from sextant.entry.signals import EntryState
 from sextant.entry.sizing import SegmentBasis, Sizing, size_entry
 from sextant.entry.surge import SurgeState, advance_surge
 from sextant.exits.policy import ExitParams, buffer
-from sextant.paper.b_width import MAX_TRAIL_FRACTION, trail_percent
+from sextant.paper.b_width import MAX_TRAIL_FRACTION, trail_fraction, trail_percent, view_from_quote
 from sextant.paper.sessions import Session, session_at, session_start_ns
 from sextant.ranking.baseline import BaselineTable
 from sextant.ranking.consumer import RankingConsumer
@@ -69,6 +72,9 @@ from sextant.ranking.registry import RegistryRow
 
 Journal = Callable[[dict[str, Any]], None]
 ENTRY_ROWS = FIRST_LEG | SIZING
+WIDTH_ROWS = frozenset(
+    {"alpaca_min_trail_fraction", "trail_atr_period", "trail_atr_bar_minutes", "trail_atr_multiple"}
+)
 NS = 1_000_000_000
 
 
@@ -109,6 +115,7 @@ class BLifecycleConfig(StrategyConfig):
         basis_path: Path | None = None,
         baseline: BaselineTable | None = None,
         native_trail_fraction: Decimal | None = None,
+        width_rows: Mapping[str, Decimal] | None = None,
         **engine: object,
     ) -> None:
         unknown = sorted(set(engine) - ENGINE_FIELDS)
@@ -135,6 +142,13 @@ class BLifecycleConfig(StrategyConfig):
         self.entry_params, self.exit_params = entry_params, exit_params
         self.commission_rate, self.basis_path, self.baseline = commission_rate, basis_path, baseline
         self.native_trail_fraction = native_trail_fraction
+        if width_rows is not None:
+            if set(width_rows) != WIDTH_ROWS or native_trail_fraction is None:
+                raise ValueError(f"the width needs exactly {sorted(WIDTH_ROWS)} and the native row")
+            for name in ("trail_atr_period", "trail_atr_bar_minutes"):
+                if width_rows[name] % 1 or width_rows[name] < 1:
+                    raise ValueError(f"{name} must be a whole number of at least one")
+        self.width_rows = width_rows
 
 
 @dataclass(slots=True)
@@ -157,6 +171,15 @@ class _Book:
     stale_since: int | None = None
     paged: str | None = None
     rearm: bool = False  # a trail the RiskEngine denied: cover again on the next price
+    width_bar: BarType | None = None
+    oracle: AverageTrueRange | None = None  # the engine's float ATR, compared only
+    atr: DecimalATR | None = None  # the value used (ADR-0004's Decimal carry)
+    atr_session: int | None = None
+    width: Decimal | None = None
+    high: Decimal | None = None  # the tape high since the position opened
+    last: Decimal | None = None
+    offsets: dict[ClientOrderId, Decimal] = field(default_factory=dict)  # bps in force
+    session_bars: list[Bar] = field(default_factory=list)
 
 
 class BLifecycle(Strategy):
@@ -190,11 +213,23 @@ class BLifecycle(Strategy):
             self.subscribe_trades(iid)
             self.subscribe_quotes(iid)
             instrument = self.cache.instrument(iid)
-            if self.missing or not isinstance(instrument, Equity):
+            if not isinstance(instrument, Equity):
                 continue
-            book.instrument = instrument
+            book.instrument = instrument  # protection never waits on entry rows
+            if self.missing:
+                continue
             book.entry = EntryState(iid, self._p, segment.name, start_ns=segment.start_ns)
             self.subscribe_bars(book.entry.bar_type)
+        rows = self.width_rows
+        for iid, book in self.books.items():
+            if rows is None:
+                continue
+            minutes = int(rows["trail_atr_bar_minutes"])
+            book.width_bar = BarType.from_str(f"{iid}-{minutes}-MINUTE-LAST-EXTERNAL")
+            book.oracle = AverageTrueRange(int(rows["trail_atr_period"]))
+            self.register_indicator_for_bars(book.width_bar, book.oracle)
+            if book.entry is None or book.entry.bar_type != book.width_bar:
+                self.subscribe_bars(book.width_bar)
         if self.missing:
             self._record(kind="entry_refused", ts=now, missing=self.missing)
             return
@@ -205,6 +240,10 @@ class BLifecycle(Strategy):
             store = SegmentBasis(self.basis_path, str(account.id), self._p)
             free = self._balance(book, "free")
             self.basis = store.freeze(key, free, first_read="node_start")  # N5's frozen basis
+
+    @property
+    def width_rows(self) -> Any:
+        return self._config.width_rows
 
     @property
     def native(self) -> Any:
@@ -223,8 +262,10 @@ class BLifecycle(Strategy):
 
     def on_bar(self, bar: Bar) -> None:
         book = self.books.get(bar.bar_type.instrument_id)
-        if book is not None and book.entry is not None:
+        if book is not None and book.entry is not None and bar.bar_type == book.entry.bar_type:
             book.entry.on_bar(bar, now=self.clock.timestamp_ns())
+        if book is not None and bar.bar_type == book.width_bar:
+            self._width(book, bar)
 
     def on_quote(self, quote: QuoteTick) -> None:
         book, now = self.books.get(quote.instrument_id), self.clock.timestamp_ns()
@@ -251,6 +292,8 @@ class BLifecycle(Strategy):
         now = self.clock.timestamp_ns()
         self._session(book, now)
         self._rearm(book)
+        price, book.last = trade.price.as_decimal(), trade.price.as_decimal()
+        book.high = None if self._held(book) <= 0 else max(book.high or price, price)
         allowed = self.candidate(book, now)
         if book.entry is None or self.baseline is None or self.exit is None:
             return
@@ -387,9 +430,6 @@ class BLifecycle(Strategy):
     def on_order_expired(self, event: Any) -> None:
         self._on_order(event)
 
-    def on_order_updated(self, event: Any) -> None:
-        self._on_order(event)  # a confirmed quantity replacement moves the reservation
-
     def on_order_denied(self, event: Any) -> None:
         self._record(
             kind="page", ts=event.ts_event, reason="denied", order=str(event.client_order_id)
@@ -433,8 +473,7 @@ class BLifecycle(Strategy):
         ids = {o.client_order_id for o in trails}
         sells = [o for o in live if o.side is OrderSide.SELL and o.client_order_id not in ids]
         reserved = sum((o.leaves_qty.as_decimal() for o in sells), Decimal(0))  # owner's too
-        positions = self.cache.positions_open(instrument_id=iid, strategy_id=self.strategy_id)
-        held = sum((p.quantity.as_decimal() for p in positions if p.is_long), Decimal(0))
+        held = self._held(book)
         unreserved = max(Decimal(0), held - reserved).to_integral_value(rounding=ROUND_FLOOR)
         covered = sum((o.leaves_qty.as_decimal() for o in trails), Decimal(0))
         if held > 0 and unreserved == 0:
@@ -460,18 +499,88 @@ class BLifecycle(Strategy):
             return self._page(book, now, "native_trail_fraction_missing")
         if not isinstance(native, Decimal) or not 0 < native <= MAX_TRAIL_FRACTION:
             return self._page(book, now, "native_trail_fraction_invalid")  # ADR-0025's cap
+        width = book.width
+        if width is None and self.width_rows is not None:
+            self._page(book, now, "width_unavailable")  # Q4: arm at the native row and page
+        bps = trail_percent(native if width is None else width) * 100  # rounded wider
         order = self.order_factory.trailing_stop_market(
             book.instrument_id,
             OrderSide.SELL,
             Quantity.from_int(int(shares)),
-            trail_percent(native) * 100,  # basis points, rounded wider (b_width.py)
+            bps,
             trailing_offset_type=TrailingOffsetType.BASIS_POINTS,
             time_in_force=TimeInForce.GTC,
             reduce_only=True,
             tags=["protect"],
         )
         self._record(kind="protect", ts=now, order=str(order.client_order_id), quantity=str(shares))
+        book.offsets[order.client_order_id] = bps
         self.submit_order(order)
+
+    # -- S1-4: width from completed bars, tighten-only modify -----------------------------
+
+    def _width(self, book: _Book, bar: Bar) -> None:
+        """D-30's width from this RTH session's completed bars (b_width.completed_atr's scope).
+
+        The engine's ``AverageTrueRange`` is registered for the bars and updated before this
+        handler; the Decimal ATR is fed the same bar and is the value used. A new RTH session
+        resets both and re-feeds its first bar to the oracle.
+        """
+        rows, now = self.width_rows, self.clock.timestamp_ns()
+        assert book.oracle is not None and book.width_bar is not None
+        if session_at(bar.ts_init - 1) is not Session.RTH:
+            return  # no new width outside RTH: the last one stays (b_width.py)
+        start = session_start_ns(bar.ts_init - 1)
+        if book.atr_session != start:
+            book.atr_session, book.session_bars = start, []
+            book.oracle.reset()
+            book.oracle.handle_bar(bar)
+        book.session_bars.append(bar)
+        # Rows in force at each bar: invalid ones keep trails, arm at native, never tighten.
+        period = _width_period(rows, book.width_bar)
+        if period is None:
+            book.width = None
+            return self._page(book, now, "width_rows_invalid")
+        if book.atr is None or book.atr.period != period:  # rebuilt over this session's bars
+            book.atr = DecimalATR(period)
+            for completed in book.session_bars[:-1]:
+                book.atr.handle_bar(completed)
+        book.atr.handle_bar(bar)
+        quote = book.quote
+        if book.atr.value is None or quote is None:
+            return
+        view = view_from_quote(quote.bid_price.as_decimal(), quote_ask(quote))
+        try:
+            width = trail_fraction(
+                native=self.native,
+                minimum=rows["alpaca_min_trail_fraction"],
+                multiple=rows["trail_atr_multiple"],
+                atr=book.atr.value,
+                view=view,
+            )
+        except (TypeError, ValueError):
+            book.width = None
+            return self._page(book, now, "width_rows_invalid")
+        if width is None:
+            return
+        book.width = width
+        self._record(
+            kind="width",
+            ts=now,
+            bar_ts=bar.ts_init,
+            atr=str(book.atr.value),
+            oracle=book.oracle.value,
+            width=str(width),
+        )
+
+    def on_order_updated(self, event: Any) -> None:
+        self._on_order(event)  # a confirmed quantity replacement moves the reservation
+
+    def _held(self, book: _Book) -> Decimal:
+        positions = self.cache.positions_open(
+            instrument_id=book.instrument_id, strategy_id=self.strategy_id
+        )
+        return sum((p.quantity.as_decimal() for p in positions if p.is_long), Decimal(0))
 
     def _session(self, book: _Book, now: int) -> None:
         """Section F: one record at every session change; the same trail rests across it."""
@@ -586,3 +695,20 @@ def _is_trail(order: Any) -> bool:
 
 def quote_ask(quote: QuoteTick) -> Decimal:
     return quote.ask_price.as_decimal()
+
+
+def _width_period(rows: Mapping[str, Any] | None, bar_type: BarType) -> int | None:
+    """The rows in force: exactly four positive Decimals, whole period and the bar's minutes."""
+    if rows is None or set(rows) != WIDTH_ROWS:
+        return None
+    values = [rows[name] for name in sorted(WIDTH_ROWS)]
+    if not all(isinstance(v, Decimal) and v.is_finite() and v > 0 for v in values):
+        return None
+    period, minutes = rows["trail_atr_period"], rows["trail_atr_bar_minutes"]
+    if (
+        period % 1
+        or minutes % 1
+        or not str(bar_type).endswith(f"-{int(minutes)}-MINUTE-LAST-EXTERNAL")
+    ):
+        return None
+    return int(period)
