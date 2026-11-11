@@ -197,3 +197,17 @@ def test_a_timer_write_after_stop_never_replaces_the_final_receipt(tmp_path) -> 
     receipt = tmp_path / "late" / "capacity.json"
     run(tmp_path, receipt, cls=Late)
     assert json.loads(receipt.read_text())["final"] is True
+
+
+def test_an_unknown_config_key_is_refused_by_name() -> None:
+    with pytest.raises(TypeError, match="receipt_interval"):
+        CapacityActorConfig(  # a misspelled key, never swallowed
+            instrument_ids=(PENNY,),
+            receipt_path=Path("x"),
+            receipt_interval_s=1,
+            receipt_interval=5,
+        )
+    config = CapacityActorConfig(  # the engine's own base fields still pass through
+        instrument_ids=(PENNY,), receipt_path=Path("x"), receipt_interval_s=1, log_events=False
+    )
+    assert config.log_events is False

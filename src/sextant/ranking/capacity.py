@@ -31,6 +31,10 @@ from sextant.execution.state import write_atomic
 NS = 1_000_000_000
 QUANTILES = {"p50": 0.50, "p95": 0.95, "p99": 0.99}
 CHANNELS = ("trades", "quotes")
+# The engine's own DataActorConfig fields, the only keys the catch-all may carry: the
+# documented config pattern passes them through to DataActorConfig.__new__
+# (docs/concepts/actors.md:15-21; common stub :132-151). Any other key is refused by name.
+ENGINE_FIELDS = frozenset({"actor_id", "log_events", "log_commands"})
 
 
 class CapacityActorConfig(DataActorConfig):
@@ -41,8 +45,11 @@ class CapacityActorConfig(DataActorConfig):
         receipt_path: Path,
         receipt_interval_s: int,
         quotes: bool = False,
-        **_kwargs: object,
+        **kwargs: object,
     ) -> None:
+        unknown = sorted(set(kwargs) - ENGINE_FIELDS)
+        if unknown:
+            raise TypeError(f"{type(self).__name__}() got unexpected keyword arguments {unknown}")
         super().__init__()
         ids = tuple(instrument_ids)
         if not ids or len(set(ids)) != len(ids):
