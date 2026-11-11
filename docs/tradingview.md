@@ -133,11 +133,20 @@ The following commands are owner-session steps, **not run by this worker**:
 ```sh
 uv run --frozen python -m sextant.tradingview --research-dir /path/to/top100/latest --authorize
 uv run --frozen python -m sextant.tradingview --research-dir /path/to/top100/latest --authorize --apply
+uv run --frozen python -m sextant.tradingview --authorize --keep-login
 uv run --frozen python -m sextant.tradingview --research-dir /path/to/top100/latest --authorize --keep-login --apply
 uv run --frozen python -m sextant.tradingview --research-dir /path/to/top100/latest --keep-login --apply
 uv run --frozen python -m sextant.tradingview --forget-login
 uv run --frozen python -m sextant.tradingview --loop --research-dir /path/to/top100/latest --authorize
 ```
+
+`--authorize --keep-login` with no `--research-dir` is the sign-in-only run: it
+opens the session once, so the owner's browser consent completes and the sign-in
+is stored, reads no display unit (so it works while no fresh unit exists) and
+calls no list tool, then prints one fixed line. Without `--keep-login` that run
+is refused, since it would save nothing, and `--apply` is refused with it. The
+authorization address goes only to Python's `webbrowser.open`, which honours a
+`BROWSER` helper by passing the address as its first argument.
 
 By default each process requires explicit owner consent in the browser and
 keeps tokens and client registration in RAM, clearing at exit; unflagged runs

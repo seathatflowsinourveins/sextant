@@ -22,6 +22,7 @@ from sextant.tradingview.presets import preset_receipt
 from sextant.tradingview.stored_login import StoredLogin, StoredLoginError
 from sextant.tradingview.sync import (
     LOGIN_STOPS,
+    LOGIN_STORE_UNAVAILABLE,
     OfficialTools,
     SyncError,
     sync_research,
@@ -32,6 +33,14 @@ STOP = (
     "Owner browser consent is required unless a stored sign-in is kept (--authorize and "
     "--keep-login); the default saves nothing."
 )
+SIGNED_IN = "TradingView sign-in kept in the encrypted store; no list was read or changed."
+SIGN_IN_NEEDS_KEEP_LOGIN = (
+    "A sign-in-only run (no --research-dir) must keep the sign-in: run --authorize "
+    "--keep-login. No session opened."
+)
+SIGN_IN_CHANGES_NO_LIST = (
+    "A sign-in-only run reads and changes no list; --apply needs --research-dir. No session opened."
+)
 
 
 def _stopped(error: SyncError) -> int:
@@ -40,6 +49,30 @@ def _stopped(error: SyncError) -> int:
     if str(error) in LOGIN_STOPS:
         _page(str(error))
     return 2
+
+
+def _sign_in(login: StoredLogin) -> int:
+    """Open the session once, so the SDK runs the owner's consent and stores it; no list call."""
+
+    async def run() -> None:
+        async with official_client(True, login):
+            pass
+
+    try:
+        asyncio.run(run())
+        kept = login.present()
+    except SyncError as error:
+        return _stopped(error)
+    except StoredLoginError:
+        kept = False
+    except Exception:
+        # SDK/HTTP exceptions may embed credentials; never emit their args/tracebacks.
+        print(STOP)
+        return 2
+    if not kept:
+        return _stopped(SyncError(LOGIN_STORE_UNAVAILABLE, stage="authorize"))
+    print(SIGNED_IN)
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -115,6 +148,16 @@ def main(argv: list[str] | None = None) -> int:
             landed_sha=args.landed_sha,
             enable_source=args.enable_source,
         )
+    if args.research_dir is None and args.authorize:
+        # Sign-in only: the freshness guard on a display unit does not apply to a run
+        # that reads no unit, so the owner can sign in while no fresh unit exists.
+        if not args.keep_login:
+            print(SIGN_IN_NEEDS_KEEP_LOGIN)
+            return 2
+        if args.apply:
+            print(SIGN_IN_CHANGES_NO_LIST)
+            return 2
+        return _sign_in(StoredLogin())
     try:
         if args.research_dir is None:
             raise InputError("Provide --research-dir for one complete producer unit")
