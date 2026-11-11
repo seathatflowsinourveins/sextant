@@ -316,18 +316,18 @@ class Gate:
         # A withheld row is withheld whatever its status (its name is not claimed); only a row
         # that has not ended is open. Alpaca's terminal statuses (execution.py _TERMINAL) are
         # the engine's closed set (rc8 crates/model/src/enums.rs:1489-1500) plus "replaced",
-        # which ends only its own row: its lineage is followed to the end (_lineage_end).
+        # which ends only its own row: its whole lineage is walked (_lineage).
         rows = [row for client in self.clients for row, _ in client.withheld]
         by_id = {row.get("id"): row for row in rows}
         ends, unresolved = {}, 0
         for row in rows:
             if not str(row.get("client_order_id", "")).startswith((HOUSE_PREFIX, self.old_prefix)):
                 continue
-            end = _lineage_end(row, by_id)
-            if end is None:
+            state, last = _lineage(row, by_id)
+            if state == "unresolved":
                 unresolved += 1
-            elif end.get("status") not in _TERMINAL:
-                ends[id(end)] = end  # a working end counts once, however many rows lead to it
+            elif state == "open":
+                ends[id(last)] = last  # one lineage counts once, however many rows lead into it
         self.counts = {
             "open_positions": len(positions),
             "open_house_orders": len(house) + len(ends),
@@ -339,19 +339,28 @@ class Gate:
         return [name for name, count in zip(names, values, strict=True) if count]
 
 
-def _lineage_end(row: dict[str, Any], by_id: Mapping[Any, dict[str, Any]]) -> Any:
-    """The row a replacement chain ends at, through Alpaca's ``replaced_by`` link (alpaca-py
-    cc4cb3b7 ``alpaca/trading/models.py:223``); a successor may carry any client id
-    (``requests.py:300``). None for a missing link, a successor not in the same listing or a
-    cycle: the cutover refuses then. It only reads; no row is adopted, changed or cancelled."""
-    seen: set[str] = set()
-    while row.get("status") == "replaced":
+def _lineage(row: dict[str, Any], by_id: Mapping[Any, dict[str, Any]]) -> tuple[str, Any]:
+    """Walk a replacement lineage through Alpaca's ``replaced_by`` link (alpaca-py cc4cb3b7
+    ``alpaca/trading/models.py:223``; a successor may carry any client id, ``requests.py:300``),
+    following a populated link on ANY status, so a terminal-looking middle never ends it early.
+
+    ``("open", last)`` when any visited row is working or of unknown status; otherwise
+    ``("unresolved", last)`` for a link to a row not in the same listing, a cycle, a link that is
+    not a string, or a last row ``replaced`` with no link; ``("ended", last)`` only when every
+    visited row is terminal and the last has no link. It only reads; nothing is sent or changed."""
+    seen, working = {id(row)}, False
+    while True:
+        working = working or row.get("status") not in _TERMINAL
         key = row.get("replaced_by")
-        if not isinstance(key, str) or not key or key in seen or key not in by_id:
-            return None
-        seen.add(key)
-        row = by_id[key]
-    return row
+        if key is None or key == "":
+            if working:
+                return "open", row
+            return ("unresolved" if row.get("status") == "replaced" else "ended"), row
+        successor = by_id.get(key) if isinstance(key, str) else None
+        if successor is None or id(successor) in seen:
+            return ("open" if working else "unresolved"), row
+        seen.add(id(successor))
+        row = successor
 
 
 def account_matches(number: object) -> bool:
