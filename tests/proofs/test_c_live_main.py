@@ -577,6 +577,7 @@ def invoke(
     config: Path | None = None,
     feed_tap: bool = False,
     feed_tap_universe: Path | None = None,
+    feed_factory_override: Any = None,
 ) -> int:
     calls = {"index": 0}
 
@@ -616,7 +617,7 @@ def invoke(
         argv,
         client_factory=lambda **_: client,
         data_factory=lambda **_: data if data is not None else FakeDataClient({}),
-        feed_factory=feed_factory,
+        feed_factory=feed_factory_override or feed_factory,
         now_ns=clock,
         sleep=sleep,
         monotonic=mono,
@@ -2080,3 +2081,73 @@ def test_a_feed_tap_universe_requires_the_feed_tap(live_env: Path) -> None:
             Monotonic(),
             feed_tap_universe=live_env / "universe.json",
         )
+
+
+def test_zero_size_stream_trade_is_dropped_and_runner_delivers_later_rows(
+    live_env: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    import logging
+
+    from test_alpaca_feed import (
+        _deliver_quote,
+        _deliver_trade,
+        _factory_for,
+        _quote,
+        _ScriptedStream,
+        _trade,
+    )
+
+    from sextant.paper.alpaca_feed import AlpacaTickFeed
+
+    clock = Clock()
+    symbol = IID.symbol.value
+    received: list[str] = []
+    feeds: list[AlpacaTickFeed] = []
+    session_type = c_live_main_module.CSession
+    on_trade, on_quote = session_type.on_trade, session_type.on_quote
+
+    def record_trade(session, tick):
+        received.append("trade")
+        on_trade(session, tick)
+
+    def record_quote(session, tick):
+        received.append("quote")
+        on_quote(session, tick)
+
+    monkeypatch.setattr(session_type, "on_trade", record_trade)
+    monkeypatch.setattr(session_type, "on_quote", record_quote)
+    monkeypatch.setattr("sextant.paper.alpaca_feed.time.time_ns", clock)
+
+    def script(stream):
+        _deliver_trade(stream, _trade(symbol=symbol, s=0))
+        _deliver_trade(stream, _trade(symbol=symbol))
+        _deliver_quote(stream, _quote(symbol=symbol))
+
+    stream = _ScriptedStream(script)
+
+    def build_feed(instruments, **kwargs):
+        feed = AlpacaTickFeed(instruments, stream_factory=_factory_for(stream), **kwargs)
+        feeds.append(feed)
+        return feed
+
+    with caplog.at_level(logging.ERROR):
+        result = invoke(
+            live_env,
+            FakeTradingClient(),
+            clock,
+            Monotonic(),
+            dry_run=True,
+            feed_factory_override=build_feed,
+        )
+
+    assert result == 0
+    assert received == ["trade", "quote"]
+    assert feeds[0].failure is None
+    assert feeds[0].dropped_trade_count == 1
+    assert stream.stop_ws_calls == 0
+    assert receipt(live_env)["errors"] == []
+    errors = [record for record in caplog.records if "Dropped Alpaca trades row" in record.message]
+    assert len(errors) == 1
+    assert errors[0].levelno == logging.ERROR
+    assert symbol in errors[0].message
+    assert "size" in errors[0].message and "not positive" in errors[0].message
