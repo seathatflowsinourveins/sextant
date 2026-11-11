@@ -15,7 +15,7 @@ from types import SimpleNamespace as NS
 
 import pytest
 import requests
-from nautilus_trader.model import ClientOrderId, OrderStatus
+from nautilus_trader.model import ClientOrderId, Money, OrderStatus
 
 from .test_alpaca_client import client
 from .test_alpaca_execution import order
@@ -72,6 +72,33 @@ def test_post_response_classes(cls):
 
 
 @pytest.mark.parametrize("cls", CLASSES)
+def test_patch_response_classes(cls):
+    async def run():
+        node = client()
+        await node._submit_order(NS(order=order(), params={}))
+        venue = node.gateway.sdk
+        _answer(venue, "patch", cls, apply=False)
+        try:
+            await node._modify_order(_cmd("modify"))
+        except Exception:
+            assert cls in ("5xx", "none")
+        if cls == "4xx":
+            node.generate_order_modify_rejected.assert_called_once()
+            assert not node._proposals
+            return
+        # 2xx is a proposal, not a replacement; 5xx/none are unknown: the proposal stays.
+        assert list(node._proposals) == ["fixture-entry-r1"]
+        node.generate_order_modify_rejected.assert_not_called()
+        if cls == "2xx":  # Resolved only by the venue: here its replace refusal.
+            parent = next(iter(venue.rows.values()))
+            await _stream(node, "order_replace_rejected", parent | {"status": "new"})
+            node.generate_order_modify_rejected.assert_called_once()
+            assert not node._proposals
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("cls", CLASSES)
 def test_delete_response_classes(cls):
     async def run():
         node = client()
@@ -98,6 +125,46 @@ def test_delete_response_classes(cls):
         await _read(node, "cancel")  # Authoritative: still working, so refused once.
         node.generate_order_cancel_rejected.assert_called_once()
         assert not node._cancels
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    "event", ["canceled", "fill", "expired", "rejected", "order_cancel_rejected"]
+)
+def test_an_acknowledged_delete_is_resolved_by_a_terminal_or_refusing_stream_event(event):
+    async def run():
+        node = client()
+        await node._submit_order(NS(order=order(), params={}))
+        venue = node.gateway.sdk
+        row = next(iter(venue.rows.values()))
+        venue.delete = lambda path, body: venue.requests.append(("DELETE", path, {}))
+        await node._cancel_order(_cmd("cancel"))
+        assert node._cancels == {row["id"]}
+        node.commission_for_fill = lambda data: Money.from_str("0 USD")
+        status = {
+            "canceled": "canceled",
+            "fill": "filled",
+            "expired": "expired",
+            "rejected": "rejected",
+        }
+        changed = row | {"status": status.get(event, "new")}
+        if event == "fill":
+            changed |= {"filled_qty": changed["qty"], "filled_avg_price": "0.1234"}
+            update = {
+                "event": "fill",
+                "order": changed,
+                "execution_id": "fixture-x",
+                "price": "0.1234",
+                "qty": changed["qty"],
+                "timestamp": row["updated_at"],
+            }
+            await node._on_trade_update({"stream": "trade_updates", "data": update})
+        else:
+            await _stream(node, event, changed)
+        assert not node._cancels
+        refused = node.generate_order_cancel_rejected.call_count
+        assert refused == (1 if event == "order_cancel_rejected" else 0)
 
     asyncio.run(run())
 

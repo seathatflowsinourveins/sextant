@@ -66,6 +66,60 @@ async def _successor(node, *, sell=True):
     return row
 
 
+FACTS = ["fill", "partial_fill", "stopped", "canceled", "expired", "rejected"]
+FACTS += ["order_cancel_rejected", "order_replace_rejected"]
+
+
+@pytest.mark.parametrize("event", FACTS)
+def test_every_safety_fact_is_recorded_before_the_lineage_await(event):
+    """While the successor's parent read is out (await A), the fact is already recorded."""
+
+    async def run():
+        node = client()
+        row = await _successor(node)
+        venue = node.gateway.sdk  # a sent, unanswered DELETE and PATCH on the successor
+        venue.delete = lambda path, body: venue.rows[row["id"]].update(status="pending_cancel")
+        venue.patch = lambda path, body: venue.requests.append(("PATCH", path, {}))
+        for kind in ("cancel", "modify"):  # the modify's own read sees pending_cancel
+            await getattr(node, f"_{kind}_order")(_cmd(kind))
+            await asyncio.gather(*tuple(node._actions))
+        assert node._cancels == {row["id"]} and node._proposals
+        entered, release = _hold(node, f"/orders/{row['replaces']}")
+        task = asyncio.create_task(node._on_trade_update(_event(event, row)))
+        await asyncio.wait_for(entered.wait(), 1)
+        if event in ("fill", "partial_fill", "stopped"):
+            assert row["id"] in node._executing
+        if event != "order_replace_rejected" and event not in ("partial_fill", "stopped"):
+            assert row["id"] not in node._cancels  # terminal or refused: no cancel can act
+        if event == "order_replace_rejected":
+            assert not node._proposals  # the venue refused the replacement
+        release.set()
+        await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(run())
+
+
+# One RED witness per r5 fix (each fails on the r4 client).
+
+
+def test_a_cancel_refusal_a_read_emitted_is_not_emitted_again():
+    async def run():
+        node = client()
+        await node._submit_order(NS(order=order(), params={}))
+        venue = node.gateway.sdk
+        row = next(iter(venue.rows.values()))
+        node.cache.order.return_value = order(status=OrderStatus.PENDING_CANCEL)
+        venue.delete = lambda path, body: venue.requests.append(("DELETE", path, {}))
+        await node._cancel_order(_cmd("cancel"))  # an attempt; the order keeps working
+        await node._generate_order_status_report(
+            NS(client_order_id=ClientOrderId("fixture-entry"), venue_order_id=None)
+        )  # the read finds it working and refuses the cancel
+        await node._on_trade_update(_event("order_cancel_rejected", row))
+        node.generate_order_cancel_rejected.assert_called_once()
+
+    asyncio.run(run())
+
+
 def test_an_executing_successor_is_fenced_before_its_parent_read():
     async def run():
         node = client()

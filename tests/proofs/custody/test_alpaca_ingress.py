@@ -16,6 +16,7 @@ from nautilus_trader.model import ClientOrderId, Money
 
 from .test_alpaca_client import client, client_module
 from .test_alpaca_execution import order
+from .test_alpaca_exits import _cmd
 
 STATUS = [
     "new", "accepted", "pending_new", "pending_cancel", "pending_replace", "canceled",
@@ -96,5 +97,50 @@ def test_every_event_on_a_house_or_owner_order_resolves_identity_once(state, eve
         node = client()
         row, stable, active = await _state(node, state)
         await _deliver(node, state, event, row, stable, active)
+
+    asyncio.run(run())
+
+
+async def _successor_state(node, state):
+    """Successor lineage states after one house modify of the bound order."""
+    first, _, _ = await _state(node, "bound")
+    venue = node.gateway.sdk
+    await node._modify_order(_cmd("modify"))
+    if state == "unconfirmed":
+        return deepcopy(venue.pending[1]), None, first["id"]
+    successor = venue.confirm()
+    if state == "confirmed_unbound":
+        return successor, ROOT, first["id"]  # Bound by this event's own resolution.
+    stale = deepcopy(first) | {"status": "new", "replaced_by": None}
+    if state == "stale_cold":  # A restarted client: no binding in memory.
+        node._active.clear()
+        node._roots.clear()
+        node._active_n.clear()
+    await node._report(venue.rows[successor["id"]])
+    if state == "successor_bound":
+        return deepcopy(venue.rows[successor["id"]]), ROOT, successor["id"]
+    return stale, ROOT, successor["id"]  # The original order's late snapshot.
+
+
+# A successor row that says pending_new does not confirm its lineage (the venue has not
+# finished the replace): held as incomplete coverage. A confirmed one in pending_replace is
+# being replaced again and stays confirmed (PR 588 P1-a).
+UNCONFIRMING = {"pending_new"}
+
+
+@pytest.mark.parametrize("event", EVENTS)
+@pytest.mark.parametrize(
+    "state", ["confirmed_unbound", "successor_bound", "unconfirmed", "stale_warm", "stale_cold"]
+)
+def test_every_event_on_a_successor_lineage_resolves_identity_once(state, event):
+    async def run():
+        node = client()
+        row, stable, active = await _successor_state(node, state)
+        held = state == "unconfirmed" or (
+            state in ("confirmed_unbound", "successor_bound") and event in UNCONFIRMING
+        )
+        if state == "confirmed_unbound" and not held and event not in UNCLASSIFIED:
+            active = row["id"]  # The one resolution binds the venue-confirmed successor.
+        await _deliver(node, state, event, row, stable, active, held=held)
 
     asyncio.run(run())
