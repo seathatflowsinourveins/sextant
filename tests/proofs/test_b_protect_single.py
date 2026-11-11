@@ -74,7 +74,7 @@ class Probe(BLifecycle):
     def _held(self, book):
         return self.held
 
-    def _arm(self, book, now, shares):
+    def _arm(self, book, now, shares) -> ClientOrderId | None:
         cid = f"O-20261027-080600-001-BTEST-{len(self.orders) + 10}"
         self.orders[ClientOrderId(cid)] = order(
             cid, quantity=int(shares), status=OrderStatus.SUBMITTED
