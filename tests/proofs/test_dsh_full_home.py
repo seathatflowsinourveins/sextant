@@ -8,6 +8,7 @@ src/operations.ts:90-120 (each newly added bundle is appended to dsh.profile.bun
 
 import importlib.util
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -46,6 +47,7 @@ if args[0] == "plugin":
             name = json.loads((Path(spec) / "package.json").read_text())["name"]
             dependencies[name] = "link:" + spec
             (profile / "node_modules").mkdir(exist_ok=True)
+            (profile / "node_modules" / name).unlink(missing_ok=True)
             (profile / "node_modules" / name).symlink_to(spec)
         elif spec.startswith("github:"):
             name = names["github"][spec]
@@ -107,9 +109,9 @@ def world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path]:
     return {"tmp": tmp_path, "home": tmp_path / "dsh-full", "dsh": dsh, "skills": skills}
 
 
-def _install(parity: ModuleType, world: dict[str, Path]) -> list[str]:
+def _install(parity: ModuleType, world: dict[str, Path], **options: bool) -> list[str]:
     skills = {path.name: path for path in world["skills"].iterdir()}
-    return parity.install_dsh_full(skills, world["home"], [str(world["dsh"])], ROOT)
+    return parity.install_dsh_full(skills, world["home"], [str(world["dsh"])], ROOT, **options)
 
 
 def _lines(path: Path) -> list[str]:
@@ -169,6 +171,8 @@ def test_a_fresh_home_is_built_from_the_lock_with_exact_pins(world: dict[str, Pa
     assert headless["dsh"]["profile"]["bundles"] == stack
     result = _doctor(tui)
     assert result.returncode == 0, result.stderr
+    recorded = json.loads(tui.read_text())["dependencies"]  # a new home links into the checkout
+    assert all(recorded[row["package"]] == f"link:{ROOT / row['link']}" for row in LINKS)
 
 
 def test_a_second_run_changes_nothing_and_calls_nothing(world: dict[str, Path]) -> None:
@@ -265,11 +269,89 @@ def test_an_unrecognised_home_is_left_unchanged_and_the_run_fails(
     assert _bytes(home) == before and not (world["tmp"] / "dsh.log").exists()
 
 
+LINKS = [row for row in LOCK["interactive"]["dependencies"] if row["spec"].startswith("link:")]
+
+
+def _copied_links(world: dict[str, Path]) -> dict[str, str]:
+    """This host's layout: the four house bundles linked to copies inside the home."""
+    tui = world["home"] / "profiles/dsh-tui"
+    data = json.loads((tui / "package.json").read_text())
+    for row in LINKS:
+        copy = world["home"] / "src" / row["link"]
+        copy.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ROOT / row["link"] / "package.json", copy / "package.json")
+        data["dependencies"][row["package"]] = f"link:{copy}"
+        (tui / "node_modules" / row["package"]).unlink()
+        (tui / "node_modules" / row["package"]).symlink_to(copy)
+    (tui / "package.json").write_text(json.dumps(data))
+    (world["tmp"] / "dsh.log").unlink()
+    return {row["package"]: data["dependencies"][row["package"]] for row in LINKS}
+
+
+def test_a_default_run_keeps_and_reports_links_outside_the_checkout(
+    world: dict[str, Path], capsys: pytest.CaptureFixture[str]
+) -> None:
+    parity = _parity()
+    _install(parity, world)
+    kept = _copied_links(world)
+    capsys.readouterr()
+    _install(parity, world)
+    recorded = json.loads((world["home"] / "profiles/dsh-tui/package.json").read_text())
+    assert {name: recorded["dependencies"][name] for name in kept} == kept
+    assert not (world["tmp"] / "dsh.log").exists()
+    lines = [line for line in capsys.readouterr().out.splitlines() if " kept " in line]
+    assert len(lines) == 4
+    assert all(
+        any(f"{name} at {value[5:]}" in line for line in lines) for name, value in kept.items()
+    )
+
+
+def test_repoint_links_moves_them_into_the_checkout(
+    world: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    parity = _parity()
+    _install(parity, world)
+    _copied_links(world)
+    checked: list[Path] = []
+    monkeypatch.setattr(parity, "_checkout_at_main", checked.append)
+    _install(parity, world, repoint=True)
+    stack = LOCK["interactive"]["bundles"]
+    moved = sorted(LINKS, key=lambda row: stack.index(row["package"]))
+    assert checked == [ROOT]
+    assert _lines(world["tmp"] / "dsh.log") == [
+        f"plugin --profile dsh-tui add --save-exact {_target(row)}" for row in moved
+    ]
+    assert _doctor(world["home"] / "profiles/dsh-tui/package.json").returncode == 0
+
+
+def _git(path: Path, *args: str) -> str:
+    return subprocess.check_output(
+        ["git", "-c", "core.hooksPath=/dev/null", "-c", "user.name=Sextant",
+         "-c", "user.email=sextant@Noesis.localdomain", "-c", "commit.gpgsign=false",
+         "-C", str(path), *args], text=True,
+    ).strip()  # fmt: skip
+
+
+def test_repoint_links_refuses_a_checkout_off_its_fetched_main(world: dict[str, Path]) -> None:
+    parity = _parity()
+    checkout = world["tmp"] / "checkout"
+    checkout.mkdir()
+    _git(checkout, "init", "--initial-branch=main")
+    for note in ("fetched main", "local work"):
+        _git(checkout, "commit", "--allow-empty", "-m", note)
+        if note == "fetched main":
+            _git(checkout, "update-ref", "refs/remotes/origin/main", "HEAD")
+    with pytest.raises(parity.Refused, match="origin/main"):
+        parity.install_dsh_full({}, world["home"], [str(world["dsh"])], checkout, repoint=True)
+    assert not world["home"].exists() and not (world["tmp"] / "dsh.log").exists()
+    _git(checkout, "checkout", "--detach", "refs/remotes/origin/main")
+    parity._checkout_at_main(checkout)
+
+
 def test_parity_runs_the_dsh_full_step_on_the_enhanced_home() -> None:
     parity = _parity()
     full = parity.SPEC["runtimes"]["dsh"]["full"]
     assert full["home"] == ".dsh-full" and full["lock"] == "config/dsh/profile.lock.json"
     setup = (ROOT / "deploy/wsl/setup.sh").read_text()
-    # A fresh machine gets the enhanced home before setup.sh links ~/.local/bin/dsh-tui.
-    build = setup.index("parity.py --runtime dsh-full")
-    assert build < setup.index('"$HOME/.local/bin/dsh-tui"')
+    assert "python3 -I deploy/wsl/lane-runtimes/parity.py --runtime dsh-full\n" in setup
+    assert "--repoint-links" not in setup  # a re-point is always a deliberate, separate run

@@ -681,9 +681,31 @@ def _recognise(dsh_home: Path, locks: list[dict]) -> None:
         raise Refused(f"{dsh_home}: exists and is not a home this installer made; no change made")
 
 
-def install_lock_profile(dsh_home: Path, dsh: list[str], repository: Path, lock: dict) -> list:
+def _checkout_at_main(repository: Path) -> None:
+    """--repoint-links reads the house bundles from this checkout, so its HEAD must be the
+    commit of refs/remotes/origin/main as last fetched (git 2.53 git-fetch(1) DESCRIPTION:
+    fetch updates remote-tracking branches; gitrevisions(7): refs/remotes/<refname>)."""
+    head = _git(repository, "rev-parse", "HEAD")
+    main = _git(repository, "rev-parse", "--verify", "refs/remotes/origin/main^{commit}")
+    if head != main:
+        raise Refused(f"{repository}: HEAD {head} is not origin/main {main}; no change made")
+
+
+def _working_link(value: str | None, package: str) -> bool:
+    """A recorded link to a directory holding this package."""
+    try:
+        target = Path(value.removeprefix("link:")) / "package.json"
+        return value.startswith("link:") and json.loads(target.read_text())["name"] == package
+    except (AttributeError, OSError, ValueError, KeyError, TypeError):
+        return False
+
+
+def install_lock_profile(
+    dsh_home: Path, dsh: list[str], repository: Path, lock: dict, repoint: bool = False
+) -> list:
     """One lock profile by dsh's own commands: plain rows first, then one add per missing
-    bundle in the lock's order, since dsh appends each new bundle. Nothing is removed."""
+    bundle in the lock's order, since dsh appends each new bundle. Nothing is removed. A link
+    to a working bundle outside this checkout is reported and kept unless repoint is set."""
     rows, stack = _lock_rows(lock)
     by_name = {row["package"]: row for row in rows}
     plain = [row for row in rows if row["package"] not in stack]
@@ -704,7 +726,12 @@ def install_lock_profile(dsh_home: Path, dsh: list[str], repository: Path, lock:
     for row in ordered:
         present = json.loads(manifest.read_text()) if manifest.is_file() else {}
         target, recorded = _lock_target(repository, row)
-        if _recorded(profile, present.get("dependencies", {}).get(row["package"])) == recorded:
+        now = _recorded(profile, present.get("dependencies", {}).get(row["package"]))
+        if now == recorded:
+            continue
+        if not repoint and _working_link(now, row["package"]):
+            print(f"{name}: kept {row['package']} at {now[5:]}; --repoint-links moves it")
+            states.append(f"{name}: kept a link outside this checkout")
             continue
         if shutil.which("pnpm") is None:  # dsh-plugin-manager spawns pnpm from PATH
             raise Refused("pnpm is not on PATH; run parity.sh or setup.sh (host-tools lock)")
@@ -717,9 +744,11 @@ def install_lock_profile(dsh_home: Path, dsh: list[str], repository: Path, lock:
 
 
 def install_dsh_full(
-    skills: dict[str, Path], dsh_home: Path, dsh: list[str], repository: Path
+    skills: dict[str, Path], dsh_home: Path, dsh: list[str], repository: Path, repoint=False
 ) -> list[str]:
     """The enhanced home: recognised first, then the shelf's skills and both lock profiles."""
+    if repoint:
+        _checkout_at_main(repository)
     lock = _profile_lock(repository)[1]
     locks = [lock["interactive"], lock["headless"]]
     _dsh_roots(dsh_home, *(row["profile"] for row in locks))
@@ -732,7 +761,7 @@ def install_dsh_full(
         _publish(dsh_home / FULL_MARKER, f"{SPEC['runtimes']['dsh']['full']['lock']}\n", 0o644)
     states = [copy_skill(path, dsh_home / "skills") for path in skills.values()]
     for row in locks:
-        states.extend(install_lock_profile(dsh_home, dsh, repository, row))
+        states.extend(install_lock_profile(dsh_home, dsh, repository, row, repoint))
     return states
 
 
@@ -833,6 +862,7 @@ def main() -> int:
     runtimes = ("codex", "dsh", "dsh-full", "antigravity", "muse")
     parser.add_argument("--runtime", action="append", choices=runtimes)
     parser.add_argument("--check-roots", action="store_true", help="read-only installer preflight")
+    parser.add_argument("--repoint-links", action="store_true", help="dsh-full: links to checkout")
     args = parser.parse_args()
     home = Path.home()
     try:
@@ -860,7 +890,9 @@ def main() -> int:
             dsh,
             repository,
         ),
-        "dsh-full": lambda skills: install_dsh_full(skills, full, dsh, repository),
+        "dsh-full": lambda skills: install_dsh_full(
+            skills, full, dsh, repository, args.repoint_links
+        ),
         "antigravity": lambda skills: install_antigravity(
             skills,
             cache,
