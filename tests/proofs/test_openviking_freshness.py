@@ -8,6 +8,8 @@ import os
 import re
 import shutil
 import subprocess
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 ROOT = Path(__file__).parents[2]
@@ -180,6 +182,60 @@ def test_before_the_first_prefetch_the_index_follows_origin_main(tmp_path: Path)
     assert any(f"--to {SOURCE}/{head} " in call for call in calls)
 
 
+def test_a_failed_repair_never_lets_a_partial_revision_retire_the_others(tmp_path: Path) -> None:
+    # Review ov-6a99d9b r1 P0 (review_openviking_regressions.py:6). OpenViking keeps a non-empty
+    # failed target (178a8cdf:openviking/service/resource_service.py:705), so after a failed repair
+    # an existence-only stat must not count as a verified import.
+    repo, _ = _checkout(tmp_path)
+    assert _run(tmp_path, _index(repo))[0] == 0
+    code, _ = _run(tmp_path, _index(repo), OV_STAT_RC="1", OV_ADD_RC="1")
+    assert code != 0
+    assert not (tmp_path / "home/.local/share/sextant-openviking/indexed-revision").exists()
+    (tmp_path / "calls.log").write_text("")
+    (tmp_path / "listing.txt").write_text(f"{SOURCE}/{'f' * 40}\n")
+    code, calls = _run(tmp_path, _index(repo), OV_ADD_RC="1")
+    assert code != 0
+    assert any(call.startswith("ov add-resource ") for call in calls)
+    assert not [call for call in calls if call.startswith("ov rm ")]
+
+
+def test_a_run_that_waited_for_the_lock_indexes_the_newest_main(tmp_path: Path) -> None:
+    # Review ov-6a99d9b r1 P2 (review_openviking_regressions.py:12): main is read inside the lock.
+    repo, older = _checkout(tmp_path)
+    (repo / "docs" / "guide.md").write_text("# Newer main\n")
+    _git(repo, "commit", "-q", "-am", "newer main")
+    newer = _git(repo, "rev-parse", "HEAD")
+    (tmp_path / "listing.txt").write_text(f"{SOURCE}/{older}\n{SOURCE}/{newer}\n")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    ready, release = tmp_path / "old-run-ready", tmp_path / "release-old-run"
+    (bin_dir / "flock").write_text(
+        "#!/usr/bin/env bash\n"
+        'if [[ "${DELAY_OLD_RUN:-0}" == 1 ]]; then\n'
+        f'  touch "{ready}"\n'
+        f'  while [[ ! -f "{release}" ]]; do sleep 0.02; done\n'
+        "fi\n"
+        f'exec {shutil.which("flock")} "$@"\n'
+    )
+    (bin_dir / "flock").chmod(0o755)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        old_run = pool.submit(_run, tmp_path, _index(repo), DELAY_OLD_RUN="1")
+        deadline = time.monotonic() + 20
+        while not ready.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        try:
+            assert ready.exists()
+            _git(repo, "update-ref", "refs/prefetch/remotes/origin/main", newer)
+            assert _run(tmp_path, _index(repo))[0] == 0
+        finally:
+            release.touch()
+        code, calls = old_run.result()
+    assert code == 0
+    record = tmp_path / "home/.local/share/sextant-openviking/indexed-revision"
+    assert record.read_text().strip() == newer
+    assert f"ov rm --recursive {SOURCE}/{newer}" not in calls
+
+
 def test_the_installer_renders_every_unit_from_this_checkout_and_starts_the_timer(
     tmp_path: Path,
 ) -> None:
@@ -210,7 +266,18 @@ def test_the_installer_renders_every_unit_from_this_checkout_and_starts_the_time
 
 def test_the_timer_has_a_schedule_and_runs_the_index_once_at_a_time() -> None:
     timer = (OV_DIR / "openviking-index.timer").read_text()
-    assert re.search(r"^OnCalendar=\S", timer, re.M)
+    # Review ov-6a99d9b r1 P2: the cadence is a registry row, and the unit carries its value.
+    registry = json.loads((OV_DIR / "parameters.json").read_text())
+    rows = {row["name"]: row for row in registry["rows"]}
+    period, offset = (
+        rows["openviking_index_period_minutes"],
+        rows["openviking_index_offset_minutes"],
+    )
+    for row in (period, offset):
+        assert row["status"] == "UNCALIBRATED" and row["source"] and row["last_change"]
+        assert row["unit"] == "minutes" and "sextant-openviking-index.timer" in row["applies_to"]
+    assert period["value"] == 60  # One run per hour: the calendar's minute field is fixed.
+    assert re.findall(r"^OnCalendar=(.*)$", timer, re.M) == [f"*-*-* *:{offset['value']:02d}:00"]
     assert "Persistent=true" in timer and "WantedBy=timers.target" in timer
     service = (OV_DIR / "openviking-index.service").read_text()
     assert "Type=oneshot" in service

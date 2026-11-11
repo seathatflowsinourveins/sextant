@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "schema": "sextant.openviking.parameters/1",
+  "source": "The research index refresh follows git's own hourly maintenance prefetch of main, which this repo registers through deploy/wsl/lifecycle.sh (`git maintenance start`).",
+  "rows": [
+    {
+      "name": "openviking_index_period_minutes",
+      "kind": "period",
+      "value": 60,
+      "unit": "minutes",
+      "status": "UNCALIBRATED",
+      "source": "git-maintenance(1), git 2.53.0: the prefetch task runs on the hourly schedule; the git-maintenance@hourly.timer git writes here has OnCalendar=*-*-* 1..23:00:00.",
+      "last_change": "2026-11-10",
+      "applies_to": "sextant-openviking-index.timer OnCalendar (one run per hour)"
+    },
+    {
+      "name": "openviking_index_offset_minutes",
+      "kind": "offset",
+      "value": 20,
+      "unit": "minutes",
+      "status": "UNCALIBRATED",
+      "source": "After git's hourly prefetch at minute 0 (git-maintenance@hourly.timer, OnCalendar=*-*-* 1..23:00:00), so a run reads the main that prefetch just fetched.",
+      "last_change": "2026-11-10",
+      "applies_to": "sextant-openviking-index.timer OnCalendar minute field"
+    }
+  ]
+}
