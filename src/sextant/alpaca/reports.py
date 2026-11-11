@@ -44,7 +44,17 @@ from nautilus_trader.model import (
     VenueOrderId,
 )
 
-_LOG = Logger("AlpacaReports")
+
+def _log() -> Logger:
+    """Build the engine Logger where it logs.
+
+    The Python ``Logger`` is an unsendable pyclass (nautilus_trader@d53849b
+    ``crates/common/src/python/logging.rs:434-438``): used from a thread other than its
+    creator's, PyO3 aborts the process, so a module-level instance cannot serve a node
+    whose loop runs on another thread.
+    """
+    return Logger("AlpacaReports")
+
 
 _STATUS = {
     alpaca.OrderStatus.NEW: OrderStatus.ACCEPTED,
@@ -161,7 +171,7 @@ def order_status_report(
         alpaca.OrderStatus.CALCULATED,
         alpaca.OrderStatus.PENDING_REVIEW,
     ):
-        _LOG.warning(f"Retaining Alpaca order with venue status {order.status}")
+        _log().warning(f"Retaining Alpaca order with venue status {order.status}")
 
     trigger_type = (
         TriggerType.DEFAULT
@@ -225,7 +235,7 @@ def position_status_report(
 ) -> PositionStatusReport | None:
     """Map an open equity position at snapshot observation time."""
     if position.asset_class != alpaca.AssetClass.US_EQUITY:
-        _LOG.warning(f"Omitting out-of-scope Alpaca position asset class {position.asset_class}")
+        _log().warning(f"Omitting out-of-scope Alpaca position asset class {position.asset_class}")
         return None
     if position.symbol != instrument.raw_symbol.value:
         raise ValueError("Alpaca position does not match the loaded instrument")
@@ -272,7 +282,7 @@ def order_status_report_results(
                 ts_init=ts_init,
             )
         except ValueError as exc:
-            _LOG.error(f"Alpaca order report failed: {type(exc).__name__}")
+            _log().error(f"Alpaca order report failed: {type(exc).__name__}")
             results.append((row, exc))
         else:
             results.append((row, report))
