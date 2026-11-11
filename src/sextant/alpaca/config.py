@@ -43,11 +43,7 @@ def _refuse_unknown(
 
 
 class AlpacaDataClientConfig(DataClientConfig):
-    """Configuration for the Alpaca market-data client.
-
-    ``api_key_env`` and ``api_secret_env`` name process environment variables;
-    no key or secret value is stored in the config or its serialized form.
-    """
+    """Market-data client configuration; credentials named, never stored."""
 
     def __init__(
         self,
@@ -68,12 +64,7 @@ class AlpacaDataClientConfig(DataClientConfig):
 
 
 class AlpacaExecutionClientConfig(ExecutionClientConfig):
-    """Configuration for the Alpaca execution client.
-
-    ``account_id`` is the engine account identity, so one writer per account can
-    be named explicitly (AGENTS.md custody rule). Credentials are named, never
-    held, exactly as in :class:`AlpacaDataClientConfig`.
-    """
+    """Execution client configuration with the engine account identity."""
 
     def __init__(
         self,
