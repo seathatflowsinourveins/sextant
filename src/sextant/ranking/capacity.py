@@ -9,14 +9,17 @@ Actor's own handler time per tick (``time.perf_counter_ns``). The engine ships n
 data latency statistic at the pin; it ships runner queue pressure (``QueueStateChanged``
 with ``queue_depth`` and ``mean_dispatch_ns``, actors.md:196-250), which is recorded as
 delivered. A node-clock timer (``set_timer``) writes the receipt atomically every
-``receipt_interval_s`` seconds, which the caller passes, and once more on stop. No socket,
-no order, and no handler raises: failures are counted.
+``receipt_interval_s`` seconds, which the caller passes, and once more on stop. Only the last
+``bucket_window_s`` closed seconds and queue events, also the caller's, are kept and written;
+older ones are counted as dropped. No socket, no order, and no handler raises: failures are
+counted.
 """
 
 from __future__ import annotations
 
 import math
 import time
+from collections import deque
 from collections.abc import Sequence
 from datetime import timedelta
 from pathlib import Path
@@ -44,6 +47,7 @@ class CapacityActorConfig(DataActorConfig):
         instrument_ids: Sequence[InstrumentId],
         receipt_path: Path,
         receipt_interval_s: int,
+        bucket_window_s: int,
         quotes: bool = False,
         **kwargs: object,
     ) -> None:
@@ -56,8 +60,11 @@ class CapacityActorConfig(DataActorConfig):
             raise ValueError("the measured universe needs unique instrument ids")
         if type(receipt_interval_s) is not int or receipt_interval_s <= 0:
             raise ValueError("receipt_interval_s must be a positive int the caller supplies")
+        if type(bucket_window_s) is not int or bucket_window_s <= 0:
+            raise ValueError("bucket_window_s must be a positive int the caller supplies")
         self.instrument_ids, self.receipt_path = ids, Path(receipt_path)
         self.receipt_interval_s, self.quotes = receipt_interval_s, quotes is True
+        self.bucket_window_s = bucket_window_s
 
 
 def nearest_rank(values: list[int]) -> dict[str, int | None]:
@@ -80,9 +87,13 @@ class CapacityActor(DataActor):
         self._path, self._interval = config.receipt_path, config.receipt_interval_s
         self._second: int | None = None
         self._open: dict[str, Any] = _bucket()
-        self._closed: list[dict[str, Any]] = []
+        # Review F5: only the last bucket_window_s closed seconds and as many queue events are
+        # kept and written; older ones are dropped and counted, never grown without bound.
+        window = config.bucket_window_s
+        self._closed: deque[dict[str, Any]] = deque(maxlen=window)
         self._last_init: dict[str, int] = {}
-        self.queue_states: list[dict[str, Any]] = []
+        self.queue_states: deque[dict[str, Any]] = deque(maxlen=window)
+        self.dropped_buckets = self.dropped_queue_states = 0
         self.ticks = self.errors = self.writes = self.write_errors = 0
         self.stopped = False
 
@@ -106,6 +117,8 @@ class CapacityActor(DataActor):
 
     def on_queue_state(self, event: Any) -> None:
         try:
+            if len(self.queue_states) == self.queue_states.maxlen:
+                self.dropped_queue_states += 1
             self.queue_states.append(
                 {
                     "ts": event.ts_event,
@@ -133,6 +146,8 @@ class CapacityActor(DataActor):
             second = self.clock.timestamp_ns() // NS
             if second != self._second:
                 if self._second is not None:
+                    if len(self._closed) == self._closed.maxlen:
+                        self.dropped_buckets += 1
                     self._closed.append(_summary(self._second, self._open))
                 self._second, self._open = second, _bucket()
             row = self._open[channel]
@@ -172,7 +187,9 @@ class CapacityActor(DataActor):
                 "errors": self.errors,
                 "write_errors": self.write_errors,
                 "buckets": buckets,
-                "queue_states": self.queue_states,
+                "dropped_buckets": self.dropped_buckets,
+                "queue_states": list(self.queue_states),
+                "dropped_queue_states": self.dropped_queue_states,
             }
             write_atomic(self._path, receipt)
             self.writes += 1
