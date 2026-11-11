@@ -182,7 +182,9 @@ class Receiver(RankingDataActor):
         super().on_data(data)
 
 
-def run(tmp_path: Path, *, fail_at=None, prime=priming, factory=None) -> dict[str, Any]:
+def run(
+    tmp_path: Path, *, fail_at=None, prime=priming, factory=None, host_cls=None, actor_cls=None
+) -> dict[str, Any]:
     tmp_path.mkdir(parents=True, exist_ok=True)
     catalog = ParquetDataCatalog(str(tmp_path))
     catalog.write_instruments([equity(iid) for iid in IDS])
@@ -214,7 +216,7 @@ def run(tmp_path: Path, *, fail_at=None, prime=priming, factory=None) -> dict[st
     hosts: list[FakeHost] = []
 
     def build() -> FakeHost:
-        hosts.append(FakeHost(log, fail_at))
+        hosts.append((host_cls or FakeHost)(log, fail_at))
         return hosts[-1]
 
     actor_config = RankingActorConfig(
@@ -224,7 +226,7 @@ def run(tmp_path: Path, *, fail_at=None, prime=priming, factory=None) -> dict[st
         priming=prime,
         page=lambda reason, detail: pages.append((reason, detail)),
     )
-    bound = type("Bound", (Logged,), {"calls": log})
+    bound = type("Bound", (actor_cls or Logged,), {"calls": log})
     actor = bound(actor_config)
     consumer = RankingConsumer(
         registry=registry(),
@@ -357,3 +359,16 @@ def test_an_unknown_config_key_is_refused_by_name() -> None:
         log_events=False,
     )
     assert config.log_events is False
+
+
+# --- Review round 1 (Codex xhigh at ba990fd): the exact-head witnesses as proofs ----------
+
+
+def test_a_failing_subscription_faults_and_the_node_keeps_running(tmp_path) -> None:  # F4
+    class Unavailable(Logged):
+        def subscribe_trades(self, instrument_id, client_id=None, params=None) -> None:
+            raise OSError("fixture subscription registration unavailable")
+
+    out = run(tmp_path, actor_cls=Unavailable)
+    assert out["actor"].errors == {"subscribe": 1} and out["pages"] == [("subscribe", "OSError")]
+    assert out["counter"].seen == len(SECONDS)  # the shared node and its data client ran on

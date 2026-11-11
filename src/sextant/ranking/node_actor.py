@@ -116,7 +116,10 @@ class RankingActor(DataActor):
         except Exception as exc:
             return self._fault("priming", exc)
         self.primed = True
-        self.subscribe_trades(list(self._ids))
+        try:  # a registration failure faults and pages; the shared node runs on (review F4)
+            self.subscribe_trades(list(self._ids))
+        except Exception as exc:
+            self._fault("subscribe", exc)
 
     def on_trade(self, trade: TradeTick) -> None:
         host = self.host
