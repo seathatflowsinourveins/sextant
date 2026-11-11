@@ -64,7 +64,7 @@
 - Adoption needs a dependence-aware lower bound above the incumbent and above hold-flat at stressed costs; otherwise keep the incumbent and record the negative. [ADR-0019](../adr/0019-validation-and-merit.md)
 - Merit is ≥30 independent round trips over ≥5 sessions at PSR ≥ 0.95 with replay correlation ≥0.9 and slippage ≤1.5× modelled; it produces a draft, never a promotion. [ADR-0019](../adr/0019-validation-and-merit.md)
 - Nightly reflection and tuning write proposals only; a label or a one-day anecdote never adopts a change. A nightly proposal PR carries no registry patch and never calls the registry's reviewed-write path; adoption is a separate change in the consuming runtime. Manual Orca runs skip the scheduler's precheck, so readiness is checked at run entry too. [ADR-0018](../adr/0018-evidence-and-learning-loop.md), [L4 design](../research/2026-11-06-nightly-proposals.md) ([#143](https://github.com/seathatflowsinourveins/sextant-archive/pull/143))
-- Read outcomes only as of the cutoff; keep superseded and negative lessons. [ADR-0018](../adr/0018-evidence-and-learning-loop.md)
+- Read outcomes only as of the cutoff; keep superseded and negative lessons. Historical collection keeps original response texts, feed/window identity and empty windows; a data receipt never qualifies a width or substitutes for a trial-ledger run. [ADR-0018](../adr/0018-evidence-and-learning-loop.md); [calibration job](../../deploy/calibration/README.md), D-44/LEAD-2127 §5
 
 ## Harness
 
