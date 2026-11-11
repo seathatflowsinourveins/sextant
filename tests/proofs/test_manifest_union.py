@@ -30,6 +30,7 @@ RETIRED = (
     "Live Alpaca SIP tick feed for paper arming",
     "One other-family review per PR through gh-aw",
     "Overnight BOATS polling feed for the C lane",
+    "Paper-only Alpaca HTTP transport for the row-8 bridge",
     "Owner-ruled J5 cadence, disabled until landing",
     "Private local ephemeral Actions runners",
     "Read-only one-socket feed tap and capacity gate",
