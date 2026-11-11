@@ -84,6 +84,10 @@ class RankingActorConfig(DataActorConfig):
         self.host_factory, self.priming, self.page = host_factory, priming, page
 
 
+class StaleGeneration(Exception):
+    """A host returned a generation that does not advance the published lineage."""
+
+
 class RankingActor(DataActor):
     """Feeds one host from the node's trade ticks and publishes its generations."""
 
@@ -97,6 +101,8 @@ class RankingActor(DataActor):
         self.errors: dict[str, int] = {}
         self.last_error: str | None = None
         self._paged: set[tuple[str, str]] = set()
+        self._lineage: tuple[str, int] | None = None  # the last published (epoch, sequence)
+        self._retired: set[str] = set()
 
     def on_start(self) -> None:
         """Build, then prime, then subscribe: never a tick to an unprimed host."""
@@ -130,7 +136,7 @@ class RankingActor(DataActor):
         except Exception as exc:
             return self._fault("on_trade", exc)
         self._clear("on_trade")
-        if generation is None:
+        if generation is None or not self._advances(generation):
             return
         data_type = ranking_data_type(self._feed)
         try:  # a DEGRADED veto is published too, so a consumer drops its names at once
@@ -138,7 +144,22 @@ class RankingActor(DataActor):
         except Exception as exc:
             return self._fault("publish", exc)
         self._clear("publish")
+        identity = generation.generation_id
+        self._lineage = (identity.producer_epoch, identity.sequence)
         self.published += 1
+
+    def _advances(self, generation: RankingGeneration) -> bool:
+        """Only a generation past the last published one leaves (review F3; reader.py:220-235)."""
+        identity, last = generation.generation_id, self._lineage
+        epoch, sequence = identity.producer_epoch, identity.sequence
+        if epoch in self._retired or (
+            last is not None and epoch == last[0] and sequence <= last[1]
+        ):
+            self._fault("lineage", StaleGeneration(f"{epoch}/{sequence}"))
+            return False
+        if last is not None and epoch != last[0]:
+            self._retired.add(last[0])
+        return True
 
     def on_stop(self) -> None:
         if self.host is None:

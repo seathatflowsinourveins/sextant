@@ -372,3 +372,23 @@ def test_a_failing_subscription_faults_and_the_node_keeps_running(tmp_path) -> N
     out = run(tmp_path, actor_cls=Unavailable)
     assert out["actor"].errors == {"subscribe": 1} and out["pages"] == [("subscribe", "OSError")]
     assert out["counter"].seen == len(SECONDS)  # the shared node and its data client ran on
+
+
+def test_a_repeated_trade_generation_is_never_published_twice(tmp_path) -> None:  # F3
+    class Repeating(FakeHost):
+        def __init__(self, log, fail_at=None) -> None:
+            super().__init__(log, fail_at)
+            self.previous = None
+
+        def on_trade(self, tick):
+            generation = super().on_trade(tick)
+            if self.calls == 3:
+                return self.previous  # an earlier generation handed back
+            self.previous = generation
+            return generation
+
+    out = run(tmp_path, host_cls=Repeating)
+    sequences = [g.generation_id.sequence for g in out["receiver"].received]
+    assert all(later > earlier for earlier, later in zip(sequences, sequences[1:], strict=False))
+    assert out["actor"].errors.get("lineage") == 1
+    assert ("lineage", "StaleGeneration") in out["pages"]
