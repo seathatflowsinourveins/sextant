@@ -39,3 +39,14 @@ Sources: [ADR-0003](../adr/0003-ranking-and-feeds.md):9,24,42;
 (Strategy callbacks, OrderFactory, submit_order); martinfowler.com:
 [Release Toggles](https://martinfowler.com/articles/feature-toggles.html#ReleaseToggles),
 read 2026-11-10 (ship unfinished behavior disabled and test both toggle states).
+
+
+Lesson from the native composition proof: generation delivery alone leaves the
+consumer at `heartbeat_missing`. B must subscribe to the native heartbeat signal
+and call `accept_heartbeat`, as the existing RankingDataActor does. The publisher's
+initial actor-start generation can precede Strategy subscriptions; the next complete
+generation and heartbeat must arrive before a rank can pass. Recorded minute bars
+cannot stand in for trade ticks, and collection-time references cannot be backdated
+for a freshness measurement. Sources: the rc8 pin above, `docs/concepts/message_bus.md:55-65,180-239`,
+`python/nautilus_trader/trading/__init__.pyi:633,690-696`, and the existing
+`ranking/{consumer,node_ranking,node_session}.py` composition at `7252b0f5`.
