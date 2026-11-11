@@ -46,5 +46,27 @@
     "source": "alpaca-py@v0.44.0 cc4cb3b7ba50ae250e621983c2779047fb16bb28:alpaca/common/rest.py:85 discards HTTP response headers, so Alpaca's documented X-RateLimit-Remaining (https://docs.alpaca.markets/reference/stockbars, read 2026-11-10) is unavailable to C; 60 s is one custody window_s (lanes/custody-parameters.json) and stays uncalibrated until a C session measures the cadence (ADR-0018)",
     "calibration_state": "UNCALIBRATED",
     "last_change": "2026-11-10"
+  },
+  {
+    "name": "paper_us_equity_commission_per_fill",
+    "unit": "USD per fill",
+    "value": "0",
+    "account_scope": "paper",
+    "asset_class": "us_equity",
+    "currency": "USD",
+    "source": "Alpaca Brokerage Fee Schedule (https://files.alpaca.markets/disclosures/library/BrokFeeSched.pdf, revised 2026-10-12, read 2026-11-11) p.1: \"Alpaca Securities does not charge commissions, except as described below. Commissions apply to index options trades, use of the Elite Smart Router under the Alpaca Elite offering, and order flow determined to be non-retail in nature.\"; https://alpaca.markets/algotrading, read 2026-11-11: \"there are no commission charges for Alpaca self-directed individual cash brokerage accounts that trade U.S.-listed securities and options through an API\"; https://docs.alpaca.markets/us/docs/paper-trading, read 2026-11-11: \"Paper trading works the same way as live trading end to end - except the order is not routed a live exchange.\" Covers paper accounts, US-listed equities and standard routing only; Elite Smart Router routing, non-retail order flow and the live account's fees are NOT covered",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-11"
+  },
+  {
+    "name": "paper_us_equity_regulatory_fees_per_fill",
+    "unit": "USD per fill",
+    "value": "0",
+    "account_scope": "paper",
+    "asset_class": "us_equity",
+    "currency": "USD",
+    "source": "https://docs.alpaca.markets/us/docs/paper-trading, read 2026-11-11: \"Specifically, paper trading does not account for:\" listing \"Regulatory fees\" (SEC fee, FINRA TAF and CAT, per https://docs.alpaca.markets/us/docs/regulatory-fees, read 2026-11-11). A live account accrues these per account per day and posts them at end of day (BrokFeeSched.pdf p.4, read 2026-11-11), not per fill, so the live account's fees are NOT covered by this row",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-11"
   }
 ]
