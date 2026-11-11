@@ -69,6 +69,12 @@ class RankingConsumer:
         self._heartbeat: tuple[int, int] | None = None
         self.reason = self.reader.reason
 
+    def revoke(self) -> None:
+        """Withdraw cached entry authority until a new generation and heartbeat arrive."""
+        self._heartbeat = None
+        self.reader.invalidate("generation_pending", notify=False)
+        self.reason = self.reader.reason
+
     def handle(self, envelope: CustomData, *, now: int) -> bool:
         """Accept a full generation through the reader; any refusal forces a new heartbeat."""
         accepted = self.reader.accept_generation(envelope, now=now)

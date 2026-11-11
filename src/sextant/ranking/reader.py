@@ -39,9 +39,12 @@ class GenerationReader:
         self._sequence: int | None = None
         self._retired_epochs: set[str] = set()
 
-    def invalidate(self, reason: str) -> None:
+    def invalidate(self, reason: str, *, notify: bool = True) -> None:
         self.generation, self.generation_key = None, None
-        self._refuse(reason)
+        if notify:
+            self._refuse(reason)
+        else:
+            self.reason = reason
 
     def _refuse(self, reason: str) -> None:
         self.reason = reason
