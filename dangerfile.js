@@ -95,7 +95,7 @@ const AUTHORITY = {
     ],
   },
   broker: {
-    paths: ["src/sextant/paper/", "lanes/paper/"],
+    paths: ["src/sextant/paper/", "src/sextant/alpaca/", "lanes/paper/"],
     owners: ["alpacahq/alpaca-py", "docs.alpaca.markets", "nautechsystems/nautilus_trader"],
   },
   data: {
@@ -124,6 +124,8 @@ const AUTHORITY = {
       "stablyai/orca",
       "orchestratorinc/agent-orchestrator",
       "danger/danger-js",
+      "volcengine/openviking",
+      "ggml-org/llama.cpp",
     ],
   },
   lanes: {
