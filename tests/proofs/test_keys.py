@@ -37,6 +37,21 @@ def test_live_keys_cannot_enter_the_store(tmp_path: Path) -> None:
     assert not list(tmp_path.rglob("*")), "a refusal must store nothing"
 
 
+def test_with_keys_refuses_the_tradingview_sign_in(tmp_path: Path) -> None:
+    """Only the sync's own loader reads the stored sign-in (docs/adr/0021, D-23 amendment).
+
+    The refusal comes before any decrypt, so it holds with no store at all; the real-store
+    witness is test_tradingview.py::test_with_keys_cannot_put_the_stored_login_in_an_environment.
+    """
+    with_keys = str(SCRIPTS / "with-keys.sh")
+    for spec in ("TRADINGVIEW_MCP_OAUTH", "TRADINGVIEW_MCP_OAUTH:OTHER_NAME"):
+        for strict in ((), ("--strict",)):
+            done = _run("bash", with_keys, *strict, "-k", spec, "--", "true", home=tmp_path)
+            assert done.returncode == 3
+            assert "refusing to inject TRADINGVIEW_MCP_OAUTH" in done.stderr
+    assert not list(tmp_path.rglob("*")), "a refusal must store nothing"
+
+
 def test_t9_box_two_names_are_registered_and_the_northstar_app_keys_are_not() -> None:
     """T9 (sextant#58): the owner's Mac-only names move in; northstar's two App keys stay out."""
     known = (SCRIPTS / "keys.sh").read_text().split("KNOWN=(", 1)[1].split("\n)", 1)[0]

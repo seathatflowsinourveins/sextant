@@ -7,12 +7,15 @@ import copy
 import hashlib
 import importlib
 import json
+import os
 import socket
+import time
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 
 import pandas as pd
 import pytest
@@ -1543,3 +1546,794 @@ def test_sdk_does_not_negotiate_and_resend_mutations(monkeypatch: pytest.MonkeyP
     asyncio.run(run())
     assert len(attempts) == 1
     assert peer.calls == []
+
+
+# A lasting sign-in: the owner's D-23 word, kept in the repo's encrypted store (ADR-0021 amendment).
+
+LOGIN_NAME = "TRADINGVIEW_MCP_OAUTH"
+LOGIN_ACCESS = "fixture-access-2b1f6c"
+LOGIN_REFRESH = "fixture-refresh-9d4a2e"
+LOGIN_CLIENT = "fixture-client-7c3e11"
+
+
+def stored_login():
+    try:
+        return importlib.import_module("sextant.tradingview.stored_login")
+    except ModuleNotFoundError:
+        pytest.fail("The encrypted TradingView login store is not implemented")
+
+
+def a_token(access: str = LOGIN_ACCESS, refresh: str = LOGIN_REFRESH, expires_in: int = 3600):
+    from mcp.shared.auth import OAuthToken
+
+    return OAuthToken(
+        access_token=access,
+        refresh_token=refresh,
+        token_type="Bearer",  # noqa: S106 - fixture value, not a credential
+        expires_in=expires_in,
+    )
+
+
+def a_registration():
+    from mcp.shared.auth import OAuthClientInformationFull
+    from pydantic import AnyUrl
+
+    return OAuthClientInformationFull(
+        client_id=LOGIN_CLIENT,
+        redirect_uris=[AnyUrl("http://127.0.0.1:1/callback")],
+        token_endpoint_auth_method="none",  # noqa: S106 - public client, no secret
+    )
+
+
+def a_registered_login(tmp_path: Path):
+    """The real store under a temporary HOME, or a host-absence skip (the local run witnesses)."""
+    module = stored_login()
+    login = module.StoredLogin(home=tmp_path)
+    try:
+        login.save(a_token(), a_registration())
+    except module.StoredLoginError:
+        pytest.skip(
+            "the systemd-creds user store is unavailable here; the local ci run is the witness"
+        )
+    return login
+
+
+def test_stored_login_is_encrypted_at_rest_rotates_and_forgets(tmp_path: Path, capfd, caplog):
+    import logging
+
+    caplog.set_level(logging.DEBUG)
+    capfd.readouterr()
+    module = stored_login()
+    login = a_registered_login(tmp_path)
+    try:
+        path = tmp_path / ".config" / "sextant" / "credentials" / LOGIN_NAME
+        assert path.is_file()
+        assert (path.stat().st_mode & 0o777) == 0o600
+        raw = path.read_bytes()
+        for secret in (LOGIN_ACCESS, LOGIN_REFRESH, LOGIN_CLIENT):
+            assert secret.encode() not in raw
+
+        loaded = login.load()
+        assert loaded is not None
+        assert loaded.tokens.access_token == LOGIN_ACCESS
+        assert loaded.tokens.refresh_token == LOGIN_REFRESH
+        assert loaded.client_info.client_id == LOGIN_CLIENT
+
+        rotated = a_token(access="rotated-access", refresh="rotated-refresh")
+        asyncio.run(module.StoredTokenStorage(login).set_tokens(rotated))
+        after = login.load()
+        assert after is not None
+        assert after.tokens.refresh_token == "rotated-refresh"  # noqa: S105 - fixture
+        assert b"rotated-refresh" not in path.read_bytes()
+
+        assert login.forget() is True
+        assert login.load() is None
+        assert not path.exists()
+
+        # File-descriptor capture also sees a key-store subprocess that writes to the
+        # terminal; each stream is searched as text, not as a tuple of whole strings.
+        out, err = capfd.readouterr()
+        assert_no_secret(out + err + caplog.text)
+    finally:
+        login.forget()
+
+
+def test_keep_login_without_a_stored_login_still_requires_owner_consent(tmp_path: Path):
+    auth = importlib.import_module("sextant.tradingview.auth")
+    login = stored_login().StoredLogin(home=tmp_path)
+
+    async def run():
+        with pytest.raises(auth.SyncError) as raised:
+            async with auth.official_client(authorize=False, login=login):
+                pytest.fail("no stored login and no owner consent must not open a session")
+        return raised.value
+
+    assert asyncio.run(run()).stage == "authorize"
+
+
+def test_real_sdk_refresh_writes_the_rotated_token_back(tmp_path: Path):
+    import httpx2
+    from mcp.client.auth import OAuthClientProvider
+    from mcp.shared.auth import OAuthClientMetadata
+    from pydantic import AnyUrl
+
+    module = stored_login()
+    login = a_registered_login(tmp_path)
+    # Already past its lifetime: the store's issue time primes the SDK's expiry, so the
+    # next process refreshes through the stored refresh token instead of re-consenting.
+    login.save(
+        a_token(access="stale-access", refresh="old-refresh", expires_in=-60), a_registration()
+    )
+    seen: list[tuple[str, str | None]] = []
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        seen.append((str(request.url), request.headers.get("authorization")))
+        if str(request.url).endswith("/token"):
+            body = (await request.aread()).decode()
+            assert "grant_type=refresh_token" in body
+            assert "refresh_token=old-refresh" in body
+            return httpx2.Response(
+                200,
+                content=json.dumps(
+                    {
+                        "access_token": "fresh-access",
+                        "refresh_token": "fresh-refresh",
+                        "token_type": "Bearer",
+                        "expires_in": 3600,
+                    }
+                ).encode(),
+            )
+        return httpx2.Response(200, content=b"{}")
+
+    async def run():
+        storage = module.StoredTokenStorage(login)
+        provider = OAuthClientProvider(
+            server_url="https://mcp.tradingview.com/mcp",
+            client_metadata=OAuthClientMetadata(
+                client_name="fixture", redirect_uris=[AnyUrl("http://127.0.0.1:1/callback")]
+            ),
+            storage=storage,
+            redirect_handler=pytest.fail,
+            callback_handler=pytest.fail,
+        )
+        storage.prime_expiry(provider.context)
+        async with httpx2.AsyncClient(
+            auth=provider, transport=httpx2.MockTransport(handler)
+        ) as client:
+            return await client.post("https://mcp.tradingview.com/mcp", json={})
+
+    assert asyncio.run(run()).status_code == 200
+    stored = login.load()
+    assert stored is not None
+    assert stored.tokens.refresh_token == "fresh-refresh"  # noqa: S105 - fixture
+    assert [url for url, _ in seen] == [
+        "https://mcp.tradingview.com/token",
+        "https://mcp.tradingview.com/mcp",
+    ]
+    assert seen[0][1] is None
+    assert seen[1][1] == "Bearer fresh-access"
+
+
+def test_a_refused_stored_login_falls_back_once_and_never_loops():
+    from urllib.parse import parse_qs, urlsplit
+
+    import httpx2
+    from mcp.client.auth import AuthorizationCodeResult, OAuthClientProvider
+    from mcp.shared.auth import OAuthClientMetadata
+    from pydantic import AnyUrl
+
+    class Storage:
+        def __init__(self):
+            self.tokens = a_token(expires_in=3600)
+            self.client_info = a_registration()
+
+        async def get_tokens(self):
+            return self.tokens
+
+        async def set_tokens(self, tokens):
+            self.tokens = tokens
+
+        async def get_client_info(self):
+            return self.client_info
+
+        async def set_client_info(self, client_info):
+            self.client_info = client_info
+
+    storage = Storage()
+    redirects: list[str] = []
+    states: list[str] = []
+    callbacks: list[bool] = []
+    mcp_calls: list[str | None] = []
+    token_calls: list[str] = []
+    other: list[str] = []
+
+    async def redirect(url: str) -> None:
+        redirects.append(url)
+        states.append(parse_qs(urlsplit(url).query)["state"][0])
+
+    async def callback():
+        callbacks.append(True)
+        return AuthorizationCodeResult(code="fixture-code", state=states[-1])
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        url = str(request.url)
+        if url == "https://mcp.tradingview.com/mcp":
+            mcp_calls.append(request.headers.get("authorization"))
+            return httpx2.Response(401, content=b"")
+        if url.endswith("/token"):
+            token_calls.append((await request.aread()).decode())
+            return httpx2.Response(
+                200,
+                content=json.dumps(
+                    {
+                        "access_token": "fresh-access",
+                        "refresh_token": "fresh-refresh",
+                        "token_type": "Bearer",
+                        "expires_in": 3600,
+                    }
+                ).encode(),
+            )
+        if "/.well-known/" in url:
+            return httpx2.Response(404, content=b"")
+        other.append(url)
+        return httpx2.Response(404, content=b"")
+
+    async def run():
+        provider = OAuthClientProvider(
+            server_url="https://mcp.tradingview.com/mcp",
+            client_metadata=OAuthClientMetadata(
+                client_name="fixture", redirect_uris=[AnyUrl("http://127.0.0.1:1/callback")]
+            ),
+            storage=storage,
+            redirect_handler=redirect,
+            callback_handler=callback,
+        )
+        async with httpx2.AsyncClient(
+            auth=provider, transport=httpx2.MockTransport(handler)
+        ) as client:
+            return await client.post("https://mcp.tradingview.com/mcp", json={})
+
+    assert asyncio.run(run()).status_code == 401
+    assert other == []
+    assert len(redirects) == 1
+    assert redirects[0].startswith("https://mcp.tradingview.com/authorize?")
+    assert callbacks == [True]
+    assert len(token_calls) == 1 and "grant_type=authorization_code" in token_calls[0]
+    assert mcp_calls == ["Bearer " + LOGIN_ACCESS, "Bearer fresh-access"]
+
+
+def test_keys_registers_the_tradingview_login_sealed_name():
+    text = (Path(__file__).resolve().parents[2] / "scripts" / "keys.sh").read_text()
+    known = text.split("KNOWN=(", 1)[1].split("\n)", 1)[0]
+    assert LOGIN_NAME in known.split()
+
+
+@pytest.mark.parametrize(
+    ("invalid_section", "marker"),
+    [
+        ("tokens", "witness-refresh-token-value"),
+        ("client_info", "witness-client-secret-value"),
+    ],
+)
+def test_unreadable_stored_document_does_not_expose_credentials(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, invalid_section: str, marker: str
+):
+    import subprocess
+    import traceback
+
+    module = stored_login()
+    payload = {
+        "tokens": {"access_token": "witness-access-token-value"},
+        "client_info": {"client_id": "witness-client-id-value"},
+        "obtained_at": 1.0,
+    }
+    if invalid_section == "tokens":
+        payload["tokens"] = {"refresh_token": marker}
+    else:
+        payload["client_info"] = {"client_secret": marker}
+    login = module.StoredLogin(home=tmp_path)
+    monkeypatch.setattr(login, "_state", lambda: "set")
+    monkeypatch.setattr(
+        module,
+        "_run",
+        lambda *arguments, **options: subprocess.CompletedProcess(
+            arguments, 0, json.dumps(payload).encode(), b""
+        ),
+    )
+    exposes_credential = False
+    sanitized = False
+    try:
+        login.load()
+    except module.StoredLoginError as error:
+        exposes_credential = any(marker in line for line in traceback.format_exception(error))
+        sanitized = (
+            error.__cause__ is None
+            and error.__context__ is None
+            and error.__suppress_context__ is True
+        )
+    else:
+        pytest.fail("malformed stored document was not refused", pytrace=False)
+    if exposes_credential:
+        pytest.fail(
+            "the stored credential is exposed by the chained exception graph",
+            pytrace=False,
+        )
+    assert sanitized
+
+
+# Fix round on the stored login (issue #470 row 14). Each value below is a recognisable
+# fake; a proof that output is clean searches every output stream and file for all of them.
+FAKE_ACCESS = "fake-access-token-a91c"
+FAKE_REFRESH = "fake-refresh-token-4be7"
+ROTATED_ACCESS = "fake-rotated-access-c30d"
+ROTATED_REFRESH = "fake-rotated-refresh-58f2"
+FRESH_ACCESS = "fake-fresh-access-e6b0"
+FRESH_REFRESH = "fake-fresh-refresh-71d4"
+FAKE_CODE = "fake-auth-code-9a2e"
+FAKE_CALLBACK = "http://127.0.0.1:1/callback"
+FAKES = (
+    LOGIN_ACCESS,
+    LOGIN_REFRESH,
+    LOGIN_CLIENT,
+    FAKE_ACCESS,
+    FAKE_REFRESH,
+    ROTATED_ACCESS,
+    ROTATED_REFRESH,
+    FRESH_ACCESS,
+    FRESH_REFRESH,
+    FAKE_CODE,
+    "127.0.0.1:1",
+)
+
+
+def assert_no_secret(text: str, root: Path | None = None) -> None:
+    """Names the leaked fixtures only, so a failure never prints the surrounding output."""
+    leaked = [value for value in FAKES if value in text]
+    for path in sorted(root.rglob("*")) if root is not None else ():
+        if path.is_file():
+            data = path.read_bytes()
+            leaked += [f"{path.name}:{value}" for value in FAKES if value.encode() in data]
+    assert leaked == []
+
+
+def literal(name: str) -> str:
+    _, sync = api()
+    return getattr(sync, name, f"<sync.{name} is not defined>")
+
+
+# The service's shape as the lead measured it live (2026-11-11): the authorization server is on
+# another host, and the SDK's fallback `<server>/token` answers 403 with a CSRF refusal.
+ISSUER = "https://www.tradingview.com"
+PUBLISHED_TOKEN = ISSUER + "/mcp/oauth/token"
+CSRF = {"detail": "CSRF validation failed", "code": "CSRF_TOKEN_INVALID"}
+METADATA = {
+    "issuer": ISSUER,
+    "authorization_endpoint": ISSUER + "/mcp/oauth/authorize",
+    "token_endpoint": PUBLISHED_TOKEN,
+    "registration_endpoint": ISSUER + "/mcp/oauth/register",
+}
+RESOURCE = {"resource": "https://mcp.tradingview.com/mcp", "authorization_servers": [ISSUER]}
+
+
+def a_bound_registration(issuer: str | None = ISSUER):
+    """The registration as the SDK stores it: bound to its issuer (SEP-2352, oauth2.py:766-781)."""
+    return a_registration().model_copy(update={"issuer": issuer})
+
+
+class MemoryLogin:
+    """StoredLogin's four calls over one in-memory document, recorded in call order."""
+
+    def __init__(
+        self, events: list[str], tokens=None, *, obtained_at: float | None = None, client=None
+    ):
+        self.events = events
+        self.document = None
+        if tokens is not None:
+            self.document = stored_login().StoredDocument(
+                tokens,
+                client or a_bound_registration(),
+                time.time() if obtained_at is None else obtained_at,
+            )
+
+    def present(self):
+        return self.document is not None
+
+    def load(self):
+        return self.document
+
+    def save(self, tokens, client_info, obtained_at):
+        self.events.append("save")
+        self.document = stored_login().StoredDocument(tokens, client_info, obtained_at)
+
+    def forget(self):
+        self.events.append("forget")
+        removed = self.document is not None
+        self.document = None
+        return removed
+
+
+def stale_login(events: list[str], *, refresh: str | None = FAKE_REFRESH) -> MemoryLogin:
+    """A stored login past its access lifetime, so the session refreshes first."""
+    return MemoryLogin(
+        events,
+        a_token(access=FAKE_ACCESS, refresh=refresh, expires_in=60),  # type: ignore[arg-type]
+        obtained_at=time.time() - 3600,
+    )
+
+
+def token_body(access: str, refresh: str, expires_in: int = 3600) -> dict:
+    return {
+        "access_token": access,
+        "refresh_token": refresh,
+        "token_type": "Bearer",
+        "expires_in": expires_in,
+    }
+
+
+def oauth_service(
+    events: list[str],
+    *,
+    refresh,
+    accept=(FRESH_ACCESS, ROTATED_ACCESS),
+    metadata=METADATA,
+    prm_url=ISSUER + "/.well-known/oauth-protected-resource/mcp",
+):
+    """The service's shape: ``refresh(request)`` answers each refresh grant at the published
+    endpoint; ``metadata`` is the issuer's published document, or a status code, or an exception;
+    the 401 challenge names ``prm_url``, the protected-resource document."""
+    import httpx2
+
+    accepted = {f"Bearer {value}" for value in accept}
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        host, path = request.url.host, request.url.path
+        if (host, path) == ("mcp.tradingview.com", "/mcp"):
+            if request.headers.get("authorization") in accepted:
+                return httpx2.Response(200, json={})
+            events.append("unauthorized")
+            challenge = f'Bearer resource_metadata="{prm_url}"'
+            return httpx2.Response(401, headers={"WWW-Authenticate": challenge})
+        if str(request.url) == prm_url:
+            return httpx2.Response(200, json=RESOURCE)
+        if str(request.url) == ISSUER + "/.well-known/oauth-authorization-server":
+            if isinstance(metadata, BaseException):
+                raise metadata
+            if isinstance(metadata, int):
+                return httpx2.Response(metadata)
+            return httpx2.Response(200, json=metadata)
+        if "/.well-known/" in path:
+            return httpx2.Response(404)
+        if (host, path) == ("mcp.tradingview.com", "/token"):
+            events.append("fallback")
+            return httpx2.Response(403, json=CSRF)
+        path = path.removeprefix("/mcp/oauth") if host == "www.tradingview.com" else "unexpected"
+        if path == "/register":
+            events.append("register")
+            return httpx2.Response(
+                201,
+                json={
+                    "client_id": "fake-reregistered-client",
+                    "redirect_uris": [FAKE_CALLBACK],
+                    "token_endpoint_auth_method": "none",
+                },
+            )
+        if path == "/token":
+            grant = parse_qs((await request.aread()).decode())["grant_type"][0]
+            events.append(grant)
+            if grant == "refresh_token":
+                return refresh(request)
+            return httpx2.Response(200, json=token_body(FRESH_ACCESS, FRESH_REFRESH))
+        pytest.fail(f"unexpected mocked path {path}", pytrace=False)
+
+    return handler
+
+
+def wired_session(monkeypatch: pytest.MonkeyPatch, handler, events: list[str]):
+    """The real official_client, provider, store adapter and hooks over a mocked service.
+
+    Only the browser (``OwnerCallback``), the network transport and the MCP session
+    object are fixtures; the session posts once on entry and fails any list or tool call.
+    """
+    import httpx2
+    from mcp.client.auth import AuthorizationCodeResult
+
+    auth = importlib.import_module("sextant.tradingview.auth")
+    original = httpx2.AsyncClient
+    states: list[str] = []
+
+    class Callback:
+        uri = FAKE_CALLBACK
+        result = None
+        server = SimpleNamespace(server_close=lambda: None)
+
+        async def redirect(self, url: str) -> None:
+            events.append("consent")
+            states.append(parse_qs(urlsplit(url).query)["state"][0])
+
+        async def wait(self):
+            return AuthorizationCodeResult(code=FAKE_CODE, state=states[-1])
+
+    class Session:
+        def __init__(self, transport, **options):
+            self.http = transport
+
+        async def request(self) -> None:
+            response = await self.http.post(auth.SERVER, json={})
+            if response.status_code != 200:
+                raise RuntimeError("fixture session refused")
+            events.append("session")
+
+        async def __aenter__(self):
+            await self.request()
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def list_tools(self, *args, **kwargs):
+            pytest.fail("this run must not list tools", pytrace=False)
+
+        async def call_tool(self, *args, **kwargs):
+            pytest.fail("this run must not call a tool", pytrace=False)
+
+    def http_client(**options):
+        return original(transport=httpx2.MockTransport(handler), trust_env=False, **options)
+
+    monkeypatch.setattr(auth, "OwnerCallback", Callback)
+    monkeypatch.setattr(auth.httpx2, "AsyncClient", http_client)
+    monkeypatch.setattr(auth, "streamable_http_client", lambda server, http_client: http_client)
+    monkeypatch.setattr(auth, "Client", Session)
+    return auth
+
+
+def open_session(auth, *, authorize: bool, login) -> None:
+    async def run():
+        async with auth.official_client(authorize, login):
+            pass
+
+    asyncio.run(run())
+
+
+def refused_session(auth, *, authorize: bool, login):
+    with pytest.raises(auth.SyncError) as raised:
+        open_session(auth, authorize=authorize, login=login)
+    return raised.value
+
+
+def answer(status: int, body) -> Any:
+    import httpx2
+
+    if isinstance(body, bytes):
+        return lambda request: httpx2.Response(status, content=body)
+    return lambda request: httpx2.Response(status, json=body)
+
+
+@pytest.mark.parametrize("authorize", [True, False])
+@pytest.mark.parametrize("status", [500, 503, 429])
+def test_a_token_endpoint_outage_keeps_the_stored_login_and_stops(
+    monkeypatch: pytest.MonkeyPatch, status: int, authorize: bool
+):
+    """Fix 1: the status decides; even a refusal code in a 5xx or 429 body keeps the login."""
+    events: list[str] = []
+    login = stale_login(events)
+    before = login.document
+    service = oauth_service(events, refresh=answer(status, {"error": "invalid_grant"}))
+    auth = wired_session(monkeypatch, service, events)
+    error = refused_session(auth, authorize=authorize, login=login)
+    assert events == ["refresh_token"]
+    assert login.document is before
+    assert str(error) == literal("LOGIN_UNAVAILABLE")
+
+
+@pytest.mark.parametrize("authorize", [True, False])
+def test_a_transport_failure_at_the_token_endpoint_keeps_the_stored_login(
+    monkeypatch: pytest.MonkeyPatch, authorize: bool
+):
+    import httpx2
+
+    def refresh(request):
+        raise httpx2.ConnectError("fixture outage", request=request)
+
+    events: list[str] = []
+    login = stale_login(events)
+    before = login.document
+    auth = wired_session(monkeypatch, oauth_service(events, refresh=refresh), events)
+    error = refused_session(auth, authorize=authorize, login=login)
+    assert events == ["refresh_token"]
+    assert login.document is before
+    assert str(error) == literal("LOGIN_UNAVAILABLE")
+
+
+@pytest.mark.parametrize("authorize", [True, False])
+@pytest.mark.parametrize(
+    ("status", "body"),
+    [(400, {"error": "invalid_request"}), (400, b"not json"), (403, {})],
+)
+def test_an_unclear_refresh_answer_keeps_the_stored_login_and_stops(
+    monkeypatch: pytest.MonkeyPatch, status: int, body, authorize: bool
+):
+    events: list[str] = []
+    login = stale_login(events)
+    before = login.document
+    auth = wired_session(monkeypatch, oauth_service(events, refresh=answer(status, body)), events)
+    error = refused_session(auth, authorize=authorize, login=login)
+    assert events == ["refresh_token"]
+    assert login.document is before
+    assert str(error) == literal("LOGIN_UNUSABLE")
+
+
+@pytest.mark.parametrize(
+    ("status", "code"),
+    [(400, "invalid_grant"), (401, "invalid_client"), (400, "unauthorized_client")],
+)
+def test_a_definite_refusal_is_forgotten_before_the_one_browser_sign_in(
+    monkeypatch: pytest.MonkeyPatch, status: int, code: str
+):
+    """Fixes 1 and 5, through auth.py's real wiring: forget comes before any fallback."""
+    events: list[str] = []
+    login = stale_login(events)
+    service = oauth_service(events, refresh=answer(status, {"error": code}))
+    auth = wired_session(monkeypatch, service, events)
+    open_session(auth, authorize=True, login=login)
+    assert events[:2] == ["refresh_token", "forget"]
+    assert events.count("consent") == 1
+    assert events.index("consent") < events.index("save") < events.index("session")
+    assert login.document is not None
+    assert login.document.tokens.access_token == FRESH_ACCESS
+    client = login.document.client_info
+    assert client is not None
+    if code == "invalid_client":
+        # The registration itself was refused: the browser sign-in registers a new client.
+        assert "register" in events
+        assert client.client_id == "fake-reregistered-client"
+    else:
+        assert "register" not in events
+        assert client.client_id == LOGIN_CLIENT
+
+
+def test_keep_login_without_authorize_never_opens_a_browser_after_a_refusal(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Fix 2: an unattended --keep-login run stops with the owner step instead."""
+    events: list[str] = []
+    login = stale_login(events)
+    service = oauth_service(events, refresh=answer(400, {"error": "invalid_grant"}))
+    auth = wired_session(monkeypatch, service, events)
+    error = refused_session(auth, authorize=False, login=login)
+    assert events == ["refresh_token", "forget"]
+    assert login.document is None
+    assert str(error) == literal("LOGIN_REFUSED")
+
+
+@pytest.mark.parametrize("case", ["rejected access token", "no refresh token"])
+def test_keep_login_without_authorize_refuses_when_the_service_wants_consent(
+    monkeypatch: pytest.MonkeyPatch, case: str
+):
+    events: list[str] = []
+    if case == "rejected access token":
+        login = MemoryLogin(events, a_token(access=FAKE_ACCESS, refresh=FAKE_REFRESH))
+    else:
+        login = stale_login(events, refresh=None)
+    before = login.document
+    service = oauth_service(events, refresh=answer(500, {}), accept=())
+    auth = wired_session(monkeypatch, service, events)
+    error = refused_session(auth, authorize=False, login=login)
+    assert events == ["unauthorized"]
+    assert login.document is before
+    assert str(error) == literal("LOGIN_NEEDS_CONSENT")
+
+
+def test_keep_login_without_authorize_and_no_stored_login_refuses_before_a_session(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    events: list[str] = []
+    auth = wired_session(monkeypatch, oauth_service(events, refresh=answer(500, {})), events)
+    monkeypatch.setattr(auth, "OwnerCallback", lambda: pytest.fail("no session", pytrace=False))
+    error = refused_session(auth, authorize=False, login=MemoryLogin(events))
+    assert events == []
+    assert error.stage == "authorize"
+    assert str(error) == literal("LOGIN_NEEDS_CONSENT")
+
+
+def token_requests(events: list[str], handler):
+    """The handler, recording where each token request went."""
+
+    async def recorded(request):
+        if request.url.path.endswith("/token"):
+            events.append(f"POST {request.url.host}{request.url.path}")
+        return await handler(request)
+
+    return recorded
+
+
+@pytest.mark.parametrize("client", ["bound", "unbound"])
+def test_a_fresh_process_refreshes_at_the_published_token_endpoint(
+    monkeypatch: pytest.MonkeyPatch, client: str
+):
+    """Measured live: the SDK's fallback `<server>/token` answers 403 (CSRF); the published
+    endpoint is on the issuer's host. Unbound: a registration stored without its issuer."""
+    events: list[str] = []
+    login = stale_login(events)
+    if client == "unbound":
+        assert login.document is not None
+        login.document = stored_login().StoredDocument(
+            login.document.tokens, a_bound_registration(None), login.document.obtained_at
+        )
+    # Unbound, only the server's own well-known (SEP-985) can name the issuer before a 401.
+    prm = "https://mcp.tradingview.com/.well-known/oauth-protected-resource/mcp"
+    refresh = answer(200, token_body(ROTATED_ACCESS, ROTATED_REFRESH))
+    service = oauth_service(
+        events, refresh=refresh, **({"prm_url": prm} if client == "unbound" else {})
+    )
+    auth = wired_session(monkeypatch, token_requests(events, service), events)
+    open_session(auth, authorize=False, login=login)
+    assert events[:2] == ["POST www.tradingview.com/mcp/oauth/token", "refresh_token"]
+    assert "fallback" not in events
+    assert "session" in events
+    assert login.document is not None
+    assert login.document.tokens.refresh_token == ROTATED_REFRESH
+
+
+@pytest.mark.parametrize("authorize", [False, True])
+@pytest.mark.parametrize("metadata", [404, 503, "transport"])
+def test_without_the_published_token_endpoint_the_run_stops_and_keeps_the_login(
+    monkeypatch: pytest.MonkeyPatch, metadata, authorize: bool
+):
+    """A refresh is never sent to a fallback endpoint; the store is left for the next run."""
+    import httpx2
+
+    if metadata == "transport":
+        metadata = httpx2.ConnectError("fixture outage")
+    events: list[str] = []
+    login = stale_login(events)
+    before = login.document
+    service = oauth_service(events, refresh=answer(200, {}), metadata=metadata)
+    auth = wired_session(monkeypatch, service, events)
+    error = refused_session(auth, authorize=authorize, login=login)
+    assert events == []
+    assert login.document is before
+    assert str(error) == literal("LOGIN_UNAVAILABLE")
+
+
+def test_the_guard_never_lets_a_refresh_reach_an_unpublished_endpoint():
+    import httpx2
+
+    module = stored_login()
+    guard = module.RefreshGuard(module.StoredTokenStorage(MemoryLogin([])), consent=True)
+    guard.context = SimpleNamespace(oauth_metadata=None)
+    form = {"grant_type": "refresh_token", "refresh_token": FAKE_REFRESH}
+    request = httpx2.Request("POST", "https://mcp.tradingview.com/token", data=form)
+    with pytest.raises(module.StoredLoginStop):
+        asyncio.run(guard.request(request))
+    assert guard.reason() == "unavailable"
+
+
+def test_with_keys_cannot_put_the_stored_login_in_an_environment(tmp_path: Path):
+    """Fix 4: with-keys refuses the name; the sync's own loader still reads it."""
+    import subprocess
+
+    login = a_registered_login(tmp_path)
+    try:
+        done = subprocess.run(
+            [
+                "bash",
+                str(Path(__file__).resolve().parents[2] / "scripts" / "with-keys.sh"),
+                "-k",
+                LOGIN_NAME,
+                "--",
+                "printenv",
+                LOGIN_NAME,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            env={"HOME": str(tmp_path), "PATH": os.environ.get("PATH", "/usr/bin:/bin")},
+        )
+        code = done.returncode
+        assert code == 3
+        assert_no_secret(done.stdout + done.stderr)
+        loaded = login.load()
+        assert loaded is not None
+        assert loaded.tokens.refresh_token == LOGIN_REFRESH
+    finally:
+        login.forget()

@@ -57,6 +57,10 @@ KNOWN=(
   # (northstar@0243050704565abaf3a95f0f09613cb974a331e5:scripts/keys.sh:77-78, GITHUB_APP_*_KEY_B64).
   SEXTANT_GITHUB_APP_KEY_B64
   SEXTANT_LEDGER_DEPLOY_KEY_B64 # the ledger branch's one writer (#102): base64 of an ed25519 deploy key, read only by `just ledger-append`
+  # The owner's lasting TradingView MCP login (D-23, 2026-11-10; docs/adr/0021 amendment). One JSON
+  # line: the official SDK's tokens and client registration, written and read only by
+  # src/sextant/tradingview/stored_login.py through --sealed-stdin. `--forget-login` removes it.
+  TRADINGVIEW_MCP_OAUTH
 )
 
 [[ "$(uname -s)" == Linux ]] || {

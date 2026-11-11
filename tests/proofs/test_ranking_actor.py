@@ -404,3 +404,31 @@ def test_the_pager_key_set_is_bounded_by_stage(tmp_path) -> None:  # F6
     assert out["actor"].errors == {"on_trade": len(SECONDS)}
     assert [stage for stage, _ in out["pages"]] == ["on_trade"]  # one page, not one per type
     assert out["actor"]._paged <= {"on_trade"}
+
+
+def test_the_engine_base_fields_reach_the_config_through_new_not_init() -> None:
+    """Counter-witness (gate review of #486): the pinned pattern passes ``actor_id`` and the log
+    settings to ``DataActorConfig.__new__`` and calls ``super().__init__()`` with none
+    (docs/concepts/actors.md:15-21); the base ``__init__`` is ``object.__init__`` and refuses
+    them, so forwarding ``**kwargs`` would break every config."""
+    import pytest
+    from nautilus_trader.model import ActorId
+
+    config = RankingActorConfig(
+        instrument_ids=IDS,
+        feed="sip",
+        host_factory=cast(Any, lambda: FakeHost([])),
+        priming=priming,
+        actor_id=ActorId("RANKING-PROOF"),
+        log_events=False,
+        log_commands=False,
+    )
+    assert config.actor_id == ActorId("RANKING-PROOF")
+    assert config.log_events is False and config.log_commands is False
+
+    class Forwarding(DataActorConfig):
+        def __init__(self, **kwargs: Any) -> None:
+            super().__init__(**kwargs)
+
+    with pytest.raises(TypeError, match=r"object\.__init__"):
+        Forwarding(log_events=False)
