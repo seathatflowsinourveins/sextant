@@ -11,7 +11,7 @@ from typing import Any, cast
 
 import pytest
 from nautilus_trader.model import InstrumentId, InstrumentStatus, MarketStatusAction
-from test_ranking import NS, START
+from test_ranking import NS, START, registry
 from test_ranking_actor import FakeHost, Logged, run
 
 from sextant.ranking.node_actor import RankingActorConfig, classify
@@ -214,3 +214,21 @@ def test_a_status_veto_lifts_once_the_host_applies_it(tmp_path) -> None:  # F2 r
     out = run(tmp_path, host_cls=FailsOnce, statuses=[status(305, MarketStatusAction.NONE)])
     assert out["actor"].vetoed == set() and out["actor"].errors == {"instrument_status": 1}
     assert out["hosts"][0].publisher.assets["PENNY"].halted is None  # applied on the retry
+
+
+def test_a_refused_halt_withdraws_the_readable_rank_at_once(tmp_path) -> None:  # review P2
+    from sextant.ranking.heartbeat import HeartbeatEmitter
+
+    class RefusesHalt(Recording):
+        def set_symbol(self, name, *, references, asset) -> Any:
+            if name == "PENNY" and asset.halted is True:
+                raise RuntimeError("fixture halt setter unavailable")
+            return super().set_symbol(name, references=references, asset=asset)
+
+    out = run(tmp_path, host_cls=RefusesHalt, statuses=[status(361, MarketStatusAction.HALT)])
+    consumer, at = out["consumer"], START + 361 * NS
+    beat = HeartbeatEmitter(registry=registry(), clock=lambda: at, sink=consumer.accept_heartbeat)
+    beat.emit(out["receiver"].received[-2])  # a beat for the last READY generation
+    assert out["actor"].vetoed == {"PENNY"}
+    assert out["receiver"].received[-1].coverage.state.name == "DEGRADED"  # the veto, at once
+    assert consumer.entry_rank("PENNY", now=at) is None

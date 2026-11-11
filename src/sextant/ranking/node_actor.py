@@ -154,6 +154,7 @@ class RankingActor(DataActor):
         self._paged: dict[str, int] = {}  # last page time per stage: a bounded key set (F6)
         self._lineage: tuple[str, int] | None = None  # the last published (epoch, sequence)
         self._retired: set[str] = set()
+        self._last: RankingGeneration | None = None  # the last generation on the bus
         self._early: dict[str, InstrumentStatus] = {}  # statuses before priming (review F1)
         self._veto: dict[str, tuple[bool | None, int, str]] = {}  # unapplied statuses (F2)
 
@@ -215,7 +216,8 @@ class RankingActor(DataActor):
             generation = self.host.set_symbol(name, references=references, asset=updated)
         except Exception as exc:
             self._veto[name] = (True if halted is True else None, at, why)
-            return self._fault("instrument_status", exc)
+            self._fault("instrument_status", exc)
+            return self._withdraw()
         self._veto.pop(name, None)
         self._publish(generation)
 
@@ -231,6 +233,18 @@ class RankingActor(DataActor):
             return self._fault("on_trade", exc)
         self._publish(generation)
 
+    def _withdraw(self) -> None:
+        """Republish the last generation in its withheld form at once, so a consumer drops the
+        rank now rather than at its age bound (review P2). A DEGRADED copy is refused before
+        the reader's sequence check (reader.py:110-116), so it never moves the lineage."""
+        if self._last is None:
+            return
+        data_type = ranking_data_type(self._feed)
+        try:
+            self.publish_data(data_type, CustomData(data_type, withheld(self._last)))
+        except Exception as exc:
+            self._fault("publish", exc)
+
     def _publish(self, generation: RankingGeneration | None) -> None:
         """A returned generation reaches the node bus at once; None publishes nothing."""
         if generation is None or not self._advances(generation):
@@ -244,6 +258,7 @@ class RankingActor(DataActor):
             return self._fault("publish", exc)
         identity = generation.generation_id
         self._lineage = (identity.producer_epoch, identity.sequence)
+        self._last = generation
         self.published += 1
 
     def _advances(self, generation: RankingGeneration) -> bool:
