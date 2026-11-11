@@ -35,6 +35,11 @@ def cached_order(*, filled=0, quantity=100, pending=True, trail=True):
         leaves_qty=Quantity.from_int(quantity - filled),
         quantity=Quantity.from_int(quantity),
         ts_init=at("0.7"),
+        # ADAPTED (ADR-0007:17, plan P6): the engine's native contingency fields, which the
+        # reservation count reads (an OCO pair counts once); none here.
+        contingency_type=None,
+        linked_order_ids=None,
+        order_list_id=None,
     )
 
 
@@ -106,7 +111,11 @@ def test_added_shares_have_cover_while_an_existing_exit_is_partly_filled(pending
     engine.on_order_filled(SimpleNamespace(instrument_id=PENNY, client_order_id=ClientOrderId("OWNER-ADDED")))
     print("PARTIAL_ADDITION", "pending", pending, "held", engine.held, "leaves", order.leaves_qty, "arms", engine.arms, "pages", engine.rows)
     assert not engine.commands
-    assert order.leaves_qty.as_decimal() + sum(engine.arms, Decimal(0)) == engine.held - 30
+    # ADAPTED (ADR-0007:17, one house trail of the full net quantity, re-armed by cancel plus one resubmit; ADR-0007:25 and LEAD-2308, lead decision 09:3x): while the one trail
+    # completes, the added shares wait, paged once, and are armed on its end. Original: the
+    # leaves plus a second trail equal the unreserved holding.
+    assert engine.arms == []
+    assert any(r.get("reason") == "exit_triggered_left_to_complete" for r in engine.rows)
 
 
 def test_quantity_answer_does_not_strand_the_added_shares_after_a_partial_fill():
@@ -118,9 +127,13 @@ def test_quantity_answer_does_not_strand_the_added_shares_after_a_partial_fill()
     engine.on_order_updated(SimpleNamespace(instrument_id=PENNY, client_order_id=CID))
     print("PARTIAL_RESIZE_ANSWER", "held", engine.held, "reserved", 30, "leaves", order.leaves_qty, "arms", engine.arms)
     assert not engine.commands
-    assert order.leaves_qty.as_decimal() + sum(engine.arms, Decimal(0)) == engine.held - 30
+    # ADAPTED (ADR-0007:17, one house trail of the full net quantity, re-armed by cancel plus one resubmit; ADR-0007:25, LEAD-2308): no resize exists to answer, and a partly filled
+    # trail completes before the rest is armed. Original: the leaves plus a second trail.
+    assert engine.arms == []
+    assert any(r.get("reason") == "exit_triggered_left_to_complete" for r in engine.rows)
 
 
+@pytest.mark.xfail(strict=True, reason="the entry time limit waits for the engine's managed GTD part (lead 09:3x)")
 def test_entry_ttl_survives_a_rejected_cancel_after_the_replace_answer():
     engine = probe()
     order = cached_order(trail=False)
@@ -145,6 +158,7 @@ def test_entry_ttl_survives_a_rejected_cancel_after_the_replace_answer():
     assert len(engine.commands) == 2
 
 
+@pytest.mark.xfail(strict=True, reason="the entry time limit waits for the engine's managed GTD part (lead 09:3x)")
 @pytest.mark.parametrize("answer", ["updated", "modify_rejected", "filled"])
 def test_entry_ttl_answer_and_terminal_controls(answer):
     engine = probe()
@@ -164,6 +178,7 @@ def test_entry_ttl_answer_and_terminal_controls(answer):
     assert not book.expire_due
 
 
+@pytest.mark.xfail(strict=True, reason="the entry time limit waits for the engine's managed GTD part (lead 09:3x)")
 def test_entry_expiry_remains_effective_after_a_strategy_restart():
     before = probe()
     order = cached_order(trail=False)
@@ -199,6 +214,7 @@ def test_refused_trail_rearms_on_the_next_trade(refusal):
     assert engine.arms == [Decimal(100)]
 
 
+@pytest.mark.xfail(strict=True, reason="the entry time limit waits for the engine's managed GTD part (lead 09:3x)")
 def test_unanswered_price_modify_retains_expiry_without_an_illegal_cancel():
     engine = probe()
     order = cached_order(trail=False)
