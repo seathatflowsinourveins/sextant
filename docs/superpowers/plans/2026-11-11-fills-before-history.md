@@ -20,7 +20,8 @@ aggregate startup trace. Native order inference, reconciliation and gate own sta
 - Diagnostics contain counts only, never venue identifiers or monetary/time values.
 - Coordinator clarification: 8,822 = 400 explained + 8,422 pre-history; 398 of
   the 400 explained fills are in unloaded names (the distinct skip count).
-- Fresh origin/main remains d42872a7; the node-teardown fix is not on main.
+- The initial origin/main was d42872a7; #693 later merged as 1dfb44ce with the
+  supplied base's exact tree. Cut onto that fresh main; shared teardown is not there.
 
 ## Upstream first
 
@@ -53,15 +54,33 @@ modify `src/sextant/alpaca/execution.py`, `src/sextant/paper/node_order.py`,
 **Interfaces:** Existing `_generate_fill_reports(command)` returns no activity-derived
 reports; `report_trace['fills']` and `startup_cause` expose aggregate counts.
 
-- [ ] Write run-3 node/gate proof plus recent-unlisted, excess, empty-listing and
+- [x] Write run-3 node/gate proof plus recent-unlisted, excess, empty-listing and
   unexplained-position refusal proofs; add strict-boundary and reset cases.
-- [ ] Run focused pytest before source changes and preserve RED output.
-- [ ] Add an oldest-submission boundary for unlisted rows only, with pre-history,
+- [x] Run focused pytest before source changes and preserve RED output.
+- [x] Add an oldest-submission boundary for unlisted rows only, with pre-history,
   unlisted-order and excess-quantity counts in receipts and ERROR output.
-- [ ] Run focused GREEN, update manifest/lesson, regenerate index and run ci-local.
-- [ ] Review complete diff, measure source/raw sizes, commit locally and report.
+- [x] Run focused GREEN, update manifest/lesson, regenerate index and run ci-local.
+- [x] Review complete diff, measure source/raw sizes, commit locally and report.
 
 Skills: orchestration; writing-plans; systematic-debugging; test-driven-development;
 executing-plans; verification-before-completion; requesting-code-review (prepare
 handoff for coordinator's separate review, no helpers authorized);
 finishing-a-development-branch (keep this branch and worktree as instructed).
+
+Ruling: use a five-second fixture run for 89 paced pages plus the final paced account
+verification; the two-second fixture default stopped before verification. No production
+pacing or timing changed. RED: 7 failed; focused GREEN: 7 passed.
+
+Ruling: collect failed native-node cycles in this module's fixture teardown after a
+combined run failed the next module's LiveNode build (117 passed, 1 failed). This uses
+the existing native proof cleanup pattern; the separate shared teardown fix is not
+on origin/main at d42872a7 and is not imported from its unmerged branch.
+
+Ruling: #693 merged as 1dfb44ce while verification ran, with the supplied base's
+exact tree. Rebase only this task's commits onto that squash so the review window
+contains this task alone. Combined regression GREEN: 118 passed, 1 vendor warning.
+
+Verification: ci-local exit 0; 4,961 passed, 9 xfailed, 140 warnings; ruff, pyright,
+zizmor, shellcheck, actionlint, budgets and gitleaks passed. Source delta +18 net.
+Final review: author review against the skill template; independent max gate review
+is a coordinator handoff because this task explicitly forbids helper workers.

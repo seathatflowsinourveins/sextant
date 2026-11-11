@@ -6,6 +6,7 @@ Synthetic data only; the native node, reconciliation, pacer and gate are real.
 """
 
 import asyncio
+import gc
 import json
 from copy import deepcopy
 
@@ -30,6 +31,8 @@ REASON = "historical fill that no order report explains"
 def history_read_burst(monkeypatch):
     # Fixture only: 89 paced activity pages fit without waiting a real minute.
     monkeypatch.setattr(test_b_order_node, "controls", lambda: controls(burst_fraction="0.5"))
+    yield
+    gc.collect()  # Release failed native-node cycles before another module builds on this thread.
 
 
 def _fill(ident, order_id, *, stamp=STAMP, symbol="UNLOADED", side="buy"):
@@ -92,7 +95,8 @@ def test_run3_flat_history_opens_gate_and_receipt_counts_all_89_pages(tmp_path, 
     venue = _run3_history()
     assert len(venue.rows) == 437 and len(venue.activities) == 8822 and not venue.positions
     before, seeded = deepcopy(venue.rows), len(venue.requests)
-    body, code, stand = start(tmp_path, venue)
+    # The 89 paced pages plus the account verification need more than the 2-second default.
+    body, code, stand = start(tmp_path, venue, duration="5")
     assert (code, body["phase"]) == (0, "stopped"), body
     assert all(value == 0 for value in body["gate"].values()) and stand.subscribed == 3
     trace = body["reconciliation"]

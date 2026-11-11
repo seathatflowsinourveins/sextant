@@ -677,6 +677,9 @@ def startup_cause(clients: list[Any]) -> dict[str, Any] | None:
         parts = [
             f"stage={stage} error={e['error']} first={e.get('first')} status={e.get('status')} "
             f"failures={e.get('failures')} skipped_unloaded={e.get('skipped_unloaded', 0)} "
+            f"before_order_history={e.get('before_order_history', 0)} "
+            f"unlisted_order={e.get('unlisted_order', 0)} "
+            f"quantity_exceeds={e.get('quantity_exceeds', 0)} "
             f"reason={e.get('reason')!r} requests="
             + ",".join(f"{k}:{v.get('requests')}/{v.get('rows')}" for k, v in e["requests"].items())
             for stage, e in failed.items()
