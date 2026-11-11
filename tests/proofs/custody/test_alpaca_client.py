@@ -180,6 +180,25 @@ def test_owner_mutations_and_account_cancel_are_refused_without_wire():
     asyncio.run(run())
 
 
+def test_failed_report_row_prevents_absence_and_flat_inference():
+    async def run():
+        node = client()
+        await node._submit_order(NS(order=order(), params={}))
+        venue = node.gateway.sdk
+        row = next(iter(venue.rows.values()))
+        venue.rows["bad"] = row | {"id": "bad", "status": "future_state"}
+        scan = NS(open_only=True, instrument_id=None, start=None, end=None)
+        with pytest.raises(client_module().IncompleteCoverage) as exc:
+            await node._generate_order_status_reports(scan)
+        assert len(exc.value.failures) == 1
+        assert len(exc.value.reports) == 1
+        assert exc.value.failures[0][0]["status"] == "future_state"
+        assert node.coverage_complete is False
+        assert node._provides_bulk_position_coverage(order().instrument_id) is False
+
+    asyncio.run(run())
+
+
 def test_owner_successor_is_never_adopted_through_house_parent():
     async def run():
         node = client()
@@ -248,6 +267,16 @@ def test_trade_events_are_read_as_raw_strings(event):
     asyncio.run(run())
 
 
+def test_engine_config_retains_venue_position_truth_without_synthetic_alignment():
+    config = client_module().execution_engine_config(universe=["TEST.ALPACA"])
+    assert config.generate_missing_orders is False
+    assert config.filter_position_reports is False
+    assert config.filter_unclaimed_external_orders is True
+    assert list(config.reconciliation_instrument_ids or []) == ["TEST.ALPACA"]
+    with pytest.raises(ValueError, match="universe"):
+        client_module().execution_engine_config(universe=[])
+
+
 def test_fake_venue_models_session_trigger_and_wash_refusal():
     node = client()
     venue = node.gateway.sdk
@@ -286,6 +315,18 @@ def test_restarted_client_recovers_confirmed_house_successor():
         assert restored._active["fixture-entry"] == row["id"]
         await restored._cancel_order(change)
         assert restored.gateway.sdk.requests[-1][1].endswith(row["id"])
+
+    asyncio.run(run())
+
+
+def test_incomplete_position_fetch_revokes_previous_bulk_coverage():
+    async def run():
+        node = client()
+        node.coverage_complete = True
+        node.gateway.sdk.get = Mock(side_effect=ConnectionError("fixture transport failure"))
+        with pytest.raises(ConnectionError):
+            await node._generate_position_status_reports(NS())
+        assert not node._provides_bulk_position_coverage(None)
 
     asyncio.run(run())
 
@@ -510,6 +551,58 @@ def test_stream_callback_does_not_hold_client_on_sdk_thread(monkeypatch):
     assert reference() is None, "SDK callback must only retain a weak client reference"
 
 
+def test_bulk_order_request_preserves_native_bounds_and_instrument():
+    async def run():
+        from nautilus_trader.model import InstrumentId
+
+        node = client()
+        await node._generate_order_status_reports(
+            NS(
+                open_only=False,
+                instrument_id=InstrumentId.from_str("TEST.ALPACA"),
+                start=1_000_000_000,
+                end=2_000_000_000,
+            )
+        )
+        params = node.gateway.sdk.requests[0][2]
+        assert params["after"] == "1970-01-01T00:00:01.000000000Z"
+        assert params["until"] == "1970-01-01T00:00:02.000000000Z"
+        assert params["symbols"] == "TEST"
+
+    asyncio.run(run())
+
+
+def test_parent_read_failure_retains_sibling_reports():
+    async def run():
+        node = client()
+        await node._submit_order(NS(order=order(), params={}))
+        row = next(iter(node.gateway.sdk.rows.values()))
+        sibling = dict(
+            row,
+            id="00000000-0000-0000-0000-000000000099",
+            client_order_id="fixture-entry-r1",
+            replaces=row["id"],
+        )
+        listing = [row, sibling]
+        get = node.gateway.sdk.get
+
+        def fail_parent(path, params):
+            if path == "/orders":
+                return listing
+            raise ConnectionError("fixture parent observation unavailable")
+
+        node.gateway.sdk.get = fail_parent
+        with pytest.raises(client_module().IncompleteCoverage) as failure:
+            await node._generate_order_status_reports(
+                NS(open_only=False, instrument_id=None, start=None, end=None)
+            )
+        assert len(failure.value.reports) == len(failure.value.failures) == 1
+        assert failure.value.failures[0][0] is sibling
+        node.gateway.sdk.get = get
+
+    asyncio.run(run())
+
+
 def test_account_report_rejects_float_money_before_emission():
     async def run():
         node = client()
@@ -621,6 +714,23 @@ def test_malformed_trailing_offset_emits_local_modify_rejection():
         )
         node.generate_order_modify_rejected.assert_called_once()
         assert not any(r[0] == "PATCH" for r in node.gateway.sdk.requests)
+
+    asyncio.run(run())
+
+
+def test_empty_order_class_keeps_the_pinned_sdk_simple_order_semantics():
+    async def run():
+        node = client()
+        await node._submit_order(NS(order=order(), params={}))
+        row = next(iter(node.gateway.sdk.rows.values()))
+        row["order_class"] = ""
+        reports = await node._generate_order_status_reports(
+            NS(open_only=True, instrument_id=None, start=None, end=None)
+        )
+        assert len(reports) == 1
+        assert reports[0].client_order_id == ClientOrderId("fixture-entry")
+        assert reports[0].order_type == OrderType.LIMIT
+        assert node.coverage_complete
 
     asyncio.run(run())
 
