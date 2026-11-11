@@ -33,7 +33,9 @@ from sextant.tradingview.inputs import (
     _ns,
     read_research_inputs,
 )
+from sextant.tradingview.stored_login import StoredLogin
 from sextant.tradingview.sync import (
+    LOGIN_STOPS,
     OfficialTools,
     SyncError,
     read_memberships,
@@ -48,7 +50,8 @@ NO_CLAUDE_USAGE = (
 )
 _STOP = (
     "Display sync stopped. Re-inventory before retry; earlier writes may have succeeded. "
-    "Owner browser consent is required each session (--authorize); no authorization is saved."
+    "Owner browser consent is required unless a stored sign-in is kept (--authorize and "
+    "--keep-login); the default saves nothing."
 )
 
 
@@ -252,6 +255,7 @@ def run_loop(
     *,
     research_dir: Path,
     authorize: bool,
+    login: StoredLogin | None = None,
     registry: Path = DEFAULT_REGISTRY,
     state_root: Path = DEFAULT_STATE_ROOT,
     max_age: int = 1200,
@@ -267,7 +271,12 @@ def run_loop(
     sync: Callable[..., Awaitable[dict]] = sync_research,
     cycles: int | None = None,
 ) -> int:
-    """Preflight without a session, then own exactly one consent context."""
+    """Preflight without a session, then own exactly one consent context.
+
+    With ``login`` and no ``authorize`` the context is the stored sign-in: the SDK
+    refreshes it in-process as ticks need and writes each rotation back to the store;
+    it never opens a browser, and a stored-login stop pages its owner step.
+    """
     try:
         enabled, enabled_source = _registry_receipt(registry)
     except (OSError, ValueError, KeyError, TypeError):
@@ -290,7 +299,9 @@ def run_loop(
         return 2
 
     async def run() -> int:
-        async with open_client(authorize) as client:
+        # Without the store the call is today's, so --loop --authorize is unchanged.
+        opened = open_client(authorize) if login is None else open_client(authorize, login)
+        async with opened as client:
             tools = OfficialTools(client, now=clock)
             try:
                 current = await read_current(tools)
@@ -348,5 +359,7 @@ def run_loop(
         return 130
     except Exception as error:
         safe = f" Safe diagnostic: {error.stop_tail()}." if isinstance(error, SyncError) else ""
+        if isinstance(error, SyncError) and str(error) in LOGIN_STOPS:
+            page(str(error))
         print(f"{_STOP}{safe}")
         return 2

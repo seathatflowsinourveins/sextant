@@ -10,14 +10,36 @@ from __future__ import annotations
 import asyncio
 import importlib
 import json
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
+from urllib.parse import parse_qs
 
+import httpx2
 import pytest
 from mcp import Client
-from test_tradingview import NOW, Peer, change, unit
+from test_tradingview import (
+    FAKE_REFRESH,
+    FRESH_ACCESS,
+    FRESH_REFRESH,
+    NOW,
+    ROTATED_ACCESS,
+    ROTATED_REFRESH,
+    MemoryLogin,
+    Peer,
+    answer,
+    assert_no_secret,
+    change,
+    literal,
+    oauth_service,
+    stale_login,
+    token_body,
+    unit,
+    wired_session,
+)
 
 from sextant.tradingview import sync as sync_module
 from sextant.tradingview.auth import sensitive_logging
@@ -697,3 +719,144 @@ def test_run_loop_stop_prints_the_same_safe_diagnostic_as_one_cycle(tmp_path, ca
         f"{module._STOP} Safe diagnostic: OAuthTokenError at token (HTTP 400 at token endpoint).\n"
     )
     assert "TradingView session stopped" not in out
+
+
+# Addition 7 (issue #470 row 14): a scheduled loop may use the stored login, never a browser.
+class SdkClock:
+    """The pinned SDK reads ``time.time()`` for token expiry (mcp/client/auth/oauth2.py:186-192,
+    mcp/shared/auth_utils.py:68-80); the loop's own clock is the separate ``Clock``."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch):
+        import mcp.client.auth.oauth2 as oauth2
+        import mcp.shared.auth_utils as auth_utils
+
+        self.now = time.time()
+        fake = SimpleNamespace(time=lambda: self.now)
+        monkeypatch.setattr(oauth2, "time", fake)
+        monkeypatch.setattr(auth_utils, "time", fake)
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+
+def stored_loop(tmp_path, monkeypatch, *, login, refresh, sync):
+    """run_loop through the real official_client with the stored login and no --authorize."""
+    auth = wired_session(monkeypatch, oauth_service(login.events, refresh=refresh), login.events)
+    clock, delays, pages = Clock(), [], []
+
+    async def read_current(tools):
+        return {"NS movers": frozenset(), "NS focus": frozenset()}
+
+    result = loop().run_loop(
+        research_dir=unit(tmp_path / "unit"),
+        authorize=False,
+        login=login,
+        registry=registry(tmp_path),
+        state_root=tmp_path / "state",
+        landed_sha="f" * 40,
+        clock=clock,
+        sleep=sleeper(clock, delays),
+        page=pages.append,
+        weekly_usage_pct=Decimal(0),
+        usage_source=NO_USAGE,
+        open_client=auth.official_client,
+        read_current=read_current,
+        sync=sync,
+        cycles=1,
+    )
+    return result, pages
+
+
+def test_the_loop_uses_the_stored_login_and_writes_each_rotation_back(tmp_path, monkeypatch, capfd):
+    sdk = SdkClock(monkeypatch)
+    events: list[str] = []
+    login = stale_login(events)
+    rotations = iter([(ROTATED_ACCESS, ROTATED_REFRESH), (FRESH_ACCESS, FRESH_REFRESH)])
+    presented: list[str] = []
+    between: list[str] = []
+
+    def refresh(request):
+        presented.append(parse_qs(request.content.decode())["refresh_token"][0])
+        access, token = next(rotations)
+        return httpx2.Response(200, json=token_body(access, token, expires_in=600))
+
+    async def sync(tools, inputs, *, apply):
+        assert login.document is not None
+        between.append(login.document.tokens.refresh_token)
+        sdk.advance(3600)  # the session's access token is now past its lifetime
+        await tools.client.request()
+        return applied()
+
+    result, pages = stored_loop(tmp_path, monkeypatch, login=login, refresh=refresh, sync=sync)
+    assert result == 0
+    assert pages == []
+    assert "consent" not in events
+    # The startup refresh's rotation was in the store before the tick refreshed with it.
+    assert presented == [FAKE_REFRESH, ROTATED_REFRESH]
+    assert between == [ROTATED_REFRESH]
+    assert login.document is not None
+    assert login.document.tokens.refresh_token == FRESH_REFRESH
+    out, err = capfd.readouterr()
+    assert_no_secret(out + err, tmp_path)  # includes the cadence state and its receipts
+
+
+@pytest.mark.parametrize("case", ["missing", "refused", "outage"])
+def test_the_loop_stops_with_the_owner_step_and_pages(tmp_path, monkeypatch, capfd, case):
+    sdk = SdkClock(monkeypatch)
+    events: list[str] = []
+    login = MemoryLogin(events) if case == "missing" else stale_login(events)
+    queue = {
+        "missing": [],
+        "refused": [answer(400, {"error": "invalid_grant"})],
+        "outage": [answer(200, token_body(ROTATED_ACCESS, ROTATED_REFRESH, 600)), answer(503, {})],
+    }[case]
+
+    def refresh(request):
+        return queue.pop(0)(request)
+
+    async def sync(tools, inputs, *, apply):
+        sdk.advance(3600)
+        await tools.client.request()
+        return applied()
+
+    result, pages = stored_loop(tmp_path, monkeypatch, login=login, refresh=refresh, sync=sync)
+    expected = literal(
+        {
+            "missing": "LOGIN_NEEDS_CONSENT",
+            "refused": "LOGIN_REFUSED",
+            "outage": "LOGIN_UNAVAILABLE",
+        }[case]
+    )
+    out, err = capfd.readouterr()
+    assert result == 2
+    assert expected in pages
+    assert expected in out
+    assert "consent" not in events
+    if case == "outage":
+        # The outage changed nothing in the store; the admitted run is latched as before.
+        assert login.document is not None
+        assert login.document.tokens.refresh_token == ROTATED_REFRESH
+        assert state(tmp_path)["failed"] is True
+    else:
+        assert login.document is None
+    assert_no_secret(out + err, tmp_path)
+
+
+def test_loop_cli_passes_the_stored_login_and_keeps_authorize_unchanged(tmp_path, monkeypatch):
+    cli = importlib.import_module("sextant.tradingview.__main__")
+    seen: list[dict] = []
+
+    class Login:
+        pass
+
+    def run_loop(**options):
+        seen.append(options)
+        return 0
+
+    monkeypatch.setattr(cli, "StoredLogin", Login)
+    monkeypatch.setattr(cli, "run_loop", run_loop)
+    assert cli.main(["--loop", "--keep-login", "--research-dir", str(tmp_path)]) == 0
+    assert cli.main(["--loop", "--authorize", "--research-dir", str(tmp_path)]) == 0
+    assert [entry["authorize"] for entry in seen] == [False, True]
+    assert isinstance(seen[0]["login"], Login)
+    assert seen[1]["login"] is None

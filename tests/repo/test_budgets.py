@@ -65,7 +65,13 @@ def test_src_stays_under_budget() -> None:
     # measured -- so about 32,700 to 33,800. This cap is interim: the PR that completes Paper
     # B's cutover lowers it to 31,000 and the one that completes Paper C's lowers it to 29,000
     # in the same merge train, and the tracking issue (#389) owns that ratchet.
-    assert sum(_lines(path) for path in (ROOT / "src").rglob("*.py")) < 34500
+    # Then to 37,000 on 2026-11-11 under the lead's ruling LEAD-0310: main measured 33,056 of
+    # 34,500, while the reviewed work queued for the day adds about 3,800 (the execution client
+    # units 2 to 9, the ranking node's remaining parts, the Strategy's fixed parts, the stored
+    # sign-in and display parts, and the calibration and ledger fixes). It ratchets back to 34,500
+    # when Paper C's runner removal lands, to 31,000 at Paper B's cutover and to 29,000 after the
+    # entry and exit duplicates fold into the Strategy.
+    assert sum(_lines(path) for path in (ROOT / "src").rglob("*.py")) < 37000
 
 
 def test_design_stays_short() -> None:

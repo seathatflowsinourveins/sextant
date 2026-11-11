@@ -1844,7 +1844,6 @@ def test_cli_keep_login_passes_the_stored_login_to_one_cycle(tmp_path: Path, mon
     assert cli.main(["--research-dir", str(tmp_path), "--keep-login"]) == 2
     assert isinstance(seen["login"], Login)
     assert seen["authorize"] is False
-    assert cli.main(["--research-dir", str(unit(tmp_path)), "--keep-login", "--loop"]) == 2
 
 
 def test_the_first_keep_login_authentication_is_saved_before_sync(

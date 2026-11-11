@@ -138,6 +138,7 @@ uv run --frozen python -m sextant.tradingview --research-dir /path/to/top100/lat
 uv run --frozen python -m sextant.tradingview --research-dir /path/to/top100/latest --keep-login --apply
 uv run --frozen python -m sextant.tradingview --forget-login
 uv run --frozen python -m sextant.tradingview --loop --research-dir /path/to/top100/latest --authorize
+uv run --frozen python -m sextant.tradingview --loop --research-dir /path/to/top100/latest --keep-login
 ```
 
 `--authorize --keep-login` with no `--research-dir` is the sign-in-only run: it
@@ -176,8 +177,10 @@ is what lets an unattended unit use it. A value that cannot be read stops with
 `--forget-login`, then `--authorize --keep-login`. `--forget-login` is the one
 command that deletes the local value, and `scripts/with-keys.sh` refuses this
 name, so no other command gets it in an environment. The store is per-user, not
-a same-UID isolation boundary. `--keep-login` is refused with `--loop`; the loop's
-own start and stop schedule stays a later change.
+a same-UID isolation boundary. `--loop --keep-login` holds one session on the
+stored login: the SDK refreshes it as ticks need and every rotation is written
+back; a login stop ends the loop with the owner step and a page, and an admitted
+run stays latched as for any failed tick.
 
 The sign-in uses only the official `https://mcp.tradingview.com/mcp` endpoint
 and an ephemeral loopback OAuth callback. Revocation is the owner's, in their
@@ -441,6 +444,13 @@ applies because no usage figure is supplied), releases the lease at the segment
 boundary, and moves to the next supported segment; after POST it waits for the
 next 04:00 ET open.
 Overnight is not produced until #138 supplies a BOATS baseline.
+
+`--ranked-view-dir DIR` also writes `DIR/ranked.html` and `DIR/ranked.json` each
+tick: every directory name with an official close, ranked with no TradingView map,
+so an unmapped name shows by its plain ticker; the unit files do not change. The
+page is script-free, mode 600, reloads at the cadence floor, reads STALE past the
+display `max_age_s` and UNAVAILABLE with the reason on a refused or idle tick. If the
+producer stops, compare its "Stale after" time with the clock.
 
 Each tick fetches the current segment's completed SIP minutes (the in-progress
 minute is never replayed) and passes every completed minute through the
