@@ -144,6 +144,7 @@ class RankingActor(DataActor):
         self._paged: dict[str, int] = {}  # last page time per stage: a bounded key set (F6)
         self._lineage: tuple[str, int] | None = None  # the last published (epoch, sequence)
         self._retired: set[str] = set()
+        self._early: dict[str, InstrumentStatus] = {}  # statuses before priming (review F1)
 
     def on_start(self) -> None:
         """Build, then prime, then subscribe: never a tick to an unprimed host."""
@@ -164,6 +165,8 @@ class RankingActor(DataActor):
         except Exception as exc:
             return self._fault("priming", exc)
         self.primed = True
+        for name in sorted(self._early):  # applied in name order, the latest per name
+            self.on_instrument_status(self._early.pop(name))
         try:  # a registration failure faults and pages; the shared node runs on (review F4)
             self.subscribe_trades(list(self._ids))
             self.subscribe_instrument_status(list(self._ids))
@@ -173,9 +176,11 @@ class RankingActor(DataActor):
     def on_instrument_status(self, status: InstrumentStatus) -> None:
         """Map one status to the host, keeping that name's primed references and asset."""
         host, name = self.host, str(status.instrument_id.symbol)
-        if host is None or not self.primed:
+        if not self.primed:
+            if status.instrument_id in self._ids:
+                self._early[name] = status  # kept, never dropped: applied once primed (F1)
             return
-        if status.instrument_id not in self._ids or name not in self._primed:
+        if host is None or status.instrument_id not in self._ids or name not in self._primed:
             self.ignored_statuses += 1
             return
         references, asset = self._primed[name]

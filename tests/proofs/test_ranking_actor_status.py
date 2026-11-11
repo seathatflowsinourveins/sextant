@@ -138,3 +138,24 @@ def test_the_page_window_has_no_default() -> None:
             page_window_s=60,
             page_windows=60,
         )
+
+
+# --- Review round 1 (Codex xhigh at ba990fd): the exact-head witnesses as proofs ----------
+
+
+def test_a_status_delivered_during_priming_is_kept_and_applied(tmp_path) -> None:  # F1
+    class EarlyStatus(Logged):
+        def on_start(self) -> None:
+            original = self._priming
+
+            def prime_with_status():
+                self.on_instrument_status(status(-1, MarketStatusAction.HALT))
+                assert not self.primed
+                return original()
+
+            self._priming = prime_with_status
+            super().on_start()
+
+    out = run(tmp_path, actor_cls=EarlyStatus, host_cls=Recording)
+    assert out["hosts"][0].publisher.assets["PENNY"].halted is True
+    assert statuses_after_priming(out["hosts"][0]) == [("PENNY", True, D("0.50"))]
