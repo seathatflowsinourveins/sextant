@@ -1,13 +1,18 @@
-"""LEAD-1452 part 3a: native ranking heartbeat ingress to B, offline only."""
+"""LEAD-1452 part 3: B consumes native ranking and heartbeat on its existing node."""
 
 from dataclasses import replace
 from datetime import date
 
 import pytest
+from nautilus_trader.model import InstrumentId
+from test_ranking_node_ranking import argv as ranking_argv
 
+from sextant.paper import node_order
 from sextant.ranking import node_ranking, registry
 from sextant.ranking.node_session import SegmentedHost
 from sextant.ranking.registry import ENTRY_ROWS, RegistryRow
+
+from .test_b_order_node import TIMING, AccountVenue, Stand, argv
 
 KEY_NAME = "FIXTURE_VARIABLE_NAME"
 
@@ -17,6 +22,74 @@ def ages():
         RegistryRow(n, "seconds", 2, "synthetic fixture only", "UNCALIBRATED", date(2026, 11, 11))
         for n in ENTRY_ROWS
     )
+
+
+def prepared(tmp_path):
+    root = tmp_path / "rank"
+    root.mkdir()
+    ranked, _ = node_ranking.parse(ranking_argv(root))
+    flags = [
+        *argv(tmp_path),
+        "--ranking-universe-artifact",
+        str(root / "universe.json"),
+        "--ranking-baseline-dir",
+        str(root / "baselines"),
+        "--ranking-inputs-dir",
+        str(root / "ranking-inputs"),
+    ]
+    args = node_order.parse(flags)
+    return replace(args, universe=(InstrumentId.from_str("AAPL.ALPACA"),), ranking=ranked)
+
+
+def test_absent_ages_preserve_default_node_and_refusals(tmp_path):
+    args = node_order.parse(argv(tmp_path))
+    assert args.ranking is None
+    args = replace(args, universe=node_order.read_universe(args.universe_artifact)[0])
+    stand = Stand(AccountVenue())
+    node, strategy = node_order.build(
+        args, consumer=None, data_factory=stand.data, exec_factory=stand.exec, timing=TIMING
+    )
+    try:
+        assert strategy.consumer is None
+        assert "ranking_consumer" in strategy.missing
+        assert strategy.rank_gate.value is False
+    finally:
+        node.dispose()
+
+
+@pytest.mark.parametrize("missing", list(ENTRY_ROWS))
+@pytest.mark.parametrize("unsourced", [False, True])
+def test_any_missing_or_unsourced_age_never_builds_consumer(
+    tmp_path, monkeypatch, missing, unsourced
+):
+    rows = tuple(
+        replace(r, source="") if unsourced and r.name == missing else r
+        for r in ages()
+        if unsourced or r.name != missing
+    )
+    monkeypatch.setattr(registry, "B_ENTRY_AGE_ROWS", rows)
+    args = node_order.parse(argv(tmp_path))  # no priming paths: age refusal must come first
+    assert args.ranking is None
+
+
+def test_valid_ages_require_all_verified_ranking_paths(tmp_path, monkeypatch):
+    monkeypatch.setattr(registry, "B_ENTRY_AGE_ROWS", ages())
+    with pytest.raises(node_order.OrderModeRefused, match="ranking"):
+        node_order.parse(argv(tmp_path))
+
+
+def test_rank_universe_must_include_claims_and_fit_startup_queue(tmp_path, monkeypatch):
+    monkeypatch.setattr(registry, "B_ENTRY_AGE_ROWS", ages())
+    args = prepared(tmp_path)
+    stand = Stand(AccountVenue())
+    args = replace(args, universe=(InstrumentId.from_str("OTHER.ALPACA"),))
+    with pytest.raises(node_order.OrderModeRefused, match="ranking_universe"):
+        node_order.build(args, consumer=None, data_factory=stand.data, exec_factory=stand.exec)
+    assert args.ranking is not None
+    many = tuple(f"Z{i}" for i in range(1025))
+    args = replace(args, universe=(), ranking=replace(args.ranking, universe=many))
+    with pytest.raises(node_order.OrderModeRefused, match="ranking_capacity"):
+        node_order.build(args, consumer=None, data_factory=stand.data, exec_factory=stand.exec)
 
 
 def replay(tmp_path, *, mid=False, gap=False):
@@ -151,3 +224,73 @@ def test_native_consumer_ages_veto(tmp_path, which):
         entry.accept_heartbeat(at=at + 3 * NS, received_ns=at + 3 * NS)
     assert entry.entry_rank("PENNY", now=at + 3 * NS) is None
     assert entry.reason == f"entry_{which}_stale"
+
+
+def test_order_node_constructs_one_client_and_deduplicates_trade_subscriptions(
+    tmp_path, monkeypatch
+):
+    import threading
+    from types import SimpleNamespace
+
+    from nautilus_trader.live.clients import DataClientFactory
+    from test_ranking import NS
+
+    from sextant.ranking.baseline import segment_start
+    from sextant.ranking.node_actor import RankingActor
+    from sextant.ranking.node_session import SegmentedHost
+
+    monkeypatch.setattr(registry, "B_ENTRY_AGE_ROWS", ages())
+    args = prepared(tmp_path)
+    assert args.ranking is not None
+    ranked = replace(args.ranking, universe=("AAPL", "ZA"))
+    args = replace(args, ranking=ranked)
+    # This build-only time selects the fixture's primable PRE session; LiveNode owns its clock.
+    at = 1794387600 * NS  # 2026-11-11 04:00 New York
+    segment = segment_start(at)[0]
+    assert segment is not None and segment.name == "PRE"
+    monkeypatch.setattr(node_order, "time", SimpleNamespace(time_ns=lambda: at))
+    from .test_b_order_node import NUMBER
+
+    monkeypatch.setenv(node_order.EXPECTED_FULL_ENV, NUMBER)
+    stand, clients, actors = Stand(AccountVenue()), [], []
+
+    class Data(DataClientFactory):
+        @staticmethod
+        def create(**kwargs):
+            clients.append((kwargs["name"], kwargs["config"]))
+            client = stand.data.create(**kwargs)
+
+            async def statuses(command):
+                pass
+
+            client._subscribe_instrument_status = statuses
+            return client
+
+    original = node_ranking.attach
+
+    def attach(*a, **kw):
+        actor = original(*a, **kw)
+        actors.append(actor)
+        return actor
+
+    monkeypatch.setattr(node_ranking, "attach", attach)
+    node, strategy = node_order.build(
+        args, consumer=None, data_factory=Data, exec_factory=stand.exec, timing=TIMING
+    )
+    timer = threading.Timer(2, node.handle().stop)
+    try:
+        timer.start()
+        node.run()
+        assert strategy.gate.open
+        assert strategy.consumer is not None
+        assert strategy.rank_gate.value is False
+        assert len(actors) == 1 and isinstance(actors[0], RankingActor)
+        assert isinstance(actors[0].host, SegmentedHost)
+        assert len(clients) == 1 and clients[0][0] == "ALPACA"
+        assert set(clients[0][1].instrument_provider.load_ids) == {"AAPL.ALPACA", "ZA.ALPACA"}
+        assert tuple(map(str, strategy._config.instrument_ids)) == ("AAPL.ALPACA",)
+        assert stand.connected == 1 and stand.subscribed == 2
+        assert all(r[0] == "GET" for r in stand.venue.requests)
+    finally:
+        timer.cancel()
+        node.dispose()

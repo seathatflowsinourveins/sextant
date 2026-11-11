@@ -73,16 +73,20 @@ def test_schema_keeps_all_thirteen_legacy_columns() -> None:
     ]
 
 
-def test_reruns_rejections_and_failures_retain_immutable_counts(tmp_path: Path) -> None:
+def without_counts(row: dict) -> dict:
+    return {k: v for k, v in row.items() if k not in {"n_trials", "effective_n"}}
+
+
+def test_reruns_rejections_and_failures_count_and_refresh_every_row(tmp_path: Path) -> None:
     log = TrialLog(tmp_path / WITNESS_PATH)
     append(log, "first")
     first = deepcopy(log.records[0])
     for run, state in [("rerun", "COMPLETE"), ("rejected", "PRUNED"), ("failed", "FAIL")]:
         append(TrialLog(log.path), run, state)
     rows = TrialLog(log.path).records
-    assert rows[0] == first
-    assert [r["n_trials"] for r in rows] == [1, 2, 3, 4]
-    assert all(r["effective_n"] is None for r in rows)
+    assert without_counts(rows[0]) == without_counts(first)
+    # Source _refresh_counts (trials.py:233-236): every row carries current N, never a stale one.
+    assert [(r["n_trials"], r["effective_n"]) for r in rows] == [(4, 4.0)] * 4
     assert [r["state"] for r in rows] == ["COMPLETE", "COMPLETE", "PRUNED", "FAIL"]
 
 
@@ -148,7 +152,7 @@ with log.attempts({"killed": {}}, {}, {"tier":"MODELED", "block_set_id":"test"})
     assert [r["state"] for r in rows] == ["FAIL", "COMPLETE"]
     assert "abandoned" in rows[0]["error"]
     assert rows[0]["trial_id"] == before["trial_id"] and rows[0]["config"] == before["config"]
-    assert [r["n_trials"] for r in rows] == [1, 2]
+    assert [r["n_trials"] for r in rows] == [2, 2]
 
 
 def test_second_registration_failure_terminalizes_the_first(
@@ -190,7 +194,7 @@ def test_legacy_schema_metadata_and_rows_survive_append(tmp_path: Path) -> None:
         log.path,
     )
     append(TrialLog(log.path), "later")
-    assert TrialLog(log.path).records[0] == original
+    assert without_counts(TrialLog(log.path).records[0]) == without_counts(original)
     assert pq.read_schema(log.path).metadata[b"frozen"] == b"receipt"
 
 
@@ -236,3 +240,22 @@ def test_nested_run_cannot_reap_its_own_live_owner(tmp_path: Path) -> None:
             pytest.fail("nested engine must not start")
         assert TrialLog(log.path).records[0]["state"] == "RUNNING"
     assert TrialLog(log.path).records[0]["state"] == "COMPLETE"
+
+
+def test_no_reader_in_src_treats_effective_n_as_measured() -> None:
+    """The column holds float(N), the no-discount fallback refreshed on every row at each
+    commit (trials.py SCHEMA note); only the writer and its custody check touch it, and
+    producers outside them may only declare it absent (None)."""
+    src = Path(__file__).resolve().parents[2] / "src"
+    writer = {src / "sextant/validation/trials.py", src / "sextant/validation/ledger.py"}
+    readers = [
+        f"{path.relative_to(src)}:{n}"
+        for path in sorted(src.rglob("*.py"))
+        if path not in writer
+        for n, line in enumerate(path.read_text().splitlines(), 1)
+        if "effective_n" in line.replace("effective_n_snapshot", "")
+        and '"effective_n": None' not in line
+    ]
+    assert readers == []
+    text = (src / "sextant/validation/trials.py").read_text()
+    assert "never a measured effective count" in text and "every tier" in text

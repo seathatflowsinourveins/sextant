@@ -8,6 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from test_trial_log import without_counts
 
 from sextant.validation.trials import WITNESS_PATH, TrialLog
 
@@ -72,11 +73,11 @@ def test_second_run_continues_the_one_cumulative_ledger(env) -> None:
     assert _run(catalog, catalog.parent / "out-1") == 0
     first = TrialLog(ledger).records
     assert len(first) == 12
-    assert [row["n_trials"] for row in first] == list(range(1, 13))
+    assert [(row["n_trials"], row["effective_n"]) for row in first] == [(12, 12.0)] * 12
     assert _run(catalog, catalog.parent / "out-2") == 0
     both = TrialLog(ledger).records
     assert len(both) == 24
-    assert [row["n_trials"] for row in both] == list(range(1, 25))
+    assert [(row["n_trials"], row["effective_n"]) for row in both] == [(24, 24.0)] * 24
     assert [row["trial_id"] for row in both] == list(range(24))
     assert len(set(seen)) == 1
     assert seen[0] == REPOSITORY / WITNESS_PATH
@@ -188,5 +189,5 @@ def test_engine_keyboard_interrupt_is_finalized_and_recovered(env, monkeypatch) 
     assert _run(catalog, catalog.parent / "after-keyboard-interrupt") == 0
     continued = TrialLog(ledger).records
     assert len(continued) == 15
-    assert continued[:3] == rows
-    assert [row["n_trials"] for row in continued] == list(range(1, 16))
+    assert list(map(without_counts, continued[:3])) == list(map(without_counts, rows))
+    assert [(row["n_trials"], row["effective_n"]) for row in continued] == [(15, 15.0)] * 15

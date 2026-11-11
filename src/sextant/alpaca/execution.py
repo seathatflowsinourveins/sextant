@@ -8,10 +8,13 @@ Core owns trading state. This client retains venue identity evidence only.
 """
 
 import asyncio
+import functools
 import os
 import re
 import weakref
 from collections.abc import Callable
+from contextlib import suppress
+from contextvars import ContextVar
 from dataclasses import dataclass
 from decimal import Decimal
 from threading import Event
@@ -49,6 +52,81 @@ class IncompleteCoverage(RuntimeError):
         super().__init__(
             "Alpaca reconciliation coverage incomplete" + (f": {named}" if named else "")
         )
+
+
+# The startup trace (FAILED-START-1.md): the engine's composer keeps only the outer context of
+# a generator's error (common/clients/execution.rs:543-561; python/node.rs:676), so each stage
+# records its own counts and first failure. Only these texts of ours are copied: they name no
+# symbol, price, quantity, id or key. A venue body or a validation error is never copied.
+_STAGE: ContextVar[str | None] = ContextVar("alpaca_report_stage", default=None)
+_REASONS = (
+    "historical fill that no order report explains",
+    "order pages are not contiguous",
+    "order page made no progress",
+    "order listing needs more requests than the registered request budget",
+    "fill activity pages exceed budget",
+    "Alpaca ",
+    "replacement ",
+    "report instrument is unavailable",
+    "venue quantity exceeds instrument size precision",
+)
+
+
+_FIELDS = frozenset({"id", "order_id", "cum_qty", "filled_qty", "qty", "status", "symbol"})
+_FIELDS |= {"client_order_id", "submitted_at", "replaces", "replaced_by", "side", "type"}
+
+
+def _reason(error: BaseException) -> str | None:
+    key = error.args[0] if isinstance(error, KeyError) and error.args else None
+    if isinstance(key, str) and key in _FIELDS:  # Args may be unhashable.
+        return f"missing field {key}"
+    text = str(error) if type(error).__module__.startswith(("sextant.", "builtins")) else ""
+    return text[:200] if text.startswith(_REASONS) else None
+
+
+def _traced(stage: str):
+    """Record a report generator's requests, rows and first failure in ``report_trace``."""
+
+    def wrap(method):
+        @functools.wraps(method)
+        async def traced(self, command):
+            entry = self.report_trace[stage] = {
+                "requests": {},
+                "failures": 0,
+                "skipped_unloaded": 0,
+                "before_order_history": 0,
+                "unlisted_order": 0,
+                "quantity_exceeds": 0,
+            }
+            token = _STAGE.set(stage)
+            try:
+                return await method(self, command)
+            except Exception as exc:
+                entry.update(error=type(exc).__name__, failures=1)
+                try:  # Best effort: the recorder never replaces the generator's exception.
+                    failures = exc.failures if isinstance(exc, IncompleteCoverage) else []
+                    first = failures[0][1] if failures else exc
+                    status = getattr(first, "status_code", None)
+                    entry.update(
+                        first=type(first).__name__,
+                        status=status if isinstance(status, int) else None,
+                        failures=len(failures) or 1,
+                        reason=_reason(first),
+                    )
+                except Exception as fault:
+                    entry["recorder_error"] = type(fault).__name__
+                raise
+            finally:
+                _STAGE.reset(token)
+                with suppress(Exception):
+                    if entry["skipped_unloaded"]:
+                        Logger("AlpacaExecution").warning(
+                            f"reconciliation {stage}: skipped_unloaded={entry['skipped_unloaded']}"
+                        )
+
+        return traced
+
+    return wrap
 
 
 def execution_engine_config(*, universe, **kwargs) -> LiveExecutionEngineConfig:
@@ -208,6 +286,7 @@ class AlpacaExecutionClient(ExecutionClient):
         self._proposals: dict[str, tuple[str, str]] = {}
         self._sequence: dict[str, int] = {}
         self.failures: list[tuple[object, Exception]] = []
+        self.report_trace: dict[str, dict[str, Any]] = {}  # per stage, counts only
         # Owner rows the engine would skip anyway; kept with payload and reason.
         self.withheld: list[tuple[dict, str]] = []
         self.withheld_positions: list[tuple[dict, str]] = []
@@ -439,10 +518,26 @@ class AlpacaExecutionClient(ExecutionClient):
         )
         return opened, exiting
 
-    async def _call(self, kind, method, path, data=None, **kwargs):
+    async def _call(self, kind, method, path, data=None, **kwargs) -> Any:
         if self.gateway is None:
             raise RuntimeError("account gateway is disconnected")
-        return await self.gateway.call(kind, method, path, data, **kwargs)
+        stage, count = _STAGE.get(), None
+        try:  # Best effort: counting never changes the call's result or exception.
+            if stage is not None:
+                name = "/orders/{id}" if path.startswith("/orders/") else path  # Never an id.
+                count = self.report_trace[stage]["requests"].setdefault(
+                    name, {"requests": 0, "rows": 0}
+                )
+                count["requests"] += 1
+        except Exception:
+            count = None
+        result = await self.gateway.call(kind, method, path, data, **kwargs)
+        if count is not None:
+            try:
+                count["rows"] += len(result) if isinstance(result, list) else 1
+            except Exception:
+                count["rows"] = None
+        return result
 
     def _instrument_id(self, row):
         from nautilus_trader.model import InstrumentId
@@ -454,6 +549,20 @@ class AlpacaExecutionClient(ExecutionClient):
         if instrument is None:
             raise ValueError("report instrument is unavailable")
         return instrument
+
+    def _unloaded_history(self, row, stage: str):
+        # NT d53849b spot/execution.rs:3542-3545: warn and skip uncached reports.
+        # Only terminal history may be withheld; working rows must stop the start.
+        if self.cache.instrument(self._instrument_id(row)) is not None:
+            return False
+        pending = [row]  # alpaca-py cc4cb3b7 models.py:241: legs are recursive Orders.
+        while pending:
+            part = pending.pop()
+            if part.get("status") not in _TERMINAL:
+                raise ValueError("report instrument is unavailable for non-terminal order")
+            pending.extend(part.get("legs") or [])
+        self.report_trace[stage]["skipped_unloaded"] += 1
+        return True
 
     async def _identity(self, row):
         wire_id, venue_id = row["client_order_id"], row["id"]
@@ -854,6 +963,7 @@ class AlpacaExecutionClient(ExecutionClient):
         reason = "order listing needs more requests than the registered request budget"
         raise IncompleteCoverage([], [(params, ValueError(reason))])
 
+    @_traced("orders")
     async def _generate_order_status_reports(self, command):
         self.coverage_complete = self._orders_complete = False
         self.withheld = []
@@ -875,6 +985,9 @@ class AlpacaExecutionClient(ExecutionClient):
         reports, failures = [], []
         for row in rows:
             try:
+                if self._unloaded_history(row, "orders"):
+                    self.withheld.append((row, "terminal order instrument unavailable"))
+                    continue
                 reason = self._owner_withheld(row)
                 if reason is not None:
                     self.withheld.append((row, reason))
@@ -897,6 +1010,7 @@ class AlpacaExecutionClient(ExecutionClient):
             for row, _ in (*self.withheld, *self.withheld_positions)
         )
 
+    @_traced("positions")
     async def _generate_position_status_reports(self, command):
         self.coverage_complete = False
         rows = await self._call(ActionKind.QUERY, "get", "/positions")
@@ -942,14 +1056,17 @@ class AlpacaExecutionClient(ExecutionClient):
             query = dict(query, page_token=page[-1]["id"])
         raise IncompleteCoverage([], [(query, ValueError("fill activity pages exceed budget"))])
 
+    @_traced("fills")
     async def _generate_fill_reports(self, command):
         """No fill report is built from history: a FILL row carries no stream execution id and
         no fee (account activities reference, read 2026-11-11), and none is invented.
 
         The engine infers each fill an order report explains (create_inferred_fill,
         reconciliation/orders.rs:1065-1145), so a row whose order is listed with at least its
-        cumulative quantity needs no report. Any other row is refused; a holding that no order
-        report explains also stops the start in the engine (node/mod.rs:992-996).
+        cumulative quantity needs no report. Unlisted fills before the oldest listed submission
+        are counted, not refused; other unexplained fills still refuse. BUILD ON native bounded
+        fill reads (d53849b architect_ax/execution.rs:1676-1695). A holding no order explains
+        still stops the start in the engine (node/mod.rs:992-996).
         """
         params = _bounds(command)
         params.pop("symbols", None)  # Activities accepts symbol, singular.
@@ -964,12 +1081,23 @@ class AlpacaExecutionClient(ExecutionClient):
             for order in (row, *(row.get("legs") or ())) if isinstance(row, dict) else ():
                 if isinstance(order, dict) and isinstance(order.get("id"), str):
                     listed[order["id"]] = order
+        oldest = min(
+            (dt_to_unix_nanos(order["submitted_at"]) for order in listed.values()), default=None
+        )
+        trace = self.report_trace["fills"]
         failures = []
         for row in rows:
             try:
                 order = listed.get(row["order_id"])
+                stamp = row.get("transaction_time")
+                if order is None and oldest is not None and stamp is not None:
+                    if dt_to_unix_nanos(stamp) < oldest:
+                        trace["before_order_history"] += 1
+                        continue
                 if order is None or Decimal(order["filled_qty"]) < Decimal(row["cum_qty"]):
+                    trace["unlisted_order" if order is None else "quantity_exceeds"] += 1
                     raise ValueError("historical fill that no order report explains")
+                self._unloaded_history(order, "fills")  # Same terminal-only rule; no inferred fill.
             except Exception as exc:
                 failures.append((row, exc))
         if failures:

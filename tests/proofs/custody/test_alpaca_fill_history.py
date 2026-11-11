@@ -164,15 +164,19 @@ def _start(venue):
     )
     node.add_strategy(Consumer(StrategyConfig(external_order_instrument_ids=[IID])))
 
-    async def run(node=node):
-        await asyncio.wait_for(node.run_async(), 10)
+    async def run(owned):
+        await asyncio.wait_for(owned.run_async(), 10)
 
     try:
-        asyncio.run(run())
+        asyncio.run(run(node))
     except Exception as exc:  # The witness records the failure.
         seen["error"] = f"{type(exc).__name__}: {exc}"
-    del node  # One LiveNode per thread at a time (the pinned builder refuses a second).
-    gc.collect()
+    finally:
+        try:
+            node.dispose()
+        finally:
+            del node  # Empty the coroutine's closure before collecting native cycles.
+            gc.collect()
     return seen
 
 

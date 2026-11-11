@@ -5,6 +5,7 @@ No test connects: the node is built offline as the pinned upstream's own factory
 test_interactive_brokers_factories.py:142-190``), and every ``run`` uses a recording builder.
 """
 
+import gc
 import json
 import re
 import threading
@@ -127,9 +128,14 @@ def test_the_node_builds_offline_from_the_official_factories_only(tmp_path: Path
 
     node = node_ibkr.build(args, configs, registry)  # the real builder: still no connection
     try:
-        assert str(node.trader_id) == "PAPERIBKR-001" and not node.is_running
+        trader_id, running = str(node.trader_id), node.is_running
     finally:
-        node.dispose()
+        try:
+            node.dispose()
+        finally:
+            del node
+            gc.collect()
+    assert trader_id == "PAPERIBKR-001" and not running
 
 
 def test_the_tester_is_upstreams_and_dry_runs_without_the_second_opt_in(tmp_path: Path) -> None:

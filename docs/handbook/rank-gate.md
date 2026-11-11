@@ -41,6 +41,20 @@ Sources: [ADR-0003](../adr/0003-ranking-and-feeds.md):9,24,42;
 read 2026-11-10 (ship unfinished behavior disabled and test both toggle states).
 
 
+Paper B node composition (LEAD-1452 part 3, LEAD-1501): the three entry freshness
+rows remain absent in `ranking.registry.B_ENTRY_AGE_ROWS`. Neither CLI nor display
+ages supply authority. Missing, unsourced or invalid rows preserve protection-only
+startup, with no ranking input read or consumer built. Only after reviewed rows exist,
+`--ranking-universe-artifact`, `--ranking-baseline-dir` and `--ranking-inputs-dir`
+are all required; they use the existing manifest verifiers and the committed K2
+registry. B and RankingActor share one Alpaca data client; the producer loads the full
+ranking universe, claims must belong to it, and the 1,024-name startup queue bound
+still refuses larger universes. Claim expansion and native loading after startup
+need a separate reviewed capacity part; never narrow the producer to fit the queue.
+The current file loader primes PRE/RTH of its own session only. The consumer is bound
+to the startup segment and refuses another segment; part 6 must wire consumer rollover
+before enabling ordinary entries. A missing segment/name never borrows a baseline.
+
 Lesson from the native composition proof: generation delivery alone leaves the
 consumer at `heartbeat_missing`. B must subscribe to the native heartbeat signal
 and call `accept_heartbeat`, as the existing RankingDataActor does. The publisher's

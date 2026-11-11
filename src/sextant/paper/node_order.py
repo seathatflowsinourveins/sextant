@@ -39,8 +39,9 @@ import os
 import signal
 import sys
 import threading
+import time
 from collections.abc import Callable, Mapping
-from contextlib import ExitStack
+from contextlib import ExitStack, suppress
 from dataclasses import dataclass, field, replace
 from decimal import Decimal
 from pathlib import Path
@@ -76,6 +77,7 @@ from sextant.entry.parameters import EntryParameters
 from sextant.execution.custody import AccountScope, CustodyError, WriterLease
 from sextant.execution.pacer import ActionKind
 from sextant.execution.state import write_atomic
+from sextant.paper import node_rank
 from sextant.paper.b_lifecycle import BLifecycle, BLifecycleConfig, Journal
 from sextant.paper.b_protector import load_b_parameters
 from sextant.paper.b_protector_main import (
@@ -86,6 +88,7 @@ from sextant.paper.b_protector_main import (
 from sextant.paper.config import PaperAccount
 from sextant.paper.decision_record import DecisionLog, Row
 from sextant.paper.sessions import Session, session_at
+from sextant.ranking import node_ranking
 from sextant.ranking.consumer import RankingConsumer
 from sextant.ranking.registry import RANK_GATE_ENABLED
 
@@ -150,6 +153,7 @@ class OrderArguments:
     lease_source: str
     universe: tuple[InstrumentId, ...] = ()  # the claim list, read after the leases
     universe_source: str = "not read"
+    ranking: node_ranking.RankingArguments | None = None
     attended: AttendedEntry | None = None
 
 
@@ -242,6 +246,8 @@ def parse(argv: list[str] | None = None) -> OrderArguments:
         ("--lease-source", str),
     ):
         required.add_argument(flag, type=kind, required=True)
+    for flag in ("--ranking-universe-artifact", "--ranking-baseline-dir", "--ranking-inputs-dir"):
+        parser.add_argument(flag, type=Path)
     raw = parser.parse_args(argv)
     if raw.paper_slot != 2:  # slot 1 is the owner's account, slot 3 is revoked (AGENTS.md)
         raise OrderModeRefused("paper_slot", f"only paper slot 2, not {raw.paper_slot}")
@@ -254,6 +260,10 @@ def parse(argv: list[str] | None = None) -> OrderArguments:
     if account.lane != "alpaca-paper-b":
         raise OrderModeRefused("registries", "the account config is not Paper B's")
     rows = load_rows(raw)
+    try:
+        ranking = node_rank.load(raw)
+    except (ValueError, OSError, KeyError, TypeError) as error:
+        raise OrderModeRefused("ranking", str(error)) from error
     return OrderArguments(
         account,
         rows,
@@ -266,6 +276,7 @@ def parse(argv: list[str] | None = None) -> OrderArguments:
         raw.stream_lease_root,
         raw.existing_streams,
         raw.lease_source,
+        ranking=ranking,
         attended=load_attended(raw),
     )
 
@@ -648,6 +659,24 @@ def build(
     exec_factory: Any = AlpacaExecutionClientFactory,
     timing: Mapping[str, float] | None = None,
 ) -> tuple[LiveNode, GatedBLifecycle]:
+    loaded_ids = args.universe
+    if args.ranking is not None:
+        names = set(args.ranking.universe)
+        if not {iid.symbol.value for iid in args.universe} <= names:
+            raise OrderModeRefused("ranking_universe", "claims absent from ranking universe")
+        if len(names) > QUEUE:
+            raise OrderModeRefused(
+                "ranking_capacity",
+                "full universe exceeds startup queue; "
+                "requires the separately reviewed chunked-load part",
+            )
+        loaded_ids = tuple(InstrumentId(Symbol(n), VENUE) for n in sorted(names))
+        if consumer is not None:
+            raise OrderModeRefused("ranking_consumer", "in-node composition owns its consumer")
+        try:
+            consumer = node_rank.consumer(args.ranking, now=time.time_ns())
+        except ValueError as error:
+            raise OrderModeRefused("ranking", str(error)) from error
     # The Strategy first, so a refused config leaves no node built on this thread.
     strategy = GatedBLifecycle(strategy_config(args, consumer=consumer, journal=journal))
     strategy.attended = args.attended
@@ -660,7 +689,7 @@ def build(
         api_key_env=args.api_key_env,
         api_secret_env=args.api_secret_env,
         feed=DEFAULT_FEED,
-        instrument_provider=InstrumentProviderConfig(load_ids=[str(i) for i in args.universe]),
+        instrument_provider=InstrumentProviderConfig(load_ids=[str(i) for i in loaded_ids]),
     )
     node = (
         LiveNodeBuilder.from_config(NODE_NAME, config)
@@ -671,6 +700,8 @@ def build(
     strategy.gate = gate
     try:
         node.add_strategy(strategy)
+        if args.ranking is not None:
+            node_ranking.attach(node, args.ranking, inputs=node_ranking.file_inputs(args.ranking))
     except Exception:
         node.dispose()
         raise
@@ -811,6 +842,7 @@ def run(
             timer.cancel()
             node.dispose()
         gate = strategy.gate
+        cause = startup_cause(gate.clients)
         outcome = strategy.attended_outcome
         if args.attended and gate.open and not strategy.attended_attempted and not outcome:
             counts = dict(last_reason=strategy.ask_reason, attempts=0, submits=0)
@@ -832,9 +864,38 @@ def run(
             refused_sends=gate.refused_sends,
             outside_holdings_paged=len(gate.paged),
             journal=journal,
+            **({"reconciliation": cause} if cause else {}),
             **outcome,
         )
         return receipt, 0 if phase == "stopped" else 2
+
+
+def startup_cause(clients: list[Any]) -> dict[str, Any] | None:
+    """The client's per-stage startup trace (counts, classes, status, our own reason texts),
+    including terminal history skipped without an instrument (LEAD-1618).
+    A failed stage also emits one ERROR line; no value is in either."""
+    try:  # Best effort: the recorder never replaces the run's own failure or its receipt.
+        trace = {k: v for c in clients for k, v in getattr(c, "report_trace", {}).items()}
+        failed = {stage: entry for stage, entry in trace.items() if "error" in entry}
+        if not failed:
+            return trace or None
+        parts = [
+            f"stage={stage} error={e['error']} first={e.get('first')} status={e.get('status')} "
+            f"failures={e.get('failures')} skipped_unloaded={e.get('skipped_unloaded', 0)} "
+            f"before_order_history={e.get('before_order_history', 0)} "
+            f"unlisted_order={e.get('unlisted_order', 0)} "
+            f"quantity_exceeds={e.get('quantity_exceeds', 0)} "
+            f"reason={e.get('reason')!r} requests="
+            + ",".join(f"{k}:{v.get('requests')}/{v.get('rows')}" for k, v in e["requests"].items())
+            for stage, e in failed.items()
+        ]
+        line = f"order node ERROR startup reconciliation failed: {'; '.join(parts)}"
+    except Exception as fault:
+        trace = {"recorder_error": type(fault).__name__}
+        line = f"order node ERROR startup reconciliation failed: {trace}"
+    with suppress(Exception):
+        print(line, file=sys.stderr)
+    return trace
 
 
 def journal_page(reason: str, _symbol: str | None, detail: str) -> None:

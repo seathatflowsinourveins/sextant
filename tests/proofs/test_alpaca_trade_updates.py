@@ -8,6 +8,7 @@ from importlib import import_module
 
 import msgpack
 import pytest
+from nautilus_trader.common import logging_sync_to_disk
 from nautilus_trader.model import CustomData, DataType
 from test_alpaca_data import (
     INSTRUMENT_ID,
@@ -186,7 +187,7 @@ def test_bad_updates_do_not_stop_bus_delivery_or_later_channel_subscriptions(mon
     assert all(not handlers for handlers in stream._handlers.values())
     assert all(not frame.get("corrections") and not frame.get("cancelErrors") for frame in frames)
     assert all("*" not in frame.get("trades", ()) for frame in frames)
-    client._log.flush()
+    logging_sync_to_disk()
     captured = capfd.readouterr()
     logs = re.sub(r"\x1b\[[0-9;]*m", "", captured.out + captured.err)
     assert sum("Dropped Alpaca corrections row" in line for line in logs.splitlines()) == 4

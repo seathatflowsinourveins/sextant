@@ -13,3 +13,15 @@ The owner's size ruling defers custom merit, inference, appender and registry co
 At CI handoff, a missing merge ref is not a test result. Merge the landed base, keep main's full pytest section, regenerate the lock with uv lock, and run just ci. New proofs belong under tests/proofs without a testpaths edit. Practices are proposed in the PR body for the program lead's single writer.
 
 [Scope, source map and budget hold](../research/2026-11-06-ledger-merit.md).
+
+## TrialLog dependencies for the ledger writer
+
+Archive #110 at `fbe075a49f673b07ec8cf98b2ae580605123e34c`,
+`src/sextant/validation/trials.py:77-357`, carries legacy rows without arm identities,
+current-N refresh and once-only terminal payload updates. The schema and terminal outcomes
+stay frozen while n_trials and effective_n refresh to N on every row at each commit:
+n_trials is the file's current N over all tiers, not the count when the row was written, and
+effective_n is float(N), the upstream no-discount fallback, never a measured effective count.
+No reader may treat it as measured; inference freezes its own snapshot (ADR-0019). Keep these dependencies with the
+writer's proofs: schema compatibility alone does not establish cumulative custody.
+This dependency commit adds no protected-ref writer or producer-root migration.

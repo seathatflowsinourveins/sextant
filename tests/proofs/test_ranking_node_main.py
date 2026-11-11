@@ -7,6 +7,7 @@ The start-and-stop proof reuses test_alpaca_data.py's stand-in socket, provider 
 from __future__ import annotations
 
 import ast
+import gc
 import json
 import threading
 from contextlib import contextmanager
@@ -58,9 +59,14 @@ def test_the_config_is_data_only_and_the_node_builds_with_no_network(tmp_path) -
     assert args.data.api_key_env == "FIXTURE_KEY_NAME"  # a name; no value is read here
     node, actor = node_main.build(args)  # the real factory: building opens nothing
     try:
-        assert actor.ticks == 0
+        ticks = actor.ticks
     finally:
-        node.dispose()
+        try:
+            node.dispose()
+        finally:
+            del node, actor
+            gc.collect()
+    assert ticks == 0
 
 
 def test_an_execution_client_is_refused(tmp_path) -> None:
