@@ -146,83 +146,83 @@
   {
     "name": "bp_target_fraction",
     "unit": "ratio",
-    "value": null,
-    "source": "seathatflowsinourveins/northstar-lanes@00203275944a22655b3e14b221cfde9a265d549a:docs/adr/0005-entry.md:N1-N5,registry; ATR rows:docs/adr/0006-exit-engine.md:X2",
-    "calibration": "UNAVAILABLE",
-    "last_change": "2026-11-06",
-    "scope": "UNAVAILABLE"
+    "value": "1",
+    "source": "D-38 owner direction, 2026-11-10 17:33 EST, via LEAD-1735 item 2: C runs at 1x per docs/adr/0002-philosophy-and-lanes.md:33 ('on C at 1x'); leverage above 1x stays owner-only; lead reading, UNCALIBRATED",
+    "calibration": "UNCALIBRATED",
+    "last_change": "2026-11-10",
+    "scope": "REVIEWED"
   },
   {
     "name": "stop_ref_fraction",
     "unit": "ratio",
-    "value": null,
-    "source": "seathatflowsinourveins/northstar-lanes@00203275944a22655b3e14b221cfde9a265d549a:docs/adr/0005-entry.md:N1-N5,registry; ATR rows:docs/adr/0006-exit-engine.md:X2",
-    "calibration": "UNAVAILABLE",
-    "last_change": "2026-11-06",
-    "scope": "UNAVAILABLE"
+    "value": "0.010",
+    "source": "D-38 owner direction, 2026-11-10 17:33 EST, via LEAD-1735 item 2: C sized per trade by the size-from-risk rule (docs/design.md:25, docs/adr/0004-entry.md:21); 1.0 percent of the planned basis, lead reading, UNCALIBRATED",
+    "calibration": "UNCALIBRATED",
+    "last_change": "2026-11-10",
+    "scope": "REVIEWED"
   },
   {
     "name": "portfolio_slots",
     "unit": "count",
-    "value": null,
-    "source": "seathatflowsinourveins/northstar-lanes@00203275944a22655b3e14b221cfde9a265d549a:docs/adr/0005-entry.md:N1-N5,registry; ATR rows:docs/adr/0006-exit-engine.md:X2",
-    "calibration": "UNAVAILABLE",
-    "last_change": "2026-11-06",
-    "scope": "UNAVAILABLE"
+    "value": 5,
+    "source": "D-38 owner direction, 2026-11-10 17:33 EST, via LEAD-1735 item 2; the owner's 2026-11-09 capacity authorization sets C's 5-name capacity; mover quota 2 follows docs/design.md:25's ceil(0.4 x cap); lead reading, UNCALIBRATED",
+    "calibration": "UNCALIBRATED",
+    "last_change": "2026-11-10",
+    "scope": "REVIEWED"
   },
   {
     "name": "stopout_size_decay",
     "unit": "ratio",
-    "value": null,
-    "source": "seathatflowsinourveins/northstar-lanes@00203275944a22655b3e14b221cfde9a265d549a:docs/adr/0005-entry.md:N1-N5,registry; ATR rows:docs/adr/0006-exit-engine.md:X2",
-    "calibration": "UNAVAILABLE",
-    "last_change": "2026-11-06",
-    "scope": "UNAVAILABLE"
+    "value": "1",
+    "source": "LEAD-1735 item 2: the stopout term is not applied on a first leg (identity 1); docs/adr/0004-entry.md:21; no separate calibration",
+    "calibration": "UNCALIBRATED",
+    "last_change": "2026-11-10",
+    "scope": "REVIEWED"
   },
   {
     "name": "stopout_size_floor",
     "unit": "ratio",
-    "value": null,
-    "source": "seathatflowsinourveins/northstar-lanes@00203275944a22655b3e14b221cfde9a265d549a:docs/adr/0005-entry.md:N1-N5,registry; ATR rows:docs/adr/0006-exit-engine.md:X2",
-    "calibration": "UNAVAILABLE",
-    "last_change": "2026-11-06",
-    "scope": "UNAVAILABLE"
+    "value": "1",
+    "source": "LEAD-1735 item 2: the stopout term is not applied on a first leg (identity 1); docs/adr/0004-entry.md:21; no separate calibration",
+    "calibration": "UNCALIBRATED",
+    "last_change": "2026-11-10",
+    "scope": "REVIEWED"
   },
   {
     "name": "confidence_size_floor",
     "unit": "ratio",
-    "value": null,
-    "source": "seathatflowsinourveins/northstar-lanes@00203275944a22655b3e14b221cfde9a265d549a:docs/adr/0005-entry.md:N1-N5,registry; ATR rows:docs/adr/0006-exit-engine.md:X2",
-    "calibration": "UNAVAILABLE",
-    "last_change": "2026-11-06",
-    "scope": "UNAVAILABLE"
+    "value": "1",
+    "source": "LEAD-1735 item 2: no confidence multiplier on an unscored first leg (identity 1); docs/adr/0004-entry.md:22; no separate calibration",
+    "calibration": "UNCALIBRATED",
+    "last_change": "2026-11-10",
+    "scope": "REVIEWED"
   },
   {
     "name": "chase_cap_fraction",
     "unit": "ratio",
-    "value": null,
-    "source": "seathatflowsinourveins/northstar-lanes@00203275944a22655b3e14b221cfde9a265d549a:docs/adr/0005-entry.md:N1-N5,registry; ATR rows:docs/adr/0006-exit-engine.md:X2",
-    "calibration": "UNAVAILABLE",
-    "last_change": "2026-11-06",
-    "scope": "UNAVAILABLE"
+    "value": "0.03",
+    "source": "src/sextant/paper/c_live_main.py:930 (0.03 on main, from first_leg_max_move by analogy, uncalibrated); docs/adr/0004-entry.md:21; docs/adr/0025-gain-protection-and-fast-exit.md:26; LEAD-1735 item 2",
+    "calibration": "UNCALIBRATED",
+    "last_change": "2026-11-10",
+    "scope": "REVIEWED"
   },
   {
     "name": "flow_share_cap",
     "unit": "ratio",
-    "value": null,
-    "source": "seathatflowsinourveins/northstar-lanes@00203275944a22655b3e14b221cfde9a265d549a:docs/adr/0005-entry.md:N1-N5,registry; ATR rows:docs/adr/0006-exit-engine.md:X2",
-    "calibration": "UNAVAILABLE",
-    "last_change": "2026-11-06",
-    "scope": "UNAVAILABLE"
+    "value": "0.05",
+    "source": "docs/adr/0002-philosophy-and-lanes.md:33: S notional <=5 percent of prior-five-minute dollar volume, applied to C by LEAD-1735 item 2",
+    "calibration": "UNCALIBRATED",
+    "last_change": "2026-11-10",
+    "scope": "REVIEWED"
   },
   {
     "name": "flow_share_window_s",
     "unit": "seconds",
-    "value": null,
-    "source": "seathatflowsinourveins/northstar-lanes@00203275944a22655b3e14b221cfde9a265d549a:docs/adr/0005-entry.md:N1-N5,registry; ATR rows:docs/adr/0006-exit-engine.md:X2",
-    "calibration": "UNAVAILABLE",
-    "last_change": "2026-11-06",
-    "scope": "UNAVAILABLE"
+    "value": "300",
+    "source": "docs/adr/0002-philosophy-and-lanes.md:33: prior five-minute dollar volume (300 seconds), applied to C by LEAD-1735 item 2",
+    "calibration": "UNCALIBRATED",
+    "last_change": "2026-11-10",
+    "scope": "REVIEWED"
   },
   {
     "name": "covered_flow_window_s",

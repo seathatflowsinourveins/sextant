@@ -22,6 +22,12 @@ FIRST_LEG = frozenset(
     "entry_chase_bps entry_ttl_s atr_period atr_bar_minutes max_data_age_s "
     "max_armed_symbols".split()
 )
+# D-38: C's entry-size rows, read with the first-leg rows and nothing else.
+SIZING = frozenset(
+    "bp_target_fraction stop_ref_fraction portfolio_slots stopout_size_decay "
+    "stopout_size_floor confidence_size_floor chase_cap_fraction flow_share_cap "
+    "flow_share_window_s".split()
+)
 COUNTS = frozenset(
     "first_leg_trades_count reclaim_trades_count atr_period atr_bar_minutes "
     "max_armed_symbols portfolio_slots".split()
@@ -52,17 +58,28 @@ class EntryParameters:
     params_hash: str
     fixture: bool
     first_leg_only: bool = False
+    sizing_only: bool = False
 
     @classmethod
-    def from_rows(cls, rows: Sequence[Mapping[str, Any]], *, fixture=False, first_leg_only=False):
+    def from_rows(
+        cls,
+        rows: Sequence[Mapping[str, Any]],
+        *,
+        fixture=False,
+        first_leg_only=False,
+        sizing_only=False,
+    ):
+        if first_leg_only and sizing_only:
+            raise ValueError("first_leg_only and sizing_only are mutually exclusive")
         names = [row["name"] for row in rows]
         if set(names) != NAMES or len(names) != len(NAMES):
             raise ValueError("missing, duplicate or unknown entry registry row")
+        loaded = FIRST_LEG | SIZING if sizing_only else FIRST_LEG
         values: dict[str, Any] = {}
         for row in rows:
             name = row["name"]
-            if first_leg_only and name not in FIRST_LEG:
-                continue  # reclaim, sizing and flow rows stay unread and unavailable
+            if (first_leg_only or sizing_only) and name not in loaded:
+                continue  # reclaim, sizing, flow and extension rows stay unread
             scope, value = row.get("scope"), row.get("value")
             if not all(row.get(k) for k in ("source", "unit", "last_change")):
                 raise ValueError(f"{name}: missing source/unit/last_change")
@@ -92,11 +109,18 @@ class EntryParameters:
             separators=(",", ":"),
             default=str,
         )
-        digest = hashlib.sha256((payload + " first_leg_only" * first_leg_only).encode())
-        return cls(MappingProxyType(values), digest.hexdigest(), fixture, first_leg_only)
+        digest = hashlib.sha256(
+            (payload + " first_leg_only" * first_leg_only + " sizing_only" * sizing_only).encode()
+        )
+        return cls(
+            MappingProxyType(values), digest.hexdigest(), fixture, first_leg_only, sizing_only
+        )
 
     def __getitem__(self, name: str) -> Any:
         return self.values[name]
+
+    def has(self, name: str) -> bool:
+        return name in self.values
 
     def ns(self, name: str) -> int:
         return int(self[name] * SEC)
