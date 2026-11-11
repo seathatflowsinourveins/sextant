@@ -130,6 +130,7 @@ def run_node(
     extra=(),
     cls=BLifecycle,
     start=AT - NS,
+    risk=None,
     **kwargs: Any,
 ):
     pub = publisher()
@@ -158,7 +159,7 @@ def run_node(
             )
             for kind in data
         ],
-        engine=BacktestEngineConfig(bypass_logging=True, run_analysis=False),
+        engine=BacktestEngineConfig(bypass_logging=True, run_analysis=False, risk_engine=risk),
         raise_exception=True,
         dispose_on_completion=False,
         start=start,  # the clock starts before the first publication
