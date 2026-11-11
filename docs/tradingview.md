@@ -344,15 +344,20 @@ enablement.
 
 ## Segment unit producer for the display directory
 
+This part ships the unit publication step (`publish_tick`, whose clock is read
+again after the replay). The command line, the cadence loop and the request
+budget's consumer below arrive with the next part and are documented ahead of
+it: until then the command is not runnable and no keyed job is started.
+
 `tradingview/prestage.py` is the repo entry point that keeps the newest
 complete display unit fresh for the current PRE, RTH or POST segment, so the
 display loop above reads a fresh `--research-dir` without a manual step. One
-operator-started process holds one slot-3 data lease and takes the same
-environment seam as C under ADR-0028:
+operator-started process holds one slot-2 data lease and takes the same
+environment seam as the other keyed jobs under ADR-0028:
 
 ```sh
 scripts/with-keys.sh --strict \
-  -k ALPACA_PAPER_3_API_KEY -k ALPACA_PAPER_3_SECRET_KEY -- \
+  -k ALPACA_PAPER_2_API_KEY -k ALPACA_PAPER_2_SECRET_KEY -- \
   uv run --frozen python -m sextant.tradingview.prestage \
   --research-dir "$HOME/sextant-data/tradingview-prestage/unit" \
   --nasdaq-listed nasdaqlisted.txt --other-listed otherlisted.txt \
@@ -361,7 +366,7 @@ scripts/with-keys.sh --strict \
 ```
 
 `--strict` refuses a missing or empty key. The process reads only
-`ALPACA_PAPER_3_API_KEY` and `ALPACA_PAPER_3_SECRET_KEY` from its environment
+`ALPACA_PAPER_2_API_KEY` and `ALPACA_PAPER_2_SECRET_KEY` from its environment
 and passes them to the SDK; no key enters a file, flag, URL or log.
 
 The request budget is its own row in
