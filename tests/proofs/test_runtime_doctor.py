@@ -62,6 +62,7 @@ class World:
         self.home = tmp_path / "home"
         self.repo = tmp_path / "repo"
         self.prefix = self.home / ".local" / "share" / "sextant-lane-runtimes"
+        self.muse_plugins = ["superpowers", "sextant-mcp"]
         self.versions = {
             "claude": "2.1.321",
             "dsh": "0.2.2-rc.1",
@@ -645,6 +646,39 @@ class Fake:
             return ok(f"Muse Code 1.4.6 ({w.versions['muse']})")
         if cmd[:3] == ["muse", "model-profile", "show"]:
             return ok("model muse-wonder-full-1.0\neffort max\n")
+        if cmd == ["muse", "plugins", "list", "--json"]:
+            spec = w.parity_spec()
+            capabilities = {
+                "superpowers": {
+                    "skills": [
+                        {"id": name}
+                        for name in spec["shelf"]["superpowers@superpowers-dev"]["skills"]
+                    ],
+                },
+                "sextant-mcp": {"mcp_servers": [{"id": name} for name in spec["mcp"]]},
+            }
+            return ok(
+                json.dumps(
+                    {
+                        "plugins": [
+                            {
+                                "active": True,
+                                "valid": True,
+                                "plugin": {"id": name, "capabilities": capabilities[name]},
+                            }
+                            for name in w.muse_plugins
+                        ]
+                    }
+                )
+            )
+        if cmd == ["muse", "skills", "list", "--source", "user", "--json"]:
+            parity = w.parity_spec()["shelf"]["superpowers@superpowers-dev"]["skills"]
+            shelf = set(
+                _load(w.repo / "deploy/wsl/lane-runtimes/parity.py", "muse_shelf").shelf_names()
+            )
+            return ok(
+                json.dumps({"skills": [{"name": name} for name in sorted(shelf - set(parity))]})
+            )
         if cmd[0].endswith("omniroute") and cmd[-1] == "--version":
             return ok(w.versions["omniroute"])
         if cmd[0].endswith("omniroute") and "combos" in cmd:
@@ -1053,17 +1087,7 @@ DEFECTS = [
     ("antigravity.repository", lambda w: _set_agy(w, trustedWorkspaces=["/srv/old-sextant"])),
     ("muse.version", lambda w: w.versions.__setitem__("muse", "1.4.5")),
     ("muse.model_effort", lambda w: _set_muse(w, reasoning_effort="low")),
-    (
-        "muse.parity",
-        lambda w: (w.repo / "deploy/wsl/lane-runtimes/parity.json").write_text(
-            json.dumps(
-                {
-                    **json.loads((w.repo / "deploy/wsl/lane-runtimes/parity.json").read_text()),
-                    "runtimes": {"muse": {"shelf_and_mcp": "done"}},
-                }
-            )
-        ),
-    ),
+    ("muse.parity", lambda w: w.muse_plugins.remove("sextant-mcp")),
     ("muse.guard", lambda w: (w.prefix / "muse-launch.sh").write_text("#!/bin/sh\n")),
     ("muse.repository", lambda w: _set_repository(w, "/srv/old-sextant")),
     ("omniroute.version", lambda w: w.versions.__setitem__("omniroute", "3.8.52")),

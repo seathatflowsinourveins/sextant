@@ -4,10 +4,13 @@ Fixture proofs of the installer and launchers. Native host listings are recorded
 deploy/wsl/lane-runtimes/parity-receipts.json.
 """
 
+import hashlib
 import importlib.util
 import json
 import os
+import shlex
 import shutil
+import stat
 import subprocess
 import sys
 import tomllib
@@ -32,6 +35,13 @@ ANTIGRAVITY_NATIVE_ROOTS = (
     ".gemini/antigravity-cli/plugin_data/sextant-shelf/state.json",
     ".gemini/config/mcp_config.json",
 )  # fmt: skip
+
+
+@pytest.fixture(autouse=True)
+def _isolated_runtime_home_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Use each proof's temporary home unless it supplies an explicit runtime root."""
+    for name in ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "DSH_HOME"):
+        monkeypatch.delenv(name, raising=False)
 
 
 def _parity() -> ModuleType:
@@ -371,6 +381,236 @@ def test_muse_is_pinned_to_metas_manifest_and_wonder_full_at_max() -> None:
     policy = json.loads((RUNTIMES / "model-policy.json").read_text())["meta"]
     assert policy["model"] == "muse-wonder-full-1.0" and policy["effort"] == "max"
     assert policy["contributor_mode"] == "off"
+
+
+MUSE_PAYLOAD = {
+    ".muse-plugin/plugin.json": '{"schemaVersion":1,"name":"superpowers","version":"7.0.2"}\n',
+    "skills/payload.md": "original payload\n",
+    "retired.txt": "original retired payload\n",
+}
+
+
+@pytest.fixture
+def muse_delivery(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    parity, home = _parity(), tmp_path / "home"
+    cache = home / ".local/share/sextant-runtime-skills"
+    data = home / ".local/share/muse"
+    config = home / ".config/muse"
+    registry = data / "plugins/installed.json"
+    source = cache / "superpowers"
+    prefix = home / LANE
+    prefix.mkdir(parents=True)
+    (prefix / "repository-path").write_text(str(ROOT))
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config.parent))
+    monkeypatch.setenv("XDG_DATA_HOME", str(data.parent))
+    monkeypatch.setattr(sys, "argv", ["parity.py", "--runtime", "muse"])
+    skills = _skills(tmp_path / "skills")
+    monkeypatch.setattr(parity, "shelf", lambda _cache: skills)
+    for relative, content in MUSE_PAYLOAD.items():
+        path = source / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content)
+
+    def native(command: list[str]) -> None:
+        noun, verb, path, *args = command[1:]
+        assert (verb, args) == ("install", ["--scope", "user", "--json"])
+        origin = Path(path)
+        if noun == "skills":
+            shutil.copytree(origin, config / "skills" / origin.name)
+            return
+        assert noun == "plugins"
+        name = json.loads((origin / ".muse-plugin/plugin.json").read_text())["name"]
+        body = b"".join(
+            str(file.relative_to(origin)).encode() + b"\0" + file.read_bytes()
+            for file in sorted(origin.rglob("*"))
+            if file.is_file() and ".git" not in file.relative_to(origin).parts
+        )
+        digest = hashlib.sha256(body).hexdigest()
+        root = data / "plugins/cache/local" / name
+        if root.exists():
+            shutil.rmtree(root)
+        package = root / digest / "package"
+        shutil.copytree(origin, package, ignore=shutil.ignore_patterns(".git"))
+        (package.parent / "agent-definitions").mkdir()
+        state = (
+            json.loads(registry.read_text())
+            if registry.exists()
+            else {
+                "version": 1,
+                "plugins": {},
+            }
+        )
+        state["plugins"][name] = {
+            "id": name,
+            "enabled": True,
+            "source": {"provenance": "native-local", "path": str(origin)},
+            "cache_path": str(package.relative_to(data)),
+            "package_sha256": f"sha256:{digest}",
+        }
+        registry.write_text(json.dumps(state))
+
+    monkeypatch.setattr(parity, "_native", native)
+    return parity.main, source, registry, config, skills
+
+
+def test_parity_delivers_muse_skills_and_mcp_without_changing_settings(muse_delivery, capsys):
+    run, _source, registry, config, skills = muse_delivery
+    settings = config / "settings.json"
+    settings.parent.mkdir(parents=True)
+    settings.write_bytes(b'{"model":"owner-value"}\n')
+    assert run() == 0
+    first = capsys.readouterr()
+    assert 'muse: {"installed": 12}' in first.out
+    state = registry.read_bytes()
+    plugins = json.loads(state)["plugins"]
+    assert set(plugins) == {"superpowers", "sextant-mcp"}
+    mcp = registry.parents[1] / plugins["sextant-mcp"]["cache_path"]
+    manifest = json.loads((mcp / ".muse-plugin/plugin.json").read_text())
+    servers = {server["id"]: server for server in manifest["capabilities"]["mcpServers"]}
+    assert set(servers) == set(SPEC["mcp"])
+    for name, server in servers.items():
+        assert server["command"] == ["bash", f"mcp/{name}.sh"]
+        assert (mcp / server["command"][1]).is_file()
+    superpowers = set(SPEC["shelf"]["superpowers@superpowers-dev"]["skills"])
+    assert {path.name for path in (config / "skills").iterdir()} == set(skills) - superpowers
+    assert run() == 0
+    assert 'muse: {"unchanged": 12}' in capsys.readouterr().out
+    assert settings.read_bytes() == b'{"model":"owner-value"}\n'
+    assert registry.read_bytes() == state
+
+
+def test_muse_mcp_wrappers_supply_config_after_muse_clears_the_environment(muse_delivery):
+    run, _source, registry, _config, _skills = muse_delivery
+    assert run() == 0
+    plugins = json.loads(registry.read_text())["plugins"]
+    package = registry.parents[1] / plugins["sextant-mcp"]["cache_path"]
+    for name, key, header in (
+        ("context7", "CONTEXT7_API_KEY", "Authorization: Bearer ${CONTEXT7_API_KEY}"),
+        ("exa", "EXA_API_KEY", "x-api-key: ${EXA_API_KEY}"),
+    ):
+        script = (package / f"mcp/{name}.sh").read_text()
+        command = shlex.split(script.split("exec ", 1)[1])
+        assert command[:5] == [str(ROOT / "scripts/with-keys.sh"), "--strict", "-k", key, "--"]
+        assert command[command.index("--header") + 1] == header
+    paper = (package / "mcp/paper-search.sh").read_text()
+    assert shlex.split(paper.split("exec ", 1)[1])[:2] == [
+        "env",
+        "PAPER_SEARCH_MCP_ENV_FILE=/dev/null",
+    ]
+
+
+def _muse_package(registry: Path) -> Path:
+    record = json.loads(registry.read_text())["plugins"]["superpowers"]
+    return registry.parents[1] / record["cache_path"]
+
+
+def _filesystem_snapshot(root: Path) -> dict:
+    def entry(path: Path) -> tuple[int, bytes | str | None]:
+        mode = path.lstat().st_mode
+        if stat.S_ISREG(mode):
+            return mode, path.read_bytes()
+        if stat.S_ISLNK(mode):
+            return mode, os.readlink(path)
+        return mode, None
+
+    return {path.relative_to(root): entry(path) for path in (root, *root.rglob("*"))}
+
+
+def _muse_mutations():
+    for relative in MUSE_PAYLOAD:
+        for operation in ("remove", "bytes", "permissions", "executable", "symlink"):
+            yield pytest.param(operation, relative, id=f"{operation}-{relative}")
+    for operation in ("permissions", "special-mode"):
+        for relative in (".", "skills"):
+            yield pytest.param(operation, relative, id=f"{operation}-dir-{relative}")
+    for operation in ("add-file", "add-dir", "add-fifo"):
+        yield pytest.param(operation, "owner-added", id=operation)
+    yield pytest.param("add-file", "../../other-digest/package", id="orphan-cache")
+    yield pytest.param("add-file", "../agent-definitions/owner.md", id="agent-cache")
+    for field in ("cache_path", "package_sha256"):
+        for operation in ("missing", "empty", "malformed", "other"):
+            yield pytest.param(operation, field, id=f"record-{field}-{operation}")
+    yield pytest.param("remove-record", "", id="orphan-package")
+    yield pytest.param("remove-receipt", "", id="missing-baseline")
+
+
+def _mutate_muse(operation: str, relative: str, package: Path, registry: Path, source: Path):
+    if operation == "remove-receipt":
+        (source.parent / "muse-superpowers.json").unlink()
+    elif operation in {"missing", "empty", "malformed", "other", "remove-record"}:
+        state = json.loads(registry.read_text())
+        record = state["plugins"]["superpowers"]
+        if operation == "remove-record":
+            del state["plugins"]["superpowers"]
+        elif operation == "missing":
+            del record[relative]
+        else:
+            record[relative] = {
+                "empty": "",
+                "malformed": 17,
+                "other": f"sha256:{'0' * 64}",
+            }[operation]
+        registry.write_text(json.dumps(state))
+    else:
+        target = package / relative
+        if operation == "remove":
+            target.unlink()
+        elif operation == "bytes":
+            target.write_bytes(target.read_bytes() + b"owner edit\n")
+        elif operation in {"permissions", "executable", "special-mode"}:
+            bit = {"permissions": 0o040, "executable": 0o100, "special-mode": 0o2000}
+            target.chmod(stat.S_IMODE(target.stat().st_mode) ^ bit[operation])
+        elif operation == "symlink":
+            target.unlink()
+            target.symlink_to(source / relative)
+        elif operation == "add-file":
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("owner file\n")
+        elif operation == "add-dir":
+            target.mkdir()
+        else:
+            assert operation == "add-fifo"
+            os.mkfifo(target)
+
+
+@pytest.mark.parametrize("move_payload", (False, True), ids=("same", "moved"))
+@pytest.mark.parametrize(("operation", "relative"), list(_muse_mutations()))
+def test_parity_refuses_each_muse_mutation_and_preserves_state(
+    muse_delivery, capsys, operation, relative, move_payload
+):
+    run, source, registry, _config, _skills = muse_delivery
+    assert run() == 0
+    capsys.readouterr()
+    package = _muse_package(registry)
+    if move_payload:
+        (source / "skills/payload.md").write_text("incoming changed bytes\n")
+        (source / "retired.txt").unlink()
+    _mutate_muse(operation, relative, package, registry, source)
+    before = _filesystem_snapshot(registry.parent)
+    assert run() == 1
+    assert "NOT_CONFIGURED:" in capsys.readouterr().err
+    assert _filesystem_snapshot(registry.parent) == before
+
+
+@pytest.mark.parametrize("change", ("payload", "mode"))
+def test_parity_reinstalls_only_the_clean_muse_package_when_source_moves(
+    muse_delivery, capsys, change
+):
+    run, source, registry, _config, _skills = muse_delivery
+    assert run() == 0
+    capsys.readouterr()
+    incoming = source / "skills/payload.md"
+    if change == "payload":
+        incoming.write_text("incoming changed bytes\n")
+        (source / "retired.txt").unlink()
+    else:
+        incoming.chmod(0o755)
+    assert run() == 0
+    assert 'muse: {"installed": 1, "unchanged": 11}' in capsys.readouterr().out
+    assert _filesystem_snapshot(_muse_package(registry)) == _filesystem_snapshot(source)
+    assert run() == 0
+    assert 'muse: {"unchanged": 12}' in capsys.readouterr().out
 
 
 def test_qmd_is_on_every_runtimes_path() -> None:
