@@ -464,6 +464,8 @@ class RankedView:
     universe_source: str = ""
     written: bool = False
     previous: Any = None
+    # (key, inputs kept alive for the key's ids, publisher, host, last fed close).
+    carried: Any = None
 
     def write(self, now_ns: int, reason: str | None = None, generation: Any = None) -> None:
         self.previous = generation or self.previous
@@ -537,14 +539,57 @@ def _replay(
         sip_authority=SIP_AUTHORITY,
         symbol_map=dict(symbol_map),
     )
+    return publisher, host, _feed_minutes(host, symbols, by_minute, since_ns=None)
+
+
+def _feed_minutes(
+    host: BarFidelityHost,
+    symbols: Sequence[str],
+    by_minute: Mapping[int, list[Bar]],
+    *,
+    since_ns: int | None,
+) -> int:
     ingested = 0
     for close_ns in sorted(by_minute):
+        if since_ns is not None and close_ns < since_ns:
+            continue
         ingested += host.ingest(
             BarPoll(bars=tuple(by_minute[close_ns]), requested=tuple(symbols)),
             market_ns=close_ns,
             received_ns=close_ns,
         )
-    return publisher, host, ingested
+    return ingested
+
+
+def _carry_key(
+    view: RankedView, segment: Segment, *, lease: Any, epoch: str, prior_close_ns: int, params: str
+) -> tuple:
+    # Identity, not equality: run() rebuilds these objects for each segment.
+    inputs = (lease, view.baseline, view.symbols, view.closes)
+    return (segment, epoch, prior_close_ns, params, *map(id, inputs))
+
+
+def _view_replay(
+    view: RankedView, by_minute: Mapping[int, list[Bar]], key: tuple, **replay: Any
+) -> tuple[RankingPublisher, BarFidelityHost]:
+    """Feed a carried view only its new minutes, else replay the segment in full.
+
+    Streaming batches keep state between batches (nautilus_trader d53849b2,
+    docs/concepts/backtesting/apis-and-runs.md:74-91). The last fed minute is fed
+    again, so the host's revised-bar rule (host.py:186-192) forces a full replay.
+    """
+    carried, view.carried = view.carried, None
+    if carried is not None and carried[0] == key and by_minute:
+        _, _, publisher, host, last_ns = carried
+        try:
+            _feed_minutes(host, view.symbols, by_minute, since_ns=last_ns)
+            return publisher, host
+        except (ValueError, KeyError, TypeError, ArithmeticError):
+            pass
+    # Release a refused carry before the full replay, so peak memory stays one view.
+    carried = publisher = host = None
+    publisher, host, _ = _replay(**replay, by_minute=by_minute)
+    return publisher, host
 
 
 def _drop_stale(publisher: RankingPublisher, publish_clock_ns: int, max_age_ns: int) -> None:
@@ -644,7 +689,21 @@ def publish_tick(
     _drop_stale(publisher, publish_clock_ns, max_age_ns)
     if view is not None and view.baseline is not None:
         view_names = frozenset(view.symbols)
-        view_publisher, _, _ = _replay(
+        view_minutes = _completed(
+            (item for item in bars if item.symbol in view_names), segment, completed_end_ns
+        )
+        key = _carry_key(
+            view,
+            segment,
+            lease=lease,
+            epoch=epoch,
+            prior_close_ns=prior_close_ns,
+            params=registry.params_hash,
+        )
+        view_publisher, view_host = _view_replay(
+            view,
+            view_minutes,
+            key,
             lease=lease,
             trader=f"TV-VIEW-{segment.name}-001",
             segment=segment,
@@ -657,9 +716,6 @@ def publish_tick(
             epoch=f"{epoch}-view",
             universe_source=view.universe_source,
             feed=feed,
-            by_minute=_completed(
-                (item for item in bars if item.symbol in view_names), segment, completed_end_ns
-            ),
         )
         _drop_stale(view_publisher, publish_clock_ns, max_age_ns)
         generation = view_publisher.publish(now=publish_clock_ns)
@@ -674,6 +730,9 @@ def publish_tick(
                 universe_source=view.universe_source,
             ),
         )
+        if view_minutes:
+            inputs = (lease, view.baseline, view.symbols, view.closes)
+            view.carried = (key, inputs, view_publisher, view_host, max(view_minutes))
 
     if not host.heartbeat(at=latest_close_ns, received_ns=publish_clock_ns):
         raise PrestageError("the bar-fidelity heartbeat was refused")
