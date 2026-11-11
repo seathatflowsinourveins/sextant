@@ -21,3 +21,14 @@ Native actor failure must prevent the tester from starting and produce a named r
 receipt. Use native logging bypass for account-safe diagnostics. The lane remains OFF.
 The [manifest custody row](../manifest.md#ibkr-tester-custody) names the pinned paths and
 `test_ibkr_node_custody.py` regression; no broker session was used to establish this lesson.
+
+For attended starts, use the [paper user units](../../deploy/paper/README.md) after review,
+landing and the kit's pre-checks. The lead starts `sextant-paper-ibkr-dry-run.service`
+with `systemctl --user start`, watches `journalctl --user -u <unit> -f`, and stops early
+with `systemctl --user stop <unit>`. Its receipt is `IBKR_RECEIPT_DIR/ibkr-node-receipt.json`.
+Paper B's stage 1 unit, start/watch/stop and receipt/journal locations are on the same page.
+Both use `Restart=no`; the IBKR unit requests only a dry run. This follows systemd's
+own supervision and the existing TradingView units, with sources in the manifest row.
+Lesson: a checked-in supervised start keeps key names in argv and non-secret run choices
+in a required `.params` file, without shell sourcing or a new launcher. CLI proofs must
+parse the current node flags: B's writer and stream roots must match their existing holders.

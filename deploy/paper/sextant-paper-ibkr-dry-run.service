@@ -1,0 +1,13 @@
+[Unit]
+Description=Sextant IBKR attended node dry run
+Documentation=https://github.com/seathatflowsinourveins/sextant/blob/main/deploy/paper/README.md
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/sextant
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin PYTHONUNBUFFERED=1
+# Non-secret run choices only; the paper account identity comes from the named store key.
+EnvironmentFile=%h/.config/sextant/paper/paper-ibkr-dry-run.params
+ExecStart=/usr/bin/bash %h/sextant/scripts/with-keys.sh --strict -k IB_PAPER_ACCOUNT_ID -- %h/.local/bin/uv run --frozen python -m sextant.paper.node_ibkr --host ${IBKR_HOST} --port ${IBKR_PORT} --data-client-id ${IBKR_DATA_CLIENT_ID} --exec-client-id ${IBKR_EXEC_CLIENT_ID} --account-id-env IB_PAPER_ACCOUNT_ID --instrument ${IBKR_INSTRUMENT} --order-qty ${IBKR_ORDER_QTY} --duration-s ${IBKR_DURATION_S} --receipt-dir ${IBKR_RECEIPT_DIR} --lease-root ${IBKR_LEASE_ROOT} --profile lifecycle
+Restart=no
