@@ -231,7 +231,7 @@ class RankingActor(DataActor):
         self.host, self.primed, self._primed = None, False, {}
         self._halted = dict.fromkeys(self._halted)  # every name unknown again
         self._watch_from = self._subscribed_at = self._lineage = self._last = None
-        self._connected_once = False  # the run's first connect is not a gap
+        self._received = False  # no print, status or fact yet: a connect then is no gap
         if isinstance(self._facts, StreamFacts):  # no earlier run's conditions (P2)
             self._facts.clear()
         if self.snapshot_statuses is not None:  # the 2e recorder counts this run only (P2)
@@ -246,6 +246,7 @@ class RankingActor(DataActor):
 
     def on_instrument_status(self, status: InstrumentStatus) -> None:
         """A halt sets halted, a resume clears it, anything else from halted stays halted."""
+        self._received = True
         name = str(status.instrument_id.symbol)
         why = f"instrument status {status.action.name}"
         if not self.primed:
@@ -273,19 +274,20 @@ class RankingActor(DataActor):
     def on_socket_state(self, event: SocketStateChanged) -> None:
         """A LiveNode relays a network client's CONNECTED or DISCONNECTED (crates/live node
         mod.rs publish_socket_state_change; crates/network sink.rs). Any event after which
-        prints may have been missed follows the gap rule; the client does not mark a first
-        connect, so the Actor keeps that one bit (lead ruling 04:3x)."""
-        first = event.state == SocketState.CONNECTED and not self._connected_once
-        self._connected_once = True
-        if not first and self.host is not None and self.primed:
-            self._gap(f"socket {event.state}", since=None)
+        prints may have been missed follows the gap rule. Only a connect while this run has
+        received nothing (no print, status or fact) is exempt (lead ruling 04:3x; #537 P1)."""
+        if event.state != SocketState.CONNECTED or self._received:
+            self.reset_evidence(f"socket {event.state}")
 
     def reset_evidence(
         self, reason: str = "stream gap reported by the node entry", *, since: int | None = None
     ) -> None:
-        """Every name unknown again; prints count only after ``since`` (default: now)."""
-        if self.host is None or not self.primed:
-            return
+        """A gap: DEGRADED first, then every name unknown; prints count only after ``since``
+        (default: now). The node entry's own call takes the same path (#537 P2)."""
+        if self.host is not None and self.primed:
+            self._gap(reason, since=since)
+
+    def _reset_names(self, reason: str, since: int | None) -> None:
         self.resets += 1
         now = self.clock.timestamp_ns()
         if self._watch_from is not None:
@@ -295,6 +297,7 @@ class RankingActor(DataActor):
 
     def on_data(self, data) -> None:
         """The data client's per-trade facts and stream gaps (N1e, DESIGN-N1E)."""
+        self._received = True
         source = self._facts
         if not isinstance(source, StreamFacts) or self.host is None or not self.primed:
             return
@@ -304,7 +307,7 @@ class RankingActor(DataActor):
                 source.record(data.data)
         elif kind == source.gap_type.type_name:
             self.stream_gaps += 1
-            self._gap("stream reconnect", since=data.data.ts_init)
+            self.reset_evidence("stream reconnect", since=data.data.ts_init)
 
     def _gap(self, reason: str, *, since: int | None) -> None:
         """A stream gap: DEGRADED for the rest of the segment (LEAD-0033 2e) is published
@@ -318,7 +321,7 @@ class RankingActor(DataActor):
             self._fault("set_coverage", exc)
         else:
             self._publish(generation)
-        self.reset_evidence(reason, since=since)
+        self._reset_names(reason, since)
 
     def _clear_on_print(self, trade: TradeTick, facts: tuple[bool, tuple[str, ...]] | None) -> None:
         name, start = str(trade.instrument_id.symbol), self._watch_from
@@ -375,6 +378,7 @@ class RankingActor(DataActor):
         )
 
     def on_trade(self, trade: TradeTick) -> None:
+        self._received = True
         host = self.host
         if host is None or not self.primed:
             return

@@ -234,8 +234,9 @@ def leaked_after(out: dict[str, Any], at: int) -> list[tuple[str, dict[str, int 
     [
         ((GAP_AT, SocketState.DISCONNECTED),),
         ((START - NS // 2, SocketState.CONNECTED), (GAP_AT, SocketState.CONNECTED)),
+        ((GAP_AT, SocketState.CONNECTED),),  # the first connect seen, after prints (#537 P1)
     ],
-    ids=["disconnect", "a-later-connect"],
+    ids=["disconnect", "a-later-connect", "a-first-connect-after-prints"],
 )
 def test_a_socket_event_that_may_have_missed_prints_follows_the_gap_rule(tmp_path, events):
     out = run(tmp_path, gap=False, sockets=events)
