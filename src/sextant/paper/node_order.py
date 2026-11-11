@@ -57,7 +57,7 @@ from nautilus_trader.model import InstrumentId, Symbol, TraderId
 
 from sextant.alpaca.config import AlpacaDataClientConfig, AlpacaExecutionClientConfig
 from sextant.alpaca.constants import DEFAULT_FEED, VENUE
-from sextant.alpaca.execution import execution_engine_config
+from sextant.alpaca.execution import _TERMINAL, execution_engine_config
 from sextant.alpaca.factories import AlpacaDataClientFactory, AlpacaExecutionClientFactory
 from sextant.entry.parameters import EntryParameters
 from sextant.execution.custody import AccountScope, CustodyError, WriterLease
@@ -313,11 +313,15 @@ class Gate:
             if str(order.client_order_id).startswith((HOUSE_PREFIX, self.old_prefix))
         ]
         withheld = [row for client in self.clients for row, _ in client.withheld_positions]
+        # A withheld row is withheld whatever its status (its name is not claimed); only a row
+        # that has not ended is open. Alpaca's terminal statuses (execution.py _TERMINAL) are
+        # the engine's closed set (rc8 crates/model/src/enums.rs:1489-1500) plus "replaced".
         withheld_house = [
             row
             for client in self.clients
             for row, _ in client.withheld
             if str(row.get("client_order_id", "")).startswith((HOUSE_PREFIX, self.old_prefix))
+            and row.get("status") not in _TERMINAL
         ]
         self.counts = {
             "open_positions": len(positions),
