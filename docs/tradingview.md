@@ -190,7 +190,11 @@ not server revocation.
 The owner must ensure only one sync process runs at a time: there is no
 cross-process lock, and concurrent processes are unsupported. The in-process
 limiter and logging guard do not confer cross-process ownership. Run it on the
-display schedule, independently of the trade clock; no unattended service is installed.
+display schedule, independently of the trade clock. `deploy/tradingview/` holds a
+one-display-session user service and weekday timer that run this loop with the
+stored sign-in (`--loop --keep-login`, no browser); its installer writes them only
+with `--with-sync`, and they are not installed while the display service's access
+is suspended.
 
 Input is one resolved producer unit: `top100.json` (`morning-pack.candidates/1`),
 `focus.json` (`top100.focus/1`) and `display-lists.json` (`ns-display-lists/1`).
@@ -475,6 +479,7 @@ unit in place; a segment whose five-session baseline or reference close cannot
 be assembled is skipped with its reason paged, and the producer waits for the
 next segment instead of exiting; an interruption before the pointer switch
 leaves the previous generation readable, and the switch itself is atomic. No
-stream is opened, no TradingView call is made, no order or controller exists,
-and no unattended service is installed: the operator starts the process,
-exactly as they start the display loop.
+stream is opened, no TradingView call is made, and no order or controller exists.
+`deploy/tradingview/sextant-tradingview-prestage.service` runs this command, with
+`--ranked-view-dir`, as a long-running user service; the bounds come from the
+registry file above, and its installer installs and enables the producer alone.
