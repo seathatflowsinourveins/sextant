@@ -19,6 +19,15 @@ Sources: NautilusTrader d53849b, `docs/developer_guide/python_adapters.md` and
 references, read 2026-11-10; ADR-0007/0009. The execution-boundary proofs witness
 these constraints offline; broker qualification and economic merit remain open.
 
+A failed or unsupported row is incomplete coverage, with the original payload
+retained. An empty successful list has a different meaning. Replacement queries
+must follow the confirmed successor, and stale predecessor state cannot move
+active authority backwards. Known exit fills and triggers revoke queued
+mutation admission even before a fresh REST observation. Entry remainders can
+still be cancelled. Stream callbacks keep only a weak client reference and
+dereference it on the node loop. Shutdown cancels the SDK coroutine on its own
+loop, closes the socket and joins the executor work, including stalled connects.
+
 The SDK omits fill commissions. Until an evidenced resolver or registry row
 exists, exact fill reports are UNAVAILABLE; never label an inferred fee as an
 observed fee. Nonempty historical activities also need an evidenced identity
@@ -59,6 +68,26 @@ client must not add another numeric pin after parsing them; otherwise another
 paper profile or a later sourced rate change needs a code change. The pacer still
 validates the budget against the broker ceiling and retains per-position reserves.
 
+A sent command is resolved locally only by a venue refusal (4xx). A malformed
+2xx body, a 5xx or a transport error after send stays unresolved; the next
+authoritative read of that order settles a lost PATCH unless the order is
+`pending_replace`. An older successor arriving after a newer one is bound is
+not a first binding. A pacer refusal is a not-sent refusal for every caller.
+The paper node claims external orders for the house universe and limits
+reconciliation to it (lead ruling 2026-11-11): the owner's filled shares in a
+universe symbol are the position the Strategy protects, while no order outside
+the house namespace is ever modified or cancelled. Owner rows the engine would
+skip (replaced without fills, or in an unloaded instrument) are withheld with
+their payload, and their instrument loses bulk position coverage; an owner
+bracket refuses startup by name. A holding whose fills predate the lookback
+window aborts startup. A read that finds an order unchanged after an unanswered
+modify or cancel returns it to its venue state before the engine's in-flight
+ladder would close it, and disconnect rejects a queued entry it never sent.
+Sources: pinned NautilusTrader `manager.rs` (external-order claim and filter,
+no-instrument skip, reconciliation scope, unresolved positions, in-flight
+ladder); alpaca-py `rest.py:197-210`; Alpaca order statuses, read 2026-11-10;
+E5 fix-round design note.
+
 On-wire evidence is recorded at one send boundary, the gateway's on-wire hook,
 before any reply: a sent DELETE's venue id, a submit's or PATCH's sent flag
 beside its reserved proposal. An exception, a cancellation or a destroyed task
@@ -72,6 +101,9 @@ Every trade update passes one identity resolution before it is forwarded, fills
 included. Unknown lineage is incomplete coverage, never another order's id, and
 the active binding moves only forward by house successor number. Sources:
 alpaca-py `trading/enums.py:321-333`; reviews e5r3-99ac5bf and e5max-99ac5bf.
+
+A windowed listing merges rows by string venue id; a row with no such id goes on to
+its own row boundary, keeping its payload and its siblings. Source: review e5r3-99ac5bf.
 
 Every safety fact a trade update carries (executing, terminal, refused) is recorded on
 arrival, keyed by the venue order id it names, before the first await. Lineage work after

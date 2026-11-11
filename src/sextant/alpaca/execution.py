@@ -19,9 +19,11 @@ from typing import Any
 
 from alpaca.common.exceptions import APIError
 from alpaca.trading.client import TradingClient
-from alpaca.trading.models import Order
+from alpaca.trading.models import Order, Position
 from alpaca.trading.stream import TradingStream
-from nautilus_trader.core import dt_to_unix_nanos
+from nautilus_trader.common import Logger
+from nautilus_trader.core import dt_to_unix_nanos, unix_nanos_to_iso8601
+from nautilus_trader.live import LiveExecutionEngineConfig
 from nautilus_trader.live.clients import ExecutionClient
 from nautilus_trader.model import (
     AccountBalance,
@@ -34,7 +36,7 @@ from nautilus_trader.model import (
 from sextant.execution.pacer import AccountPacer, ActionKind
 from sextant.risk.controls import Controls
 
-from .reports import _decimal, fill_report, order_status_report
+from .reports import _decimal, fill_report, order_status_report, position_status_report
 from .wire import AccountGateway, guard_mutation, house_id, modify_payload, submit_payload
 
 
@@ -47,6 +49,24 @@ class IncompleteCoverage(RuntimeError):
         super().__init__(
             "Alpaca reconciliation coverage incomplete" + (f": {named}" if named else "")
         )
+
+
+def execution_engine_config(*, universe, **kwargs) -> LiveExecutionEngineConfig:
+    """LEAD-2201 B4/B5 and item 8; manager.rs at d53849b gates synthetic alignment here.
+
+    Lead ruling 2026-11-11: reconciliation is limited to the house universe
+    (node_config.rs:444-445; an empty list would reconcile every instrument).
+    """
+    scope = [str(instrument_id) for instrument_id in universe]
+    if not scope:
+        raise ValueError("reconciliation requires the house universe")
+    return LiveExecutionEngineConfig(
+        generate_missing_orders=False,
+        filter_position_reports=False,
+        filter_unclaimed_external_orders=True,
+        reconciliation_instrument_ids=scope,
+        **kwargs,
+    )
 
 
 async def _deliver_update(reference, update):
@@ -75,6 +95,17 @@ def _run_stream(stream, owner, ready, closing):
                 stream._trade_updates_handler = None
 
     asyncio.run(run())
+
+
+def _bounds(command):
+    params = {}
+    for field, name in (("start", "after"), ("end", "until")):
+        value = getattr(command, field, None)
+        if value is not None:
+            params[name] = unix_nanos_to_iso8601(value)
+    if getattr(command, "instrument_id", None) is not None:
+        params["symbols"] = command.instrument_id.symbol.value
+    return params
 
 
 # Alpaca order statuses that end an order (orders-at-alpaca, read 2026-11-10).
@@ -134,6 +165,19 @@ _INGRESS = frozenset(
 _TERMINAL_EVENTS = frozenset({"fill", "canceled", "expired", "rejected", "replaced"})
 
 
+def _merge_listings(*listings) -> list:
+    """Merge listings by venue id; a row with no string id goes on to its own row boundary."""
+    keyed: dict[str, Any] = {}
+    loose: list = []
+    for row in (row for listing in listings for row in listing):
+        key = row.get("id") if isinstance(row, dict) else None
+        if isinstance(key, str):
+            keyed[key] = row
+        else:
+            loose.append(row)
+    return [*keyed.values(), *loose]
+
+
 def _unresolved(exc, token) -> bool:
     """After send, only a venue 4xx refusal resolves a command locally.
 
@@ -160,8 +204,12 @@ class AlpacaExecutionClient(ExecutionClient):
         self._proposals: dict[str, tuple[str, str]] = {}
         self._sequence: dict[str, int] = {}
         self.failures: list[tuple[object, Exception]] = []
+        # Owner rows the engine would skip anyway; kept with payload and reason.
+        self.withheld: list[tuple[dict, str]] = []
+        self.withheld_positions: list[tuple[dict, str]] = []
         self._executing: set[str] = set()
         self._cancels: set[str] = set()  # Venue ids with a sent, unanswered DELETE.
+        self._orders_complete = False
         self._stream = None
         self._stream_task = None
         self._stream_ready = None
@@ -730,6 +778,130 @@ class AlpacaExecutionClient(ExecutionClient):
         report = await self._generate_order_status_report(command)
         if report is not None:
             self._handle_report(report)
+
+    def _owner_withheld(self, row) -> str | None:
+        """Why the engine would skip this owner row; None for every house row.
+
+        NT manager.rs:4665-4668 filters unclaimed external orders and 1056-1057
+        skips reports without a cached instrument; Alpaca replaced and contingent
+        classes have no simple report shape. DESIGN-owner-activity.md, E5 round.
+        """
+        if not self.house_prefix or row["client_order_id"].startswith(self.house_prefix):
+            return None
+        if row.get("order_class") not in (None, "", "simple"):
+            # Lead ruling 2026-11-11: managed paper is plain LIMIT, no bracket.
+            reason = (
+                f"owner {row['order_class']} order {row['client_order_id']} ({row['id']}) "
+                "is outside the managed-paper contract; startup refused"
+            )
+            # Built per call: a module-level Logger aborted the pinned node process
+            # when the node ran on a non-main thread (witnessed in this round).
+            Logger("AlpacaExecution").warning(reason)
+            raise ValueError(reason)
+        if row["status"] == "replaced" and Decimal(row.get("filled_qty") or "0") == 0:
+            return "owner order replaced without fills"
+        if self.cache.instrument(self._instrument_id(row)) is None:
+            return "owner order instrument unavailable"
+        return None
+
+    async def _generate_order_status_reports(self, command):
+        self.coverage_complete = self._orders_complete = False
+        self.withheld = []
+        # Vendor maximum: refuse capped coverage rather than infer missing orders.
+        rows = await self._call(
+            ActionKind.QUERY,
+            "get",
+            "/orders",
+            {
+                "status": "open" if command.open_only else "all",
+                "limit": 500,
+                "nested": True,
+                **_bounds(command),
+            },
+        )
+        capped = len(rows) >= 500
+        if not command.open_only and getattr(command, "start", None) is not None:
+            # A submission-time window cannot cover older still-working orders.
+            opened = await self._call(
+                ActionKind.QUERY, "get", "/orders", {"status": "open", "limit": 500, "nested": True}
+            )
+            capped = capped or len(opened) >= 500
+            rows = _merge_listings(rows, opened)
+        reports, failures = [], []
+        for row in rows:
+            try:
+                reason = self._owner_withheld(row)
+                if reason is not None:
+                    self.withheld.append((row, reason))
+                    continue
+                report = await self._report(row)
+                if report is not None:
+                    reports.append(report)
+            except Exception as exc:
+                failures.append((row, exc))
+        if capped:
+            failures.append((rows, ValueError("order listing reached venue page cap")))
+        if failures:
+            self.failures.extend(failures)
+            raise IncompleteCoverage(reports, failures)
+        self.coverage_complete = self._orders_complete = True
+        return reports
+
+    def _provides_bulk_position_coverage(self, instrument_id):
+        # A withheld row never authorises a flat inference for its instrument.
+        return self.coverage_complete and all(
+            self._instrument_id(row) != instrument_id
+            for row, _ in (*self.withheld, *self.withheld_positions)
+        )
+
+    async def _generate_position_status_reports(self, command):
+        self.coverage_complete = False
+        rows = await self._call(ActionKind.QUERY, "get", "/positions")
+        reports, failures = [], []
+        self.withheld_positions = []
+        for row in rows:
+            try:
+                if self.cache.instrument(self._instrument_id(row)) is None:
+                    # No house order can exist without its instrument; under the ruled
+                    # scope the engine skips it (manager.rs:1314-1319). No flat coverage.
+                    self.withheld_positions.append((row, "position instrument unavailable"))
+                    continue
+                report = position_status_report(
+                    Position.model_validate(row),
+                    account_id=self.account_id,
+                    instrument=self._instrument(row),
+                    ts_init=self.clock.timestamp_ns(),
+                )
+                if report is not None:
+                    reports.append(report)
+            except Exception as exc:
+                failures.append((row, exc))
+        if failures:
+            self.coverage_complete = False
+            raise IncompleteCoverage(reports, failures)
+        self.coverage_complete = self._orders_complete
+        return reports
+
+    async def _generate_fill_reports(self, command):
+        self.coverage_complete = False
+        params = _bounds(command)
+        params.pop("symbols", None)  # Activities accepts symbol, singular.
+        instrument_id = getattr(command, "instrument_id", None)
+        if instrument_id is not None:
+            params["symbol"] = instrument_id.symbol.value
+        rows = await self._call(ActionKind.QUERY, "get", "/account/activities/FILL", params)
+        # No invented REST/stream trade-ID correspondence or fees. E3's parser
+        # needs explicit commission evidence; nonempty unqualified history fails.
+        if rows:
+            self.coverage_complete = False
+            raise IncompleteCoverage(
+                [],
+                [
+                    (row, ValueError("historical fill identity and fees unqualified"))
+                    for row in rows
+                ],
+            )
+        return []
 
     async def _on_trade_update(self, update: dict[str, Any]):
         try:
