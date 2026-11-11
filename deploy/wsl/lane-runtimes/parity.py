@@ -24,6 +24,11 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[2]
 SPEC = json.loads((HERE / "parity.json").read_text())
 LOCK = json.loads((REPO / SPEC["lock"]).read_text())
+# dsh-v0.2.2-rc.1 apps/cli/README.md:46 (in-box bundles resolve from the dsh installation) and
+# apps/cli/reference/README.md:15 (the shipped template that carries each app bundle).
+TEMPLATES = {"@deepseek-ai/dsh-headless": "headless", "@deepseek-ai/dsh-acp-app": "acp"}
+IN_BOX = {"@deepseek-ai/dsh-base", *TEMPLATES}
+FULL_MARKER = ".sextant-dsh-full"  # written into an enhanced home this installer creates
 GIT = (
     "git",
     "--no-replace-objects",
@@ -38,9 +43,9 @@ NATIVE_TIMEOUT = 600  # seconds per native dsh or agy call; a stall is reported,
 LOGIN_HOMES = (".codex", ".config/orca", ".local/share/orca")
 
 
-def _native(command: list[str]) -> None:
+def _native(command: list[str], **options: object) -> None:
     """One native install call, stdin closed so no prompt can wait on the terminal."""
-    subprocess.run(command, check=True, stdin=subprocess.DEVNULL, timeout=NATIVE_TIMEOUT)
+    subprocess.run(command, check=True, stdin=subprocess.DEVNULL, timeout=NATIVE_TIMEOUT, **options)
 
 
 class Refused(Exception):
@@ -90,9 +95,9 @@ def _dsh_tui_destinations(home: Path, prefix: Path) -> None:
         )
 
 
-def _dsh_roots(dsh_home: Path) -> None:
+def _dsh_roots(dsh_home: Path, *locked: str) -> None:
     roots = [dsh_home / "skills", dsh_home / "profiles"]
-    for name in ("dsh-tui", *SPEC["runtimes"]["dsh"]["profiles"]):
+    for name in dict.fromkeys(["dsh-tui", *SPEC["runtimes"]["dsh"]["profiles"], *locked]):
         profile = dsh_home / "profiles" / name
         roots.extend([profile, profile / "node_modules", profile / "package.json"])
         if profile.is_dir():
@@ -624,6 +629,113 @@ def install_dsh(
     return states
 
 
+def _profile_lock(repository: Path) -> tuple[str, dict]:
+    """The enhanced home's lock (parity.json dsh.full), read where its links point."""
+    path = SPEC["runtimes"]["dsh"]["full"]["lock"]
+    return path, json.loads((repository / path).read_text())
+
+
+def _lock_rows(lock: dict) -> tuple[list[dict], list[str]]:
+    """A lock profile's rows and its bundle stack (interactive lists both; headless, bundles)."""
+    if "dependencies" in lock:
+        return lock["dependencies"], lock["bundles"]
+    return lock["bundles"], [row["package"] for row in lock["bundles"]]
+
+
+def _lock_target(repository: Path, row: dict) -> tuple[str, str]:
+    """A lock row's `dsh plugin add` argument and recorded value: a link adds this repository's
+    path, as setup.sh adds config/dsh; an npm pin adds name@version; github: stays verbatim."""
+    spec = row["spec"]
+    if spec.startswith("link:"):
+        return _quality_target(repository, row["link"])
+    if not spec.startswith(("github:", row["package"] + "@")):
+        spec = f"{row['package']}@{spec}"
+    return _quality_target(repository, spec)
+
+
+def _recognise(dsh_home: Path, locks: list[dict]) -> None:
+    """Refuse an existing home before any change unless this installer made it (its marker) or
+    built it: every lock profile present records only that lock's rows and bundles."""
+    if not dsh_home.exists():
+        return
+    known = (dsh_home / FULL_MARKER).is_file()
+    for lock in locks:
+        profile = dsh_home / "profiles" / lock["profile"]
+        if not profile.exists():
+            continue
+        rows, stack = _lock_rows(lock)
+        manifest = profile / "package.json"
+        try:  # a marked home may hold a profile its first run left without a manifest
+            data = json.loads(manifest.read_text()) if manifest.exists() or not known else {}
+            foreign = [] if profile.is_dir() else ["not a directory"]
+            foreign += sorted(
+                (set(data.get("dependencies", {})) - {row["package"] for row in rows})
+                | (set(data.get("dsh", {}).get("profile", {}).get("bundles", [])) - set(stack))
+            )
+        except (OSError, ValueError, AttributeError, TypeError):
+            foreign = ["an unreadable package.json"]
+        if foreign:
+            raise Refused(f"{profile}: not built from the lock ({foreign}); no change made")
+        known = True
+    if not known or not dsh_home.is_dir():
+        raise Refused(f"{dsh_home}: exists and is not a home this installer made; no change made")
+
+
+def install_lock_profile(dsh_home: Path, dsh: list[str], repository: Path, lock: dict) -> list:
+    """One lock profile by dsh's own commands: plain rows first, then one add per missing
+    bundle in the lock's order, since dsh appends each new bundle. Nothing is removed."""
+    rows, stack = _lock_rows(lock)
+    by_name = {row["package"]: row for row in rows}
+    plain = [row for row in rows if row["package"] not in stack]
+    ordered = plain + [by_name[name] for name in stack if name in by_name and name not in IN_BOX]
+    name, states = lock["profile"], []
+    profile = dsh_home / "profiles" / name
+    env = {**os.environ, "DSH_HOME": str(dsh_home)}
+    template = next((TEMPLATES[app] for app in stack if app in TEMPLATES), None)
+    if template and not (profile / "package.json").is_file():
+        # A non-shipped name starts from dsh-base alone; the shipped template carries the app.
+        command = ["--profile", name, "--from-default-profile", template, "--dump-config"]
+        _native([*dsh, *command], env=env, stdout=subprocess.DEVNULL)
+        states.append(f"{name}: initialized from {template}")
+    workspace = profile / "pnpm-workspace.yaml"  # setup.sh's documented profile workspace
+    if not workspace.exists():
+        _publish(workspace, (repository / "deploy/wsl/dsh/pnpm-workspace.yaml").read_text(), 0o644)
+    manifest = profile / "package.json"
+    for row in ordered:
+        present = json.loads(manifest.read_text()) if manifest.is_file() else {}
+        target, recorded = _lock_target(repository, row)
+        if _recorded(profile, present.get("dependencies", {}).get(row["package"])) == recorded:
+            continue
+        if shutil.which("pnpm") is None:  # dsh-plugin-manager spawns pnpm from PATH
+            raise Refused("pnpm is not on PATH; run parity.sh or setup.sh (host-tools lock)")
+        states.extend(_install_bundle_dependencies([target]))
+        _native([*dsh, "plugin", "--profile", name, "add", "--save-exact", target], env=env)
+        states.append(f"{name}: added {target}")
+    if json.loads(manifest.read_text()).get("dsh", {}).get("profile", {}).get("bundles") != stack:
+        raise Refused(f"{name}: dsh.profile.bundles are out of the lock's order; kept for review")
+    return states
+
+
+def install_dsh_full(
+    skills: dict[str, Path], dsh_home: Path, dsh: list[str], repository: Path
+) -> list[str]:
+    """The enhanced home: recognised first, then the shelf's skills and both lock profiles."""
+    lock = _profile_lock(repository)[1]
+    locks = [lock["interactive"], lock["headless"]]
+    _dsh_roots(dsh_home, *(row["profile"] for row in locks))
+    _recognise(dsh_home, locks)
+    for source in skills.values():  # check every skill before copying any
+        target = dsh_home / "skills" / source.name
+        if target.exists() and _tree(target) != _tree(source):
+            raise Refused(f"{target}: differs from the pinned skill; no change made")
+    if not dsh_home.exists():
+        _publish(dsh_home / FULL_MARKER, f"{SPEC['runtimes']['dsh']['full']['lock']}\n", 0o644)
+    states = [copy_skill(path, dsh_home / "skills") for path in skills.values()]
+    for row in locks:
+        states.extend(install_lock_profile(dsh_home, dsh, repository, row))
+    return states
+
+
 def agy_mcp_commands(home: Path, bridge: Path) -> list[list[str]]:
     """agy mcp add/disable arguments. Antigravity 1.4.6 sends header placeholders literally, so
     keyed servers run the pinned mcp-remote bridge, which expands ${VAR} from its own env."""
@@ -710,14 +822,16 @@ def preflight(home: Path) -> None:
     _codex_lane(home)
     _dsh_roots(Path(os.environ.get("DSH_HOME") or home / ".dsh"))
     _dsh_tui_destinations(home, prefix)
+    lock = _profile_lock(REPO)[1]
+    full = home / SPEC["runtimes"]["dsh"]["full"]["home"]
+    _dsh_roots(full, *(lock[variant]["profile"] for variant in ("interactive", "headless")))
     _antigravity_roots(home)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--runtime", action="append", choices=("codex", "dsh", "antigravity", "muse")
-    )
+    runtimes = ("codex", "dsh", "dsh-full", "antigravity", "muse")
+    parser.add_argument("--runtime", action="append", choices=runtimes)
     parser.add_argument("--check-roots", action="store_true", help="read-only installer preflight")
     args = parser.parse_args()
     home = Path.home()
@@ -730,18 +844,23 @@ def main() -> int:
         return 0
     prefix = home / ".local/share/sextant-lane-runtimes"
     cache = home / ".local/share/sextant-runtime-skills"
-    repository = Path((prefix / "repository-path").read_text().strip())
+    # parity.sh records the installing checkout; setup.sh runs the dsh-full step before it has.
+    recorded = prefix / "repository-path"
+    repository = Path(recorded.read_text().strip()) if recorded.is_file() else REPO
     for name in ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN"):  # the launchers' rule
         os.environ.pop(name, None)
     os.environ["AGY_CLI_DISABLE_AUTO_UPDATE"] = "true"
+    dsh = [str(home / ".local/share/sextant-agents/node_modules/.bin/dsh")]
+    full = home / SPEC["runtimes"]["dsh"]["full"]["home"]
     steps = {
         "codex": lambda skills: install_codex(skills, home),
         "dsh": lambda skills: install_dsh(
             skills,
             Path(os.environ.get("DSH_HOME") or home / ".dsh"),
-            [str(home / ".local/share/sextant-agents/node_modules/.bin/dsh")],
+            dsh,
             repository,
         ),
+        "dsh-full": lambda skills: install_dsh_full(skills, full, dsh, repository),
         "antigravity": lambda skills: install_antigravity(
             skills,
             cache,
