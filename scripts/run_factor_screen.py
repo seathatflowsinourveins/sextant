@@ -21,7 +21,7 @@ from nautilus_trader.persistence import ParquetDataCatalog
 from sextant.backtest import factor_screen as fs
 from sextant.backtest import replay
 from sextant.backtest.exit_inputs import DEFAULT_INPUTS
-from sextant.validation.trials import TrialLog
+from sextant.validation.trials import WITNESS_PATH, TrialLog
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 
@@ -108,25 +108,7 @@ def main(argv: list[str] | None = None) -> int:
     instruments, rows = load(args.catalog)
     bars = [bar for series in rows.values() for bar in series]
     days = sorted({fs.session_of(bar.ts_event) for bar in bars})
-    results = []
-    for arm, spec in fs.ARMS.items():
-        if spec["state"] == "RUNNABLE":
-            results.append(arm_result(arm, plan_for(arm, rows), bars, instruments, days))
-        else:
-            results.append(
-                {
-                    "arm": arm,
-                    "state": "FAIL",
-                    "kind": spec["kind"],
-                    "source": spec["source"],
-                    "error": f"{spec['state']}: {spec['missing']}",
-                    "sample_state": "INSUFFICIENT_N",
-                    "costs": {},
-                    "days": [],
-                    "daily_net_returns": [],
-                    "condition_returns": {},
-                }
-            )
+    args.out.mkdir(parents=True, exist_ok=False)
     meta = {
         "study": fs.STUDY["name"],
         "seed": int(fs.STUDY["seed"]),
@@ -147,12 +129,42 @@ def main(argv: list[str] | None = None) -> int:
         "catalog_receipt": receipt,
         "run_id": str(uuid4()),
     }
-    args.out.mkdir(parents=True, exist_ok=False)
+    ledger = TrialLog(REPOSITORY / WITNESS_PATH)
+    params = {key: fs.STUDY[key] for key in ("horizon_bars", "top_k", "clv_threshold", "quantity")}
+    sandbox = {
+        "study": fs.STUDY["name"],
+        "seed": fs.STUDY["seed"],
+        "cost_bps": fs.STUDY["cost_bps"],
+        "tier": "MODELED",
+        "block_set_id": "|".join(days) or "NO_SESSIONS",
+    }
+    weights = {arm: "1" for arm, spec in fs.ARMS.items() if spec["kind"] == "factor"}
+    results = []
+    for arm, spec in fs.ARMS.items():
+        if spec["state"] != "RUNNABLE":
+            results.append(
+                {
+                    "arm": arm,
+                    "state": "FAIL",
+                    "kind": spec["kind"],
+                    "source": spec["source"],
+                    "error": f"{spec['state']}: {spec['missing']}",
+                    "sample_state": "INSUFFICIENT_N",
+                    "costs": {},
+                    "days": [],
+                    "daily_net_returns": [],
+                    "condition_returns": {},
+                }
+            )
+            continue
+        plan = plan_for(arm, rows)
+        with ledger.attempts({arm: weights}, params, sandbox):
+            results.append(arm_result(arm, plan, bars, instruments, days))
+    fs.append_trials(ledger, [result for result in results if result["state"] == "FAIL"], meta)
     payload = {"meta": meta, "results": results}
     (args.out / "screen.json").write_text(
         json.dumps(payload, indent=2, sort_keys=True, default=str) + "\n"
     )
-    fs.append_trials(TrialLog(args.out / "trials.parquet"), results, meta)
     if args.table is not None:
         args.table.write_text(fs.render_table(results, meta))
     print(
