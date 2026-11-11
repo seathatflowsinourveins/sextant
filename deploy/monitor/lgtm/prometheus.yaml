@@ -1,0 +1,42 @@
+# Source: grafana/docker-otel-lgtm@9c57b1400ccdb8920e1a2b6083134cc5ef244a8f docker/prometheus.yaml; Prometheus OTLP guide, read 2026-11-09.
+# Changes: one-hour out-of-order window for the requested archive view; MON-2 lane/runtime resource labels.
+---
+global:
+  scrape_native_histograms: true
+otlp:
+  keep_identifying_resource_attributes: true
+  # Recommended attributes to be promoted to labels.
+  promote_resource_attributes:
+    - service.instance.id
+    - service.name
+    - sextant.lane
+    - sextant.runtime
+    - service.namespace
+    - service.version
+    - cloud.availability_zone
+    - cloud.region
+    - container.name
+    - deployment.environment # backward compatibility
+    - deployment.environment.name
+    - k8s.cluster.name
+    - k8s.container.name
+    - k8s.cronjob.name
+    - k8s.daemonset.name
+    - k8s.deployment.name
+    - k8s.job.name
+    - k8s.namespace.name
+    - k8s.node.name
+    - k8s.pod.name
+    - k8s.replicaset.name
+    - k8s.statefulset.name
+    - host.name
+    - postgresql.database.name
+    - postgresql.schema.name
+    - postgresql.table.name
+    - postgresql.index.name
+    - database # used by otelcol/receiver/mongodb
+    - kafka.cluster.alias
+storage:
+  tsdb:
+    # UNCALIBRATED: owner requested a last-hour archive view; registry in dashboard-parameters.json.
+    out_of_order_time_window: 1h

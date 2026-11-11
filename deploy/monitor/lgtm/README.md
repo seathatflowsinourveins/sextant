@@ -20,6 +20,9 @@ read in its own upstream UI — see `../upstream-ui-map.md`.
   `conf/provisioning/alerting` directory; it carries the single
   monitor-staleness rule (see `alerting/README.md`). Grafana creates the
   `Sextant` folder on load. There is no Alertmanager or contact point.
+- `provisioning/god-view.yaml` is mounted read-only over Grafana's
+  `conf/provisioning/dashboards/god-view.yaml`; `dashboards/` is mounted at
+  `/sextant-god-view`; `prometheus.yaml` is mounted at `/otel-lgtm/prometheus.yaml`.
 - `otelcol-config.yaml` strips content-bearing tool fields and masks
   secret-shaped values before anything persists; `genai-mapping.md` pins
   the vendor -> `gen_ai.*` schema. Runtime feeds land in PR-M2, so until
