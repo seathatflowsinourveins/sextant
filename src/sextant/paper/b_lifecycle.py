@@ -108,7 +108,7 @@ class BLifecycleConfig(StrategyConfig):
         *,
         namespace: str,
         instrument_ids: Sequence[InstrumentId],
-        consumer: RankingConsumer,
+        consumer: RankingConsumer | None,
         rank_gate: RegistryRow,
         journal: Journal | None = None,
         entry_params: EntryParameters | None = None,
@@ -129,14 +129,23 @@ class BLifecycleConfig(StrategyConfig):
             raise ValueError("B needs unique instrument ids")
         if not all(isinstance(iid, InstrumentId) for iid in ids):
             raise ValueError("B instrument ids must be native InstrumentIds")
-        if not isinstance(consumer, RankingConsumer):
-            raise ValueError("B needs the reviewed RankingConsumer")
         if not namespace.isalnum():  # the house guard reads it as one id segment
             raise ValueError("B's namespace must be letters and digits")
         if not isinstance(rank_gate, RegistryRow) or rank_gate.name != "rank_gate_enabled":
             raise ValueError("B needs the rank_gate_enabled registry row")
-        if baseline is not None and (
-            baseline.identity != consumer.reader.baseline_hash or baseline.feed != consumer.feed
+        # With the gate off no rank is read, so protection needs no consumer (lead 09:1x); the
+        # entry then has no session segment and is refused.
+        if not isinstance(consumer, RankingConsumer) and (consumer, rank_gate.value) != (
+            None,
+            False,
+        ):
+            raise ValueError("B needs the reviewed RankingConsumer")
+        if (
+            consumer is not None
+            and baseline is not None
+            and (
+                baseline.identity != consumer.reader.baseline_hash or baseline.feed != consumer.feed
+            )
         ):
             raise ValueError("the surge baseline differs from the ranking's baseline")
         self.namespace, self.instrument_ids = namespace, ids
@@ -211,6 +220,7 @@ class BLifecycle(Strategy):
         rows = self.params
         missing = sorted(n for n in ENTRY_ROWS if rows is None or not rows.has(n))
         named = (
+            ("ranking_consumer", self.consumer),
             ("exit_params", self.exit),
             ("commission_rate", self.commission),
             ("basis_path", self.basis_path),
@@ -219,8 +229,9 @@ class BLifecycle(Strategy):
         self.missing = missing + [name for name, value in named if value is None]
 
     def on_start(self) -> None:
-        self.subscribe_data(ranking_data_type(self.consumer.feed))
-        now, segment = self.clock.timestamp_ns(), self.consumer.reader.segment
+        now = self.clock.timestamp_ns()
+        if self.consumer is not None:
+            self.subscribe_data(ranking_data_type(self.consumer.feed))
         for iid, book in self.books.items():
             self.subscribe_trades(iid)
             self.subscribe_quotes(iid)
@@ -228,8 +239,10 @@ class BLifecycle(Strategy):
             if not isinstance(instrument, Equity):
                 continue
             book.instrument = instrument  # protection never waits on entry rows
-            if self.missing:
+            self.reconcile(book)  # a (re)start covers what is held at once (ADR-0007:17)
+            if self.missing or self.consumer is None:
                 continue
+            segment = self.consumer.reader.segment
             book.entry = EntryState(iid, self._p, segment.name, start_ns=segment.start_ns)
             self.subscribe_bars(book.entry.bar_type)
         rows = self.width_rows
@@ -248,6 +261,8 @@ class BLifecycle(Strategy):
         book = next((b for b in self.books.values() if b.instrument is not None), None)
         account = None if book is None else self.portfolio.account(book.instrument_id.venue)
         if book is not None and account is not None and self.basis_path is not None:
+            assert self.consumer is not None  # "ranking_consumer" is not missing
+            segment = self.consumer.reader.segment
             key = f"{segment.session_date.isoformat()}:{segment.name}:{segment.start_ns}"
             store = SegmentBasis(self.basis_path, str(account.id), self._p)
             free = self._balance(book, "free")
@@ -268,6 +283,8 @@ class BLifecycle(Strategy):
         return self.params
 
     def on_data(self, data: CustomData) -> None:
+        if self.consumer is None:
+            return
         now = self.clock.timestamp_ns()
         accepted = self.consumer.handle(data, now=now)
         self._record(kind="generation", ts=now, accepted=accepted, reason=self.consumer.reason)
@@ -321,7 +338,7 @@ class BLifecycle(Strategy):
                 book.surge,
                 trade,
                 self.baseline,
-                segment=self.consumer.reader.segment,
+                segment=cast(RankingConsumer, self.consumer).reader.segment,  # entry: consumer
                 feed=self.baseline.feed,
                 params=self._p,
                 quote=quote,
@@ -340,12 +357,14 @@ class BLifecycle(Strategy):
 
     def candidate(self, book: _Book, now: int) -> bool:
         """The rank gate over one current ``entry_rank``; DISABLED means no house entry."""
-        enabled = self.rank_gate.value
+        enabled, consumer = self.rank_gate.value, self.consumer
         rank = None
-        if enabled is True:
-            rank = self.consumer.entry_rank(str(book.instrument_id.symbol), now=now)
+        if enabled is True and consumer is not None:
+            rank = consumer.entry_rank(str(book.instrument_id.symbol), now=now)
         decision = decide_rank_gate(
-            enabled=cast(bool, enabled), rank=rank, consumer_reason=self.consumer.reason
+            enabled=cast(bool, enabled),
+            rank=rank,
+            consumer_reason=None if consumer is None else consumer.reason,
         )
         book.gate, book.gate_ns = decision, now
         allowed = decision.status is RankGateStatus.PASS
