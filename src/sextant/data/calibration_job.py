@@ -120,6 +120,7 @@ def _rows(text: str, symbol: str, kind: str, start: datetime, end: datetime) -> 
 def _complete(pages: Sequence[str]) -> None:
     if not pages:
         raise ValueError("history response is incomplete")
+    seen: set[str] = set()
     for index, text in enumerate(pages):
         payload = json.loads(text)
         if not isinstance(payload, dict) or "next_page_token" not in payload:
@@ -130,6 +131,10 @@ def _complete(pages: Sequence[str]) -> None:
                 raise ValueError("history response is incomplete")
         elif not isinstance(token, str) or not token:
             raise ValueError("history response has a broken continuation chain")
+        elif token in seen:
+            raise ValueError("history response has a repeated continuation token")
+        else:
+            seen.add(token)
 
 
 def archive(
