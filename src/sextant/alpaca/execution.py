@@ -94,6 +94,9 @@ def _traced(stage: str):
                 "requests": {},
                 "failures": 0,
                 "skipped_unloaded": 0,
+                "before_order_history": 0,
+                "unlisted_order": 0,
+                "quantity_exceeds": 0,
             }
             token = _STAGE.set(stage)
             try:
@@ -1060,8 +1063,10 @@ class AlpacaExecutionClient(ExecutionClient):
 
         The engine infers each fill an order report explains (create_inferred_fill,
         reconciliation/orders.rs:1065-1145), so a row whose order is listed with at least its
-        cumulative quantity needs no report. Any other row is refused; a holding that no order
-        report explains also stops the start in the engine (node/mod.rs:992-996).
+        cumulative quantity needs no report. Unlisted fills before the oldest listed submission
+        are counted, not refused; other unexplained fills still refuse. BUILD ON native bounded
+        fill reads (d53849b architect_ax/execution.rs:1676-1695). A holding no order explains
+        still stops the start in the engine (node/mod.rs:992-996).
         """
         params = _bounds(command)
         params.pop("symbols", None)  # Activities accepts symbol, singular.
@@ -1076,11 +1081,21 @@ class AlpacaExecutionClient(ExecutionClient):
             for order in (row, *(row.get("legs") or ())) if isinstance(row, dict) else ():
                 if isinstance(order, dict) and isinstance(order.get("id"), str):
                     listed[order["id"]] = order
+        oldest = min(
+            (dt_to_unix_nanos(order["submitted_at"]) for order in listed.values()), default=None
+        )
+        trace = self.report_trace["fills"]
         failures = []
         for row in rows:
             try:
                 order = listed.get(row["order_id"])
+                stamp = row.get("transaction_time")
+                if order is None and oldest is not None and stamp is not None:
+                    if dt_to_unix_nanos(stamp) < oldest:
+                        trace["before_order_history"] += 1
+                        continue
                 if order is None or Decimal(order["filled_qty"]) < Decimal(row["cum_qty"]):
+                    trace["unlisted_order" if order is None else "quantity_exceeds"] += 1
                     raise ValueError("historical fill that no order report explains")
                 self._unloaded_history(order, "fills")  # Same terminal-only rule; no inferred fill.
             except Exception as exc:
