@@ -19,7 +19,7 @@ mkdir -p "$unit_dir"
 escaped="${repo//\\/\\\\}"
 escaped="${escaped//&/\\&}"
 escaped="${escaped//|/\\|}"
-for unit in sextant-paper-b-stage1.service sextant-paper-ibkr-dry-run.service sextant-paper-ibkr-lifecycle.service; do
+for unit in sextant-paper-b-stage1.service sextant-paper-ibkr-dry-run.service sextant-paper-ibkr-lifecycle.service sextant-paper-b-test-entry.service; do
   sed -e "s|%h/sextant/|$escaped/|g" -e "s|%h/sextant\$|$escaped|" \
     "$here/$unit" >"$unit_dir/$unit"
 done

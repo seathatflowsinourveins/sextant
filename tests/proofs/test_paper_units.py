@@ -17,12 +17,14 @@ DEPLOY = ROOT / "deploy/paper"
 B = "sextant-paper-b-stage1.service"
 IBKR = "sextant-paper-ibkr-dry-run.service"
 IBKR_LIFECYCLE = "sextant-paper-ibkr-lifecycle.service"
-UNITS = (B, IBKR, IBKR_LIFECYCLE)
+B_TEST_ENTRY = "sextant-paper-b-test-entry.service"
+UNITS = (B, IBKR, IBKR_LIFECYCLE, B_TEST_ENTRY)
 KEYS = {
     B: ["ALPACA_PAPER_2_API_KEY", "ALPACA_PAPER_2_SECRET_KEY"],
     IBKR: ["IB_PAPER_ACCOUNT_ID"],
     IBKR_LIFECYCLE: ["IB_PAPER_ACCOUNT_ID"],
 }
+KEYS[B_TEST_ENTRY] = KEYS[B]
 
 
 def _unit(path: Path) -> configparser.ConfigParser:
@@ -273,3 +275,56 @@ def test_ibkr_lifecycle_command_uses_node_opt_in_without_reading_account(tmp_pat
     ):
         with pytest.raises((SystemExit, node_ibkr.IbkrNodeRefused)):
             node_ibkr.parse(_arguments(IBKR_LIFECYCLE, values | {key: value}))
+
+
+def test_b_test_entry_unit_only_adds_the_fixed_instrument_opt_in():
+    stage1 = (DEPLOY / B).read_text()
+    attended = DEPLOY / B_TEST_ENTRY
+    assert attended.is_file(), "missing separate attended test-entry unit"
+    assert attended.read_text() == stage1.replace(
+        "Description=Sextant Paper B attended stage 1 (protection only)",
+        "Description=Sextant Paper B attended test entry",
+    ).replace("paper-b-stage1.params", "paper-b-test-entry.params").replace(
+        "--lease-source ${B_LEASE_SOURCE}\n",
+        "--lease-source ${B_LEASE_SOURCE} --attended-test-entry ${B_ATTENDED_TEST_INSTRUMENT}\n",
+    )
+    command = shlex.split(_unit(attended)["Service"]["ExecStart"])
+    assert command[-2:] == ["--attended-test-entry", "${B_ATTENDED_TEST_INSTRUMENT}"]
+    assert command.count("--attended-test-entry") == 1
+    assert "-c" not in command
+    assert not any("attended-test" in arg for arg in _arguments(B, {}))
+    # Every expansion remains exactly one argument; no unbraced expansion/splice.
+    for arg in command:
+        if "$" in arg:
+            assert re.fullmatch(r"\$\{[A-Z_]+\}", arg)
+
+
+def test_b_test_entry_parameters_are_separate_complete_and_blank():
+    example = DEPLOY / "paper-b-test-entry.params.example"
+    assert example.is_file(), "missing attended instrument parameter example"
+
+    def assignments(path):
+        return dict(
+            line.split("=", 1)
+            for line in path.read_text().splitlines()
+            if line and not line.startswith("#")
+        )
+
+    stage1 = assignments(DEPLOY / "paper-b-stage1.params.example")
+    assert assignments(example) == stage1 | {"B_ATTENDED_TEST_INSTRUMENT": ""}
+    service = _unit(DEPLOY / B_TEST_ENTRY)["Service"]
+    assert service["EnvironmentFile"] == ("%h/.config/sextant/paper/paper-b-test-entry.params")
+    assert "B_ATTENDED_TEST_INSTRUMENT" not in stage1
+
+
+def test_b_test_entry_instrument_is_one_literal_argument_even_when_missing():
+    # T1 owns node validation; this proof covers systemd's single-token boundary only.
+    for instrument in ("", "fixture with spaces $literal --not-an-option"):
+        args = _arguments(B_TEST_ENTRY, {"B_ATTENDED_TEST_INSTRUMENT": instrument})
+        assert args[-2:] == ["--attended-test-entry", instrument]
+        assert len(args) == len(_arguments(B, {})) + 2
+
+
+def test_paper_installer_has_no_start_or_enable_command():
+    installer = (DEPLOY / "install.sh").read_text()
+    assert not re.search(r"systemctl[^\n]*(?:\bstart\b|\benable\b)", installer)
