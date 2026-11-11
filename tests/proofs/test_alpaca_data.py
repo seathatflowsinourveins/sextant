@@ -2,7 +2,7 @@
 
 import asyncio
 import threading
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from importlib import import_module
 from typing import Any
@@ -46,6 +46,7 @@ INVALID_QUOTES = (
     {**QUOTE, "bp": 0},
     {**QUOTE, "bp": 10.05},
     {**QUOTE, "ap": QUOTE["bp"]},
+    {**QUOTE, "bp": "10.011", "ap": "10.012"},  # Equal at the instrument's precision.
 )
 TRADE = {"S": "AAPL", "T": "t", "t": STAMP, "p": 10.02, "s": 7, "x": "D", "i": 123}
 BAR = {
@@ -65,8 +66,9 @@ BAR = {
 class StandInSocket:
     """Emulate wire subscriptions under the SDK's own subscription methods."""
 
-    def __init__(self, stream):
+    def __init__(self, stream, bad_channel):
         self.stream = stream
+        self.bad_channel = bad_channel
         self.first_subscribe = True
 
     async def send(self, data):
@@ -85,6 +87,11 @@ class StandInSocket:
         )
         for channel, rows in rows_by_channel:
             if channel not in self.stream.delivered and "AAPL" in payload.get(channel, ()):
+                if channel == self.bad_channel:
+                    size = "s" if channel == "trades" else "v"
+                    await self.stream._dispatch({**rows[0], size: -1, "t": _WireTimestamp()})
+                    later = _WireTimestamp(START + timedelta(seconds=1))
+                    await self.stream._dispatch({**QUOTE, "t": later})
                 for row in rows:
                     await self.stream._dispatch({**row, "t": _WireTimestamp()})
                 self.stream.delivered.add(channel)
@@ -94,8 +101,11 @@ class StandInSocket:
 
 
 class _WireTimestamp:
+    def __init__(self, timestamp=START):
+        self.timestamp = timestamp
+
     def to_datetime(self):
-        return START
+        return self.timestamp
 
 
 class StandInHistory:
@@ -141,6 +151,7 @@ class Witness(Strategy):
     def __init__(self):
         super().__init__()
         self.historical = False
+        self.expected_live_events = 3
         self.events: list[tuple[QuoteTick | TradeTick | Bar, int]] = []
         self.completed: list[str] = []
         self.responses: list[DataResponse] = []
@@ -165,7 +176,7 @@ class Witness(Strategy):
 
     def receive(self, event):
         self.events.append((event, threading.get_ident()))
-        if not self.historical and len(self.events) == 3:
+        if not self.historical and len(self.events) == self.expected_live_events:
             self.unsubscribe_quotes(INSTRUMENT_ID)
             self.finished.set()
 
@@ -194,7 +205,14 @@ class Witness(Strategy):
             self.receive(bar)
 
 
-async def run_shell(*, historical: bool = False, fail: bool = False):
+async def run_shell(
+    *,
+    historical: bool = False,
+    fail: bool = False,
+    bad_channel: str | None = None,
+    strategy: Witness | None = None,
+    history: StandInHistory | None = None,
+):
     # Fail as a test assertion on the clean checkout. The actual native shell
     # and queue are built below once the adapter module is available.
     try:
@@ -216,15 +234,17 @@ async def run_shell(*, historical: bool = False, fail: bool = False):
 
         async def _start_ws(self):
             self.thread_ids.add(threading.get_ident())
-            self._ws = StandInSocket(self)
+            self._ws = StandInSocket(self, bad_channel)
 
         async def _consume(self):
             await asyncio.Future()
 
     stream = StandInStream()
-    history = StandInHistory(fail)
-    strategy = Witness()
+    history = StandInHistory(fail) if history is None else history
+    strategy = Witness() if strategy is None else strategy
     strategy.historical = historical
+    if bad_channel is not None:
+        strategy.expected_live_events += 1
 
     clients = []
 
@@ -302,7 +322,7 @@ def test_stock_stream_delivers_typed_data_to_strategy_on_sandbox_loop():
     assert stream.thread_ids and owner not in stream.thread_ids
     assert stream.closed.is_set()
     assert not history.calls
-    assert client.dropped_quote_count == 3
+    assert client.dropped_quote_count == len(INVALID_QUOTES)
 
 
 def test_stock_history_delivers_correlated_typed_data_off_the_node_loop():
@@ -310,7 +330,7 @@ def test_stock_history_delivers_correlated_typed_data_off_the_node_loop():
     strategy, stream, history, client = asyncio.run(run_shell(historical=True))
     assert_ticks(strategy.events, owner)
     assert len(set(strategy.completed)) == 3
-    assert client.dropped_quote_count == 3
+    assert client.dropped_quote_count == len(INVALID_QUOTES)
     assert {response.correlation_id for response in strategy.responses} == set(strategy.completed)
     assert all(
         response.completed and response.failure_reason is None for response in strategy.responses
@@ -401,6 +421,7 @@ def test_disconnect_reraises_first_handler_conversion_failure(monkeypatch):
 
     class Stream(data.AlpacaStockDataStream):
         async def _run_forever(self):
+            self._should_run = True
             await asyncio.Future()
 
         async def register(self, channel, symbols, handler):
@@ -408,7 +429,8 @@ def test_disconnect_reraises_first_handler_conversion_failure(monkeypatch):
             await handler(Quote("UNREGISTERED", QUOTE))
 
     async def check():
-        client = offline_client(stream=Stream("fixture", "fixture"))
+        stream = Stream("fixture", "fixture")
+        client = offline_client(stream=stream)
         monkeypatch.setattr(client, "create_task", lambda coro, _name: asyncio.create_task(coro))
         monkeypatch.setattr(
             client,
@@ -418,8 +440,11 @@ def test_disconnect_reraises_first_handler_conversion_failure(monkeypatch):
             ),
         )
         await client._subscribe_channel("quotes", [INSTRUMENT_ID])
-        with pytest.raises(ValueError, match="nonnegative whole count"):
-            await client._disconnect()
+        try:
+            assert not stream._should_run
+        finally:
+            with pytest.raises(ValueError, match="nonnegative whole count"):
+                await client._disconnect()
 
     asyncio.run(check())
 
@@ -435,3 +460,137 @@ def test_trade_id_is_bounded_without_claiming_aggressor():
     tick = data._trade_tick(row, stock)
     assert str(tick.trade_id) == "D-" + "7" * 34
     assert tick.aggressor_side == AggressorSide.NO_AGGRESSOR
+
+
+@pytest.mark.parametrize("channel", ["trades", "bars"])
+def test_bad_stream_row_is_counted_and_later_quotes_reach_strategy(channel):
+    from nautilus_trader.core import dt_to_unix_nanos
+
+    strategy, stream, _history, client = asyncio.run(run_shell(bad_channel=channel))
+    quotes = [event for event, _ in strategy.events if isinstance(event, QuoteTick)]
+    assert [quote.ts_event for quote in quotes] == [
+        dt_to_unix_nanos(START),
+        dt_to_unix_nanos(START + timedelta(seconds=1)),
+    ]
+    assert sum(isinstance(event, TradeTick) for event, _ in strategy.events) == 1
+    assert sum(isinstance(event, Bar) for event, _ in strategy.events) == 1
+    assert client.dropped_trade_count == int(channel == "trades")
+    assert client.dropped_bar_count == int(channel == "bars")
+    assert stream.closed.is_set()
+
+
+def test_daily_bar_close_and_request_windows_across_both_dst_changes():
+    from nautilus_trader.core import dt_to_unix_nanos
+
+    daily = BarType.from_str(f"{INSTRUMENT_ID}-1-DAY-LAST-EXTERNAL")
+    spring_open = datetime(2026, 3, 8, 5, tzinfo=UTC)
+    spring_close = datetime(2026, 3, 9, 4, tzinfo=UTC)
+    fall_open = datetime(2026, 11, 1, 4, tzinfo=UTC)
+    fall_close = datetime(2026, 11, 2, 5, tzinfo=UTC)
+
+    class DailyHistory(StandInHistory):
+        def get_stock_bars(self, request: StockBarsRequest):
+            self.calls.append((request, threading.get_ident()))
+            assert request.start is not None and request.end is not None
+            rows = [
+                {**BAR, "t": opening}
+                for opening in (spring_open, fall_open)
+                if request.start <= opening.replace(tzinfo=None) <= request.end
+            ]
+            return BarSet({INSTRUMENT_ID.symbol.value: rows})
+
+    class DailyWitness(Witness):
+        def on_start(self):
+            self.request_bars(daily, spring_open, spring_close, callback=self.complete)
+            self.request_bars(daily, fall_open, fall_close, callback=self.complete)
+
+        def complete(self, request_id: str):
+            self.completed.append(request_id)
+            if len(self.completed) == 2:
+                self.finished.set()
+
+    async def check():
+        return await run_shell(
+            historical=True,
+            strategy=DailyWitness(),
+            history=DailyHistory(fail=False),
+        )
+
+    strategy, _stream, history, _client = asyncio.run(check())
+    windows = {
+        (request.start, request.end)
+        for request, _ in history.calls
+        if isinstance(request, StockBarsRequest) and request.timeframe.value == "1Day"
+    }
+    assert windows == {
+        (datetime(2026, 3, 7, 5), datetime(2026, 3, 8, 5)),
+        (datetime(2026, 10, 31, 4), datetime(2026, 11, 1, 4)),
+    }
+    closes = {dt_to_unix_nanos(spring_close), dt_to_unix_nanos(fall_close)}
+    bars = [event for event, _ in strategy.events if isinstance(event, Bar)]
+    assert len(bars) == 2
+    assert all(bar.bar_type == daily and bar.ts_event == bar.ts_init for bar in bars)
+    assert {bar.ts_event for bar in bars} == closes
+    assert {(response.start, response.end) for response in strategy.responses} == {
+        (dt_to_unix_nanos(spring_open), dt_to_unix_nanos(spring_close)),
+        (dt_to_unix_nanos(fall_open), dt_to_unix_nanos(fall_close)),
+    }
+
+
+def test_queued_quote_is_ignored_after_unsubscribe(monkeypatch):
+    from alpaca.data.models import Quote
+
+    from sextant.alpaca import data
+
+    async def check():
+        stream = data.AlpacaStockDataStream("fixture", "fixture")
+        provider = ProofProvider(InstrumentProviderConfig(load_all=True))
+        await provider.initialize()
+        client = offline_client(stream=stream, instrument_provider=provider)
+        published: list[object] = []
+
+        async def change_locally(_stream, change, *args):
+            await change(*args)
+
+        monkeypatch.setattr(client, "_change_subscription", change_locally)
+        monkeypatch.setattr(client, "_handle_data", published.append)
+        await client._subscribe_channel("quotes", [INSTRUMENT_ID])
+        symbol = INSTRUMENT_ID.symbol.value
+        callback = stream._handlers["quotes"][symbol]
+        quote = Quote(symbol, QUOTE)
+        await callback(quote)
+        await asyncio.sleep(0)
+        assert len(published) == 1
+
+        await client._unsubscribe_channel("quotes", [INSTRUMENT_ID])
+        await callback(quote)  # The already-dispatched callback can outlive SDK unregister.
+        await asyncio.sleep(0)
+        assert len(published) == 1
+
+    asyncio.run(check())
+
+
+def test_hosted_stream_skips_startup_after_disconnect():
+    from sextant.alpaca import data
+
+    class Stream(data.AlpacaStockDataStream):
+        started = False
+        closed = False
+
+        async def _run_forever(self):
+            self.started = True
+
+        async def close(self):
+            self.closed = True
+
+    async def check():
+        stream = Stream("fixture", "fixture")
+        client = offline_client(stream=stream)
+        await client._disconnect()
+        owner = asyncio.get_running_loop()
+        ready = owner.create_future()
+        await asyncio.to_thread(client._run_stream, stream, owner, ready)
+        assert ready.done() and stream.closed
+        assert not stream.started
+
+    asyncio.run(check())
