@@ -111,6 +111,10 @@ class Node:
 
     def deliver(self, generation: RankingGeneration | None) -> RankingGeneration | None:
         if generation is not None:  # the Actor's publish_data, then the heartbeat
+            if self.published:  # review F3: every adapter generation advances the lineage
+                last = self.published[-1].generation_id
+                assert generation.generation_id.producer_epoch == last.producer_epoch
+                assert generation.generation_id.sequence > last.sequence
             self.published.append(generation)
             data_type = ranking_data_type("sip")
             self.consumer.handle(CustomData(data_type, generation), now=self.now)
@@ -430,3 +434,25 @@ def test_the_adapter_drops_into_the_ranking_actor_on_a_backtest_node(tmp_path) -
     assert out["consumer"].reader.generation is last
     (penny,) = [row for row in last.rows if row.symbol == "PENNY"]
     assert penny.rank == 1 and penny.focus_eligible is True
+
+
+# --- Review round 1 F1-F3, checked on the adapter -----------------------------------------
+
+
+def test_every_generation_the_adapter_returns_advances_its_lineage() -> None:  # F3
+    node = Node()
+    node.warm()
+    raise_once(node)  # a failed publish and its veto, then recovery
+    for second in (361, 362, 363):
+        node.tick(second, "PENNY", "0.56")
+    node.deliver(node.host.set_coverage(replace(ready(3), state=CoverageState.DEGRADED)))
+    sequences = [g.generation_id.sequence for g in node.published]
+    assert sequences == sorted(set(sequences)) and len(sequences) > 10
+
+
+def test_a_setter_the_publisher_refuses_stores_nothing_and_raises_to_the_actor() -> None:  # F2
+    node = Node()
+    node.warm()
+    with pytest.raises(ValueError, match="outside supplied universe"):
+        node.host.set_symbol("OTHER", references=REFS, asset=GOOD)
+    assert "OTHER" not in node.publisher.assets  # nothing half-applied for the Actor to trust
