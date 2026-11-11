@@ -46,6 +46,10 @@ ENTRY_ROWS = {
 }
 
 
+# Paper B: LEAD-1501 requires recorded-session measurement before a reviewed value.
+# No deployment defaults. Tests inject rows in memory, never through the command.
+B_ENTRY_AGE_ROWS: tuple[RegistryRow, ...] = ()
+
 # The gate is an entry setting outside the generation registry and its hash.
 RANK_GATE_ENABLED = RegistryRow(
     name="rank_gate_enabled",
