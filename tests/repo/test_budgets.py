@@ -52,7 +52,13 @@ def test_src_stays_under_budget() -> None:
     # Then to 29,500 on 2026-11-10 under the lead's ruling LEAD-1303: main 81ac238 measured
     # 26,777 of 28,000; the unused-code inventory at 6ab5c48 with vulture 2.16 found 8 certain
     # and 3 probable removable lines; the built queue is about 28,860 without prestage part 3.
-    assert sum(_lines(path) for path in (ROOT / "src").rglob("*.py")) < 29500
+    # Then to 31,000 on 2026-11-10 under the lead's ruling LEAD-1925: main 06e7243 measured
+    # 27,901 of 29,500, 1,599 left, while the eight heads in flight against their own merge
+    # bases measure 2,404, so 30,305; 695 more covers the adapter's execution client and the
+    # review-fix rounds. This cap is interim, not the new normal: it ratchets down by the
+    # retired hand-built paper runners' lines at C's engine cutover and again at B's, and the
+    # tracking issue (#389) targets 29,500 or below after both.
+    assert sum(_lines(path) for path in (ROOT / "src").rglob("*.py")) < 31000
 
 
 def test_design_stays_short() -> None:
