@@ -185,6 +185,18 @@ def test_compose_mounts_the_alerting_directory_read_only_once():
     assert mounts == ["./alerting:/otel-lgtm/grafana/conf/provisioning/alerting:ro"]
 
 
+def test_compose_carries_the_live_god_view_mounts():
+    volumes = yaml.safe_load(COMPOSE.read_text(encoding="utf-8"))["services"]["lgtm"]["volumes"]
+    assert volumes[3:] == [
+        "./alerting:/otel-lgtm/grafana/conf/provisioning/alerting:ro",
+        "./provisioning/god-view.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/god-view.yaml:ro",
+        "./dashboards:/sextant-god-view:ro",
+        "./prometheus.yaml:/otel-lgtm/prometheus.yaml:ro",
+    ]
+    for source in ("provisioning/god-view.yaml", "prometheus.yaml"):
+        assert (COMPOSE.parent / source).is_file()
+
+
 def test_l7_leaves_staleness_to_the_grafana_rule():
     rules = L7_RULES.read_text(encoding="utf-8")
     assert "MonitorEvidenceStale" not in rules
