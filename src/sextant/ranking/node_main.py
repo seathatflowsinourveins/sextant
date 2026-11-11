@@ -50,6 +50,7 @@ class Arguments:
     duration_s: int
     receipt_dir: Path
     receipt_interval_s: int
+    bucket_window_s: int
     quotes: bool
     data: AlpacaDataClientConfig
 
@@ -90,6 +91,7 @@ def parse(argv: list[str] | None = None) -> tuple[Arguments, LeaseArguments]:
     required.add_argument("--duration-s", type=_positive, required=True)
     required.add_argument("--receipt-dir", type=Path, required=True)
     required.add_argument("--receipt-interval-s", type=_positive, required=True)
+    required.add_argument("--bucket-window-s", type=_positive, required=True)
     required.add_argument("--feed", required=True)
     required.add_argument("--api-key-env", required=True)
     required.add_argument("--api-secret-env", required=True)
@@ -107,6 +109,7 @@ def parse(argv: list[str] | None = None) -> tuple[Arguments, LeaseArguments]:
         raw.duration_s,
         raw.receipt_dir,
         raw.receipt_interval_s,
+        raw.bucket_window_s,
         raw.quotes,
         data,
     )
@@ -139,6 +142,7 @@ def build(
             instrument_ids=args.universe,
             receipt_path=args.receipt_dir / RECEIPT_NAME,
             receipt_interval_s=args.receipt_interval_s,
+            bucket_window_s=args.bucket_window_s,
             quotes=args.quotes,
         )
     )

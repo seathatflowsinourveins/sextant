@@ -36,6 +36,7 @@ def argv(tmp_path: Path, *drop: str, duration: str = "600") -> list[str]:
         "--duration-s": duration,
         "--receipt-dir": str(tmp_path / "receipts"),
         "--receipt-interval-s": "1",
+        "--bucket-window-s": "60",
         "--feed": "sip",
         "--api-key-env": "FIXTURE_KEY_NAME",
         "--api-secret-env": "FIXTURE_SECRET_NAME",
@@ -90,6 +91,7 @@ def test_a_missing_lease_is_refused(tmp_path) -> None:
         "--duration-s",
         "--receipt-dir",
         "--receipt-interval-s",
+        "--bucket-window-s",
         "--feed",
         "--api-key-env",
         "--api-secret-env",
@@ -111,9 +113,13 @@ def test_an_unknown_or_misspelled_option_is_refused(tmp_path) -> None:
         node_main.parse([*argv(tmp_path), "--universes", "x"])
 
 
-def test_the_command_takes_the_real_lease_which_refuses_slot_2_until_it_lands(tmp_path) -> None:
-    with pytest.raises(ValueError, match="slot"):
-        node_main.main(argv(tmp_path))
+def test_the_command_takes_the_real_lease_which_refuses_a_revoked_slot(tmp_path) -> None:
+    # Main #465 reserves slot 2 for the ranking stream, so slot 2 would start a real node; a
+    # proof never does. The real lease still refuses the revoked third slot before any start.
+    args = argv(tmp_path)
+    args[args.index("--paper-slot") + 1] = "3"
+    with pytest.raises(ValueError, match="slot 3 is revoked"):
+        node_main.main(args)
     assert not (tmp_path / "receipts").exists()
 
 
