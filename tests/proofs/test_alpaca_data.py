@@ -426,7 +426,7 @@ def test_disconnect_reraises_first_handler_failure(monkeypatch):
             self._should_run = True
             await asyncio.Future()
 
-        async def register(self, channel, symbols, handler):
+        async def register(self, channel, symbols, handler, updates=None):
             await handler(Quote(symbols[0], {**QUOTE, "bs": 1.5}))
             await handler(Quote("UNREGISTERED", QUOTE))
 
