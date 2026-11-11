@@ -76,11 +76,12 @@ class NodeRankingHost:
             self.ingress_errors += 1
             self.last_error = f"on_trade: {type(exc).__name__}"
             self.tainted.add(name)
-            # The engine never re-covers a prefix after the segment's first print
-            # (engine.py segment_covered), so the taint holds for the rest of the segment.
             state = publisher.states[name]
             publisher.states[name] = replace(state, latest=None, segment_covered=False)
             return self._publish(force=True)  # rule 1 withdraws that name's rank
+        state = publisher.states[name]
+        if name in self.tainted and state.segment_covered:  # a late print at the segment start
+            publisher.states[name] = replace(state, latest=None, segment_covered=False)  # (G2)
         return self._publish(force=False)
 
     def set_symbol(

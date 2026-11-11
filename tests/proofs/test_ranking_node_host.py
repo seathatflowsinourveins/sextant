@@ -456,3 +456,29 @@ def test_a_setter_the_publisher_refuses_stores_nothing_and_raises_to_the_actor()
     with pytest.raises(ValueError, match="outside supplied universe"):
         node.host.set_symbol("OTHER", references=REFS, asset=GOOD)
     assert "OTHER" not in node.publisher.assets  # nothing half-applied for the Actor to trust
+
+
+def test_the_taint_holds_after_a_late_print_at_the_segment_start() -> None:  # review G2
+    node = Node()
+    future = replace(REFS, known_at=START + NS)  # the first print raises: a future reference
+    node.deliver(node.host.set_symbol("PENNY", references=future, asset=GOOD))
+    node.tick(0, "PENNY")
+    assert node.host.tainted == {"PENNY"}
+    first = trade(START, "PENNY", "0.50")
+    late = TradeTick(  # the segment's first print again, received a second later
+        first.instrument_id,
+        first.price,
+        first.size,
+        first.aggressor_side,
+        first.trade_id,
+        START,
+        START + NS,
+    )
+    node.now = START + NS
+    node.deliver(node.host.on_trade(late))
+    for second in (60, 120, 180, 240, 300):
+        node.tick(second, "PENNY")
+    for second in (310, 320, 330, 340, 350, 360):
+        node.tick(second, "PENNY", "0.55")
+    state = node.publisher.states["PENNY"]
+    assert state.segment_covered is False and node.rank("PENNY") is None
