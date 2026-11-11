@@ -170,6 +170,19 @@ def test_landing_standard_and_fail_on_error_are_wired_into_the_verdict() -> None
     assert ".github/workflows/shared/review-rules.md" in adapter
 
 
+def test_every_blocking_finding_carries_an_executed_witness_or_the_static_label() -> None:
+    """The program lead's 2026-11-11 gate ruling: eight static findings, four did not reproduce."""
+    prompt = (WORKFLOWS / "review.md").read_text()
+    rules = (WORKFLOWS / "shared/review-rules.md").read_text()
+    for surface in (prompt, rules):
+        assert "executed witness" in surface
+        assert "static: no witness run" in surface
+    report = rules.split("## Report", 1)[1].split("## Two author families", 1)[0]
+    assert "states its evidence status" in report
+    assert "does not replace the witness" in report
+    assert "non-blocking" in report and "follow-up issue" in report
+
+
 def test_quality_verdict_runs_even_when_the_review_action_fails() -> None:
     """A failed action leaves no verdict; the verdict step still runs to name it."""
     for family in ("codex", "claude"):
