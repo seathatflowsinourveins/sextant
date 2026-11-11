@@ -180,7 +180,7 @@ class RankingActor(DataActor):
         self._halted: dict[str, bool | None] = {str(iid.symbol): None for iid in self._ids}
         self._watch_from: int | None = None  # node time the status subscription went active
         self._subscribed_at: int | None = None  # ... first, never moved by a reset (2e)
-        self.cleared_by_print = self.resets = self.stream_gaps = 0
+        self.cleared_by_print = self.cleared_by_status = self.resets = self.stream_gaps = 0
         snapshot = config.status_snapshot_window_s
         self._snapshot_ns = None if snapshot is None else snapshot * NS
         self.snapshot_statuses: dict[str, int] | None = None if snapshot is None else {}
@@ -351,6 +351,8 @@ class RankingActor(DataActor):
     ) -> None:
         if self.host is None or (self._halted[name] is halted and name not in self._veto):
             return
+        if stage == "instrument_status" and self._halted[name] is None and halted is False:
+            self.cleared_by_status += 1  # unknown left by a TRADING status, not by a print
         self._halted[name] = halted
         self._apply(name, halted, at, why, stage)
 
@@ -386,6 +388,7 @@ class RankingActor(DataActor):
             not_halted=sum(state is False for state in states),
             halted=sum(state is True for state in states),
             cleared_by_print=self.cleared_by_print,
+            cleared_by_status=self.cleared_by_status,
             resets=self.resets,
         )
 

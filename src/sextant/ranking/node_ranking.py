@@ -188,6 +188,7 @@ def build(
                 segment_of=segment_of,
                 clock=actor.clock.timestamp_ns,
                 receipt_dir=args.receipt_dir,
+                evidence=actor.evidence,
             )
         )
         return sessions[-1]
