@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from nautilus_trader.config import StrategyConfig
+from nautilus_trader.core import unix_nanos_to_dt
 from nautilus_trader.indicators import AverageTrueRange
 from nautilus_trader.model import (
     Bar,
@@ -287,6 +288,31 @@ class BLifecycle(Strategy):
             free = self._balance(book, "free")
             self.basis = store.freeze(key, free, first_read="node_start")  # N5's frozen basis
 
+    def _seed(self, book: _Book) -> None:
+        """The trail seed, asked once per wait when a trail is denied for want of a trade
+        (never at start: the node's 1,024-slot command queue, node_order.QUEUE): this session's
+        latest trade (limit 1) through the engine's request, so the RiskEngine can price the
+        trail before the next print (crates/risk/src/engine/mod.rs:2368-2391). The window is
+        this session (``session_start_ns``, b_width.completed_atr's scope); no age bound inside
+        it has a row, so the seed carries the trade's own timestamp."""
+        iid, now = book.instrument_id, self.clock.timestamp_ns()
+        if self.cache.trade(iid) is None:
+            start, end = unix_nanos_to_dt(session_start_ns(now)), unix_nanos_to_dt(now)
+            self.request_trades(iid, start=start, end=end, limit=1)
+
+    def on_historical_trades(self, trades: Sequence[TradeTick]) -> None:
+        """The seed's answer: the DataEngine caches it before this hook (crates/data/src/
+        engine/mod.rs:1946-1951, :1974-1981), so a trail denied for want of a trade is armed
+        now, as on the next print."""
+        for trade in trades:
+            book = self.books.get(trade.instrument_id)
+            if book is None:
+                continue
+            now = self.clock.timestamp_ns()
+            iid, price = str(trade.instrument_id), str(trade.price)
+            self._record(kind="trail_seed", ts=now, instrument=iid, price=price, at=trade.ts_event)
+            self._rearm(book, trade=True)
+
     @property
     def width_rows(self) -> Any:
         return self._config.width_rows
@@ -520,8 +546,9 @@ class BLifecycle(Strategy):
             self._record(kind="page", ts=event.ts_event, reason=page, order=str(cid))
         if priced:
             book.rearm = True
-        else:
+        elif not book.no_trade:  # a new wait: one seed request until a trade clears it
             book.no_trade = True
+            self._seed(book)
 
     def _rearm(self, book: _Book, trade: bool = False) -> None:
         """A trail the RiskEngine denied (its submit rate, or no price) is armed again on the
