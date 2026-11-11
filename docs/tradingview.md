@@ -394,7 +394,8 @@ omitted"); a map that resolves no name refuses. The map is built by
 official Read-only `search_symbols` once per directory name not yet in the map, as
 the earlier campaign took each exact symbol from that search. A name is mapped only
 when exactly one returned row is a `stock` whose qualified ticker equals the
-directory ticker. No match or several record `null` and are counted in
+directory ticker, whose `currency_logoid` is `country/US` and whose venue is not
+the BOATS overnight venue (lead ruling LEAD-0201). No match or several record `null` and are counted in
 `symbol_map.receipt.json`. A failed or quota-limited call stops the run, keeps the
 progress and records nothing for that name. No TradingView page states a prefix for
 each US listing venue, so none is derived from the Exchange code. The three display bounds

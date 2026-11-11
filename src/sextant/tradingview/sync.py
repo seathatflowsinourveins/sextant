@@ -38,6 +38,7 @@ AMBIGUOUS_TOOL_IDENTITY = "Ambiguous official tool identity"
 REPEATED_TOOLS_CURSOR = "Repeated tools/list cursor"
 INCOMPLETE_TOOL_DISCOVERY = "Incomplete tool discovery"
 TOOLS_UNAVAILABLE = "Required official watchlist tools unavailable"
+SEARCH_UNAVAILABLE = "Required official symbol search unavailable"
 RESEARCH_EXPIRED = "Research expired during sync; no further write"
 NON_DISPLAY_INPUT = "Non-display operation or incompatible official input schema"
 SESSION_REFUSED = "MCP session refused or interrupted; no automatic replay"
@@ -63,6 +64,7 @@ SAFE_STOP_MESSAGES = (
     REPEATED_TOOLS_CURSOR,
     INCOMPLETE_TOOL_DISCOVERY,
     TOOLS_UNAVAILABLE,
+    SEARCH_UNAVAILABLE,
     RESEARCH_EXPIRED,
     NON_DISPLAY_INPUT,
     SESSION_REFUSED,
@@ -242,6 +244,7 @@ class OfficialTools:
     # The admitted operations and their argument keys; a subclass names its own set.
     allowed: ClassVar[dict[str, set[str]]] = ALLOWED
     aliases: ClassVar[dict[str, str]] = WIRE
+    unavailable: ClassVar[str] = TOOLS_UNAVAILABLE
 
     def __init__(
         self,
@@ -292,7 +295,7 @@ class OfficialTools:
                 f"missing {', '.join(missing) or 'none'}"
             )
             raise SyncError(
-                TOOLS_UNAVAILABLE,
+                self.unavailable,
                 stage="tool list",
                 detail=detail,
             )

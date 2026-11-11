@@ -35,6 +35,7 @@ from sextant.tradingview.bars import build_universe
 from sextant.tradingview.host import load_symbol_map
 from sextant.tradingview.inputs import QUALIFIED
 from sextant.tradingview.sync import (
+    SEARCH_UNAVAILABLE,
     UNKNOWN_RESULT_ENVELOPE,
     OfficialTools,
     SyncError,
@@ -44,6 +45,12 @@ from sextant.tradingview.sync import (
 # "type_filter ... stock, etf, bond, forex, index, futures, or crypto" (MCP docs, search).
 STOCK = "stock"
 ROUTING = frozenset({"SMART", "IB", "IBKR", "ALPACA"})
+US = "country/US"
+# Blue Ocean ATS is an overnight venue, not a listing exchange: the 20:00-04:00 session
+# "uses the BOATS feed" (src/sextant/paper/b_feed.py:4-6, Alpaca 24/5 trading page read
+# 2026-11-09); docs/research/2026-11-06-legs-convergence.md:35 lists "Blue Ocean ATS" among
+# overnight venues.
+OVERNIGHT_VENUE = "BOATS"
 SAVE_EVERY = 50
 
 
@@ -51,32 +58,50 @@ class SymbolSearch(OfficialTools):
     """The official tools fence with one read-only operation and no namespaced alias."""
 
     allowed: ClassVar[dict[str, set[str]]] = {"search_symbols": {"query", "type_filter"}}
-    aliases: ClassVar[dict[str, str]] = {}
+    # The live wire name, read from the official tools list 2026-11-11 (lead, LEAD-0201).
+    aliases: ClassVar[dict[str, str]] = {"mcp-tv-search-symbols": "search_symbols"}
+    unavailable: ClassVar[str] = SEARCH_UNAVAILABLE
 
 
-def exact_match(ticker: str, rows: Any) -> tuple[str | None, list[str]]:
-    """The one exact stock listing for ``ticker``, or None with every exact candidate."""
-    if not isinstance(rows, list):
-        raise SyncError(UNKNOWN_RESULT_ENVELOPE, stage="tool call", detail=_shape(rows))
-    candidates = sorted(
+def exact_match(ticker: str, page: Any) -> tuple[str | None, list[str], bool]:
+    """The one US stock listing of ``ticker`` (lead ruling LEAD-0201, 2026-11-11).
+
+    Rows whose ticker equals ``ticker`` exactly, whose type is ``stock`` and whose
+    ``currency_logoid`` is ``country/US`` are kept; the BOATS overnight venue is dropped.
+    Exactly one survivor is mapped. Returns the mapping (or None), the survivors, and
+    whether dropping BOATS decided the name. A short page leaves the name unmapped.
+    """
+    if (
+        not isinstance(page, dict)
+        or set(page) != {"count", "symbols"}
+        or type(page["count"]) is not int
+        or not isinstance(page["symbols"], list)
+    ):
+        raise SyncError(UNKNOWN_RESULT_ENVELOPE, stage="tool call", detail=_shape(page))
+    rows = page["symbols"]
+    us = sorted(
         {
-            row["symbol"]
+            (row["symbol"], row.get("exchange"))
             for row in rows
             if isinstance(row, dict)
             and row.get("type") == STOCK
+            and row.get("currency_logoid") == US
             and isinstance(row.get("symbol"), str)
             and QUALIFIED.fullmatch(row["symbol"])
             and row["symbol"].split(":", 1)[1] == ticker
             and row["symbol"].split(":", 1)[0] not in ROUTING
         }
     )
-    return (candidates[0] if len(candidates) == 1 else None), candidates
-
-
-def _rows(value: Any) -> Any:
-    if isinstance(value, dict) and set(value) == {"symbols"}:
-        return value["symbols"]
-    raise SyncError(UNKNOWN_RESULT_ENVELOPE, stage="tool call", detail=_shape(value))
+    listed = sorted(
+        {
+            symbol
+            for symbol, exchange in us
+            if OVERNIGHT_VENUE not in (exchange, symbol.split(":")[0])
+        }
+    )
+    if page["count"] != len(rows) or len(listed) != 1:
+        return None, listed, False
+    return listed[0], listed, len({symbol for symbol, _ in us}) > 1
 
 
 async def resolve(
@@ -84,12 +109,13 @@ async def resolve(
     universe: Sequence[str],
     mapping: dict[str, str | None],
     *,
-    save: Callable[[dict[str, str | None], dict[str, list[str]]], None],
+    save: Callable[[dict[str, str | None], dict[str, list[str]], int], None],
     retry_unresolved: bool = False,
 ) -> dict[str, list[str]]:
     """Search every name not yet mapped; ``mapping`` is updated in place."""
     await tools.discover()
     ambiguous: dict[str, list[str]] = {}
+    decided = 0
     pending = [
         name
         for name in universe
@@ -98,13 +124,14 @@ async def resolve(
     try:
         for count, name in enumerate(pending, 1):
             result = await tools.call("search_symbols", {"query": name, "type_filter": STOCK})
-            mapping[name], candidates = exact_match(name, _rows(result))
+            mapping[name], candidates, by_boats = exact_match(name, result)
+            decided += by_boats
             if len(candidates) > 1:
                 ambiguous[name] = candidates
             if count % SAVE_EVERY == 0:
-                save(mapping, ambiguous)
+                save(mapping, ambiguous, decided)
     finally:
-        save(mapping, ambiguous)
+        save(mapping, ambiguous, decided)
     return ambiguous
 
 
@@ -129,7 +156,7 @@ async def build(
     receipt_path = symbol_map.with_name(symbol_map.stem + ".receipt.json")
     receipt: dict[str, Any] = {}
 
-    def save(current: dict[str, str | None], ambiguous: dict[str, list[str]]) -> None:
+    def save(current: dict[str, str | None], ambiguous: dict[str, list[str]], boats: int) -> None:
         kept = {name: current[name] for name in universe if name in current}
         if kept:
             write_atomic(symbol_map, kept)
@@ -138,12 +165,16 @@ async def build(
             {
                 "schema": "sextant.tv-symbol-map-receipt/1",
                 "written_at": now().isoformat(),
-                "source": "official MCP search_symbols, exact ticker, type stock, one listing",
+                "source": (
+                    "official MCP search_symbols; exact ticker, type stock, country/US, "
+                    "BOATS dropped, exactly one listing (LEAD-0201)"
+                ),
                 "universe": len(universe),
                 "searched_or_cached": len(kept),
                 "mapped": sum(value is not None for value in kept.values()),
                 "unresolved": sorted(name for name, value in kept.items() if value is None),
                 "ambiguous_this_run": ambiguous,
+                "boats_decided_this_run": boats,
             }
         )
         write_atomic(receipt_path, receipt)
