@@ -358,6 +358,7 @@ AFTER = "2026-11-11T15:35:12Z"
 @pytest.mark.parametrize(
     "markers", [("-", "-"), ("+", "+"), ("*", "*"), ("1.", "2."), ("1)", "2)")]
 )
+@pytest.mark.parametrize("indent", ["", " ", "  ", "   "])
 @pytest.mark.parametrize(
     ("clock", "missing"),
     [
@@ -367,9 +368,12 @@ AFTER = "2026-11-11T15:35:12Z"
     ],
 )
 def test_all_commonmark_markers_separate_mechanism_evidence(
-    markers: tuple[str, str], clock: str, missing: str
+    markers: tuple[str, str], indent: str, clock: str, missing: str
 ) -> None:
-    sources = f"{markers[0]} Client: {PIN} src/client.py:12 BUILD ON\n{markers[1]} Clock: {clock}"
+    sources = (
+        f"{indent}{markers[0]} Client: {PIN} src/client.py:12 BUILD ON\n"
+        f"{indent}{markers[1]} Clock: {clock}"
+    )
     found = _failures(
         _body(sources=sources), created=("src/sextant/ranking/client.py",), created_at=AFTER
     )
@@ -467,7 +471,8 @@ PR_594_SOURCES = """\
 - Native cancel/resubmit: BUILD ON nautechsystems/nautilus_trader@v2.0.0rc8
   `d53849b216e20f2c122ca01b4dd0da377638b186`:
   - `crates/model/src/orders/mod.rs:1313-1320`;
-  - `crates/trading/src/examples/strategies/grid_mm/strategy.rs:249-258` (the official example cancels and resubmits).
+  - `crates/trading/src/examples/strategies/grid_mm/strategy.rs:249-258`
+    (the official example cancels and resubmits).
   - ADR-0007:17, :25, :50; LEAD-2201 B3(a); UPSTREAM-PORT-PLAN-PROTECT.md P1 and P6.
 - Broker orders: USE AS IS https://docs.alpaca.markets/docs/orders, read 2026-11-11:
   - `docs-saved/alpaca-orders.md:165`.
@@ -481,7 +486,8 @@ PR_598_SOURCES = """\
   - `crates/adapters/interactive_brokers/src/execution/transform/tags.rs:30-51`;
   - `docs/integrations/interactive_brokers.md:418-428`.
   - Sextant main `src/sextant/exits/engine.py:303-330`; ADR-0007:17, :27; ADR-0005:34.
-  - seathatflowsinourveins/northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa `strategies/base.py:2186-2189`.
+  - seathatflowsinourveins/northstar-trading@8256c16c31dcb8e53fc726e0c1c77dc2c8d0d4fa
+    `strategies/base.py:2186-2189`.
 """
 
 
