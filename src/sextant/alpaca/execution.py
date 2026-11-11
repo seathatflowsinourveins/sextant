@@ -76,8 +76,9 @@ _FIELDS |= {"client_order_id", "submitted_at", "replaces", "replaced_by", "side"
 
 
 def _reason(error: BaseException) -> str | None:
-    if isinstance(error, KeyError) and error.args and error.args[0] in _FIELDS:
-        return f"missing field {error.args[0]}"
+    key = error.args[0] if isinstance(error, KeyError) and error.args else None
+    if isinstance(key, str) and key in _FIELDS:  # Args may be unhashable.
+        return f"missing field {key}"
     text = str(error) if type(error).__module__.startswith(("sextant.", "builtins")) else ""
     return text[:200] if text.startswith(_REASONS) else None
 
@@ -93,16 +94,19 @@ def _traced(stage: str):
             try:
                 return await method(self, command)
             except Exception as exc:
-                failures = exc.failures if isinstance(exc, IncompleteCoverage) else []
-                first = failures[0][1] if failures else exc
-                status = getattr(first, "status_code", None)
-                entry.update(
-                    error=type(exc).__name__,
-                    first=type(first).__name__,
-                    status=status if isinstance(status, int) else None,
-                    failures=len(failures) or 1,
-                    reason=_reason(first),
-                )
+                entry.update(error=type(exc).__name__, failures=1)
+                try:  # Best effort: the recorder never replaces the generator's exception.
+                    failures = exc.failures if isinstance(exc, IncompleteCoverage) else []
+                    first = failures[0][1] if failures else exc
+                    status = getattr(first, "status_code", None)
+                    entry.update(
+                        first=type(first).__name__,
+                        status=status if isinstance(status, int) else None,
+                        failures=len(failures) or 1,
+                        reason=_reason(first),
+                    )
+                except Exception as fault:
+                    entry["recorder_error"] = type(fault).__name__
                 raise
             finally:
                 _STAGE.reset(token)
@@ -504,14 +508,22 @@ class AlpacaExecutionClient(ExecutionClient):
     async def _call(self, kind, method, path, data=None, **kwargs) -> Any:
         if self.gateway is None:
             raise RuntimeError("account gateway is disconnected")
-        stage = _STAGE.get()
-        if stage is None:
-            return await self.gateway.call(kind, method, path, data, **kwargs)
-        name = "/orders/{id}" if path.startswith("/orders/") else path  # Never an id.
-        count = self.report_trace[stage]["requests"].setdefault(name, {"requests": 0, "rows": 0})
-        count["requests"] += 1
+        stage, count = _STAGE.get(), None
+        try:  # Best effort: counting never changes the call's result or exception.
+            if stage is not None:
+                name = "/orders/{id}" if path.startswith("/orders/") else path  # Never an id.
+                count = self.report_trace[stage]["requests"].setdefault(
+                    name, {"requests": 0, "rows": 0}
+                )
+                count["requests"] += 1
+        except Exception:
+            count = None
         result = await self.gateway.call(kind, method, path, data, **kwargs)
-        count["rows"] += len(result) if isinstance(result, list) else 1
+        if count is not None:
+            try:
+                count["rows"] += len(result) if isinstance(result, list) else 1
+            except Exception:
+                count["rows"] = None
         return result
 
     def _instrument_id(self, row):

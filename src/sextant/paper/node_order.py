@@ -37,7 +37,7 @@ import os
 import sys
 import threading
 from collections.abc import Callable, Mapping
-from contextlib import ExitStack
+from contextlib import ExitStack, suppress
 from dataclasses import dataclass, field, replace
 from decimal import Decimal
 from pathlib import Path
@@ -638,17 +638,23 @@ def startup_cause(clients: list[Any]) -> dict[str, Any] | None:
     """The client's per-stage startup trace (counts, classes, status, our own reason texts),
     when a stage failed: the engine logs only "Failed to get mass status" (FAILED-START-1.md).
     One ERROR line goes to the unit's output; no value is in either."""
-    trace = {k: v for client in clients for k, v in getattr(client, "report_trace", {}).items()}
-    failed = {stage: entry for stage, entry in trace.items() if "error" in entry}
-    if not failed:
-        return None
-    parts = [
-        f"stage={stage} error={e['error']} first={e['first']} status={e['status']} "
-        f"failures={e['failures']} reason={e['reason']!r} requests="
-        + ",".join(f"{k}:{v['requests']}/{v['rows']}" for k, v in e["requests"].items())
-        for stage, e in failed.items()
-    ]
-    print(f"order node ERROR startup reconciliation failed: {'; '.join(parts)}", file=sys.stderr)
+    try:  # Best effort: the recorder never replaces the run's own failure or its receipt.
+        trace = {k: v for c in clients for k, v in getattr(c, "report_trace", {}).items()}
+        failed = {stage: entry for stage, entry in trace.items() if "error" in entry}
+        if not failed:
+            return None
+        parts = [
+            f"stage={stage} error={e['error']} first={e.get('first')} status={e.get('status')} "
+            f"failures={e.get('failures')} reason={e.get('reason')!r} requests="
+            + ",".join(f"{k}:{v.get('requests')}/{v.get('rows')}" for k, v in e["requests"].items())
+            for stage, e in failed.items()
+        ]
+        line = f"order node ERROR startup reconciliation failed: {'; '.join(parts)}"
+    except Exception as fault:
+        trace = {"recorder_error": type(fault).__name__}
+        line = f"order node ERROR startup reconciliation failed: {trace}"
+    with suppress(Exception):
+        print(line, file=sys.stderr)
     return trace
 
 
