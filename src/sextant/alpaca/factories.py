@@ -11,7 +11,9 @@ instrument provider: the venue's instruments reach the engine through the data
 client. ``AccountType.MARGIN`` and ``OmsType.NETTING`` are the template's
 execution settings, and margin is the Alpaca lane in ADR-0008 B1. Credentials
 arrive only as environment-variable names from the adapter config; the
-``TradingClient`` is built inside the provider's first load.
+``TradingClient`` is built inside the provider's first load. It is always
+constructed with ``paper=True`` (alpaca-py ``alpaca/trading/client.py:80-82``
+picks the live base URL only for ``paper=False``): this adapter has one home.
 """
 
 from __future__ import annotations
@@ -37,7 +39,7 @@ def trading_client(
     return TradingClient(
         api_key=resolve_credential(config.api_key_env),
         secret_key=resolve_credential(config.api_secret_env),
-        paper=config.paper,
+        paper=True,
     )
 
 

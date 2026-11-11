@@ -22,7 +22,7 @@ import alpaca
 import pytest
 from alpaca.data.enums import DataFeed
 from alpaca.trading import client as alpaca_client_module
-from alpaca.trading.enums import AssetClass, AssetStatus
+from alpaca.trading.enums import AssetClass
 from alpaca.trading.models import Asset
 from alpaca.trading.requests import GetAssetsRequest
 from nautilus_trader.config import InstrumentProviderConfig
@@ -36,6 +36,8 @@ from nautilus_trader.model import (
     Symbol,
     TraderId,
     Venue,
+    get_tick_scheme,
+    list_tick_schemes,
 )
 
 import sextant.alpaca
@@ -51,10 +53,22 @@ def _asset(
     *,
     increment: float | None = 0.01,
     tradable: bool = True,
+    shortable: bool = True,
+    easy_to_borrow: bool = True,
+    marginable: bool = True,
+    fractionable: bool = True,
 ) -> Asset:
     return cast(
         Asset,
-        SimpleNamespace(symbol=symbol, price_increment=increment, tradable=tradable),
+        SimpleNamespace(
+            symbol=symbol,
+            price_increment=increment,
+            tradable=tradable,
+            shortable=shortable,
+            easy_to_borrow=easy_to_borrow,
+            marginable=marginable,
+            fractionable=fractionable,
+        ),
     )
 
 
@@ -86,6 +100,23 @@ def _provider(
     )
 
 
+_KEY_ENV = "ALPACA_API_KEY"
+_SECRET_ENV = "ALPACA_SECRET_KEY"  # noqa: S105 - a variable name, not a secret
+
+
+def _data_config(**kwargs: Any) -> AlpacaDataClientConfig:
+    kwargs.setdefault("api_key_env", _KEY_ENV)
+    kwargs.setdefault("api_secret_env", _SECRET_ENV)
+    return AlpacaDataClientConfig(**kwargs)
+
+
+def _exec_config(**kwargs: Any) -> AlpacaExecutionClientConfig:
+    kwargs.setdefault("api_key_env", _KEY_ENV)
+    kwargs.setdefault("api_secret_env", _SECRET_ENV)
+    kwargs.setdefault("account_id", "ALPACA-002")
+    return AlpacaExecutionClientConfig(**kwargs)
+
+
 def test_the_adapter_package_does_not_shadow_alpaca_py() -> None:
     assert sextant.alpaca is not alpaca
     assert sys.modules["alpaca"] is alpaca
@@ -102,12 +133,11 @@ def test_the_data_config_holds_environment_names_not_secret_values(
 ) -> None:
     monkeypatch.setenv("ALPACA_API_KEY", "dummy-key-value")
     monkeypatch.setenv("ALPACA_SECRET_KEY", "dummy-secret-value")
-    config = AlpacaDataClientConfig()
+    config = _data_config()
     assert (config.api_key_env, config.api_secret_env) == (
         "ALPACA_API_KEY",
         "ALPACA_SECRET_KEY",
     )
-    assert config.paper is True
     assert config.feed == "sip"
     body = config.dict()
     assert body["api_key_env"] == "ALPACA_API_KEY"
@@ -117,55 +147,45 @@ def test_the_data_config_holds_environment_names_not_secret_values(
 
 def test_the_data_config_accepts_the_vendor_feeds_and_refuses_an_unknown_one() -> None:
     for feed in DataFeed:
-        assert AlpacaDataClientConfig(feed=feed.value).feed == feed.value
+        assert _data_config(feed=feed.value).feed == feed.value
     with pytest.raises(ValueError, match="feed"):
-        AlpacaDataClientConfig(feed="tape")
+        _data_config(feed="tape")
 
 
 def test_the_data_config_passes_common_fields_to_the_native_base() -> None:
     provider = InstrumentProviderConfig(load_ids=["AAPL.ALPACA"])
-    config = AlpacaDataClientConfig(instrument_provider=provider, feed="iex")
+    config = _data_config(instrument_provider=provider, feed="iex")
     assert config.instrument_provider.load_ids == ["AAPL.ALPACA"]
     assert config.feed == "iex"
     assert config.dict()["feed"] == "iex"
 
 
 def test_the_execution_config_holds_the_account_identity_and_environment_names() -> None:
-    config = AlpacaExecutionClientConfig(account_id="ALPACA-002", paper=False)
+    config = _exec_config()
     assert config.account_id == "ALPACA-002"
-    assert config.paper is False
     body = config.dict()
     assert body["account_id"] == "ALPACA-002"
     assert body["api_key_env"] == "ALPACA_API_KEY"
 
 
-def test_an_asset_becomes_an_alpaca_equity_with_the_vendor_tick() -> None:
+def test_an_asset_becomes_an_alpaca_equity_on_the_tiered_tick() -> None:
     equity = parse_equity(_asset("AAPL", increment=0.01), ts_init=11)
     assert equity.id == InstrumentId.from_str("AAPL.ALPACA")
     assert equity.raw_symbol == Symbol("AAPL")
-    assert equity.price_precision == 2
-    assert equity.price_increment == Price.from_str("0.01")
+    assert equity.price_precision == 4
+    assert equity.price_increment == Price.from_str("0.0001")
     assert equity.ts_event == 11
     assert equity.ts_init == 11
     assert equity.quote_currency == Currency.from_str("USD")
+    assert equity.tick_scheme == "ALPACA_US_EQUITY"
 
 
-def test_a_sub_penny_asset_keeps_its_vendor_increment() -> None:
-    equity = parse_equity(_asset("PENNY", increment=0.0001), ts_init=11)
+@pytest.mark.parametrize("increment", [0.01, 0.0001, None, 0.0])
+def test_every_equity_uses_the_same_tiered_grid(increment: float | None) -> None:
+    equity = parse_equity(_asset("PENNY", increment=increment), ts_init=11)
     assert equity.price_precision == 4
     assert equity.price_increment == Price.from_str("0.0001")
-
-
-def test_a_missing_asset_tick_falls_back_to_the_n4_sub_dollar_tick() -> None:
-    equity = parse_equity(_asset("PENNY", increment=None), ts_init=11)
-    assert equity.price_precision == 4
-    assert equity.price_increment == Price.from_str("0.0001")
-
-
-def test_a_non_positive_asset_tick_falls_back_to_the_n4_sub_dollar_tick() -> None:
-    equity = parse_equity(_asset("AAPL", increment=0.0), ts_init=11)
-    assert equity.price_precision == 4
-    assert equity.price_increment == Price.from_str("0.0001")
+    assert equity.tick_scheme == "ALPACA_US_EQUITY"
 
 
 def test_the_provider_loads_the_requested_ids_through_the_asset_lookup() -> None:
@@ -189,19 +209,6 @@ def test_the_provider_defers_the_trading_client_until_the_first_load() -> None:
     assert created == [fake]
     asyncio.run(provider.initialize())
     assert created == [fake]
-
-
-def test_the_provider_loads_all_active_us_equities_and_skips_untradable_assets() -> None:
-    fake = FakeTradingClient(
-        {"AAPL": _asset("AAPL"), "DEAD": _asset("DEAD", tradable=False)},
-    )
-    provider = _provider(fake, InstrumentProviderConfig(load_all=True))
-    asyncio.run(provider.initialize())
-    assert fake.calls == ["get_all_assets"]
-    request = fake.bulk_requests[0]
-    assert request.status is AssetStatus.ACTIVE
-    assert request.asset_class is AssetClass.US_EQUITY
-    assert [str(instrument.id) for instrument in provider.list_all()] == ["AAPL.ALPACA"]
 
 
 def test_the_data_factory_builds_a_lazy_alpaca_client_with_our_provider(
@@ -264,10 +271,7 @@ def test_the_data_factory_names_the_missing_environment_variable(
 
 
 def test_the_execution_factory_builds_a_margin_netting_alpaca_client() -> None:
-    config = AlpacaExecutionClientConfig(
-        account_id="ALPACA-002",
-        paper=False,
-    )
+    config = _exec_config()
     client = factories.AlpacaExecutionClientFactory.create(
         name="ALPACA",
         config=config,
@@ -287,7 +291,7 @@ def test_the_execution_factory_builds_a_margin_netting_alpaca_client() -> None:
 def test_the_execution_client_connect_refuses_until_execution_lands() -> None:
     client = factories.AlpacaExecutionClientFactory.create(
         name="ALPACA",
-        config=AlpacaExecutionClientConfig(),
+        config=_exec_config(),
         cache=cast("Any", None),
         clock=cast("Any", None),
         trader_id=TraderId("ALPACA-001"),
@@ -308,7 +312,7 @@ def test_the_data_client_connect_initializes_the_provider_and_publishes_instrume
 
     client = RecordingClient(
         name="ALPACA",
-        config=AlpacaDataClientConfig(instrument_provider=provider_config),
+        config=_data_config(instrument_provider=provider_config),
         cache=cast("Any", None),
         clock=cast("Any", None),
         venue=constants.VENUE,
@@ -321,7 +325,7 @@ def test_the_data_client_connect_initializes_the_provider_and_publishes_instrume
 def test_the_data_client_refuses_to_connect_without_an_instrument_provider() -> None:
     client = AlpacaDataClient(
         name="ALPACA",
-        config=AlpacaDataClientConfig(),
+        config=_data_config(),
         cache=cast("Any", None),
         clock=cast("Any", None),
         venue=constants.VENUE,
@@ -335,7 +339,7 @@ def test_the_data_client_still_refuses_every_unbuilt_subscription() -> None:
     provider = _provider(fake, InstrumentProviderConfig(load_ids=["AAPL.ALPACA"]))
     client = AlpacaDataClient(
         name="ALPACA",
-        config=AlpacaDataClientConfig(
+        config=_data_config(
             instrument_provider=InstrumentProviderConfig(load_ids=["AAPL.ALPACA"]),
         ),
         cache=cast("Any", None),
@@ -349,4 +353,108 @@ def test_the_data_client_still_refuses_every_unbuilt_subscription() -> None:
 
 def test_an_unknown_adapter_field_is_refused() -> None:
     with pytest.raises(TypeError):
-        AlpacaDataClientConfig(feed="sip", self_invented_field=1)  # type: ignore[call-arg]
+        _data_config(self_invented_field=1)
+
+
+def test_the_live_endpoint_switch_cannot_be_built() -> None:
+    """Paper is this adapter's only home; a live switch is not a config value."""
+    with pytest.raises(TypeError, match="paper"):
+        AlpacaDataClientConfig(
+            api_key_env="ALPACA_API_KEY",
+            api_secret_env="ALPACA_SECRET_KEY",  # noqa: S106 - a variable name, not a secret
+            paper=False,
+        )
+    with pytest.raises(TypeError, match="paper"):
+        AlpacaExecutionClientConfig(
+            api_key_env="ALPACA_API_KEY",
+            api_secret_env="ALPACA_SECRET_KEY",  # noqa: S106 - a variable name, not a secret
+            account_id="ALPACA-002",
+            paper=False,
+        )
+
+
+def test_the_key_names_and_the_account_identity_are_required() -> None:
+    with pytest.raises(TypeError):
+        AlpacaDataClientConfig()  # type: ignore[call-arg]
+    with pytest.raises(TypeError):
+        AlpacaDataClientConfig(api_key_env="ALPACA_API_KEY")  # type: ignore[call-arg]
+    with pytest.raises(TypeError):
+        AlpacaExecutionClientConfig(
+            api_key_env="ALPACA_API_KEY",
+            api_secret_env="ALPACA_SECRET_KEY",  # noqa: S106 - a variable name, not a secret
+        )  # type: ignore[call-arg]
+    with pytest.raises(ValueError, match="ALPACA"):
+        AlpacaExecutionClientConfig(
+            api_key_env="ALPACA_API_KEY",
+            api_secret_env="ALPACA_SECRET_KEY",  # noqa: S106 - a variable name, not a secret
+            account_id="XNAS-002",
+        )
+
+
+def test_the_provider_loads_every_us_equity_including_untradable_ones() -> None:
+    fake = FakeTradingClient(
+        {"AAPL": _asset("AAPL"), "DEAD": _asset("DEAD", tradable=False)},
+    )
+    provider = _provider(fake, InstrumentProviderConfig(load_all=True))
+    asyncio.run(provider.initialize())
+    assert fake.calls == ["get_all_assets"]
+    request = fake.bulk_requests[0]
+    assert request.status is None
+    assert request.asset_class is AssetClass.US_EQUITY
+    assert [str(instrument.id) for instrument in provider.list_all()] == [
+        "AAPL.ALPACA",
+        "DEAD.ALPACA",
+    ]
+
+
+def test_the_equity_carries_the_vendor_asset_flags() -> None:
+    equity = parse_equity(
+        _asset(
+            "AAPL",
+            tradable=True,
+            shortable=False,
+            easy_to_borrow=False,
+            marginable=True,
+            fractionable=False,
+        ),
+        ts_init=11,
+    )
+    info = dict(equity.info)
+    assert info["tradable"] is True
+    assert info["shortable"] is False
+    assert info["easy_to_borrow"] is False
+    assert info["marginable"] is True
+    assert info["fractionable"] is False
+
+
+def test_the_provider_logs_what_it_still_skips() -> None:
+    fake = FakeTradingClient({"": _asset("")})
+    provider = _provider(fake, InstrumentProviderConfig(load_all=True))
+    warnings: list[str] = []
+    provider._log = cast(
+        "Any",
+        SimpleNamespace(warning=warnings.append),
+    )
+    asyncio.run(provider.initialize())
+    assert provider.list_all() == []
+    assert len(warnings) == 1
+    assert "Skipped 1" in warnings[0]
+    assert "symbol" in warnings[0]
+
+
+def test_every_equity_carries_the_alpaca_tiered_tick_scheme() -> None:
+    equity = parse_equity(_asset("AAPL", increment=0.01), ts_init=11)
+    assert equity.price_precision == 4
+    assert equity.price_increment == Price.from_str("0.0001")
+    assert equity.tick_scheme == "ALPACA_US_EQUITY"
+    assert "ALPACA_US_EQUITY" in list_tick_schemes()
+    scheme = get_tick_scheme("ALPACA_US_EQUITY")
+    assert scheme.price_precision == 4
+
+
+def test_the_tiered_tick_scheme_keeps_sub_penny_below_one_dollar() -> None:
+    equity = parse_equity(_asset("PENNY", increment=0.0001), ts_init=11)
+    assert equity.next_ask_price(0.5, 1) == Price.from_str("0.5001")
+    assert equity.next_ask_price(1.23, 1) == Price.from_str("1.2400")
+    assert equity.next_bid_price(1.23, 1) == Price.from_str("1.2200")
+    assert equity.next_ask_price(250, 1) == Price.from_str("250.0100")

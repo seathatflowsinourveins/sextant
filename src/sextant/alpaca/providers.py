@@ -1,4 +1,4 @@
-"""Alpaca instrument provider: assets by id, or every active US equity.
+"""Alpaca instrument provider: assets by id, or every US equity.
 
 Follows nautilus_trader@d53849b216e20f2c122ca01b4dd0da377638b186
 ``examples/live/_template/providers.py`` and
@@ -7,9 +7,10 @@ holds configuration and local state only, and all network work starts inside the
 async load hooks. alpaca-py 0.44.0 ``TradingClient.get_asset`` and
 ``get_all_assets`` are blocking ``requests.Session`` calls, so each one runs
 through ``asyncio.to_thread`` instead of stalling the node loop. The bulk load
-asks the vendor for active US equities and skips rows it marks untradable
-(``docs/concepts/instruments/equity.md``: the equity instrument is a Nautilus
-instrument, not a venue filter).
+asks the vendor for every US equity and adds each parseable row, tradable or
+not: an open order or position whose instrument was skipped cannot be reconciled
+(``docs/developer_guide/python_adapters.md``, "Reconciliation"). A row without a
+symbol is the only remaining skip, and it is logged.
 """
 
 from __future__ import annotations
@@ -20,7 +21,7 @@ from collections.abc import Callable
 from typing import cast, override
 
 from alpaca.trading.client import TradingClient
-from alpaca.trading.enums import AssetClass, AssetStatus
+from alpaca.trading.enums import AssetClass
 from alpaca.trading.models import Asset
 from alpaca.trading.requests import GetAssetsRequest
 from nautilus_trader.config import InstrumentProviderConfig
@@ -55,20 +56,24 @@ class AlpacaInstrumentProvider(InstrumentProvider):
 
     @override
     async def load_all_async(self, filters: dict | None = None) -> None:
-        """Load every active US-equity asset that Alpaca marks tradable."""
+        """Load every US-equity asset, tradable or not, from Alpaca."""
         client = self._trading_client()
-        request = GetAssetsRequest(
-            status=AssetStatus.ACTIVE,
-            asset_class=AssetClass.US_EQUITY,
-        )
+        request = GetAssetsRequest(asset_class=AssetClass.US_EQUITY)
         assets = cast(
             "list[Asset]",
             await asyncio.to_thread(client.get_all_assets, request),
         )
         ts_init = time.time_ns()
+        skipped = 0
         for asset in assets:
-            if asset.tradable:
-                self.add(parse_equity(asset, ts_init=ts_init))
+            if not asset.symbol:
+                skipped += 1
+                continue
+            self.add(parse_equity(asset, ts_init=ts_init))
+        if skipped:
+            self._log.warning(
+                f"Skipped {skipped} Alpaca asset(s) without a symbol",
+            )
 
     @override
     async def load_ids_async(
