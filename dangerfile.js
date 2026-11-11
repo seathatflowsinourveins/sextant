@@ -78,6 +78,44 @@ if (pr.user.login !== "dependabot[bot]") {
 }
 
 const changed = [...danger.git.created_files, ...danger.git.modified_files, ...(danger.git.deleted_files ?? [])];
+// BUILD ON danger/danger-js@14.1.0 72540533c4f99bad772ba303be0eb4af6eddbdc4
+// source/dsl/GitHubDSL.ts:202: pr.created_at is the API creation instant.
+// https://docs.github.com/en/rest/pulls/pulls#get-a-pull-request, read 2026-11-11.
+// #597's cutover is fixed: existing PRs keep their original source requirements.
+const UPSTREAM_FIRST_CUTOVER = "2026-11-11T15:35:11Z";
+if (
+  pr.user.login !== "dependabot[bot]" &&
+  changed.some((path) => path.startsWith("src/sextant/")) &&
+  Date.parse(pr.created_at) > Date.parse(UPSTREAM_FIRST_CUTOVER)
+) {
+  // Keep each paragraph/list item/table row's evidence together. Brief-style Verdict and
+  // Where searched fields continue the entry; a table's heading/separator is not evidence.
+  const entries = sources
+    .replace(/^[ \t]*\|[^\n]*\n[ \t]*\|[ \t:|\-]+\|[ \t]*$/gm, "")
+    .split(/\n[ \t]*\n|\n(?=[ \t]*(?:[-*]|\d+\.)[ \t]+(?![ \t]*(?:Verdict|Where searched):))|\n(?=[ \t]*\|)/i)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  for (const [index, entry] of (entries.length ? entries : [""]).entries()) {
+    const missing = [];
+    if (!repoAtCommit.test(entry) && !docsWithDate.test(entry)) {
+      missing.push("a pinned source (repo@tag with full commit SHA, or docs page with read YYYY-MM-DD)");
+    }
+    if (!/(?:^|[\s`(|])[\w./-]+:[1-9]\d*\b/.test(entry)) missing.push("path:line at that pin");
+    // Same verdict and field vocabulary as scripts/brief_check.py:11-12.
+    if (!/\b(use as is|build on|keep ours)\b/i.test(entry)) {
+      missing.push("a verdict (USE AS IS / BUILD ON / KEEP OURS)");
+    }
+    if (/\bkeep ours\b/i.test(entry) && !/\bWhere searched:[ \t]*\S[^\n]*/i.test(entry)) {
+      missing.push("Where searched: paths and search terms for KEEP OURS");
+    }
+    if (missing.length) {
+      fail(
+        "Never self-invent: post-cutover src PRs need Upstream references for each mechanism; " +
+          `entry ${index + 1} is missing ${missing.join("; ")}.`,
+      );
+    }
+  }
+}
 const touchesStrategy = changed.some((path) => path.startsWith("src/sextant/strategies/"));
 if (touchesStrategy && !repoAtCommit.test(sources) && !paper.test(sources)) {
   fail("Never self-invent: a strategy starts from an upstream template at a pinned commit or a cited paper.");
