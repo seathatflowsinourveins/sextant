@@ -198,10 +198,13 @@ def test_dsh_skills_go_to_its_own_home_and_the_bundle_through_dsh(
         row["spec"] for row in quality["plugins"] if row["package"] == "dsh-goalloop-agentteams"
     )
     shim = str(repository / "config/dsh/review-cmd")
+    autofix = next(
+        row["spec"] for row in quality["plugins"] if row["package"] == "dsh-test-autofix"
+    )
     assert log.read_text().splitlines() == [
         f"plugin --profile acp add --save-exact {repository}/config/dsh/mcp {goalloop} {shim}",
         f"plugin --profile headless add --save-exact {repository}/config/dsh/mcp {goalloop} {shim}",
-        f"plugin --profile dsh-tui add --save-exact {goalloop} {shim}",
+        f"plugin --profile dsh-tui add --save-exact {goalloop} {shim} {autofix}",
     ]
 
 
@@ -806,10 +809,13 @@ def test_dsh_plugin_initializes_a_shipped_profile_that_never_ran(
         row["spec"] for row in quality["plugins"] if row["package"] == "dsh-goalloop-agentteams"
     )
     shim = str(repository / "config/dsh/review-cmd")
+    autofix = next(
+        row["spec"] for row in quality["plugins"] if row["package"] == "dsh-test-autofix"
+    )
     assert log.read_text().splitlines() == [
         f"plugin --profile acp add --save-exact {bundle} {goalloop} {shim}",
         f"plugin --profile headless add --save-exact {bundle} {goalloop} {shim}",
-        f"plugin --profile dsh-tui add --save-exact {goalloop} {shim}",
+        f"plugin --profile dsh-tui add --save-exact {goalloop} {shim} {autofix}",
     ]
 
 
@@ -834,10 +840,13 @@ def test_dsh_quality_rows_install_the_p10_picks_on_every_profile(
     goalloop = next(
         row["spec"] for row in quality["plugins"] if row["package"] == "dsh-goalloop-agentteams"
     )
+    autofix = next(
+        row["spec"] for row in quality["plugins"] if row["package"] == "dsh-test-autofix"
+    )
     assert log.read_text().splitlines() == [
         f"plugin --profile acp add --save-exact {repository}/config/dsh/mcp {goalloop} {shim}",
         f"plugin --profile headless add --save-exact {repository}/config/dsh/mcp {goalloop} {shim}",
-        f"plugin --profile dsh-tui add --save-exact {goalloop} {shim}",
+        f"plugin --profile dsh-tui add --save-exact {goalloop} {shim} {autofix}",
     ]
     assert len(pnpm_log.read_text().splitlines()) == 3
 

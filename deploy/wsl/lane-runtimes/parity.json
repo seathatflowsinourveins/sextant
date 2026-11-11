@@ -33,7 +33,8 @@
         "profiles": ["dsh-tui", "acp", "headless"],
         "plugins": [
           {"package": "dsh-goalloop-agentteams", "spec": "github:samirliu/dsh-goalloop-agentteams#6b4b1fad8cd61f98e6eedbb4f12ed10b5dc93f17"},
-          {"package": "sextant-dsh-review-cmd", "spec": "config/dsh/review-cmd"}
+          {"package": "sextant-dsh-review-cmd", "spec": "config/dsh/review-cmd"},
+          {"package": "dsh-test-autofix", "spec": "github:1250589385/dsh-test-autofix#2246371b2869db52c0f9a77098777d66dbdbad32", "profiles": ["dsh-tui"]}
         ]
       },
       "mcp_bundle": "config/dsh/mcp",

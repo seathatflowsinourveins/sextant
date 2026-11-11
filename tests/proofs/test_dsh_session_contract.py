@@ -143,8 +143,8 @@ def _doctor(root: Path, lock: Path, profile: Path, gate: Path) -> subprocess.Com
 def test_lock_shape() -> None:
     lock = json.loads(LOCK.read_text(encoding="utf-8"))
     assert lock["schema"] == 1
-    assert len(lock["interactive"]["dependencies"]) == 25
-    assert len(lock["interactive"]["bundles"]) == 24
+    assert len(lock["interactive"]["dependencies"]) == 26
+    assert len(lock["interactive"]["bundles"]) == 25
     assert len(lock["headless"]["bundles"]) == 24
     assert lock["headless"]["github_plugin"].startswith("github:PerryLink/dsh-github#")
 
