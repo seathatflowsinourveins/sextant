@@ -90,6 +90,7 @@ class SegmentedHost:
         self.gaps = self.generations = self.late = self.unprimed = 0
         self.amendments = {"inside": 0, "outside": 0, "unprimed": 0}
         self.amendment_notional = {"inside": Decimal(0), "outside": Decimal(0)}
+        self.mismatched, self.mismatched_notional = 0, Decimal(0)  # an id match, not the print
         self._amended_names: set[str] = set()
         self._last: RankingGeneration | None = None
 
@@ -161,7 +162,13 @@ class SegmentedHost:
         )
 
     def on_amendment(
-        self, name: str, key: str, *, notional: Decimal | None = None
+        self,
+        name: str,
+        key: str,
+        *,
+        price: Decimal,
+        size: Decimal,
+        notional: Decimal | None = None,
     ) -> RankingGeneration | None:
         """A correction or cancel, for the current segment's adapter (N1f). The records' own
         notional is summed for the receipt only: the segment's cumulative dollar volume keeps a
@@ -170,9 +177,14 @@ class SegmentedHost:
         if self.host is None:
             self.amendments["unprimed"] += 1
             return None
-        before = self.host.amendments_inside
-        generation = self._count(self.host.on_amendment(name, key))
-        side = "inside" if self.host.amendments_inside > before else "outside"
+        host = self.host
+        before = host.amendments_inside, host.amendments_mismatched
+        generation = self._count(host.on_amendment(name, key, price=price, size=size))
+        if host.amendments_mismatched > before[1]:
+            self.mismatched += 1  # its own class: the id names a print of another price or size
+            self.mismatched_notional += notional or Decimal(0)
+            return generation
+        side = "inside" if host.amendments_inside > before[0] else "outside"
         self.amendments[side] += 1
         if notional is not None:
             self.amendment_notional[side] += notional
@@ -282,6 +294,10 @@ class SegmentedHost:
             "amendments": dict(self.amendments),
             "amendment_notional": {k: format(v, "f") for k, v in self.amendment_notional.items()},
             "amended_names": len(self._amended_names),
+            "amendments_mismatched": {
+                "count": self.mismatched,
+                "notional": format(self.mismatched_notional, "f"),
+            },
             "faults": {}
             if host is None
             else {

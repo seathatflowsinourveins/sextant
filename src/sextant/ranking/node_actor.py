@@ -378,9 +378,11 @@ class RankingActor(DataActor):
         if turn is None:
             return
         key = vendor_trade_id(event.exchange, event.original_id)
+        price, size = event.original_price, event.original_size  # the print it names, in full
         try:
-            notional = event.original_price * event.original_size  # the record's own fields
-            generation = turn(str(event.instrument_id.symbol), key, notional=notional)
+            notional = price * size  # the record's own fields
+            name = str(event.instrument_id.symbol)
+            generation = turn(name, key, price=price, size=size, notional=notional)
         except Exception as exc:
             return self._fault("amendment", exc)
         self._publish(generation)

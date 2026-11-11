@@ -55,15 +55,26 @@ def _well_formed(asset: AssetState) -> bool:
     )
 
 
-def _contains(state: MoverState, key: str) -> bool:
-    """A print still feeds a feature while it is in a window bucket or is its anchor."""
+Identity = tuple[str, Decimal, Decimal]  # trade id (exchange + original id), price, size
+
+
+def _find(state: MoverState, identity: Identity) -> str:
+    """Where a print is while it still feeds a feature (a window bucket or its anchor):
+    ``inside`` on a full match of id, price and size; ``mismatched`` when only the id matches,
+    so the amendment does not name the stored print; ``outside`` otherwise (lead 04:2x)."""
+    key, price, size = identity
+    found = "outside"
     for window in (state.history, state.volume_history):
         ticks = [tick for bucket in window.buckets for tick in bucket.ticks]
         if window.anchor is not None:
             ticks.append(window.anchor)
-        if any(tick.trade_id.value == key for tick in ticks):
-            return True
-    return False
+        for tick in ticks:
+            if tick.trade_id.value != key:
+                continue
+            if tick.price.as_decimal() == price and tick.size.as_decimal() == size:
+                return "inside"
+            found = "mismatched"
+    return found
 
 
 class NodeRankingHost:
@@ -75,8 +86,8 @@ class NodeRankingHost:
         self.tainted: set[str] = set()
         self.ingress_errors = self.ignored_trades = self.malformed_assets = 0
         self.publish_errors = 0
-        self.amended: dict[str, set[str]] = {}  # pending corrected prints per name (N1f)
-        self.amendments_inside = self.amendments_outside = 0
+        self.amended: dict[str, set[Identity]] = {}  # pending corrected prints per name (N1f)
+        self.amendments_inside = self.amendments_outside = self.amendments_mismatched = 0
         self.last_error: str | None = None
 
     def on_trade(
@@ -107,14 +118,28 @@ class NodeRankingHost:
         return self._publish(force=False)
 
     def on_amendment(
-        self, name: str, key: str, *, notional: Decimal | None = None
+        self,
+        name: str,
+        key: str,
+        *,
+        price: Decimal,
+        size: Decimal,
+        notional: Decimal | None = None,
     ) -> RankingGeneration | None:
-        """A correction or cancel: withhold the name while a live window holds the print."""
-        if name not in self.publisher.states or not _contains(self.publisher.states[name], key):
+        """A correction or cancel: withhold the name while a live window holds the print it
+        names in full (exchange and original id in ``key``, original price and size)."""
+        identity = (key, price, size)
+        where = "outside"
+        if name in self.publisher.states:
+            where = _find(self.publisher.states[name], identity)
+        if where == "mismatched":
+            self.amendments_mismatched += 1  # not the stored print: nothing is withdrawn
+            return None
+        if where == "outside":
             self.amendments_outside += 1
             return None
         self.amendments_inside += 1
-        self.amended.setdefault(name, set()).add(key)
+        self.amended.setdefault(name, set()).add(identity)
         self._hold(name)
         return self._publish(force=True)  # a withdrawal publishes at once
 
@@ -124,7 +149,7 @@ class NodeRankingHost:
         if not pending:
             return
         state = self.publisher.states[name]
-        pending = {key for key in pending if _contains(state, key)}
+        pending = {identity for identity in pending if _find(state, identity) == "inside"}
         if pending:
             self.amended[name] = pending
             self.publisher.states[name] = replace(state, latest=None)
