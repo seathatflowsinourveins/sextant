@@ -14,7 +14,6 @@ import re
 import shlex
 import shutil
 import subprocess
-from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -27,14 +26,10 @@ SYNC = "sextant-tradingview-sync.service"
 TIMER = "sextant-tradingview-sync.timer"
 UNITS = (PRODUCER, SYNC, TIMER)
 CADENCE = ROOT / "lanes/tradingview/j5-cadence.params.json"
-ARGS = {
-    "--gap-bound": "0.05",
-    "--rvol-bound": "2",
-    "--bounds-max-age-s": "600",
-    "--producer-memory-max": "3G",
-    "--sync-memory-max": "1G",
-}
-UNIT_DIR = "%h/sextant-data/tradingview-prestage/unit"
+PRODUCER_ONLY = ["--producer-memory-max", "3G"]
+WITH_SYNC = [*PRODUCER_ONLY, "--with-sync", "--sync-memory-max", "1G"]
+DATA = "%h/sextant-data/tradingview-prestage"
+UNIT_DIR = f"{DATA}/unit"
 
 
 def _unit(path: Path) -> configparser.ConfigParser:
@@ -45,7 +40,7 @@ def _unit(path: Path) -> configparser.ConfigParser:
 
 
 def _install(
-    tmp_path: Path, args: dict[str, str] | None = None, override: str | None = None
+    tmp_path: Path, args: list[str] | None = None, override: str | None = None
 ) -> tuple[subprocess.CompletedProcess[str], Path, Path, Path]:
     repo = tmp_path / "checkout"
     deploy = repo / "deploy/tradingview"
@@ -68,7 +63,7 @@ def _install(
     }
     if override is not None:
         env["SEXTANT_REPO"] = override
-    argv = [item for pair in (args if args is not None else ARGS).items() for item in pair]
+    argv = args if args is not None else WITH_SYNC
     done = subprocess.run(
         ["bash", str(deploy / "install.sh"), *argv], env=env, capture_output=True, text=True
     )
@@ -136,16 +131,18 @@ def test_sync_unit_uses_the_stored_sign_in_and_never_a_browser() -> None:
     assert "--authorize" not in args
 
 
-def test_bounds_and_memory_limits_have_no_default_in_the_committed_units() -> None:
+def test_bounds_come_from_the_registry_and_memory_limits_have_no_default() -> None:
+    from sextant.tradingview.prestage import DEFAULT_DISPLAY_BOUNDS
+
     producer = _unit(DEPLOY / PRODUCER)["Service"]
     sync = _unit(DEPLOY / SYNC)["Service"]
     command = _command(DEPLOY / PRODUCER)
-    for flag, placeholder in (
-        ("--gap-bound", "@GAP_BOUND@"),
-        ("--rvol-bound", "@RVOL_BOUND@"),
-        ("--bounds-max-age-s", "@BOUNDS_MAX_AGE_S@"),
-    ):
-        assert command[command.index(flag) + 1] == placeholder
+    # No flag overrides the sourced display-bounds rows the module reads by default.
+    for flag in ("--gap-bound", "--rvol-bound", "--bounds-max-age-s", "--display-bounds"):
+        assert flag not in command
+    rows = json.loads(DEFAULT_DISPLAY_BOUNDS.read_text())["rows"]
+    assert {row["name"] for row in rows} == {"gap_bound", "rvol_bound", "max_age_s"}
+    assert all(row["source"].strip() for row in rows)
     assert producer["MemoryMax"] == "@PRODUCER_MEMORY_MAX@"
     assert sync["MemoryMax"] == "@SYNC_MEMORY_MAX@"
     assert producer["MemorySwapMax"] == "0" and sync["MemorySwapMax"] == "0"
@@ -185,8 +182,30 @@ def test_sync_timer_starts_at_the_registered_display_open() -> None:
 
 
 @pytest.mark.parametrize("override", [None, "/work/checkout&literal|path"])
-def test_installer_renders_the_checkout_and_enables_nothing(tmp_path: Path, override) -> None:
-    done, repo, units, calls = _install(tmp_path, override=override)
+def test_default_install_writes_and_enables_the_producer_alone(tmp_path: Path, override) -> None:
+    done, repo, units, calls = _install(tmp_path, args=PRODUCER_ONLY, override=override)
+    assert done.returncode == 0, done.stderr
+    assert sorted(path.name for path in units.iterdir()) == [PRODUCER]
+    assert not (units / SYNC).exists() and not (units / TIMER).exists()
+    producer = _unit(units / PRODUCER)["Service"]
+    checkout = override or str(repo)
+    assert producer["WorkingDirectory"] == checkout
+    assert producer["ExecStart"].startswith(f"/usr/bin/bash {checkout}/scripts/with-keys.sh ")
+    assert "%h/sextant/" not in producer["ExecStart"] and "@" not in producer["ExecStart"]
+    assert f"--ranked-view-dir {DATA}/ranked-view" in producer["ExecStart"]
+    assert producer["MemoryMax"] == "3G"
+    lines = calls.read_text().splitlines()
+    assert lines[:2] == ["--user daemon-reload", f"--user enable --now {PRODUCER}"]
+    assert not any("sync" in line for line in lines)
+    (units / PRODUCER).write_text("stale")
+    again, *_ = _install(tmp_path, args=PRODUCER_ONLY, override=override)
+    assert again.returncode == 0, again.stderr
+    assert "stale" not in (units / PRODUCER).read_text()
+
+
+@pytest.mark.parametrize("override", [None, "/work/checkout&literal|path"])
+def test_with_sync_writes_the_sync_units_without_enabling_them(tmp_path: Path, override) -> None:
+    done, repo, units, calls = _install(tmp_path, args=WITH_SYNC, override=override)
     assert done.returncode == 0, done.stderr
     checkout = override or str(repo)
     producer = _unit(units / PRODUCER)["Service"]
@@ -200,30 +219,25 @@ def test_installer_renders_the_checkout_and_enables_nothing(tmp_path: Path, over
     assert f"--research-dir {UNIT_DIR}" in sync["ExecStart"]
     assert producer["MemoryMax"] == "3G" and sync["MemoryMax"] == "1G"
     assert (units / TIMER).read_bytes() == (DEPLOY / TIMER).read_bytes()
-    # Writing units and reloading is all; enabling or starting is the lead's own step.
-    assert calls.read_text().splitlines() == ["--user daemon-reload"]
-    (units / PRODUCER).write_text("stale")
-    again, *_ = _install(tmp_path, override=override)
-    assert again.returncode == 0, again.stderr
-    assert "stale" not in (units / PRODUCER).read_text()
-
-
-def _without(flag: str) -> dict[str, str]:
-    return {key: value for key, value in ARGS.items() if key != flag}
+    # The producer alone is enabled; the sync stays the lead's own later step.
+    lines = calls.read_text().splitlines()
+    assert lines[:2] == ["--user daemon-reload", f"--user enable --now {PRODUCER}"]
+    assert not any("sync" in line for line in lines)
 
 
 @pytest.mark.parametrize(
     "args",
     [
-        *(_without(flag) for flag in ARGS),
-        {**ARGS, "--gap-bound": "0.05 --once"},
-        {**ARGS, "--gap-bound": "-0.05"},
-        {**ARGS, "--rvol-bound": "1e3"},
-        {**ARGS, "--bounds-max-age-s": "0"},
-        {**ARGS, "--bounds-max-age-s": "600|x"},
-        {**ARGS, "--producer-memory-max": "infinity"},
-        {**ARGS, "--sync-memory-max": "1G\nExecStartPre=/bin/true"},
-        {**ARGS, "--unknown": "1"},
+        [],
+        ["--producer-memory-max"],
+        ["--producer-memory-max", "infinity"],
+        ["--producer-memory-max", "3G --once"],
+        ["--producer-memory-max", "3G\nExecStartPre=/bin/true"],
+        [*PRODUCER_ONLY, "--with-sync"],
+        [*PRODUCER_ONLY, "--sync-memory-max", "1G"],
+        [*PRODUCER_ONLY, "--with-sync", "--sync-memory-max", "0"],
+        [*PRODUCER_ONLY, "--gap-bound", "0.05"],
+        [*PRODUCER_ONLY, "--unknown", "1"],
     ],
 )
 def test_installer_refuses_missing_or_malformed_values(tmp_path: Path, args) -> None:
@@ -245,20 +259,19 @@ def test_rendered_producer_command_parses_with_the_producer_parser(
     tmp_path: Path, monkeypatch: Any
 ) -> None:
     from sextant.tradingview import prestage
-    from sextant.tradingview.bridge import DisplayBounds
 
-    done, _, units, _ = _install(tmp_path)
+    done, _, units, _ = _install(tmp_path, args=PRODUCER_ONLY)
     assert done.returncode == 0, done.stderr
     args = _module_args(_command(units / PRODUCER), "sextant.tradingview.prestage")
     seen: dict[str, Any] = {}
     monkeypatch.setattr(prestage, "run", lambda **kwargs: seen.update(kwargs) or 0)
     assert prestage.main(args) == 0
-    data = "%h/sextant-data/tradingview-prestage"
     assert seen["research_dir"] == Path(UNIT_DIR)
-    assert seen["nasdaq_listed"] == Path(f"{data}/nasdaqlisted.txt")
-    assert seen["other_listed"] == Path(f"{data}/otherlisted.txt")
-    assert seen["symbol_map_path"] == Path(f"{data}/symbol_map.json")
-    assert seen["bounds"] == DisplayBounds(Decimal("0.05"), Decimal("2"), 600)
+    assert seen["nasdaq_listed"] == Path(f"{DATA}/nasdaqlisted.txt")
+    assert seen["other_listed"] == Path(f"{DATA}/otherlisted.txt")
+    assert seen["symbol_map_path"] == Path(f"{DATA}/symbol_map.json")
+    assert seen["ranked_view_dir"] == Path(f"{DATA}/ranked-view")
+    assert seen["bounds"] == prestage.load_display_bounds(prestage.DEFAULT_DISPLAY_BOUNDS)
     assert seen["k2_registry"] == prestage.DEFAULT_K2_REGISTRY
     assert seen["cadence_registry"] == prestage.DEFAULT_CADENCE_REGISTRY
     assert seen["state_root"] == prestage.DEFAULT_STATE_ROOT
@@ -271,7 +284,7 @@ def test_rendered_sync_command_parses_with_the_sync_parser(
     import sextant.tradingview.__main__ as cli
     from sextant.tradingview import loop
 
-    done, _, units, _ = _install(tmp_path)
+    done, _, units, _ = _install(tmp_path, args=WITH_SYNC)
     assert done.returncode == 0, done.stderr
     args = _module_args(_command(units / SYNC), "sextant.tradingview")
     seen: dict[str, Any] = {}
