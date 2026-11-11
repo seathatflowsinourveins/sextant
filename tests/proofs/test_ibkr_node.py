@@ -27,6 +27,11 @@ CODE = "DU0000000"  # a fixture code, not an account
 ENV = "IB_PAPER_ACCOUNT_ID"
 
 
+@pytest.fixture(autouse=True)
+def _account_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+
 def _argv(tmp_path: Path, *extra: str, **changes: str) -> list[str]:
     values = {
         "--host": "192.0.2.1",  # TEST-NET-1: unroutable, and nothing here connects anyway
@@ -132,8 +137,11 @@ def test_the_tester_is_upstreams_and_dry_runs_without_the_second_opt_in(tmp_path
     assert (
         dry.trailing_offset == Decimal(25) and dry.enable_stop_sells and not dry.enable_limit_buys
     )
-    live = node_ibkr.tester_config(node_ibkr.parse(_argv(tmp_path, "--send-orders")))
+    live = node_ibkr.tester_config(
+        node_ibkr.parse(_argv(tmp_path, "--send-orders", profile="lifecycle"))
+    )
     assert live.dry_run is False
+    assert not live.enable_limit_sells and not live.enable_stop_sells and not live.enable_brackets
     lifecycle = node_ibkr.tester_config(node_ibkr.parse(_argv(tmp_path, profile="lifecycle")))
     assert lifecycle.open_position_on_start_qty == Decimal(1)
     assert lifecycle.open_position_on_first_quote and not lifecycle.enable_limit_sells
@@ -208,8 +216,9 @@ def test_start_refusals_write_the_receipt_and_never_build(
     assert "U1234567" not in text and CODE not in text  # the account is never written
 
 
-def test_the_committed_registry_keeps_the_lane_off(tmp_path: Path) -> None:
-    argv = _argv(tmp_path)
+@pytest.mark.parametrize("send_orders", [False, True])
+def test_the_committed_registry_keeps_the_lane_off(tmp_path: Path, send_orders: bool) -> None:
+    argv = _argv(tmp_path, *(["--send-orders"] if send_orders else []))
     argv[argv.index("--registry") + 1] = str(ROOT / "lanes/paper/ibkr.toml")
     assert _run(tmp_path, argv, {ENV: CODE}) == (2, [])
     assert _receipt(tmp_path)["reason"] == "lane_off"
@@ -223,6 +232,13 @@ def test_a_held_writer_lease_refuses_the_start(tmp_path: Path) -> None:
     finally:
         other.close()
     assert _receipt(tmp_path)["reason"] == "writer_lease"
+
+
+def test_an_unavailable_shared_lease_directory_refuses_before_build(tmp_path: Path) -> None:
+    (tmp_path / ".cache").write_text("not a directory")
+    assert _run(tmp_path, _argv(tmp_path), {ENV: CODE}) == (2, [])
+    receipt = _receipt(tmp_path)
+    assert (receipt["phase"], receipt["reason"]) == ("refused", "writer_lease")
 
 
 def test_the_node_refuses_off_the_main_thread(tmp_path: Path) -> None:

@@ -5,6 +5,7 @@ The stop witness executes the native Strategy API call selected by ExecTester
 """
 
 import json
+import os
 import subprocess
 import sys
 from decimal import Decimal
@@ -33,7 +34,8 @@ from nautilus_trader.model import (
     Venue,
 )
 from nautilus_trader.trading import Strategy, StrategyConfig
-from test_ibkr_node import CODE, ENV, _argv, _receipt
+from test_ibkr_node import CODE, ENV, _argv, _Node, _receipt
+from test_ibkr_node import _account_home as _account_home
 
 from sextant.execution.custody import AccountScope, WriterLease
 from sextant.paper import node_ibkr
@@ -120,7 +122,7 @@ def test_exact_head_shutdown_call_preserves_owner_order(tmp_path: Path, send_ord
 
 @pytest.mark.parametrize("profile", sorted(node_ibkr.PROFILES))
 def test_no_profile_cancels_or_closes_on_stop(tmp_path: Path, profile: str) -> None:
-    args = node_ibkr.parse(_argv(tmp_path, "--send-orders", profile=profile))
+    args = node_ibkr.parse(_argv(tmp_path, profile=profile))
     config = node_ibkr.tester_config(args)
     assert not config.cancel_orders_on_stop and not config.close_positions_on_stop
 
@@ -194,7 +196,9 @@ def test_native_portfolio_logging_never_outputs_account_code(tmp_path: Path) -> 
 @pytest.mark.parametrize("kind", ["order", "inflight", "position", "own", "empty", "dry"])
 def test_reconciled_custody_admission_and_refusal_receipt(tmp_path: Path, kind: str) -> None:
     send = kind != "dry"
-    args = node_ibkr.parse(_argv(tmp_path, *(["--send-orders"] if send else [])))
+    args = node_ibkr.parse(
+        _argv(tmp_path, *(["--send-orders"] if send else []), profile="lifecycle")
+    )
     tester = node_ibkr.tester_config(args).strategy_id
     foreign = SimpleNamespace(strategy_id=OWNER)
     own = SimpleNamespace(strategy_id=tester)
@@ -247,6 +251,134 @@ def test_reconciled_custody_admission_and_refusal_receipt(tmp_path: Path, kind: 
     after = WriterLease(AccountScope("INTERACTIVE_BROKERS", CODE), args.lease_root, "next")
     after.acquire()
     after.close()
+
+
+@pytest.mark.parametrize("profile", ["cancel-modify", "stop", "stop-limit", "trailing", "bracket"])
+def test_order_sending_resting_sell_profile_refuses_before_build(
+    tmp_path: Path, profile: str
+) -> None:
+    args = node_ibkr.parse(_argv(tmp_path, "--send-orders", profile=profile))
+    calls: list[str] = []
+
+    def builder(*a: Any) -> Any:
+        calls.append("build")
+        engine = _engine(LoggerConfig(stdout_level=LogLevel.OFF))
+
+        class FlatNode:
+            cache = engine.cache
+
+            def add_actor(self, actor: Any) -> None:
+                engine.add_actor(actor)
+
+            def handle(self) -> Any:
+                return SimpleNamespace(stop=lambda: None)
+
+            def run(self) -> None:
+                calls.append("run")
+                engine.run()
+
+            def dispose(self) -> None:
+                engine.dispose()
+
+        return FlatNode()
+
+    _, status = node_ibkr.run(args, environ={ENV: CODE}, builder=builder)
+    assert calls == [], "a resting SELL profile must refuse before any node can send"
+    receipt = _receipt(tmp_path)
+    assert (status, receipt["phase"], receipt["reason"]) == (
+        2,
+        "refused",
+        "no sourced continuous custody fence",
+    )
+    assert CODE not in json.dumps(receipt)
+
+
+@pytest.mark.parametrize("switch", ["enable_limit_sells", "enable_stop_sells", "enable_brackets"])
+def test_order_sending_config_requests_for_sells_are_refused_not_masked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, switch: str
+) -> None:
+    monkeypatch.setitem(node_ibkr.PROFILES["lifecycle"], switch, True)
+    args = node_ibkr.parse(_argv(tmp_path, "--send-orders", profile="lifecycle"))
+    with pytest.raises(node_ibkr.IbkrNodeRefused, match="no sourced continuous custody fence"):
+        node_ibkr.tester_config(args)
+
+
+@pytest.mark.parametrize("second_code", [CODE, "DU0000001"])
+def test_two_invocations_share_one_account_lease_despite_different_roots(
+    tmp_path: Path, second_code: str
+) -> None:
+    first_dir, second_dir = tmp_path / "first", tmp_path / "second"
+    first_dir.mkdir()
+    second_dir.mkdir()
+    first = node_ibkr.parse(_argv(first_dir))
+    second = node_ibkr.parse(
+        _argv(
+            second_dir,
+            exec_client_id="91004",
+            data_client_id="91003",
+            port="7497",
+            instrument="MSFT.NASDAQ",
+        )
+    )
+    inner_calls: list[str] = []
+    statuses: list[int] = []
+
+    def outer_builder(*a: Any) -> _Node:
+        def inner_builder(*a: Any) -> _Node:
+            inner_calls.append("build")
+            return _Node(inner_calls)
+
+        _, status = node_ibkr.run(second, environ={ENV: second_code}, builder=inner_builder)
+        statuses.append(status)
+        return _Node([])
+
+    _, status = node_ibkr.run(first, environ={ENV: CODE}, builder=outer_builder)
+    assert status == 0
+    if second_code == CODE:
+        assert statuses == [2], "different launch roots must not create a second account writer"
+        assert inner_calls == []
+        assert _receipt(second_dir)["reason"] == "writer_lease"
+    else:
+        assert statuses == [0] and inner_calls == ["build", "run:True", "dispose"]
+    after = WriterLease(AccountScope("INTERACTIVE_BROKERS", CODE), tmp_path / "third", "after")
+    after.acquire()
+    after.close()
+
+
+def test_another_process_cannot_choose_a_different_ibkr_account_lock(tmp_path: Path) -> None:
+    first = WriterLease(AccountScope("INTERACTIVE_BROKERS", CODE), tmp_path / "first", "first")
+    program = """
+import sys
+from pathlib import Path
+from sextant.execution.custody import AccountScope, CustodyError, WriterLease
+lease = WriterLease(AccountScope('INTERACTIVE_BROKERS', 'DU0000000'), Path('different'), 'second')
+try:
+    lease.acquire()
+except CustodyError:
+    sys.exit(2)
+lease.close()
+"""
+
+    def other_process() -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, "-c", program],
+            cwd=tmp_path,
+            env={"HOME": str(tmp_path), "PATH": os.defpath},
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
+
+    first.acquire()
+    try:
+        refused = other_process()
+        assert refused.returncode == 2, refused.stderr
+        assert not refused.stdout and not refused.stderr
+    finally:
+        first.close()
+    released = other_process()
+    assert released.returncode == 0, released.stderr
 
 
 if __name__ == "__main__":

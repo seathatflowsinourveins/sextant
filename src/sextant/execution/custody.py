@@ -162,7 +162,15 @@ class FlatReceipt:
 
 class WriterLease:
     def __init__(self, scope: AccountScope, root: Path, writer: str):
-        self.scope, self.root, self.writer = scope, root, writer
+        self.scope, self.writer = scope, writer
+        # Account configuration selects one IBKR lock root across launch paths/worktrees.
+        # BUILD ON the existing account flock; pinned execution.py:811-821 uses a shared
+        # home/.cache root and account digest. No IBKR launch argument overrides this root.
+        self.root = (
+            Path.home() / ".cache" / "sextant" / "locks"
+            if scope.broker == "INTERACTIVE_BROKERS"
+            else root
+        )
         self.fd: int | None = None
         self.token: str | None = None
         self.pacer: Any = None
