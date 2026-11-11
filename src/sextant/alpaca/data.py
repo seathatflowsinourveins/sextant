@@ -66,6 +66,7 @@ from nautilus_trader.model import (
 
 _NY = ZoneInfo("America/New_York")
 _STREAM_STOP_TIMEOUT_S = 5.0  # E4 dsh build 48cb220, shutdown bound.
+_TRADE_ID_MAX = 36  # NautilusTrader rc8 crates/model/src/identifiers/trade_id.rs:50.
 _ROUND_LOT_SHARES = 100  # Alpaca's quote sizes and the incumbent SIP normalization.
 type _Tick = QuoteTick | TradeTick | Bar
 type _StreamOwner = tuple[asyncio.AbstractEventLoop, asyncio.Task[None]]
@@ -120,7 +121,8 @@ class _Stock:
     size_precision: int
 
     def price(self, value: object) -> Price:
-        return Price.from_decimal_dp(Decimal(str(value)), self.price_precision)
+        number = value if isinstance(value, Decimal) else Decimal(str(value))
+        return Price.from_decimal_dp(number, self.price_precision)
 
     def quantity(self, value: object, multiplier: int = 1) -> Quantity:
         number = Decimal(str(value))
@@ -174,6 +176,12 @@ class AlpacaDataClient(MarketDataClient):
         self._stream_task: asyncio.Task[object] | None = None
         self._closing = False
         self._handler_failure: Exception | None = None
+        self._dropped_quote_count = 0
+
+    @property
+    def dropped_quote_count(self) -> int:
+        """Rejected spreads from streaming and history, counted on the node loop."""
+        return self._dropped_quote_count
 
     async def _connect(self) -> None:
         if self.instrument_provider is None:
@@ -345,16 +353,19 @@ class AlpacaDataClient(MarketDataClient):
                 self._handler_failure = error
                 await stream.stop_ws()
                 return
-            if tick is not None:
-                owner.call_soon_threadsafe(self._publish, channel, stock.symbol, key, tick)
+            owner.call_soon_threadsafe(self._publish, channel, stock.symbol, key, tick)
 
         # alpaca-py installs these handlers before its wire send and retains
         # them for reconnect. Accept the earliest queued tick from each handler.
         active.update({symbol: key for symbol, (_, key) in stocks.items()})
         await self._change_subscription(stream, stream.register, channel, tuple(stocks), receive)
 
-    def _publish(self, channel: str, symbol: str, key: InstrumentId | BarType, tick: _Tick) -> None:
-        if not self._closing and self._active[channel].get(symbol) == key:
+    def _publish(
+        self, channel: str, symbol: str, key: InstrumentId | BarType, tick: _Tick | None
+    ) -> None:
+        if tick is None:
+            self._dropped_quote_count += 1
+        elif not self._closing and self._active[channel].get(symbol) == key:
             self._handle_data(tick)
 
     async def _unsubscribe_quotes(self, command: UnsubscribeQuotes) -> None:
@@ -390,12 +401,14 @@ class AlpacaDataClient(MarketDataClient):
         result = await asyncio.to_thread(self._history_client().get_stock_quotes, params)
         if not isinstance(result, QuoteSet):
             raise TypeError("Alpaca quote history must return an SDK QuoteSet")
-        ticks = [
-            tick
-            for stock in stocks
-            for row in result.data.get(stock.symbol, ())
-            if (tick := _quote_tick(row, stock)) is not None
-        ]
+        ticks: list[QuoteTick] = []
+        for stock in stocks:
+            for row in result.data.get(stock.symbol, ()):
+                tick = _quote_tick(row, stock)
+                if tick is None:
+                    self._dropped_quote_count += 1
+                else:
+                    ticks.append(tick)
         self._handle_response(
             QuotesResponse(
                 self.client_id,
@@ -495,8 +508,11 @@ def _bar_timeframe(bar_type: BarType, *, streaming: bool = False) -> TimeFrame:
 
 
 def _quote_tick(row: Quote, stock: _Stock, receipt: int | None = None) -> QuoteTick | None:
-    bid, ask = stock.price(row.bid_price), stock.price(row.ask_price)
-    if not Decimal(0) < bid.as_decimal() < ask.as_decimal():
+    bid_raw, ask_raw = Decimal(str(row.bid_price)), Decimal(str(row.ask_price))
+    if not bid_raw.is_finite() or not ask_raw.is_finite() or not 0 < bid_raw < ask_raw:
+        return None
+    bid, ask = stock.price(bid_raw), stock.price(ask_raw)
+    if not 0 < bid.as_decimal() < ask.as_decimal():
         return None
     event = dt_to_unix_nanos(row.timestamp)
     return QuoteTick(
@@ -514,14 +530,14 @@ def _trade_tick(row: Trade, stock: _Stock, receipt: int | None = None) -> TradeT
     if row.id is None:
         raise ValueError("Alpaca trade is missing its vendor ID")
     exchange = getattr(row.exchange, "value", row.exchange)
-    trade_id = TradeId(f"{exchange}-{row.id}" if exchange else str(row.id))
+    trade_id = f"{exchange}-{row.id}" if exchange else str(row.id)
     event = dt_to_unix_nanos(row.timestamp)
     return TradeTick(
         stock.id,
         stock.price(row.price),
         stock.quantity(row.size),
         AggressorSide.NO_AGGRESSOR,
-        trade_id,
+        TradeId(trade_id[:_TRADE_ID_MAX]),
         event,
         event if receipt is None else receipt,
     )

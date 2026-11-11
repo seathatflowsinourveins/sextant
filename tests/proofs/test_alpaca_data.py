@@ -42,6 +42,11 @@ START = datetime(2026, 11, 9, 15, 0, tzinfo=UTC)
 END = datetime(2026, 11, 9, 15, 2, tzinfo=UTC)
 STAMP = "2026-11-09T15:00:00Z"
 QUOTE = {"S": "AAPL", "T": "q", "t": STAMP, "bp": 10.01, "ap": 10.03, "bs": 2, "as": 3}
+INVALID_QUOTES = (
+    {**QUOTE, "bp": 0},
+    {**QUOTE, "bp": 10.05},
+    {**QUOTE, "ap": QUOTE["bp"]},
+)
 TRADE = {"S": "AAPL", "T": "t", "t": STAMP, "p": 10.02, "s": 7, "x": "D", "i": 123}
 BAR = {
     "S": "AAPL",
@@ -73,9 +78,15 @@ class StandInSocket:
         if self.first_subscribe:
             self.first_subscribe = False
             await asyncio.sleep(0.1)  # The initial send suspends after snapshotting symbols.
-        for channel, row in (("quotes", QUOTE), ("trades", TRADE), ("bars", BAR)):
+        rows_by_channel = (
+            ("quotes", (*INVALID_QUOTES, QUOTE)),
+            ("trades", (TRADE,)),
+            ("bars", (BAR,)),
+        )
+        for channel, rows in rows_by_channel:
             if channel not in self.stream.delivered and "AAPL" in payload.get(channel, ()):
-                await self.stream._dispatch({**row, "t": _WireTimestamp()})
+                for row in rows:
+                    await self.stream._dispatch({**row, "t": _WireTimestamp()})
                 self.stream.delivered.add(channel)
 
     async def close(self):
@@ -94,14 +105,14 @@ class StandInHistory:
             tuple[StockQuotesRequest | StockTradesRequest | StockBarsRequest, int]
         ] = []
 
-    def _reply(self, request, dataset, row):
+    def _reply(self, request, dataset, *rows):
         self.calls.append((request, threading.get_ident()))
         if self.fail:
             raise RuntimeError("fixture history unavailable")
-        return dataset({"AAPL": [row]})
+        return dataset({"AAPL": list(rows)})
 
     def get_stock_quotes(self, request: StockQuotesRequest):
-        return self._reply(request, QuoteSet, QUOTE)
+        return self._reply(request, QuoteSet, *INVALID_QUOTES, QUOTE)
 
     def get_stock_trades(self, request: StockTradesRequest):
         return self._reply(request, TradeSet, TRADE)
@@ -193,9 +204,11 @@ async def run_shell(*, historical: bool = False, fail: bool = False):
             raise
         pytest.fail("AlpacaDataClient is missing from the sandbox shell", pytrace=False)
 
+    feed = DataFeed.IEX if historical else DataFeed.SIP
+
     class StandInStream(adapter.AlpacaStockDataStream):
         def __init__(self):
-            super().__init__("fixture", "fixture", feed=DataFeed.IEX)
+            super().__init__("fixture", "fixture", feed=feed)
             self.thread_ids: set[int] = set()
             self.delivered: set[str] = set()
             self.unsubscribe_sent = threading.Event()
@@ -213,10 +226,12 @@ async def run_shell(*, historical: bool = False, fail: bool = False):
     strategy = Witness()
     strategy.historical = historical
 
+    clients = []
+
     class FixtureFactory(DataClientFactory):
         @staticmethod
         def create(*, name, config, cache, clock):
-            return adapter.AlpacaDataClient(
+            client = adapter.AlpacaDataClient(
                 name=name,
                 config=config,
                 cache=cache,
@@ -224,9 +239,11 @@ async def run_shell(*, historical: bool = False, fail: bool = False):
                 instrument_provider=ProofProvider(InstrumentProviderConfig(load_all=True)),
                 stream=stream,
                 historical=history,
-                feed=DataFeed.IEX,
+                feed=feed,
                 venue=Venue.from_str("ALPACA"),
             )
+            clients.append(client)
+            return client
 
     settings = account()
     node = (
@@ -254,7 +271,7 @@ async def run_shell(*, historical: bool = False, fail: bool = False):
             await asyncio.wait_for(task, timeout=10)
         finally:
             node.dispose()
-    return strategy, stream, history
+    return strategy, stream, history, clients[0]
 
 
 def assert_ticks(events: list[tuple[Any, int]], owner: int):
@@ -280,18 +297,20 @@ def assert_ticks(events: list[tuple[Any, int]], owner: int):
 
 def test_stock_stream_delivers_typed_data_to_strategy_on_sandbox_loop():
     owner = threading.get_ident()
-    strategy, stream, history = asyncio.run(run_shell())
+    strategy, stream, history, client = asyncio.run(run_shell())
     assert_ticks(strategy.events, owner)
     assert stream.thread_ids and owner not in stream.thread_ids
     assert stream.closed.is_set()
     assert not history.calls
+    assert client.dropped_quote_count == 3
 
 
 def test_stock_history_delivers_correlated_typed_data_off_the_node_loop():
     owner = threading.get_ident()
-    strategy, stream, history = asyncio.run(run_shell(historical=True))
+    strategy, stream, history, client = asyncio.run(run_shell(historical=True))
     assert_ticks(strategy.events, owner)
     assert len(set(strategy.completed)) == 3
+    assert client.dropped_quote_count == 3
     assert {response.correlation_id for response in strategy.responses} == set(strategy.completed)
     assert all(
         response.completed and response.failure_reason is None for response in strategy.responses
@@ -313,7 +332,7 @@ def test_stock_history_delivers_correlated_typed_data_off_the_node_loop():
 
 
 def test_failed_stock_history_completes_requests_without_publishing_data():
-    strategy, stream, history = asyncio.run(run_shell(historical=True, fail=True))
+    strategy, stream, history, _client = asyncio.run(run_shell(historical=True, fail=True))
     assert len(set(strategy.completed)) == 3
     assert not strategy.events and not stream.thread_ids
     assert len(history.calls) == 3
@@ -403,3 +422,16 @@ def test_disconnect_reraises_first_handler_conversion_failure(monkeypatch):
             await client._disconnect()
 
     asyncio.run(check())
+
+
+def test_trade_id_is_bounded_without_claiming_aggressor():
+    from alpaca.data.models import Trade
+    from nautilus_trader.model import AggressorSide
+
+    from sextant.alpaca import data
+
+    stock = data._Stock(INSTRUMENT_ID, INSTRUMENT_ID.symbol.value, 2, 0)
+    row = Trade(stock.symbol, {**TRADE, "i": int("7" * 40)})
+    tick = data._trade_tick(row, stock)
+    assert str(tick.trade_id) == "D-" + "7" * 34
+    assert tick.aggressor_side == AggressorSide.NO_AGGRESSOR
