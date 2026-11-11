@@ -8,13 +8,17 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
+from datetime import datetime
 from typing import Any
 
+import pytest
 from nautilus_trader.model import CustomData
 from test_ranking import NS, SCOPE, START, baseline, registry
 from test_ranking_actor import NAMES
 from test_ranking_node_session import session_run
 
+from sextant.paper.sessions import ET
+from sextant.ranking.baseline import closed_until, segment_start
 from sextant.ranking.consumer import RankingConsumer
 from sextant.ranking.engine import Segment
 from sextant.ranking.heartbeat import HeartbeatEmitter
@@ -112,3 +116,22 @@ def test_a_tick_at_the_boundary_goes_to_the_new_segment_once(tmp_path) -> None:
     pre, rth = (host.publisher for _, host in entered)
     assert pre.last_event == START + 240 * NS  # the 300 s print never reached the old segment
     assert rth.states["PENNY"].latest is not None and out["session"].late == 0
+
+
+@pytest.mark.parametrize(
+    ("moment", "until"),
+    [
+        ((2026, 11, 13, 20, 30), (2026, 11, 15, 20)),  # Friday night: Sunday's overnight
+        ((2026, 11, 14, 21, 0), (2026, 11, 15, 20)),  # Saturday night
+        ((2026, 11, 27, 17, 30), (2026, 11, 29, 20)),  # the early-close gap before a weekend
+        ((2026, 12, 25, 12, 0), (2026, 12, 27, 20)),  # a holiday into a weekend
+    ],
+)
+def test_every_closed_interval_ends_at_the_next_overnight_start(moment, until) -> None:
+    def at(parts: tuple[int, ...]) -> int:
+        return int(datetime(*parts, tzinfo=ET).timestamp()) * NS
+
+    assert segment_start(at(moment))[0] is None
+    assert closed_until(at(moment)) == at(until)
+    following = segment_start(at(until))[0]
+    assert following is not None and following.start_ns == at(until)

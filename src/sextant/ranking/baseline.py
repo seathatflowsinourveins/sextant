@@ -379,6 +379,18 @@ def segment_start(ts_ns: int) -> tuple["Segment | None", date, int]:
     return Segment(segment.name, session_date, start_ns, end_ns, "xnys"), session_date, start_ns
 
 
+def closed_until(ts_ns: int) -> int:
+    """The end of the closed interval holding ``ts_ns``: 20:00 ET the day before the next
+    XNYS session. ``session_at`` is CLOSED only on a non-session trading day or in the 17:00 to
+    20:00 early-close gap, and its overnight starts at 20:00 the prior day, so every closed
+    interval ends there (exchange_calendars ``date_to_session(..., direction="next")``)."""
+    local = datetime.fromtimestamp(ts_ns // NS, tz=ET)
+    trading_day = (local + timedelta(hours=4)).date()
+    following = trading_day + timedelta(days=1)
+    session = _calendar(following.year).date_to_session(following, direction="next").date()
+    return _nanos(datetime.combine(session - timedelta(days=1), time(20), tzinfo=ET))
+
+
 def build_baseline(
     bars: Iterable[MinuteBarRow],
     *,
