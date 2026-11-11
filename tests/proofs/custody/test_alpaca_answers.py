@@ -65,3 +65,26 @@ def test_a_submit_the_venue_already_shows_is_not_rejected_by_a_late_422():
         assert node.late_answers == 1
 
     asyncio.run(run())
+
+
+def test_a_cancel_the_stream_refused_is_not_rejected_again_by_a_late_422():
+    async def run():
+        async def stream(node):
+            row = next(iter(node.gateway.sdk.rows.values()))
+            await node._on_trade_update(
+                {
+                    "stream": "trade_updates",
+                    "data": {
+                        "event": "order_cancel_rejected",
+                        "order": row,
+                        "timestamp": row["updated_at"],
+                    },
+                }
+            )
+            node.generate_order_cancel_rejected.assert_called_once()
+
+        node = await _first_answer_then_422("cancel", stream)
+        node.generate_order_cancel_rejected.assert_called_once()
+        assert node.late_answers == 1
+
+    asyncio.run(run())
