@@ -226,6 +226,136 @@ def test_every_dsh_profile_composes_the_same_mcp_patches_and_effort_is_max() -> 
     ]  # fmt: skip
 
 
+NATIVE_PARALLEL_PATCH = "./native-parallel.cordis.yml"
+
+
+def _patch_rows(path: Path) -> dict[str, dict]:
+    text = path.read_text().replace("!!js ", "")
+    return {row["id"]: row.get("config", {}) for row in yaml.safe_load(text)}
+
+
+def test_the_interactive_bundle_caps_workflow_children_at_the_subagent_cap() -> None:
+    """The workflow engine defaults to CPU parallelism (16 here), above the subagent cap of 8,
+    so a 12-child fan-out starts 4 children the subagent service refuses instead of queueing."""
+    research = json.loads((ROOT / "config/dsh/package.json").read_text())
+    patches = research["dsh"]["bundle"]["patch"]
+    assert NATIVE_PARALLEL_PATCH in patches
+    assert patches[-1] == "./mcp/max-effort.cordis.yml"  # the max-effort row still composes last
+    rows = _patch_rows(ROOT / "config/dsh" / NATIVE_PARALLEL_PATCH)
+    assert rows["subagent"]["maxActiveSubagents"] == 8
+    assert rows["workflow-ptc"]["provider"] == "spawn"
+    assert rows["workflow-ptc"]["maxConcurrentAgents"] == rows["subagent"]["maxActiveSubagents"]
+
+
+def test_the_headless_recipe_includes_the_capped_research_bundle() -> None:
+    """The cap lives in the research bundle, which the headless gate recipe includes
+    (config/dsh/profile.lock.json's headless list and the gate mirror's 24-bundle list);
+    the installed headless profile links only sextant-dsh-mcp and carries no cap."""
+    lock = json.loads((ROOT / "config/dsh/profile.lock.json").read_text())
+    headless = {row["package"]: row for row in lock["headless"]["bundles"]}
+    assert headless["sextant-dsh-research"]["link"] == "config/dsh"
+    gate = json.loads((ROOT / ".github/gate/dsh-profile.json").read_text())
+    gate_bundles = {row["package"]: row["spec"] for row in gate["bundles"]}
+    assert gate_bundles["sextant-dsh-research"] == "config/dsh"
+    rows = _patch_rows(ROOT / "config/dsh" / NATIVE_PARALLEL_PATCH)
+    assert rows["workflow-ptc"]["maxConcurrentAgents"] == 8
+
+
+@pytest.mark.local
+def test_the_composed_headless_tree_gets_the_workflow_ceiling_from_the_research_bundle(
+    tmp_path: Path,
+) -> None:
+    """The headless recipe includes the research bundle, so the cap reaches a headless
+    composition too; compose base + headless + the branch's research bundle and read the rows."""
+    dsh = Path.home() / ".local/share/sextant-agents/node_modules/@deepseek-ai/dsh/lib/bin.js"
+    installed = Path.home() / ".local/share/sextant-agents/node_modules"
+    if not dsh.is_file() or not (installed / "@deepseek-ai/dsh-headless").is_dir():
+        pytest.skip("dsh and its headless package are not installed in this runtime home")
+    dsh_home = tmp_path / "dsh-home"
+    profile = dsh_home / "profiles/dsh-proof-headless"
+    modules = profile / "node_modules"
+    (modules / "@deepseek-ai").mkdir(parents=True)
+    for name in ("dsh-base", "dsh-headless"):
+        (modules / "@deepseek-ai" / name).symlink_to(
+            installed / "@deepseek-ai" / name, target_is_directory=True
+        )
+    bundle = ROOT / "config/dsh"
+    (modules / "sextant-dsh-research").symlink_to(bundle, target_is_directory=True)
+    (profile / "package.json").write_text(
+        json.dumps(
+            {
+                "name": "dsh-profile-dsh-proof-headless",
+                "private": True,
+                "dependencies": {"sextant-dsh-research": f"link:{bundle}"},
+                "dsh": {
+                    "profile": {
+                        "bundles": [
+                            "@deepseek-ai/dsh-base",
+                            "@deepseek-ai/dsh-headless",
+                            "sextant-dsh-research",
+                        ]
+                    }
+                },
+            }
+        )
+    )
+    tree = subprocess.run(
+        [str(dsh), "--profile", "dsh-proof-headless", "--dump-config"],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "DSH_HOME": str(dsh_home)},
+        check=True,
+        timeout=120,
+    ).stdout
+    rows = [row for row in yaml.safe_load(tree.replace("!!js ", "")) if isinstance(row, dict)]
+    final = {row["id"]: row for row in rows if "id" in row}
+    assert final["subagent"]["config"]["maxActiveSubagents"] == 8
+    assert final["workflow-ptc"]["config"]["maxConcurrentAgents"] == 8
+
+
+@pytest.mark.local
+def test_the_composed_interactive_tree_keeps_the_workflow_ceiling_at_the_subagent_cap(
+    tmp_path: Path,
+) -> None:
+    """The patch file alone is not proof: the composed tree decides. The lock pins the
+    interactive bundle order with sextant-dsh-research last, and a later bundle replaces a
+    row's whole config (billion-context did), so compose base + the branch's research bundle
+    and read the effective rows."""
+    dsh = Path.home() / ".local/share/sextant-agents/node_modules/@deepseek-ai/dsh/lib/bin.js"
+    if not dsh.is_file():
+        pytest.skip("dsh is not installed in this checkout's runtime home")
+    lock = json.loads((ROOT / "config/dsh/profile.lock.json").read_text())
+    bundles = lock["interactive"]["bundles"]
+    assert bundles[-1] == "sextant-dsh-research"  # last wins: nothing composes after the cap
+    dsh_home = tmp_path / "dsh-home"
+    profile = dsh_home / "profiles/dsh-proof"
+    (profile / "node_modules").mkdir(parents=True)
+    bundle = ROOT / "config/dsh"
+    (profile / "node_modules/sextant-dsh-research").symlink_to(bundle, target_is_directory=True)
+    (profile / "package.json").write_text(
+        json.dumps(
+            {
+                "name": "dsh-profile-dsh-proof",
+                "private": True,
+                "dependencies": {"sextant-dsh-research": f"link:{bundle}"},
+                "dsh": {"profile": {"bundles": ["@deepseek-ai/dsh-base", "sextant-dsh-research"]}},
+            }
+        )
+    )
+    tree = subprocess.run(
+        [str(dsh), "--profile", "dsh-proof", "--dump-config"],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "DSH_HOME": str(dsh_home)},
+        check=True,
+        timeout=120,
+    ).stdout
+    rows = [row for row in yaml.safe_load(tree.replace("!!js ", "")) if isinstance(row, dict)]
+    final = {row["id"]: row for row in rows if "id" in row}  # the last layer's row wins
+    assert final["subagent"]["config"]["maxActiveSubagents"] == 8
+    assert final["workflow-ptc"]["config"]["maxConcurrentAgents"] == 8
+
+
 def _muse_layout(tmp_path: Path) -> tuple[Path, Path, Path]:
     prefix = tmp_path / "home" / LANE
     prefix.mkdir(parents=True)
