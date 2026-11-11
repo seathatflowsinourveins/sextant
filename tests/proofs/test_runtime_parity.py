@@ -1025,6 +1025,20 @@ def test_without_pnpm_the_dsh_step_stops_before_any_plugin_add(
     assert not called.exists()
 
 
+@pytest.mark.parametrize("bare", ["acp", "headless"])
+def test_the_dsh_step_refuses_a_bare_profile(tmp_path: Path, bare: str) -> None:
+    parity = _parity()
+    repository = _mcp_repository(tmp_path)
+    dsh_home = tmp_path / "dsh-home"
+    _link_dsh_research(dsh_home, repository)
+    for name in ("acp", "headless"):
+        (dsh_home / "profiles" / name).mkdir(parents=True)
+        (dsh_home / "profiles" / name / ("notes" if name == bare else "package.json")).touch()
+    with pytest.raises(parity.Refused, match=f"profiles/{bare}: a directory without package"):
+        parity.install_dsh(_skills(tmp_path / "source"), dsh_home, ["/nonexistent/dsh"], repository)
+    assert not (dsh_home / "skills").exists()
+
+
 def test_parity_sh_stops_with_a_clear_message_when_pnpm_is_missing(tmp_path: Path) -> None:
     tools = tmp_path / "tools"
     _python3(tools)

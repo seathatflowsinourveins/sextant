@@ -55,11 +55,15 @@ if args[0] == "plugin":
         else:
             name, version = spec.rsplit("@", 1)
             dependencies[name] = version
+        if not (installed := profile / "node_modules" / name).exists():  # where pnpm installs
+            installed.parent.mkdir(parents=True, exist_ok=True)
+            installed.symlink_to(profile)
         if name not in names["plain"] and name not in bundles:
             bundles.append(name)
     manifest.write_text(json.dumps(data))
 elif "--from-default-profile" in args:
     profile = home / "profiles" / args[1]
+    __import__("shutil").rmtree(profile, True)  # initializeProfileFromDefault replaces it
     profile.mkdir(parents=True)
     bundles = [names["base"], names["headless"]]
     (profile / "package.json").write_text(json.dumps({"dsh": {"profile": {"bundles": bundles}}}))
@@ -281,6 +285,68 @@ def test_an_unrecognised_home_is_left_unchanged_and_the_run_fails(
     before = _bytes(home)
     assert parity.main() == 1
     assert _bytes(home) == before and not (world["tmp"] / "dsh.log").exists()
+
+
+def _damage(parity: ModuleType, world: dict[str, Path], case: str) -> object:
+    tui = world["home"] / "profiles/dsh-tui"
+    data = json.loads((tui / "package.json").read_text())
+    stack = data["dsh"]["profile"]["bundles"]
+    if case.startswith("lost"):
+        return (tui / "node_modules" / case.split()[1]).unlink()
+    if case in ("gap", "unselected"):  # unselected: a recorded bundle, then a missing one
+        gone = "sextant-dsh-review-cmd" if case == "gap" else "dsh-test-autofix"
+        for name in (gone, "sextant-dsh-research")[: 1 + (case == "unselected")]:
+            stack.remove(name)
+        del data["dependencies"][gone]
+        (tui / "node_modules" / gone).unlink()
+        return (tui / "package.json").write_text(json.dumps(data))
+    profile = tui if case in ("dsh-tui", "resume") else tui.with_name("dsh-headless")
+    shutil.rmtree(profile)
+    if case == "unmarked":  # the interactive profile is recognised first
+        (world["home"] / parity.FULL_MARKER).unlink()
+    if case == "a file":
+        return profile.write_text("notes\n")
+    profile.mkdir()  # resume: a first run stopped before its first add
+    workspace = ROOT / "deploy/wsl/dsh/pnpm-workspace.yaml"
+    shutil.copyfile(workspace, profile / ("pnpm-workspace.yaml" if case == "resume" else "notes"))
+
+
+CASES = {  # a built home's one difference: its refusal, or None when the run completes it
+    "marked": "dsh-headless: a directory without",
+    "unmarked": "dsh-headless: a directory without",
+    "dsh-tui": "dsh-tui: a directory without",
+    "a file": "dsh-headless: a file",
+    "gap": r"position 19 holds 'dsh-goalloop-agentteams', lock \['sextant-dsh-review-cmd'\]",
+    "unselected": r"\['sextant-dsh-research'\] unselected",
+    "lost sextant-dsh-research off main": "recorded but not installed",
+    "lost sextant-dsh-research": None,
+    "lost brooks-lint": None,
+    "resume": None,
+}
+
+
+@pytest.mark.parametrize("case", CASES)
+def test_an_existing_home_is_completed_or_refused_unchanged(
+    world: dict[str, Path], monkeypatch: pytest.MonkeyPatch, case: str
+) -> None:
+    parity = _parity()
+    _install(parity, world)
+    _damage(parity, world, case)
+    (world["tmp"] / "dsh.log").unlink()
+    off = "HEAD 1a" if case.endswith("off main") else None
+    monkeypatch.setattr(parity, "_main_mismatch", lambda repository: off)
+    before = _bytes(world["home"])
+    if CASES[case]:
+        with pytest.raises(parity.Refused, match=CASES[case]):
+            _install(parity, world)
+        assert _bytes(world["home"]) == before and not (world["tmp"] / "dsh.log").exists()
+        return
+    _install(parity, world)
+    if case != "resume":  # one add of that row, which dsh keeps in its place
+        row = next(r for r in LOCK["interactive"]["dependencies"] if r["package"] == case[5:])
+        add = f"plugin --profile dsh-tui add --save-exact {_target(row)}"
+        assert _lines(world["tmp"] / "dsh.log") == [add]
+    assert _doctor(world["home"] / "profiles/dsh-tui/package.json").returncode == 0
 
 
 LINKS = [row for row in LOCK["interactive"]["dependencies"] if row["spec"].startswith("link:")]
