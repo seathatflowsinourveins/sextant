@@ -119,7 +119,15 @@ class AccountGateway:
         self.tasks: set[asyncio.Task] = set()
 
     async def call(
-        self, kind, method, path, data=None, *, admission=lambda: True, on_wire=lambda: None
+        self,
+        kind,
+        method,
+        path,
+        data=None,
+        *,
+        admission=lambda: True,
+        on_wire=lambda: None,
+        on_end=lambda: None,
     ):
         permitted = (
             method == "get"
@@ -155,6 +163,8 @@ class AccountGateway:
                 self.pacer.on_success()
                 if not future.done():
                     future.set_result(result)
+            finally:
+                on_end()  # the wire call itself ended, whoever still awaits it
 
         def allowed():
             try:

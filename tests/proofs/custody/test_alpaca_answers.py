@@ -160,3 +160,68 @@ def test_a_late_422_after_a_terminal_event_refuses_nothing():
         node.generate_order_cancel_rejected.assert_not_called()
 
     asyncio.run(run())
+
+
+# PR 569, second gate review: one unresolved cancel per order, answered only by its own answer.
+def test_a_late_refusal_owed_to_a_settled_attempt_never_answers_the_next():
+    async def run():
+        node = client()
+        row = await _working(node)
+        await _sent(node)  # attempt A
+        await node._generate_order_status_report(QUERY)  # working: A refused, its refusal owed
+        await _sent(node)  # attempt B
+        await node._on_trade_update(_event("order_cancel_rejected", row))  # A's, delayed
+        node.generate_order_cancel_rejected.assert_called_once()
+        assert node._cancels == {row["id"]}  # B is still unresolved
+
+    asyncio.run(run())
+
+
+def test_a_read_during_a_running_delete_settles_nothing():
+    async def run():
+        node = client()
+        await node._submit_order(NS(order=order(), params={}))
+        venue = node.gateway.sdk
+        node.cache.order.return_value = order(status=OrderStatus.PENDING_CANCEL)
+        entered, release = threading.Event(), threading.Event()
+        venue.delete = lambda path, body: (entered.set(), release.wait(2), None)[2]
+        await HOOK["cancel"](node, cast(Any, _cmd("cancel")))
+        assert await asyncio.to_thread(entered.wait, 1)  # the DELETE is running
+        await node._generate_order_status_report(QUERY)  # the order still shows new
+        release.set()
+        await asyncio.gather(*tuple(node._actions))  # 204
+        node.generate_order_cancel_rejected.assert_not_called()
+        assert node._cancels == {next(iter(venue.rows))}
+
+    asyncio.run(run())
+
+
+def test_a_second_cancel_while_one_is_unresolved_is_not_sent():
+    async def run():
+        node = client()
+        row = await _working(node)
+        venue = node.gateway.sdk
+        venue.delete = lambda path, body: venue.requests.append(
+            ("DELETE", path, row.update(status="pending_cancel"))
+        )
+        await _sent(node)
+        await _sent(node)  # Coinbase: a re-cancel risks CancelRejected flipping the order
+        assert [r[0] for r in venue.requests].count("DELETE") == 1
+        node.generate_order_cancel_rejected.assert_not_called()
+
+    asyncio.run(run())
+
+
+def test_an_unpaid_refusal_debt_leaves_the_next_attempt_to_its_own_read():
+    async def run():
+        node = client()
+        row = await _working(node)
+        await _sent(node)
+        await node._generate_order_status_report(QUERY)  # A refused; A's refusal never comes
+        await _sent(node)  # attempt B
+        await node._on_trade_update(_event("order_cancel_rejected", row))  # B's, absorbed
+        assert node._cancels == {row["id"]}
+        await node._generate_order_status_report(QUERY)  # B's own read settles it
+        assert node.generate_order_cancel_rejected.call_count == 2 and not node._cancels
+
+    asyncio.run(run())

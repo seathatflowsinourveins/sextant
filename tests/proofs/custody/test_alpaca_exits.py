@@ -129,6 +129,7 @@ def _sent(kind, how):
         if kind == "cancel":
             row_id = next(iter(node.gateway.sdk.rows))
             assert node._cancels == {row_id}  # Recorded at the send boundary.
+            await asyncio.gather(*tuple(node.gateway.tasks))  # the DELETE's own call ends
             await _read(node, kind)  # The authoritative read restores the working order.
             node.generate_order_cancel_rejected.assert_called_once()
             assert not node._cancels

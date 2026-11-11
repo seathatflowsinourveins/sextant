@@ -100,7 +100,7 @@ class _Command:
     row_id: str | None = None  # The venue order a DELETE targets.
     wire_id: str | None = None  # A PATCH's proposal key.
     root: str | None = None  # A submit's engine client order id.
-    wire_seq: int = 0  # Its place in send order; 0 until it is on the wire.
+    ended: int = 0  # The tick when its own HTTP call returned or raised; 0 while it runs.
 
 
 # Every trade_updates event the client classifies: alpaca-py TradeEvent at the pin
@@ -171,9 +171,10 @@ class AlpacaExecutionClient(ExecutionClient):
         self._commands: set[_Command] = set()
         self.late_answers = 0  # Venue answers to a command an earlier answer settled.
         self._active_n: dict[str, int] = {}  # Successor number of each root's active order.
-        self._attempts: list[_Command] = []  # DELETEs on the wire with no venue answer yet
-        self._cancel_answered: set[str] = set()  # venue ids with an answered cancel attempt
-        self._wire_seq = 0
+        self._pending: dict[str, _Command] = {}  # venue id -> its one unresolved DELETE
+        self._owed: dict[str, int] = {}  # stream refusals still owed to read-settled attempts
+        self._cancel_seen: set[str] = set()  # venue ids that ever had a DELETE on the wire
+        self._tick = 0
         # No invented commission: caller supplies an evidenced Money per execution.
         self.commission_for_fill: Callable[[dict], Money] | None = None
 
@@ -208,27 +209,28 @@ class AlpacaExecutionClient(ExecutionClient):
     def _mark_sent(self, token: _Command) -> None:
         """The send boundary: the one place on-wire evidence is recorded."""
         token.sent = True
-        self._wire_seq += 1
-        token.wire_seq = self._wire_seq
         if token.kind == "cancel" and token.row_id is not None:
             self._cancels.add(token.row_id)
-            self._attempts.append(token)
+            self._pending[token.row_id] = token
+            self._cancel_seen.add(token.row_id)
 
-    def _answer_cancels(self, row_id, *, before=None, oldest=False) -> list[_Command]:
-        """One token per engine CancelOrder (command_id, execution/cancel.rs:43), as Bybit keys
-        each request (websocket/dispatch.rs:125): a read answers only attempts sent before it."""
-        live = [t for t in self._attempts if t.row_id == row_id]
-        live = [t for t in live if before is None or t.wire_seq <= before][: 1 if oldest else None]
-        for token in live:
-            self._drop(token)
-        return live
+    def _now(self) -> int:
+        self._tick += 1
+        return self._tick
+
+    def _resolve(self, row_id, *, issued=None) -> _Command | None:
+        """Answer this order's one unresolved cancel. A terminal or refusal event answers it at
+        once; a read only when the DELETE's own call ended before the read was issued."""
+        token = self._pending.get(row_id)
+        if token is None or (issued is not None and not 0 < token.ended < issued):
+            return None
+        self._drop(token)
+        return token
 
     def _drop(self, token: _Command) -> None:
         token.settled = True
-        if token in self._attempts:
-            self._attempts.remove(token)
-            self._cancel_answered.add(str(token.row_id))
-        if not any(t.row_id == token.row_id for t in self._attempts):
+        if self._pending.get(str(token.row_id)) is token:
+            del self._pending[str(token.row_id)]
             self._cancels.discard(str(token.row_id))
 
     def _answered(self, kind: str, key: str | None) -> None:
@@ -404,7 +406,7 @@ class AlpacaExecutionClient(ExecutionClient):
         """
         if row["status"] in ("pending_replace", "pending_cancel"):
             return
-        cancel_lost = self._answer_cancels(row["id"], before=issued)
+        cancel_lost = self._resolve(row["id"], issued=issued)
         if row["status"] == "replaced" or row.get("replaced_by"):
             return
         now, venue_id = self.clock.timestamp_ns(), VenueOrderId(row["id"])
@@ -412,6 +414,8 @@ class AlpacaExecutionClient(ExecutionClient):
         if cancel_lost and root is not None and row["status"] not in _TERMINAL:
             native = self.cache.order(ClientOrderId(root))
             if getattr(native, "status", None) == OrderStatus.PENDING_CANCEL:
+                # The venue's own refusal for it may still arrive: it is owed, and answers nothing.
+                self._owed[row["id"]] = self._owed.get(row["id"], 0) + 1
                 self.generate_order_cancel_rejected(
                     native, venue_id, "venue order still working after unanswered cancel", now
                 )
@@ -451,7 +455,7 @@ class AlpacaExecutionClient(ExecutionClient):
         )
 
     async def _current(self, command):
-        issued = self._wire_seq
+        issued = self._now()
         root = house_id(str(command.client_order_id), self.house_prefix)
         venue = self._active.get(root)
         path = f"/orders/{venue}" if venue else "/orders:by_client_order_id"
@@ -530,12 +534,18 @@ class AlpacaExecutionClient(ExecutionClient):
                 return
             row = await self._current(command)
             token.row_id = row["id"]
+            if row["id"] in self._pending:
+                # Single flight: one unresolved cancel per order. Like Coinbase, never re-cancel
+                # (a CancelRejected would flip the order back to working, execution.rs:1236-1240).
+                token.settled = True
+                return
             await self._call(
                 ActionKind.CANCEL,
                 "delete",
                 f"/orders/{row['id']}",
                 admission=lambda: not token.withdrawn and self._mutation_admitted(command, row),
                 on_wire=lambda: self._mark_sent(token),
+                on_end=lambda: setattr(token, "ended", self._now()),
             )
             # Alpaca's DELETE "Attempts to cancel an Open Order" (204): an attempt, not a
             # terminal cancel. The marker stays until a terminal confirmation or a refusal.
@@ -576,7 +586,7 @@ class AlpacaExecutionClient(ExecutionClient):
         )
 
     async def _generate_order_status_report(self, command: Any):
-        issued = self._wire_seq
+        issued = self._now()
         venue = self._active.get(str(command.client_order_id)) or command.venue_order_id
         if venue is not None:
             row = await self._call(ActionKind.QUERY, "get", f"/orders/{venue}")
@@ -624,11 +634,15 @@ class AlpacaExecutionClient(ExecutionClient):
         if row.get("side") == "sell" and event in ("fill", "partial_fill", "stopped"):
             self._executing.add(row["id"])
         if event in _TERMINAL_EVENTS:
-            self._answer_cancels(row["id"])  # Terminal: no attempt can still act.
+            self._resolve(row["id"])  # Terminal: no attempt can still act; the debt ends.
+            self._owed.pop(row["id"], None)
         late = False
-        if event == "order_cancel_rejected":
-            seen = row["id"] in self._cancel_answered
-            late = not self._answer_cancels(row["id"], oldest=True) and seen
+        if event == "order_cancel_rejected":  # The broker's refusal names no attempt.
+            if self._owed.get(row["id"]):
+                self._owed[row["id"]] -= 1  # Paid to a read-settled attempt: answers nothing.
+                late = True
+            else:
+                late = self._resolve(row["id"]) is None and row["id"] in self._cancel_seen
         if event == "order_replace_rejected":
             for key, (_, parent) in self._proposals.items():
                 if parent == row["id"]:

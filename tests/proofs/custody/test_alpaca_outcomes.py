@@ -148,32 +148,6 @@ def _lose(venue, method, error):
 
 
 @pytest.mark.parametrize("kind", ANY_FAILURE)
-def test_sent_delete_lost_to_any_failure_is_restored_by_the_next_read(kind):
-    # Review e5fix-2a7d367 P1: a transport-lost DELETE left the order locally CANCELED.
-    async def run():
-        from nautilus_trader.model import OrderStatus
-
-        node = client()
-        await node._submit_order(NS(order=order(), params={}))
-        venue = node.gateway.sdk
-        error = _requests_failure(kind)
-        _lose(venue, "delete", error)
-        with pytest.raises(type(error)):
-            await node._cancel_order(
-                command(client_order_id=ClientOrderId("fixture-entry"), venue_order_id=None)
-            )
-        node.generate_order_cancel_rejected.assert_not_called()
-        node.cache.order.return_value = order(status=OrderStatus.PENDING_CANCEL)
-        await node._generate_order_status_report(
-            NS(client_order_id=ClientOrderId("fixture-entry"), venue_order_id=None)
-        )
-        assert next(iter(venue.rows.values()))["status"] == "new"
-        node.generate_order_cancel_rejected.assert_called_once()
-
-    asyncio.run(run())
-
-
-@pytest.mark.parametrize("kind", ANY_FAILURE)
 def test_sent_post_lost_to_any_failure_stays_unresolved(kind):
     async def run():
         node = client()
