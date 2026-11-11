@@ -38,7 +38,11 @@ def test_owner_reservation_quantity_update_reconciles_house_coverage(tmp_path, n
     OwnerResize.actions = ((at("0.7"), "OWNER-RESERVE", OrderSide.SELL, 30, "0.9000"),)
     _, orders, _ = run_entry(
         tmp_path,
-        quotes=[*QUOTES, quote(at("0.8"), "0.5050", "0.5100"), quote(at("1.0"), "0.5050", "0.5100")],
+        quotes=[
+            *QUOTES,
+            quote(at("0.8"), "0.5050", "0.5100"),
+            quote(at("1.0"), "0.5050", "0.5100"),
+        ],
         cls=OwnerResize,
         native_trail_fraction=NATIVE,
     )
@@ -50,7 +54,7 @@ def test_owner_reservation_quantity_update_reconciles_house_coverage(tmp_path, n
 def test_submit_throttle_denial_rearms_after_budget_recovers(tmp_path):
     """Review P1: a trail denied by the submit rate is armed again on a later event."""
     risk = RiskEngineConfig(max_order_submit_rate="1/00:00:01")
-    journal, orders, _ = run(
+    _, orders, _ = run(
         tmp_path,
         quotes=[
             *QUOTES,

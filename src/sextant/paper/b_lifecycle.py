@@ -59,7 +59,7 @@ from sextant.entry.signals import EntryState
 from sextant.entry.sizing import SegmentBasis, Sizing, size_entry
 from sextant.entry.surge import SurgeState, advance_surge
 from sextant.exits.policy import ExitParams, buffer
-from sextant.paper.b_width import trail_percent
+from sextant.paper.b_width import MAX_TRAIL_FRACTION, trail_percent
 from sextant.paper.sessions import Session, session_at, session_start_ns
 from sextant.ranking.baseline import BaselineTable
 from sextant.ranking.consumer import RankingConsumer
@@ -84,10 +84,14 @@ class BLifecycleConfig(StrategyConfig):
         # rc8's PyO3 configs initialize their native fields in __new__ (native.py's shape); the
         # constructor's own keywords arrive here too, so only the engine fields are forwarded.
         engine = {key: kwargs[key] for key in ENGINE_FIELDS if key in kwargs}
+        # B claims the external (owner) orders on every instrument it trades or protects
+        # (LEAD-2201 A8; trading stub StrategyConfig.external_order_instrument_ids), so owner
+        # fills and reservations reach its position; the client filters the unclaimed.
         return cast(Any, super().__new__)(
             cls,
             strategy_id=StrategyId.from_str(f"BLIFECYCLE-{namespace}"),
             order_id_tag=namespace,
+            external_order_instrument_ids=list(kwargs.get("instrument_ids", ())),
             **engine,
         )
 
@@ -152,6 +156,7 @@ class _Book:
     session: Session | None = None
     stale_since: int | None = None
     paged: str | None = None
+    rearm: bool = False  # a trail the RiskEngine denied: cover again on the next price
 
 
 class BLifecycle(Strategy):
@@ -167,7 +172,7 @@ class BLifecycle(Strategy):
         self.commission, self.baseline = config.commission_rate, config.baseline
         self.basis_path = config.basis_path
         self.basis: Decimal | None = None  # N5: frozen at node start, or no entry
-        self.tag, self.native = config.namespace, config.native_trail_fraction
+        self.tag, self._config = config.namespace, config
         rows = self.params
         missing = sorted(n for n in ENTRY_ROWS if rows is None or not rows.has(n))
         named = (
@@ -202,6 +207,11 @@ class BLifecycle(Strategy):
             self.basis = store.freeze(key, free, first_read="node_start")  # N5's frozen basis
 
     @property
+    def native(self) -> Any:
+        """The native row in force at this decision, never a construction copy (review P2)."""
+        return self._config.native_trail_fraction
+
+    @property
     def _p(self) -> EntryParameters:
         assert self.params is not None  # only reached when no entry row is missing
         return self.params
@@ -224,6 +234,7 @@ class BLifecycle(Strategy):
             return
         book.quote = quote
         self._session(book, now)
+        self._rearm(book)
         if book.stale_since is not None and quote.ts_event >= book.stale_since:
             gap = quote.ts_event - book.stale_since  # the carried trigger's unquoted interval
             self._record(
@@ -239,6 +250,7 @@ class BLifecycle(Strategy):
             return
         now = self.clock.timestamp_ns()
         self._session(book, now)
+        self._rearm(book)
         allowed = self.candidate(book, now)
         if book.entry is None or self.baseline is None or self.exit is None:
             return
@@ -375,10 +387,23 @@ class BLifecycle(Strategy):
     def on_order_expired(self, event: Any) -> None:
         self._on_order(event)
 
+    def on_order_updated(self, event: Any) -> None:
+        self._on_order(event)  # a confirmed quantity replacement moves the reservation
+
     def on_order_denied(self, event: Any) -> None:
         self._record(
             kind="page", ts=event.ts_event, reason="denied", order=str(event.client_order_id)
         )
+        book = self.books.get(event.instrument_id)
+        if book is not None and _is_trail(self.cache.order(event.client_order_id)):
+            book.rearm = True  # a later event re-arms; never a resubmit into the same denial
+
+    def _rearm(self, book: _Book) -> None:
+        """A trail the RiskEngine denied (its submit rate, or no price) is armed again on the
+        book's next quote or trade, not recursively inside the denial."""
+        if book.rearm:
+            book.rearm = False
+            self.reconcile(book)
 
     def _on_order(self, event: Any) -> None:
         book = self.books.get(event.instrument_id)
@@ -430,13 +455,16 @@ class BLifecycle(Strategy):
             excess -= leaves
 
     def _arm(self, book: _Book, now: int, shares: Decimal) -> None:
-        if self.native is None:
+        native = self.native
+        if native is None:
             return self._page(book, now, "native_trail_fraction_missing")
+        if not isinstance(native, Decimal) or not 0 < native <= MAX_TRAIL_FRACTION:
+            return self._page(book, now, "native_trail_fraction_invalid")  # ADR-0025's cap
         order = self.order_factory.trailing_stop_market(
             book.instrument_id,
             OrderSide.SELL,
             Quantity.from_int(int(shares)),
-            trail_percent(self.native) * 100,  # basis points, rounded wider (b_width.py)
+            trail_percent(native) * 100,  # basis points, rounded wider (b_width.py)
             trailing_offset_type=TrailingOffsetType.BASIS_POINTS,
             time_in_force=TimeInForce.GTC,
             reduce_only=True,
