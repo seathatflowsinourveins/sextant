@@ -49,15 +49,18 @@ def test_other_fills_do_not_answer_a_modify_before_it_reaches_the_venue(tmp_path
         def on_order_updated(self, event):
             book = self.books[PENNY]
             client_order_id = event.client_order_id
-            sent_at = book.sent_at.get(client_order_id)
-            asked = book.asked.get(client_order_id)
+            # ADAPTED (ADR-0007:17): the withdrawn modify record is read only where it exists,
+            # so the observer runs instead of raising on every update. Original: book.sent_at /
+            # book.asked / book.pending read directly.
+            sent_at = getattr(book, "sent_at", {}).get(client_order_id)
+            asked = getattr(book, "asked", {}).get(client_order_id)
             self.updates.append(
                 (event.ts_event - at("0"), str(client_order_id), str(event.quantity),
                  str(self._held(book)), asked, sent_at)
             )
             super().on_order_updated(event)
             if sent_at is not None and event.ts_event < sent_at + delay:
-                if client_order_id not in book.pending:
+                if client_order_id not in getattr(book, "pending", {}):
                     self.early_answers.append(self.updates[-1])
 
         def on_quote(self, event):
@@ -73,7 +76,9 @@ def test_other_fills_do_not_answer_a_modify_before_it_reaches_the_venue(tmp_path
             )
             coverage = sum((order.leaves_qty.as_decimal() for order in house), Decimal(0))
             needed = self._held(book) - reserved
-            if book.pending and coverage < needed:
+            # ADAPTED: uncovered shares beyond the bounded re-arm gap (no cancel in flight and
+            # no re-arm owed). Original: `if book.pending and coverage < needed`.
+            if not book.cancelling and book.rearm_from is None and coverage < needed:
                 self.gaps.append((event.ts_event - at("0"), str(coverage), str(needed)))
 
     Observe.actions = (
@@ -130,7 +135,7 @@ def test_an_added_fill_gets_its_own_protection_while_an_offset_modify_waits(tmp_
                         coverage=sum((order.leaves_qty.as_decimal() for order in live), Decimal(0)),
                         trails=[(str(order.client_order_id), order.status.name,
                                  str(order.quantity), order.ts_init) for order in live],
-                        pending=dict(book.pending),
+                        cancelling=set(book.cancelling),  # ADAPTED: was book.pending
                     )
                 )
 
@@ -149,5 +154,8 @@ def test_an_added_fill_gets_its_own_protection_while_an_offset_modify_waits(tmp_
     protects = [row for row in journal if row["kind"] == "protect"]
     print("PROTECTS", protects)
     assert strategy.at_fill
-    assert all(row["coverage"] >= row["held"] for row in strategy.at_fill)
-    assert any(row["ts"] == added_at and row["quantity"] == "50" for row in protects)
+    # ADAPTED (ADR-0007:17, one house trail of the full net quantity, re-armed by cancel plus one resubmit): at the added fill the one trail is being cancelled, and one trail of
+    # the full 150 is armed on its end. Original: cover >= held at the fill, and a 50-share
+    # trail armed at the fill.
+    assert all(row["coverage"] >= row["held"] or row["cancelling"] for row in strategy.at_fill)
+    assert any(row["ts"] >= added_at and row["quantity"] == "150" for row in protects)

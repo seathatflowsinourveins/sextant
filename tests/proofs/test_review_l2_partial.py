@@ -125,7 +125,12 @@ def test_added_shares_stay_covered_when_a_trail_remains_partly_filled():
             if snapshot["source"].startswith("filled:OWNER-ADDED:")
         ]
         assert at_addition
-        assert all(snapshot["coverage"] >= snapshot["needed"] for snapshot in at_addition)
+        # ADAPTED (ADR-0007:17, one house trail of the full net quantity, re-armed by cancel plus one resubmit; ADR-0007:25, LEAD-2308, lead decision 09:3x): while the partly filled
+        # trail completes, the added shares wait and are paged once. Original: cover >= needed
+        # at the addition.
+        pages = [row.get("reason") for row in journal if row["kind"] == "page"]
+        assert "exit_triggered_left_to_complete" in pages
+        assert not [s for s in strategy.snapshots if s["coverage"] > s["held"]]
         assert strategy.snapshots[-1]["coverage"] == strategy.snapshots[-1]["needed"]
     finally:
         engine.dispose()
