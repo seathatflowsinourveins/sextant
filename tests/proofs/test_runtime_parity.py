@@ -4,10 +4,13 @@ Fixture proofs of the installer and launchers. Native host listings are recorded
 deploy/wsl/lane-runtimes/parity-receipts.json.
 """
 
+import hashlib
 import importlib.util
 import json
 import os
+import shlex
 import shutil
+import stat
 import subprocess
 import sys
 import tomllib
@@ -32,6 +35,13 @@ ANTIGRAVITY_NATIVE_ROOTS = (
     ".gemini/antigravity-cli/plugin_data/sextant-shelf/state.json",
     ".gemini/config/mcp_config.json",
 )  # fmt: skip
+
+
+@pytest.fixture(autouse=True)
+def _isolated_runtime_home_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Use each proof's temporary home unless it supplies an explicit runtime root."""
+    for name in ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "DSH_HOME"):
+        monkeypatch.delenv(name, raising=False)
 
 
 def _parity() -> ModuleType:
@@ -188,10 +198,13 @@ def test_dsh_skills_go_to_its_own_home_and_the_bundle_through_dsh(
         row["spec"] for row in quality["plugins"] if row["package"] == "dsh-goalloop-agentteams"
     )
     shim = str(repository / "config/dsh/review-cmd")
+    autofix = next(
+        row["spec"] for row in quality["plugins"] if row["package"] == "dsh-test-autofix"
+    )
     assert log.read_text().splitlines() == [
         f"plugin --profile acp add --save-exact {repository}/config/dsh/mcp {goalloop} {shim}",
         f"plugin --profile headless add --save-exact {repository}/config/dsh/mcp {goalloop} {shim}",
-        f"plugin --profile dsh-tui add --save-exact {goalloop} {shim}",
+        f"plugin --profile dsh-tui add --save-exact {goalloop} {shim} {autofix}",
     ]
 
 
@@ -469,6 +482,146 @@ def test_dsh_injects_its_three_keys_in_one_strict_hop_and_versions_stay_keyless(
     assert '"../sextant-agents/node_modules/@deepseek-ai/dsh/lib/bin.js"' in launcher.read_text()
 
 
+TUI_ENTRY = "profiles/dsh-tui/node_modules/@deepseek-harness-tui/dsh-tui/bin/dsh-tui.js"
+
+
+def test_plain_dsh_tui_is_keyed_in_one_strict_hop_on_the_enhanced_home_and_prints_no_key(
+    tmp_path: Path,
+) -> None:
+    keys = "--strict -k DEEPSEEK_API_KEY -k CONTEXT7_API_KEY -k EXA_API_KEY"
+    prefix, log, home = _keyed_layout(tmp_path, "dsh-tui-launch.sh", keys)
+    values = {name: f"fixture-{name.lower()}-value" for name in keys.split()[2::2]}
+    with_keys = tmp_path / "repo/scripts/with-keys.sh"
+    exports = "".join(f"export {name}={value}\n" for name, value in values.items())
+    _stub(
+        with_keys,
+        with_keys.read_text().removeprefix("#!/bin/sh\n").replace("shift", exports + "shift"),
+    )
+    record = (
+        f'echo "tui $* home=$DSH_HOME off=$DSH_TELEMETRY_DISABLED/$DSH_TELEMETRY_MODE" >> "{log}"\n'
+    )
+    for root in (home / ".dsh-full", tmp_path / "explicit"):
+        _stub(root / TUI_ENTRY, record)
+    launcher = prefix / "dsh-tui-launch.sh"
+    link = home / ".local/bin/dsh-tui"
+    link.parent.mkdir(parents=True)
+    link.symlink_to(launcher)
+    caller = {**os.environ, "HOME": str(home), "DEEPSEEK_API_KEY": values["DEEPSEEK_API_KEY"]}
+    caller.pop("DSH_HOME", None)
+    output = ""
+    for arguments, extra in (
+        ((".",), {}),
+        (("--version",), {}),
+        ((".",), {"DSH_HOME": str(tmp_path / "explicit")}),
+    ):
+        result = subprocess.run(
+            ["bash", "-x", str(link), *arguments], env={**caller, **extra},
+            capture_output=True, text=True, check=True,
+        )  # fmt: skip
+        output += result.stdout + result.stderr
+    off = "off=1/DISABLED"
+    assert log.read_text().splitlines() == [
+        "keyed", f"tui . home={home}/.dsh-full {off}",
+        f"tui --version home={home}/.dsh-full {off}",
+        "keyed", f"tui . home={tmp_path}/explicit {off}",
+    ]  # fmt: skip
+    assert not any(value in output or value in log.read_text() for value in values.values())
+
+
+def test_a_dump_config_launch_reaches_the_core_dsh_in_one_keyed_hop(tmp_path: Path) -> None:
+    keys = "--strict -k DEEPSEEK_API_KEY -k CONTEXT7_API_KEY -k EXA_API_KEY"
+    prefix, log, home = _keyed_layout(tmp_path, "dsh-tui-launch.sh", keys)
+    shutil.copyfile(RUNTIMES / "dsh-launch.sh", prefix / "dsh-launch.sh")
+    (prefix / "dsh-launch.sh").chmod(0o755)
+    (home / ".local/bin").mkdir(parents=True)
+    (home / ".local/bin/dsh").symlink_to(prefix / "dsh-launch.sh")  # the keyed shim
+    core = prefix.parent / "sextant-agents/node_modules"
+    _stub(core / "@deepseek-ai/dsh/lib/bin.js", f'echo "core dsh $*" >> "{log}"\n')
+    (core / ".bin").mkdir()
+    (core / ".bin/dsh").symlink_to("../@deepseek-ai/dsh/lib/bin.js")
+    # dsh-tui 0.19.0 bin/dsh-tui.js:872 spawns `dsh --profile` by name for leading dsh options.
+    _stub(home / ".dsh-full" / TUI_ENTRY, 'exec dsh --profile dsh-tui "$@"\n')
+    path = f"{home}/.local/bin:{os.environ['PATH']}"
+    env = {**os.environ, "HOME": str(home), "PATH": path}
+    env.pop("DSH_HOME", None)
+    subprocess.run([str(prefix / "dsh-tui-launch.sh"), "--dump-config"], check=True, env=env)
+    assert log.read_text().splitlines() == ["keyed", "core dsh --profile dsh-tui --dump-config"]
+
+
+TUI_WRAPPER = f"{LANE}/dsh-tui-launch.sh"
+
+
+@pytest.mark.parametrize("installer", ["install.sh", "parity.sh"])
+@pytest.mark.parametrize(
+    "relative, kind",
+    [(".local/bin/dsh-tui", "file"), (TUI_WRAPPER, "file"), (".local/bin/dsh-tui", "link")],
+)
+def test_an_unknown_dsh_tui_destination_is_refused_before_any_write(
+    tmp_path: Path, installer: str, relative: str, kind: str
+) -> None:
+    home = tmp_path / "home"
+    path = home / relative
+    path.parent.mkdir(parents=True)
+    if kind == "link":
+        path.symlink_to(_stub(tmp_path / "elsewhere/dsh-tui", "exit 0\n"))
+    else:
+        _stub(path, "echo the owner's own dsh-tui\n")
+    tools = tmp_path / "tools"
+    _stub(tools / "pnpm", "exit 0\n")
+    _python3(tools)
+    for command in ("npm", "curl", "install", "uv", "ln"):
+        _stub(tools / command, "exit 86\n")
+    before = _snapshot(tmp_path)
+    result = subprocess.run(
+        ["/bin/bash", str(RUNTIMES / installer)], capture_output=True, text=True,
+        env={"HOME": str(home), "PATH": f"{tools}:/usr/bin:/bin", "TMPDIR": str(tmp_path)},
+        check=False,
+    )  # fmt: skip
+    assert result.returncode != 0 and f"{path}: " in result.stderr
+    assert _snapshot(tmp_path) == before
+
+
+@pytest.mark.parametrize(
+    "relative, target",
+    [
+        (".local/bin/dsh-tui", TUI_WRAPPER),
+        (".local/bin/dsh-tui", f".dsh/{TUI_ENTRY}"),
+        (".local/bin/dsh-tui", f".dsh-full/{TUI_ENTRY}"),
+        (".local/bin/dsh-tui", None),
+        (TUI_WRAPPER, None),
+    ],
+)
+def test_absent_our_links_and_known_dsh_tui_launchers_are_accepted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, relative: str, target: str | None
+) -> None:
+    parity = _parity()
+    home = tmp_path / "home"
+    monkeypatch.setenv("DSH_HOME", str(home / ".dsh"))
+    parity.preflight(home)  # both destinations absent
+    path = home / relative
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if target:
+        path.symlink_to(home / target)
+    else:  # a regular copy of a known launcher: the 2026-11-10 host copy or a tracked version
+        shutil.copyfile(RUNTIMES / "dsh-tui-launch.sh", path)
+    parity.preflight(home)
+    tracked = hashlib.sha256((RUNTIMES / "dsh-tui-launch.sh").read_bytes()).hexdigest()
+    assert tracked in parity.DSH_TUI_KNOWN
+    assert (
+        "01d2bb2d0bcd7ebc531664a2b224f46f1208fda9db0b59d69c9a5f8932e9d1ac" in parity.DSH_TUI_KNOWN
+    )
+
+
+def test_setup_leaves_the_dsh_tui_link_to_parity_after_the_wrapper_is_installed() -> None:
+    assert ".local/bin/dsh-tui" not in (ROOT / "deploy/wsl/setup.sh").read_text()
+    parity = (RUNTIMES / "parity.sh").read_text()
+    installed = parity.index('install -m 755 "$here/$runtime-launch.sh"')
+    assert installed < parity.index(
+        'ln -sfn "$prefix/dsh-tui-launch.sh" "$HOME/.local/bin/dsh-tui"'
+    )
+    assert "dsh-tui" in parity[parity.index("for runtime in") : installed]
+
+
 def test_antigravity_sessions_are_keyed_and_its_config_commands_are_keyless(
     tmp_path: Path,
 ) -> None:
@@ -503,6 +656,236 @@ def test_muse_is_pinned_to_metas_manifest_and_wonder_full_at_max() -> None:
     assert policy["contributor_mode"] == "off"
 
 
+MUSE_PAYLOAD = {
+    ".muse-plugin/plugin.json": '{"schemaVersion":1,"name":"superpowers","version":"7.0.2"}\n',
+    "skills/payload.md": "original payload\n",
+    "retired.txt": "original retired payload\n",
+}
+
+
+@pytest.fixture
+def muse_delivery(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    parity, home = _parity(), tmp_path / "home"
+    cache = home / ".local/share/sextant-runtime-skills"
+    data = home / ".local/share/muse"
+    config = home / ".config/muse"
+    registry = data / "plugins/installed.json"
+    source = cache / "superpowers"
+    prefix = home / LANE
+    prefix.mkdir(parents=True)
+    (prefix / "repository-path").write_text(str(ROOT))
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config.parent))
+    monkeypatch.setenv("XDG_DATA_HOME", str(data.parent))
+    monkeypatch.setattr(sys, "argv", ["parity.py", "--runtime", "muse"])
+    skills = _skills(tmp_path / "skills")
+    monkeypatch.setattr(parity, "shelf", lambda _cache: skills)
+    for relative, content in MUSE_PAYLOAD.items():
+        path = source / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content)
+
+    def native(command: list[str]) -> None:
+        noun, verb, path, *args = command[1:]
+        assert (verb, args) == ("install", ["--scope", "user", "--json"])
+        origin = Path(path)
+        if noun == "skills":
+            shutil.copytree(origin, config / "skills" / origin.name)
+            return
+        assert noun == "plugins"
+        name = json.loads((origin / ".muse-plugin/plugin.json").read_text())["name"]
+        body = b"".join(
+            str(file.relative_to(origin)).encode() + b"\0" + file.read_bytes()
+            for file in sorted(origin.rglob("*"))
+            if file.is_file() and ".git" not in file.relative_to(origin).parts
+        )
+        digest = hashlib.sha256(body).hexdigest()
+        root = data / "plugins/cache/local" / name
+        if root.exists():
+            shutil.rmtree(root)
+        package = root / digest / "package"
+        shutil.copytree(origin, package, ignore=shutil.ignore_patterns(".git"))
+        (package.parent / "agent-definitions").mkdir()
+        state = (
+            json.loads(registry.read_text())
+            if registry.exists()
+            else {
+                "version": 1,
+                "plugins": {},
+            }
+        )
+        state["plugins"][name] = {
+            "id": name,
+            "enabled": True,
+            "source": {"provenance": "native-local", "path": str(origin)},
+            "cache_path": str(package.relative_to(data)),
+            "package_sha256": f"sha256:{digest}",
+        }
+        registry.write_text(json.dumps(state))
+
+    monkeypatch.setattr(parity, "_native", native)
+    return parity.main, source, registry, config, skills
+
+
+def test_parity_delivers_muse_skills_and_mcp_without_changing_settings(muse_delivery, capsys):
+    run, _source, registry, config, skills = muse_delivery
+    settings = config / "settings.json"
+    settings.parent.mkdir(parents=True)
+    settings.write_bytes(b'{"model":"owner-value"}\n')
+    assert run() == 0
+    first = capsys.readouterr()
+    assert 'muse: {"installed": 12}' in first.out
+    state = registry.read_bytes()
+    plugins = json.loads(state)["plugins"]
+    assert set(plugins) == {"superpowers", "sextant-mcp"}
+    mcp = registry.parents[1] / plugins["sextant-mcp"]["cache_path"]
+    manifest = json.loads((mcp / ".muse-plugin/plugin.json").read_text())
+    servers = {server["id"]: server for server in manifest["capabilities"]["mcpServers"]}
+    assert set(servers) == set(SPEC["mcp"])
+    for name, server in servers.items():
+        assert server["command"] == ["bash", f"mcp/{name}.sh"]
+        assert (mcp / server["command"][1]).is_file()
+    superpowers = set(SPEC["shelf"]["superpowers@superpowers-dev"]["skills"])
+    assert {path.name for path in (config / "skills").iterdir()} == set(skills) - superpowers
+    assert run() == 0
+    assert 'muse: {"unchanged": 12}' in capsys.readouterr().out
+    assert settings.read_bytes() == b'{"model":"owner-value"}\n'
+    assert registry.read_bytes() == state
+
+
+def test_muse_mcp_wrappers_supply_config_after_muse_clears_the_environment(muse_delivery):
+    run, _source, registry, _config, _skills = muse_delivery
+    assert run() == 0
+    plugins = json.loads(registry.read_text())["plugins"]
+    package = registry.parents[1] / plugins["sextant-mcp"]["cache_path"]
+    for name, key, header in (
+        ("context7", "CONTEXT7_API_KEY", "Authorization: Bearer ${CONTEXT7_API_KEY}"),
+        ("exa", "EXA_API_KEY", "x-api-key: ${EXA_API_KEY}"),
+    ):
+        script = (package / f"mcp/{name}.sh").read_text()
+        command = shlex.split(script.split("exec ", 1)[1])
+        assert command[:5] == [str(ROOT / "scripts/with-keys.sh"), "--strict", "-k", key, "--"]
+        assert command[command.index("--header") + 1] == header
+    paper = (package / "mcp/paper-search.sh").read_text()
+    assert shlex.split(paper.split("exec ", 1)[1])[:2] == [
+        "env",
+        "PAPER_SEARCH_MCP_ENV_FILE=/dev/null",
+    ]
+
+
+def _muse_package(registry: Path) -> Path:
+    record = json.loads(registry.read_text())["plugins"]["superpowers"]
+    return registry.parents[1] / record["cache_path"]
+
+
+def _filesystem_snapshot(root: Path) -> dict:
+    def entry(path: Path) -> tuple[int, bytes | str | None]:
+        mode = path.lstat().st_mode
+        if stat.S_ISREG(mode):
+            return mode, path.read_bytes()
+        if stat.S_ISLNK(mode):
+            return mode, os.readlink(path)
+        return mode, None
+
+    return {path.relative_to(root): entry(path) for path in (root, *root.rglob("*"))}
+
+
+def _muse_mutations():
+    for relative in MUSE_PAYLOAD:
+        for operation in ("remove", "bytes", "permissions", "executable", "symlink"):
+            yield pytest.param(operation, relative, id=f"{operation}-{relative}")
+    for operation in ("permissions", "special-mode"):
+        for relative in (".", "skills"):
+            yield pytest.param(operation, relative, id=f"{operation}-dir-{relative}")
+    for operation in ("add-file", "add-dir", "add-fifo"):
+        yield pytest.param(operation, "owner-added", id=operation)
+    yield pytest.param("add-file", "../../other-digest/package", id="orphan-cache")
+    yield pytest.param("add-file", "../agent-definitions/owner.md", id="agent-cache")
+    for field in ("cache_path", "package_sha256"):
+        for operation in ("missing", "empty", "malformed", "other"):
+            yield pytest.param(operation, field, id=f"record-{field}-{operation}")
+    yield pytest.param("remove-record", "", id="orphan-package")
+    yield pytest.param("remove-receipt", "", id="missing-baseline")
+
+
+def _mutate_muse(operation: str, relative: str, package: Path, registry: Path, source: Path):
+    if operation == "remove-receipt":
+        (source.parent / "muse-superpowers.json").unlink()
+    elif operation in {"missing", "empty", "malformed", "other", "remove-record"}:
+        state = json.loads(registry.read_text())
+        record = state["plugins"]["superpowers"]
+        if operation == "remove-record":
+            del state["plugins"]["superpowers"]
+        elif operation == "missing":
+            del record[relative]
+        else:
+            record[relative] = {
+                "empty": "",
+                "malformed": 17,
+                "other": f"sha256:{'0' * 64}",
+            }[operation]
+        registry.write_text(json.dumps(state))
+    else:
+        target = package / relative
+        if operation == "remove":
+            target.unlink()
+        elif operation == "bytes":
+            target.write_bytes(target.read_bytes() + b"owner edit\n")
+        elif operation in {"permissions", "executable", "special-mode"}:
+            bit = {"permissions": 0o040, "executable": 0o100, "special-mode": 0o2000}
+            target.chmod(stat.S_IMODE(target.stat().st_mode) ^ bit[operation])
+        elif operation == "symlink":
+            target.unlink()
+            target.symlink_to(source / relative)
+        elif operation == "add-file":
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("owner file\n")
+        elif operation == "add-dir":
+            target.mkdir()
+        else:
+            assert operation == "add-fifo"
+            os.mkfifo(target)
+
+
+@pytest.mark.parametrize("move_payload", (False, True), ids=("same", "moved"))
+@pytest.mark.parametrize(("operation", "relative"), list(_muse_mutations()))
+def test_parity_refuses_each_muse_mutation_and_preserves_state(
+    muse_delivery, capsys, operation, relative, move_payload
+):
+    run, source, registry, _config, _skills = muse_delivery
+    assert run() == 0
+    capsys.readouterr()
+    package = _muse_package(registry)
+    if move_payload:
+        (source / "skills/payload.md").write_text("incoming changed bytes\n")
+        (source / "retired.txt").unlink()
+    _mutate_muse(operation, relative, package, registry, source)
+    before = _filesystem_snapshot(registry.parent)
+    assert run() == 1
+    assert "NOT_CONFIGURED:" in capsys.readouterr().err
+    assert _filesystem_snapshot(registry.parent) == before
+
+
+@pytest.mark.parametrize("change", ("payload", "mode"))
+def test_parity_reinstalls_only_the_clean_muse_package_when_source_moves(
+    muse_delivery, capsys, change
+):
+    run, source, registry, _config, _skills = muse_delivery
+    assert run() == 0
+    capsys.readouterr()
+    incoming = source / "skills/payload.md"
+    if change == "payload":
+        incoming.write_text("incoming changed bytes\n")
+        (source / "retired.txt").unlink()
+    else:
+        incoming.chmod(0o755)
+    assert run() == 0
+    assert 'muse: {"installed": 1, "unchanged": 11}' in capsys.readouterr().out
+    assert _filesystem_snapshot(_muse_package(registry)) == _filesystem_snapshot(source)
+    assert run() == 0
+    assert 'muse: {"unchanged": 12}' in capsys.readouterr().out
+
+
 def test_qmd_is_on_every_runtimes_path() -> None:
     setup = (ROOT / "deploy/wsl/setup.sh").read_text()
     assert 'ln -sfn "$qmd/node_modules/.bin/qmd" "$HOME/.local/bin/qmd"' in setup
@@ -510,7 +893,7 @@ def test_qmd_is_on_every_runtimes_path() -> None:
 
 def test_parity_installs_the_launchers_the_verified_muse_binary_and_the_cooled_bridge() -> None:
     parity = (RUNTIMES / "parity.sh").read_text()
-    for name in ("agy", "dsh", "sextant-dsh", "muse"):
+    for name in ("agy", "dsh", "dsh-tui", "sextant-dsh", "muse"):
         assert f'"$HOME/.local/bin/{name}"' in parity
     assert "jq -r .muse.sha256" in parity and "sha256sum -c -" in parity
     assert (RUNTIMES / "install.sh").read_text().rstrip().endswith('bash "$here/parity.sh"')
@@ -696,10 +1079,13 @@ def test_dsh_plugin_initializes_a_shipped_profile_that_never_ran(
         row["spec"] for row in quality["plugins"] if row["package"] == "dsh-goalloop-agentteams"
     )
     shim = str(repository / "config/dsh/review-cmd")
+    autofix = next(
+        row["spec"] for row in quality["plugins"] if row["package"] == "dsh-test-autofix"
+    )
     assert log.read_text().splitlines() == [
         f"plugin --profile acp add --save-exact {bundle} {goalloop} {shim}",
         f"plugin --profile headless add --save-exact {bundle} {goalloop} {shim}",
-        f"plugin --profile dsh-tui add --save-exact {goalloop} {shim}",
+        f"plugin --profile dsh-tui add --save-exact {goalloop} {shim} {autofix}",
     ]
 
 
@@ -724,10 +1110,13 @@ def test_dsh_quality_rows_install_the_p10_picks_on_every_profile(
     goalloop = next(
         row["spec"] for row in quality["plugins"] if row["package"] == "dsh-goalloop-agentteams"
     )
+    autofix = next(
+        row["spec"] for row in quality["plugins"] if row["package"] == "dsh-test-autofix"
+    )
     assert log.read_text().splitlines() == [
         f"plugin --profile acp add --save-exact {repository}/config/dsh/mcp {goalloop} {shim}",
         f"plugin --profile headless add --save-exact {repository}/config/dsh/mcp {goalloop} {shim}",
-        f"plugin --profile dsh-tui add --save-exact {goalloop} {shim}",
+        f"plugin --profile dsh-tui add --save-exact {goalloop} {shim} {autofix}",
     ]
     assert len(pnpm_log.read_text().splitlines()) == 3
 

@@ -90,7 +90,7 @@ perform no dsh session reads, even when `DSH_HOME` is inherited or valid logs ex
 in either `~/.dsh` or `~/.dsh-enhanced`. The source reports disabled/unavailable;
 no dsh token, timing or cost metric is exported. Other bridge feeds are unchanged.
 
-An operator can opt in with `python3 -I scripts/monitor_l3_l4.py --dsh-home ~/.dsh`
+An operator can opt in with `python3 -I scripts/monitor_l3_l4.py --dsh-home ~/.dsh-full`
 or a caller can supply an explicit API `paths["dsh_root"]`. Neither path changes
 runtime configuration or starts a service. The regression proofs
 `test_dsh_collection_is_off_by_default` and

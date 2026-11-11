@@ -76,7 +76,7 @@ def test_installers_link_only_the_retained_launchers() -> None:
     install = link.findall((RUNTIMES / "install.sh").read_text())
     assert sorted(install) == ["agy", "sextant-codex", "sextant-codex-review"]
     parity = link.findall((RUNTIMES / "parity.sh").read_text())
-    assert sorted(parity) == ["agy", "dsh", "muse", "sextant-dsh"]
+    assert sorted(parity) == ["agy", "dsh", "dsh-tui", "muse", "sextant-dsh"]
 
 
 def test_fresh_router_is_pinned_and_has_no_old_campaign_endpoint() -> None:
