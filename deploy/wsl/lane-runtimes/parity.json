@@ -38,6 +38,11 @@
         ]
       },
       "mcp_bundle": "config/dsh/mcp",
+      "full": {
+        "home": ".dsh-full",
+        "lock": "config/dsh/profile.lock.json",
+        "source": "docs/manifest.md row: Enhanced dsh home built from the profile lock"
+      },
       "skills": "deepseek-ai/deepseek-harness@dsh-v0.2.2-rc.1 66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db:packages/skill/skill-filesystem/README.md Roots and priority (<dshHome>/skills); blind legs keep their own empty DSH_HOME",
       "mcp": "dsh-v0.2.2-rc.1 packages/mcp/mcp-client/README.md; apps/cli docs/user/develop/basic/publish.md (dsh plugin --profile <name> add)",
       "proof": "dsh --profile <p> --dump-config; dsh-tui /skills"
