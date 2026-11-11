@@ -5,13 +5,17 @@ The client is injected and must be an alpaca-py raw ``StockHistoricalDataClient`
 whose rows carry ``t``, ``v``, ``vw`` and ``n``. Nothing here reads the
 environment, constructs a client or logs a payload.
 
-Completeness is a receipt, not an inference: when a response carries any bars,
-every requested session must appear in it; a response with no bars at all is a
-complete quiet window. Each requested day contributes PRE, RTH and POST
-receipts, so a day the vendor silently dropped is refused instead of zeroed.
+Completeness of the answer is the SDK's: ``get_stock_bars`` returns only after
+the page whose ``next_page_token`` is null and raises ``APIError`` on any failed
+page (alpaca-py@v0.44.0 ``alpaca/common/rest.py:198-207,376-408``). Its merged
+mapping is a ``defaultdict(list)`` filled only from symbols present in some
+page, so a requested symbol with no bars is simply absent. Such a symbol, or
+segment, did not trade in the window: it gets no coverage receipt and therefore
+no baseline, and the reader treats it as unknown. A non-empty answer that lacks
+a whole requested session for every symbol is refused as a dropped day. A
+symbol that traded in some sessions keeps a zero for its quiet ones.
 """
 
-from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
@@ -115,28 +119,39 @@ def _day_coverage(symbol: str, day: date) -> list[BaselineCoverage]:
     ]
 
 
+def _refuse_dropped_session(days: set[date], sessions: tuple[date, ...]) -> None:
+    """A session with no bar for any requested symbol is a dropped day, not a quiet one."""
+    missing = [day for day in sessions if day not in days]
+    if missing:
+        raise ValueError(
+            f"vendor bars are missing requested session {missing[0].isoformat()} "
+            "for every requested symbol"
+        )
+
+
 def _refuse_incomplete(
-    rows: dict[str, list[MinuteBarRow]], sessions: tuple[date, ...], symbols: tuple[str, ...]
-) -> None:
-    if rows:
-        missing_symbols = [symbol for symbol in symbols if symbol not in rows]
-        if missing_symbols:
-            raise ValueError(f"vendor bars are missing requested symbol {missing_symbols[0]}")
-    present: dict[str, set[date]] = defaultdict(set)
+    rows: dict[str, list[MinuteBarRow]], sessions: tuple[date, ...]
+) -> set[tuple[str, str]]:
+    """Refuse a malformed answer; return the (symbol, segment) pairs with usable bars.
+
+    The 16:00 minute is skipped as ``build_baseline`` skips it. An unrequested
+    symbol's bars get no receipt, so ``build_baseline`` still refuses them.
+    """
+    days: set[date] = set()
+    present: set[tuple[str, str]] = set()
     for symbol, bars in rows.items():
         for bar in bars:
-            segment, day, _start = segment_start(bar.ts_event)
+            segment, day, start = segment_start(bar.ts_event)
             if segment is None or segment.name not in SEGMENTS or day not in sessions:
                 raise ValueError(
                     f"vendor minute bar outside the requested sessions: {symbol} {bar.ts_event}"
                 )
-            present[symbol].add(day)
-    for symbol, days in present.items():
-        missing = [day for day in sessions if day not in days]
-        if missing:
-            raise ValueError(
-                f"vendor bars are missing requested session {missing[0].isoformat()} for {symbol}"
-            )
+            days.add(day)
+            if not (segment.name == "POST" and bar.ts_event == start):
+                present.add((symbol, segment.name))
+    if rows:
+        _refuse_dropped_session(days, sessions)
+    return present
 
 
 def _overnight_session(ts_event: int, sessions: tuple[date, ...]) -> date | None:
@@ -151,33 +166,24 @@ def _overnight_session(ts_event: int, sessions: tuple[date, ...]) -> date | None
 
 def _refuse_overnight_incomplete(
     rows: dict[str, list[MinuteBarRow]], sessions: tuple[date, ...], symbols: tuple[str, ...]
-) -> None:
-    """A non-empty overnight response must name every requested symbol and session.
+) -> set[str]:
+    """Refuse a malformed overnight answer; return the symbols with an overnight bar.
 
-    The daytime fetcher refuses the same shape through ``_refuse_incomplete``.
-    A fully empty response stays the documented quiet window; a non-empty one
-    that silently drops a symbol or a session would zero-fill the missing curve.
     Bars outside the overnight windows are left for ``build_baseline``'s
     coverage receipt to refuse.
     """
-    if not rows:
-        return
-    missing_symbols = [symbol for symbol in symbols if symbol not in rows]
-    if missing_symbols:
-        raise ValueError(f"vendor bars are missing requested symbol {missing_symbols[0]}")
-    present: dict[str, set[date]] = defaultdict(set)
-    for symbol, bars in rows.items():
+    requested = {symbol: rows[symbol] for symbol in symbols if symbol in rows}
+    days: set[date] = set()
+    present: set[str] = set()
+    for symbol, bars in requested.items():
         for bar in bars:
             day = _overnight_session(bar.ts_event, sessions)
             if day is not None:
-                present[symbol].add(day)
-    for symbol in symbols:
-        days = present.get(symbol, set())
-        missing = [day for day in sessions if day not in days]
-        if missing:
-            raise ValueError(
-                f"vendor bars are missing requested session {missing[0].isoformat()} for {symbol}"
-            )
+                days.add(day)
+                present.add(symbol)
+    if requested:
+        _refuse_dropped_session(days, sessions)
+    return present
 
 
 def fetch_overnight_baseline(
@@ -216,7 +222,7 @@ def fetch_overnight_baseline(
     )
     response = client.get_stock_bars(request)
     rows = _raw_rows(response)
-    _refuse_overnight_incomplete(rows, sessions, names)
+    present = _refuse_overnight_incomplete(rows, sessions, names)
     bars = [bar for symbol in names for bar in rows.get(symbol, ())]
     coverage = [
         BaselineCoverage(
@@ -225,6 +231,7 @@ def fetch_overnight_baseline(
             nanos(datetime.combine(day, time(4), tzinfo=ET)),
         )
         for symbol in names
+        if symbol in present
         for day in sessions
     ]
     return build_baseline(
@@ -267,9 +274,13 @@ def fetch_baseline(
         asof=as_of.isoformat(),
     )
     rows = _raw_rows(client.get_stock_bars(request))
-    _refuse_incomplete(rows, sessions, names)
+    present = _refuse_incomplete(rows, sessions)
     coverage = [
-        receipt for symbol in names for day in sessions for receipt in _day_coverage(symbol, day)
+        receipt
+        for symbol in names
+        for day in sessions
+        for name, receipt in zip(SEGMENTS, _day_coverage(symbol, day), strict=True)
+        if (symbol, name) in present
     ]
     return build_baseline(
         [bar for bars in rows.values() for bar in bars],

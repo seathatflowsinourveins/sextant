@@ -105,33 +105,50 @@ def test_a_bar_outside_the_declared_window_is_refused() -> None:
         )
 
 
-def test_an_empty_response_is_a_complete_quiet_window() -> None:
+def test_an_empty_response_gives_no_symbol_a_baseline() -> None:
     table = fetch_overnight_baseline(
         FakeData({}), ["AAPL"], as_of=AS_OF, known_at=KNOWN_AT, prior_sessions=2
     )
-    assert table.samples
-    assert {s.session for s in table.samples} == {"2026-11-05", "2026-11-06"}
-    assert all(s.dollar_volume == 0 and s.trade_count == 0 for s in table.samples)
+    assert table.samples == ()
+    assert not table.covers("AAPL", "OVERNIGHT")
 
 
-def test_a_nonempty_response_missing_a_requested_symbol_is_refused() -> None:
+def test_a_symbol_with_no_overnight_bars_in_a_complete_response_gets_no_baseline() -> None:
     rows = overnight_rows()
     del rows["SPY"]
-    with pytest.raises(ValueError, match="missing requested symbol SPY"):
-        fetch_overnight_baseline(
-            FakeData(rows), ["AAPL", "SPY"], as_of=AS_OF, known_at=KNOWN_AT, prior_sessions=2
-        )
+    table = fetch_overnight_baseline(
+        FakeData(rows), ["AAPL", "SPY"], as_of=AS_OF, known_at=KNOWN_AT, prior_sessions=2
+    )
+    alone = fetch_overnight_baseline(
+        FakeData(overnight_rows()), ["AAPL"], as_of=AS_OF, known_at=KNOWN_AT, prior_sessions=2
+    )
+    assert not table.covers("SPY", "OVERNIGHT")
+    assert table.cumulative("SPY", "OVERNIGHT", 60) is None
+    assert table.samples == alone.samples
 
 
-def test_a_nonempty_response_missing_a_requested_session_is_refused() -> None:
+def test_a_symbol_quiet_in_one_overnight_session_keeps_a_zero_for_that_session() -> None:
+    rows = overnight_rows()
+    quiet = {iso(date(2026, 11, 5), 20, 0), iso(date(2026, 11, 5), 20, 1), iso(SESSIONS[1], 3, 59)}
+    rows["AAPL"] = [bar for bar in rows["AAPL"] if str(bar["t"]) not in quiet]
+    table = fetch_overnight_baseline(
+        FakeData(rows), ["AAPL", "SPY"], as_of=AS_OF, known_at=KNOWN_AT, prior_sessions=2
+    )
+    assert table.sessions("AAPL", "OVERNIGHT") == ("2026-11-05", "2026-11-06")
+    last = [s for s in table.samples if s.symbol == "AAPL" and s.session == "2026-11-06"]
+    assert {s.dollar_volume for s in last} == {D("0")}
+
+
+def test_a_session_with_no_overnight_bars_for_any_symbol_is_refused() -> None:
     rows = overnight_rows()
     missing = {
         iso(date(2026, 11, 5), 20, 0),
         iso(date(2026, 11, 5), 20, 1),
         iso(date(2026, 11, 6), 3, 59),
     }
-    rows["AAPL"] = [bar for bar in rows["AAPL"] if str(bar["t"]) not in missing]
-    with pytest.raises(ValueError, match="missing requested session 2026-11-06 for AAPL"):
+    for symbol in rows:
+        rows[symbol] = [bar for bar in rows[symbol] if str(bar["t"]) not in missing]
+    with pytest.raises(ValueError, match="missing requested session 2026-11-06 for every"):
         fetch_overnight_baseline(
             FakeData(rows), ["AAPL", "SPY"], as_of=AS_OF, known_at=KNOWN_AT, prior_sessions=2
         )

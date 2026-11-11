@@ -13,6 +13,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import pyarrow.parquet as pq
 import pytest
+from alpaca.common.exceptions import APIError
 from alpaca.data.enums import DataFeed
 from alpaca.data.historical import StockHistoricalDataClient
 from requests import PreparedRequest, Response
@@ -397,6 +398,128 @@ def test_service_memory_limit_matches_its_uncalibrated_registry_row():
     assert row["status"] == "UNCALIBRATED" and row["source"]
     assert service["Service"]["MemoryMax"] == row["value"]
     assert service["Service"]["MemorySwapMax"] == "0"
+
+
+BROAD = tuple(f"M{index:02d}" for index in range(100))
+QUIET_OVERNIGHT = ("M07", "M42", "M99")
+
+
+def broad_client(job):
+    """The 2026-11-11 shape: 100 movers, a few with no overnight-session bars."""
+
+    class Broad(job.CalibrationHistory):
+        def __init__(self):
+            self.pages = []
+            self.closed = False
+
+        def quiet(self, request, symbol):
+            return request.feed == DataFeed.BOATS and symbol in QUIET_OVERNIGHT
+
+        def get_stock_bars(self, request):
+            if isinstance(request.symbol_or_symbols, list):
+                hours = (0, 1) if request.feed == DataFeed.BOATS else (4, 10, 17)
+                bars = [
+                    {"t": datetime(2026, 11, day, hour, tzinfo=ET), "v": 10, "vw": "2", "n": 1}
+                    for day in (5, 6)
+                    for hour in hours
+                ]
+                return {
+                    symbol: list(bars)
+                    for symbol in request.symbol_or_symbols
+                    if not self.quiet(request, symbol)
+                }
+            return self.capture(request, "bars")
+
+        def get_stock_quotes(self, request):
+            return self.capture(request, "quotes")
+
+        def capture(self, request, kind):
+            symbol = request.symbol_or_symbols
+            stamp = request.start.replace(tzinfo=UTC).isoformat()
+            row = '{"t":"' + stamp + '","bp":2,"ap":2.2,"bs":1,"as":2}'
+            if kind == "bars":
+                row = '{"t":"' + stamp + '","o":2,"h":3,"l":1,"c":2,"v":10}'
+            values = "{}" if self.quiet(request, symbol) else '{"' + symbol + '":[' + row + "]}"
+            text = '{"' + kind + '":' + values + ',"next_page_token":null}'
+            self.pages.append(text)
+            return json.loads(text)[kind]
+
+        def close(self):
+            self.closed = True
+
+    return Broad()
+
+
+def test_broad_universe_with_quiet_overnight_names_completes_and_records_them(
+    setup_job, job, capsys
+):
+    args, out = setup_job
+    Path(args[1]).write_text(json.dumps({"rows": [{"symbol": name} for name in BROAD]}))
+    client = broad_client(job)
+
+    assert job.main(args, client_factory=lambda: client, now_ns=lambda: NOW) == 0
+
+    assert client.closed
+    manifest_bytes = (out / "baselines/manifest.json").read_bytes()
+    receipt = json.loads(next((out / "calibration/runs").glob("*.json")).read_text())
+    assert receipt["baseline_manifest_sha256"] == hashlib.sha256(manifest_bytes).hexdigest()
+    coverage = receipt["baseline"]["coverage"]
+    assert coverage == json.loads(manifest_bytes)["coverage"]
+    assert coverage["OVERNIGHT"]["without_baseline"] == list(QUIET_OVERNIGHT)
+    assert coverage["OVERNIGHT"]["with_baseline"] == 97
+    assert all(coverage[name]["without_baseline"] == [] for name in ("PRE", "RTH", "POST"))
+    assert len(receipt["files"]) == 100 * 2 * 2 * 2
+    empty = {(r["symbol"], r["feed"]) for r in receipt["files"] if r["rows"] == 0}
+    assert empty == {(name, "boats") for name in QUIET_OVERNIGHT}
+    assert receipt["empty_windows"] == {"boats/bars": 6, "boats/quotes": 6}
+    assert "OVERNIGHT 97 with, 3 without" in capsys.readouterr().out
+
+
+def sdk_client(job, monkeypatch, pages):
+    """A real alpaca-py client whose HTTP layer serves fixed (status, body) pages."""
+    served = []
+
+    def send(adapter: HTTPAdapter, request: PreparedRequest, **kwargs: Any) -> Response:
+        status, body = pages[len(served)]
+        served.append(request)
+        response = Response()
+        response.status_code = status
+        response.request = request
+        response._content = body.encode()
+        return response
+
+    monkeypatch.setattr(HTTPAdapter, "send", send)
+    client = job.CalibrationHistory.__new__(job.CalibrationHistory)
+    StockHistoricalDataClient.__init__(
+        client,
+        api_key="offline",
+        secret_key="offline",  # noqa: S106 - inert SDK fixture
+        raw_data=True,
+    )
+    client.pacer = Pacer()
+    client.pages = []
+    client._session.hooks["response"].append(client._capture)
+    return client, served
+
+
+def test_a_baseline_batch_that_fails_mid_pagination_keeps_the_previous_files(
+    setup_job, job, monkeypatch
+):
+    args, out = setup_job
+    assert job.main(args, client_factory=lambda: fake_client(job), now_ns=lambda: NOW) == 0
+    before = {path: path.read_bytes() for path in out.rglob("*") if path.is_file()}
+    bar = '{"t":"2026-11-05T05:00:00Z","o":2,"h":2,"l":2,"c":2,"v":10,"vw":2,"n":1}'
+    pages = [
+        (200, '{"bars":{"AAPL":[' + bar + ']},"next_page_token":"p2"}'),
+        (500, '{"code":50010000,"message":"internal server error"}'),
+    ]
+    client, served = sdk_client(job, monkeypatch, pages)
+
+    with pytest.raises(APIError):
+        job.main(args, client_factory=lambda: client, now_ns=lambda: NOW + 1)
+
+    assert len(served) == 2
+    assert {path: path.read_bytes() for path in out.rglob("*") if path.is_file()} == before
 
 
 @pytest.mark.parametrize("tokens", [("repeat", "repeat", None), ("a", "b", "a", None)])

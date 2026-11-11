@@ -9,6 +9,9 @@ command, ``as_of``, symbol list, window, feeds and each file's sha256. The
 manifest is written last: a reader treats it as the commit record and checks the
 digests before using the files.
 
+A symbol the fetchers gave no baseline for a segment is named in the manifest's
+``coverage``; a segment with no symbol at all is ``empty_segment`` and refuses.
+
 ``--universe`` takes the K2 ranked universe artifact written by
 ``python -m sextant.paper.c_universe --out PATH``; this recipe never re-ranks.
 Only :func:`main` reads the environment or builds a client.
@@ -59,6 +62,10 @@ SEGMENT_FILES = {
 FEEDS = {"OVERNIGHT": "boats", "PRE": "sip", "RTH": "sip", "POST": "sip"}
 MANIFEST_NAME = "manifest.json"
 MIN_SAMPLES_PER_SESSION = 2  # the schema's start and end sample for one session
+NO_BASELINE_REASON = (
+    "no vendor bars for the segment in the prior sessions of a fully paged answer; "
+    "the reader treats the baseline as unknown"
+)
 
 
 class BaselineFlagged(ValueError):
@@ -84,11 +91,26 @@ def _symbols(symbols: Iterable[str]) -> tuple[str, ...]:
 
 
 def segment_table(table: BaselineTable, name: str) -> BaselineTable:
-    """One segment's samples, keeping the source, known_at and feed."""
+    """One segment's samples, keeping the source, known_at and feed; may be empty."""
     samples = tuple(sample for sample in table.samples if sample.segment == name)
-    if not samples:
-        raise ValueError(f"the {name} baseline holds no samples")
     return BaselineTable(samples, table.provenance, table.known_at, table.feed)
+
+
+def absent(tables: Mapping[str, BaselineTable], symbols: Sequence[str]) -> dict[str, list[str]]:
+    """Per segment, the requested symbols the fetchers gave no baseline, in request order."""
+    return {
+        name: [symbol for symbol in _symbols(symbols) if not tables[name].covers(symbol, name)]
+        for name in RECIPE_SEGMENTS
+    }
+
+
+def coverage_line(manifest: Mapping[str, Any]) -> str:
+    """One journal line: per segment, symbols with and without a baseline."""
+    parts = [
+        f"{name} {entry['with_baseline']} with, {len(entry['without_baseline'])} without"
+        for name, entry in manifest["coverage"].items()
+    ]
+    return "baseline coverage: " + "; ".join(parts)
 
 
 def build(
@@ -113,16 +135,24 @@ def build(
     return tables
 
 
-def verify(tables: Mapping[str, BaselineTable], symbols: Sequence[str]) -> None:
-    """Refuse a file set that is not one segment over exactly the requested symbols."""
-    expected = frozenset(_symbols(symbols))
+def verify(
+    tables: Mapping[str, BaselineTable],
+    symbols: Sequence[str],
+    without: Mapping[str, Sequence[str]] | None = None,
+) -> None:
+    """Refuse a file set that is not one segment over exactly the requested symbols.
+
+    ``without`` names, per segment, the requested symbols declared to have none.
+    """
+    requested = frozenset(_symbols(symbols))
     for name in RECIPE_SEGMENTS:
         table = tables.get(name)
         if table is None:
             raise ValueError(f"the {name} baseline is missing")
         segments = {sample.segment for sample in table.samples}
-        if segments != {name}:
+        if not segments <= {name}:
             raise ValueError(f"the {name} baseline must hold one segment, found {sorted(segments)}")
+        expected = requested - frozenset((without or {}).get(name, ()))
         covered = {sample.symbol for sample in table.samples}
         if covered != expected:
             raise ValueError(f"the {name} baseline does not cover {sorted(expected - covered)}")
@@ -152,22 +182,26 @@ def survey(
 ) -> dict[str, dict[str, list[str]]]:
     """Name each segment file that is zero-filled or thinner than the schema floor.
 
-    The fetchers keep their empty-response semantics: a quiet window is a
-    complete window. This recipe still has to say so out loud, because a table
-    whose samples are all zero is indistinguishable from a missing baseline and
-    must never arm a slot silently.
+    A table whose samples are all zero is indistinguishable from a missing
+    baseline and must never arm a slot silently. A segment with no samples is
+    ``empty_segment``: no symbol traded, which is a failed read or a wrong window.
     """
     expected = [session.isoformat() for session in sessions]
-    flags: dict[str, dict[str, list[str]]] = {"zero_filled": {}, "sparse": {}}
+    flags: dict[str, dict[str, list[str]]] = {"zero_filled": {}, "sparse": {}, "empty_segment": {}}
     for name in RECIPE_SEGMENTS:
         table = tables[name]
+        if not table.samples:
+            flags["empty_segment"][name] = list(symbols)
+            continue
         by_symbol: dict[str, list[BaselineSample]] = {}
         for sample in table.samples:
             by_symbol.setdefault(sample.symbol, []).append(sample)
         zero: list[str] = []
         sparse: list[str] = []
         for symbol in symbols:
-            samples = by_symbol.get(symbol, [])
+            if symbol not in by_symbol:
+                continue  # ``verify`` matched it to a declared absence
+            samples = by_symbol[symbol]
             present = {sample.session for sample in samples}
             if len(samples) < MIN_SAMPLES_PER_SESSION * len(expected):
                 sparse.append(symbol)
@@ -196,6 +230,7 @@ def publish(
     prior_sessions: int,
     source: str,
     universe: Mapping[str, str] | None,
+    without: Mapping[str, Sequence[str]] | None = None,
 ) -> dict[str, Any]:
     """Publish the four files and the manifest only when every check passes.
 
@@ -210,9 +245,10 @@ def publish(
     names = _symbols(symbols)
     if not sessions:
         raise ValueError("at least one prior session is required")
-    verify(tables, names)
+    verify(tables, names, without)
     texts = render(tables)
     flags = survey(tables, names, sessions)
+    declared = {name: list((without or {}).get(name, ())) for name in RECIPE_SEGMENTS}
     manifest: dict[str, Any] = {
         "command": list(command),
         "as_of": as_of.isoformat(),
@@ -227,6 +263,15 @@ def publish(
         "universe": dict(universe) if universe is not None else None,
         "zero_filled": flags["zero_filled"],
         "sparse": flags["sparse"],
+        "empty_segment": flags["empty_segment"],
+        "coverage": {
+            name: {
+                "with_baseline": len(names) - len(declared[name]),
+                "without_baseline": declared[name],
+                "reason": NO_BASELINE_REASON,
+            }
+            for name in RECIPE_SEGMENTS
+        },
         "files": {},
     }
     if any(flags.values()):
@@ -294,6 +339,7 @@ def run(
     names = _symbols(symbols)
     sessions = prior_xnys_sessions(as_of, prior_sessions)
     tables = build(client, names, as_of=as_of, known_at=known_at, prior_sessions=prior_sessions)
+    without = absent(tables, names)
     return publish(
         out,
         tables,
@@ -305,6 +351,7 @@ def run(
         prior_sessions=prior_sessions,
         source=source,
         universe=universe,
+        without=without,
     )
 
 
@@ -438,6 +485,7 @@ def main(
         )
         return 1
     print(f"wrote {len(manifest['files'])} baselines and {args.out / MANIFEST_NAME}", flush=True)
+    print(coverage_line(manifest), flush=True)
     return 0
 
 
