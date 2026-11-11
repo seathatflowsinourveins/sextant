@@ -122,9 +122,10 @@ async def _successor_state(node, state):
     return stale, ROOT, successor["id"]  # The original order's late snapshot.
 
 
-# A successor row that itself says pending_new or pending_replace does not confirm its
-# lineage (the venue has not finished the replace): held as incomplete coverage.
-UNCONFIRMING = {"pending_new", "pending_replace"}
+# A successor row that says pending_new does not confirm its lineage (the venue has not
+# finished the replace): held as incomplete coverage. A confirmed one in pending_replace is
+# being replaced again and stays confirmed (PR 588 P1-a).
+UNCONFIRMING = {"pending_new"}
 
 
 @pytest.mark.parametrize("event", EVENTS)
