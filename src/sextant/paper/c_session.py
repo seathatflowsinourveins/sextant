@@ -121,6 +121,7 @@ class _SymbolState:
     protection: str | None = None
     intent: EntryIntent | None = None
     refused_surge: int | None = None
+    refusals: dict[tuple[int, str], dict[str, Any]] = field(default_factory=dict)
 
 
 class CSession:
@@ -195,6 +196,10 @@ class CSession:
         for candidate in self._states.values():
             if candidate.quote is not None and _fresh_quote(candidate.quote, now, self.config):
                 self._maybe_enter(candidate, candidate.quote, now)
+            elif candidate.entry.surge is not None and candidate.cid is None:
+                self._refusal(
+                    candidate, "no_quote" if candidate.quote is None else "stale_quote", now
+                )
 
     def on_trade(self, trade: TradeTick) -> None:
         """Advance the entry state, then the surge detector; arm a new flag."""
@@ -265,13 +270,17 @@ class CSession:
         if state.refused_surge == surge.flag_ts:
             return
         if str(state.instrument.id) in self.config.held_symbols:
+            self._refusal(state, "held_symbol", now)
             return
         ask = quote.ask_price.as_decimal()
         if not state.entry.first_leg_ready(ask, now):
+            self._refusal(state, "first_leg_not_ready", now)
             return
         if ask > surge.quiet_price * (1 + self.config.chase_cap_fraction):
+            self._refusal(state, "chase_cap", now)
             return
         if self._slots_used() >= self.config.slot_count:
+            self._refusal(state, "slots_full", now)
             return
 
         params = self.config.params
@@ -280,6 +289,7 @@ class CSession:
             surge.flag_ts + params.ns("first_leg_window_s"),
         )
         if expiry_ns <= now:
+            self._refusal(state, "intent_expired", now)
             return
 
         instrument = state.instrument
@@ -302,11 +312,16 @@ class CSession:
                 continue
             state.intent = None
             if available <= 0 or state.pending or state.cid is not None:
+                self._refusal(
+                    state, "slots_full" if available <= 0 else "already_submitted", moment
+                )
                 continue
             if intent.expiry_ns <= moment:
+                self._refusal(state, "intent_expired", moment)
                 continue
             quote = state.quote
             if quote is None or not _fresh_quote(quote, moment, self.config):
+                self._refusal(state, "no_quote" if quote is None else "stale_quote", moment)
                 continue
             ready.append(intent)
             available -= 1
@@ -328,9 +343,13 @@ class CSession:
         if state is None or state.entry.surge is None:
             return
         if state.pending or state.cid is not None or intent.expiry_ns <= moment:
+            self._refusal(
+                state, "already_submitted" if state.cid is not None else "intent_expired", moment
+            )
             return
         quote = state.quote
         if quote is None or not _fresh_quote(quote, moment, self.config):
+            self._refusal(state, "no_quote" if quote is None else "stale_quote", moment)
             return
         _money(equity, "equity", zero=False)
         _money(buying_power, "buying_power", zero=True)
@@ -351,6 +370,7 @@ class CSession:
         )
         quantity = sizing.quantity.as_decimal()
         if sizing.refusal is not None or quantity <= ZERO:
+            self._refusal(state, f"sizing: {sizing.refusal or 'nonpositive quantity'}", moment)
             state.refused_surge = state.entry.surge.flag_ts
             return
         command = OrderCommand(
@@ -368,12 +388,37 @@ class CSession:
         state.expiry_ns = intent.expiry_ns
         state.pending = True
 
-    def refuse(self, intent: EntryIntent) -> None:
+    def refuse(self, intent: EntryIntent, reason: str = "balance_read_failed") -> None:
         """A failed or stale balance read refuses the entry until a new flag."""
         state = self._states.get(intent.instrument)
         surge = None if state is None else state.entry.surge
         if state is not None and surge is not None:
+            self._refusal(state, reason, self._now())
             state.refused_surge = surge.flag_ts
+
+    def _refusal(self, state: _SymbolState, reason: str, now: int) -> None:
+        surge = state.entry.surge
+        if surge is None:
+            return
+        row = state.refusals.setdefault(
+            (surge.flag_ts, reason),
+            {"flag_ts": surge.flag_ts, "reason": reason, "first_ns": now, "count": 0},
+        )
+        row["count"] += 1
+        row["last_ns"] = now
+        if reason == "first_leg_not_ready":
+            run = state.entry.run
+            row.update(
+                first_leg_trades=len(run),
+                first_leg_span_ns=run[-1].ts_event - run[0].ts_event if run else 0,
+                trade_fresh=state.entry.fresh(now),
+                last_trade_price=str(run[-1].price.as_decimal()) if run else None,
+                entry_failure=state.entry.failure,
+                ask=str(state.quote.ask_price.as_decimal()) if state.quote else None,
+                quiet_price=str(surge.quiet_price),
+                flag_known_ns=surge.known_at,
+                flag_expires_ns=surge.expires_ts,
+            )
 
     def _slots_used(self) -> int:
         return sum(1 for state in self._states.values() if state.cid is not None)
@@ -391,12 +436,25 @@ class CSession:
         ledger: dict[str, object] = {"params_hash": self.config.params.params_hash}
         for symbol, state in self._states.items():
             surge = state.entry.surge
+            status = "submitted" if state.cid is not None else "unarmed"
+            if surge is not None and state.cid is None:
+                status = "waiting"
+                if state.quote is None:
+                    status = "no_quote"
+                elif not _fresh_quote(state.quote, self._now(), self.config):
+                    status = "stale_quote"
+                elif state.refused_surge == surge.flag_ts:
+                    status = "refused"
+                elif not state.refusals and state.intent is None:
+                    status = "awaiting_quote"
             ledger[symbol] = {
                 "armed": surge is not None,
                 "flag_ts": surge.flag_ts if surge is not None else None,
                 "pending_cid": state.cid if state.pending else None,
                 "filled_qty": state.filled_qty,
                 "protection": state.protection,
+                "entry_status": status,
+                "refusals": [dict(row) for row in state.refusals.values()],
             }
         return ledger
 

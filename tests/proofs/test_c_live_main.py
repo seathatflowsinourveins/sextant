@@ -346,6 +346,7 @@ def asset(symbol: str, *, overnight_tradable: bool = True) -> Any:
     attributes = ["overnight_tradable"] if overnight_tradable else []
     return SimpleNamespace(
         id=f"id-{symbol}",
+        exchange="NASDAQ",
         status="active",
         asset_class="us_equity",
         symbol=symbol,
@@ -578,6 +579,7 @@ def invoke(
     feed_tap: bool = False,
     feed_tap_universe: Path | None = None,
     feed_factory_override: Any = None,
+    client_factory_override: Any = None,
 ) -> int:
     calls = {"index": 0}
 
@@ -615,7 +617,7 @@ def invoke(
         argv += ["--feed-tap-universe", str(feed_tap_universe)]
     return main(
         argv,
-        client_factory=lambda **_: client,
+        client_factory=client_factory_override or (lambda **_: client),
         data_factory=lambda **_: data if data is not None else FakeDataClient({}),
         feed_factory=feed_factory_override or feed_factory,
         now_ns=clock,
@@ -2151,3 +2153,150 @@ def test_zero_size_stream_trade_is_dropped_and_runner_delivers_later_rows(
     assert errors[0].levelno == logging.ERROR
     assert symbol in errors[0].message
     assert "size" in errors[0].message and "not positive" in errors[0].message
+
+
+def test_raw_asset_listing_survives_unknown_enum_and_records_once_per_run(
+    live_env: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from alpaca.trading.client import TradingClient
+    from alpaca.trading.enums import AssetExchange
+
+    assert "TXSE" not in {row.value for row in AssetExchange}
+    client = FakeTradingClient(assets=(asset("OMH"),))
+    rows = [
+        {**vars(asset("OMH")), "class": "us_equity", "exchange": "NASDAQ"},
+        {**vars(asset("UNKNOWN")), "class": "us_equity", "exchange": "TXSE"},
+    ]
+    for row in rows:
+        row.update(
+            id="b0b6dd9d-8b9b-48a9-ba46-3ee76b1a03cc",
+            marginable=True,
+            shortable=True,
+            easy_to_borrow=True,
+            fractionable=True,
+        )
+
+    def factory(**kwargs: Any) -> Any:
+        sdk = TradingClient(**kwargs)
+        sdk.get = lambda *args, **kw: rows
+        if kwargs.get("raw_data"):
+            return sdk
+        client.get_all_assets = sdk.get_all_assets
+        return client
+
+    assert (
+        invoke(
+            live_env,
+            client,
+            Clock(),
+            Monotonic(),
+            universe=True,
+            data=FakeDataClient({"OMH": daily_bars("1.10", "500")}),
+            baseline_dir=write_baseline_dir(live_env),
+            replays=[rth_close_replay, noop_replay],
+            client_factory_override=factory,
+        )
+        == 0
+    )
+    written = receipt(live_env)
+    assert len(written["arming"]) == 2
+    assert written["asset_rows_skipped"] == 2
+    assert all(row["eligible"] == 1 for row in written["arming"])
+    assert len([r for r in caplog.records if "asset rows" in r.message]) == 1
+
+
+def test_the_receipt_preserves_symbol_snapshot_and_refusals(live_env: Path) -> None:
+    client = FakeTradingClient()
+
+    def refuse_size(feed: FakeFeed) -> None:
+        replay(feed, entry_hook=lambda: setattr(client.account, "buying_power", "1"))
+
+    assert invoke(live_env, client, Clock(), Monotonic(), replays=[refuse_size]) == 0
+    written = receipt(live_env)
+    state = written["snapshot"][str(IID)]
+    assert state["armed"] is True
+    assert state["filled_qty"] == "0"
+    assert any(row["reason"].startswith("sizing: ") for row in state["refusals"])
+    assert written["flags"] == 1
+    assert written["commands"] == []
+
+
+def test_the_receipt_keeps_snapshots_across_segments(live_env: Path) -> None:
+    assert (
+        invoke(
+            live_env,
+            FakeTradingClient(),
+            Clock(PRE_OPEN_CLOCK),
+            Monotonic(),
+            baseline_dir=write_baseline_dir(live_env),
+            replays=[pre_fill_then_rth_replay, noop_replay],
+        )
+        == 0
+    )
+    snapshots = receipt(live_env)["segment_snapshots"]
+    assert [row["segment"] for row in snapshots] == ["PRE", "RTH"]
+    assert snapshots[0]["snapshot"][str(IID)]["armed"] is True
+
+
+def test_a_kill_after_receipt_publication_cannot_lose_the_trial(live_env: Path) -> None:
+    import signal
+
+    script = """
+import os, runpy, signal, sys
+from pathlib import Path
+ns = runpy.run_path(sys.argv[1])
+module = ns["c_live_main_module"]
+module.DEFAULT_LEASE_ROOT = Path.cwd() / "locks"
+original = module._write_receipt
+def die_after_receipt(**kwargs):
+    original(**kwargs)
+    os.kill(os.getpid(), signal.SIGKILL)
+module._write_receipt = die_after_receipt
+ns["invoke"](Path.cwd(), ns["FakeTradingClient"](), ns["Clock"](), ns["Monotonic"]())
+"""
+    child = subprocess.run([sys.executable, "-c", script, str(Path(__file__).resolve())])
+    assert child.returncode == -signal.SIGKILL
+    written = receipt(live_env)
+    rows = TrialLog(live_env / "trials.parquet").records
+    assert len(rows) == 1
+    assert json.loads(rows[0]["config"])["arm_run_id"] == written["receipt_id"]
+    assert rows[0]["state"] == "COMPLETE"
+
+
+def test_the_receipt_identifies_the_waiting_trial_file(live_env: Path) -> None:
+    import hashlib
+
+    path = live_env / "waiting-trials.parquet"
+    assert invoke(live_env, FakeTradingClient(), Clock(), Monotonic(), ledger=path) == 0
+    trial_file = receipt(live_env)["trial_file"]
+    assert trial_file == {
+        "path": str(path.resolve()),
+        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+    }
+
+
+def test_a_balance_refusal_is_in_the_receipt(live_env: Path) -> None:
+    client = FakeTradingClient()
+
+    def refuse_balance(feed: FakeFeed) -> None:
+        replay(feed, entry_hook=lambda: setattr(client, "fail_account_reads", True))
+
+    assert invoke(live_env, client, Clock(), Monotonic(), replays=[refuse_balance]) == 0
+    state = receipt(live_env)["snapshot"][str(IID)]
+    assert any(
+        "balance_read_failed: the account balance read failed" in row["reason"]
+        for row in state["refusals"]
+    )
+    assert client.submitted == []
+
+
+def test_a_receipt_write_failure_cannot_lose_the_trial(
+    live_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail_receipt(**_: Any) -> Path:
+        raise OSError("receipt unavailable")
+
+    monkeypatch.setattr(c_live_main_module, "_write_receipt", fail_receipt)
+    assert invoke(live_env, FakeTradingClient(), Clock(), Monotonic()) == 1
+    assert len(TrialLog(live_env / "trials.parquet").records) == 1

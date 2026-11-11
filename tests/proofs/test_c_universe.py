@@ -5,6 +5,7 @@ All clients are fakes: no broker call, no credential and no network.
 
 import hashlib
 import json
+import weakref
 from datetime import datetime
 from decimal import Decimal
 from types import SimpleNamespace
@@ -20,6 +21,7 @@ from alpaca.data.timeframe import TimeFrameUnit
 from alpaca.trading.enums import AssetClass, AssetStatus
 from alpaca.trading.requests import GetAssetsRequest
 
+from sextant.paper import c_universe as scanner
 from sextant.paper.c_universe import (
     canonical_rows,
     parse_args,
@@ -68,6 +70,7 @@ def asset(
 ) -> dict[str, Any]:
     return {
         "id": f"instrument-{symbol}",
+        "exchange": "NASDAQ",
         "symbol": symbol,
         "status": status,
         "class": asset_class,
@@ -265,6 +268,7 @@ def test_overnight_eligibility_reads_the_assets_api_attributes() -> None:
     # alpaca-py v0.44.0 has no top-level overnight_tradable on Asset; the live
     # GET /v2/assets response carries it in attributes. This is the real shape.
     asset = SimpleNamespace(
+        exchange="NASDAQ",
         symbol="AAPL",
         status=AssetStatus.ACTIVE,
         asset_class=AssetClass.US_EQUITY,
@@ -275,3 +279,148 @@ def test_overnight_eligibility_reads_the_assets_api_attributes() -> None:
     chosen = select_universe([asset], "overnight")
     assert [row.symbol for row in chosen] == ["AAPL"]
     assert chosen[0].overnight_tradable is True
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("exchange", "TXSE"),
+        ("status", "future-status"),
+        ("class", "future-class"),
+        ("tradable", "true"),
+        ("symbol", ""),
+        ("id", None),
+        ("id", 123),
+        ("attributes", 1),
+        ("attributes", [1]),
+        ("overnight_tradable", "true"),
+        ("overnight_halted", "true"),
+    ],
+)
+def test_unknown_asset_rows_are_skipped_counted_and_logged(field, value, caplog) -> None:
+    unknown = {**asset("UNKNOWN"), field: value}
+    payload = scan_fixture(
+        [unknown, unknown, asset("KEEP")],
+        {"KEEP": two_session_bars("KEEP", "10", "11", "1000", "1500")},
+    )
+    assert [row["symbol"] for row in payload["rows"]] == ["KEEP"]
+    assert payload["asset_rows_skipped"] == 2
+    messages = [r for r in caplog.records if "asset rows" in r.message]
+    assert len(messages) == 1
+    assert "UNKNOWN" not in messages[0].message
+
+
+def legacy_rank_universe(trading, data, session, *, now):
+    """Original eager implementation at a7247a9; the reduction/scoring are unchanged."""
+    request = GetAssetsRequest(status=AssetStatus.ACTIVE, asset_class=AssetClass.US_EQUITY)
+    universe = select_universe(trading.get_all_assets(request), session)
+    rows = []
+    if not universe:
+        return rows
+    window = scanner._window(now)
+    if window is None:
+        return rows
+    symbols = [row.symbol for row in universe]
+    bars_by_symbol = {}
+    for offset in range(0, len(symbols), scanner.BARS_BATCH):
+        batch = list(symbols[offset : offset + scanner.BARS_BATCH])
+        request = StockBarsRequest(
+            symbol_or_symbols=batch,
+            timeframe=scanner.TimeFrame(1, TimeFrameUnit("Min")),
+            start=window.start,
+            end=window.end,
+            feed=DataFeed.SIP,
+            adjustment=Adjustment.SPLIT,
+            sort=Sort.ASC,
+        )
+        response = data.get_stock_bars(request)
+        body = getattr(response, "data", response)
+        for symbol in batch:
+            bars = body.get(symbol) if isinstance(body, scanner.Mapping) else None
+            bars_by_symbol[symbol] = list(bars or ())
+    for symbol in universe:
+        bars = scanner._day_bars(bars_by_symbol.get(symbol.symbol, ()), window)
+        if bars is None:
+            continue
+        level = scanner._level(bars)
+        if level is None:
+            continue
+        score, move, dvol_ratio = level
+        rows.append(
+            scanner.Ranked(
+                symbol.symbol,
+                symbol.instrument_id,
+                score,
+                move,
+                dvol_ratio,
+                symbol.overnight_tradable,
+            )
+        )
+    rows.sort(key=lambda row: (-row.score, row.symbol))
+    return rows
+
+
+@pytest.mark.parametrize("session", scanner.SESSIONS)
+@pytest.mark.parametrize("now", [NOW, at(27, 12), at(27, 16)])
+def test_batched_ranking_matches_the_original_eager_oracle(session, now) -> None:
+    window = scanner._window(now)
+    assert window is not None
+    names = [f"FIX{i:03}" for i in range(2 * scanner.BARS_BATCH + 3)]
+    assets = [asset(name, overnight_tradable=i % 2 == 0) for i, name in enumerate(names)]
+    assets.extend([asset("INACTIVE", status="inactive"), asset("NOTRADE", tradable=False)])
+    bars: dict[str, list[Any]] = {
+        name: [
+            bar(name, datetime.combine(day, clock, tzinfo=NOW.tzinfo), close, volume)
+            for day in window.opens
+            for clock, close, volume in [
+                (scanner.time(8), "999", "99999"),  # Outside the regular session.
+                (window.opens[day], "10", "100"),
+                (scanner.time(12), str(10 + i % 3 + (day == max(window.opens))), str(200 + i)),
+                (window.closes[day], "999", "99999"),  # Close is exclusive, even early.
+            ]
+        ][::-1]
+        for i, name in enumerate(names)
+    }
+    bars[names[0]] = []
+    bars[names[1]] = [bar(names[1], at(9), "10", "100")]
+    bars[names[2]] = [SimpleNamespace(timestamp=at(9), close=None, volume="1")]
+    bars[names[3]].append(bars[names[3]][1])  # Duplicate latest regular-session stamp.
+    old_data, new_data = FakeData(bars), FakeData(bars)
+    expected = legacy_rank_universe(FakeTrading(assets), old_data, session, now=now)
+    actual = rank_universe(FakeTrading(assets), new_data, session, now=now)
+    assert actual == expected
+    assert len(actual) > scanner.BARS_BATCH // 2
+    assert scanner.build_payload(session, GENERATED_NS, actual) == scanner.build_payload(
+        session, GENERATED_NS, expected
+    )
+    assert [(r.model_dump(exclude={"timeframe"}), str(r.timeframe)) for r in new_data.requests] == [
+        (r.model_dump(exclude={"timeframe"}), str(r.timeframe)) for r in old_data.requests
+    ]
+
+
+@pytest.mark.parametrize("wrapped", [True, False])
+def test_minute_bars_are_released_before_the_next_batch(wrapped) -> None:
+    class TrackingData:
+        def __init__(self):
+            self.batches: list[list[weakref.ReferenceType[Bar]]] = []
+            self.peak_batches = 0
+
+        def get_stock_bars(self, request_params):
+            body = {
+                name: two_session_bars(name, "10", "11", "1000", "1500")
+                for name in request_params.symbol_or_symbols
+            }
+            self.batches.append([weakref.ref(row) for bars in body.values() for row in bars])
+            self.peak_batches = max(
+                self.peak_batches,
+                sum(any(ref() is not None for ref in batch) for batch in self.batches),
+            )
+            return SimpleNamespace(data=body) if wrapped else body
+
+    names = [f"FIX{i:03}" for i in range(2 * scanner.BARS_BATCH + 3)]
+    data = TrackingData()
+    rows = rank_universe(FakeTrading([asset(name) for name in names]), data, "rth", now=NOW)
+    assert len(rows) == len(names)
+    assert len(data.batches) == 3
+    assert data.peak_batches == 1
+    assert all(ref() is None for batch in data.batches for ref in batch)

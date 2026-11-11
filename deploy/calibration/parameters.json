@@ -1,0 +1,29 @@
+{
+  "schema": "sextant.calibration-data.parameters/1",
+  "rows": {
+    "prior_sessions": {
+      "value": 20,
+      "unit": "prior XNYS sessions of baseline and calibration inputs",
+      "status": "UNCALIBRATED",
+      "source": "ADR-0024; existing baseline_recipe.py and baseline_bars.py prior_sessions=20; LEAD-2127 section 5 reuses that baseline window for input collection, not width qualification."
+    },
+    "calls_per_minute": {
+      "value": "10000",
+      "unit": "historical data HTTP calls per minute, including SDK pages and retries",
+      "status": "UNCALIBRATED",
+      "source": "ADR-0013 Algo Trader Plus entitlement; alpaca_history.Pacer existing 10000 ceiling; https://docs.alpaca.markets/us/docs/about-market-data-api read 2026-11-10. Data requests, never the paper order budget."
+    },
+    "on_calendar": {
+      "value": "Mon..Fri *-*-* 03:00:00 America/New_York",
+      "unit": "systemd OnCalendar expression",
+      "status": "UNCALIBRATED",
+      "source": "LEAD-2127 section 5: rebuild C baselines each morning; ADR-0002 PRE starts 04:00 ET. Starting schedule one hour before PRE, not a measured completion-time guarantee; systemd.time calendar timezone syntax read 2026-11-10."
+    },
+    "memory_max": {
+      "value": "2G",
+      "unit": "systemd MemoryMax (binary bytes)",
+      "status": "UNCALIBRATED",
+      "source": "Offline SDK job: 4M quotes, peak RSS 1526252 KiB; next whole GiB is 2G, below the 8G/no-swap house ceiling in docs/superpowers/plans/2026-11-10-c-account-lease-and-track1a-followups.md:117. systemd.resource-control(5) MemoryMax and MemorySwapMax, https://www.freedesktop.org/software/systemd/man/latest/systemd.resource-control.html read 2026-11-10. Fixture measurement, not production capacity."
+    }
+  }
+}

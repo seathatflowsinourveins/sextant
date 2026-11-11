@@ -1,0 +1,11 @@
+[Unit]
+Description=Sextant calibration data before the morning session
+
+[Timer]
+# UNCALIBRATED schedule, authority: deploy/calibration/parameters.json on_calendar.
+OnCalendar=Mon..Fri *-*-* 03:00:00 America/New_York
+Persistent=true
+Unit=sextant-calibration-data.service
+
+[Install]
+WantedBy=timers.target
