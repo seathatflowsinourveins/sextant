@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import pytest
 from nautilus_trader.model import TradeTick
@@ -137,3 +138,52 @@ def test_boundary_gap_cannot_yield_a_rank(tmp_path):
     assert all(row.rank is None for row in last.rows), [
         (row.symbol, row.rank, row.score) for row in last.rows
     ]
+
+
+@pytest.mark.parametrize("path", ["gap-notice", "socket-disconnect"])
+def test_a_gap_at_the_boundary_through_the_actor_is_one_rule(tmp_path, path) -> None:
+    """N1e's single gap path (DEGRADED first, then every name unknown; #531, #537) and this
+    part's timing rule together: a gap the Actor receives at the next segment's start leaves
+    that segment DEGRADED with its gap counted, and no READY rank is published after it."""
+    from nautilus_trader.common import SocketState, SocketStateChanged
+    from nautilus_trader.core import UUID4
+    from nautilus_trader.model import ClientId, CustomData, TraderId
+    from test_ranking_actor import Logged
+    from test_ranking_node_session import session_run
+
+    from sextant.alpaca.stream_facts import AlpacaStreamGap, gap_type
+
+    pre = replace(SCOPE, end_ns=START + 305 * NS)
+    rth = Segment("RTH", SCOPE.session_date, pre.end_ns, SCOPE.end_ns, "fixture")
+    published: list[tuple[int, Any]] = []
+
+    class Gapped(Logged):
+        def watch_statuses(self) -> None:
+            super().watch_statuses()
+            self.clock.set_time_alert_ns("boundary-gap", rth.start_ns, self.deliver)
+
+        def deliver(self, _event) -> None:
+            now = self.clock.timestamp_ns()
+            if path == "gap-notice":
+                notice = AlpacaStreamGap("sip", 2, now, now)
+                self.on_data(CustomData(gap_type("sip"), notice))
+            else:
+                trader, client = TraderId.from_str("TRADER-001"), ClientId("ALPACA")
+                state = SocketState.DISCONNECTED
+                event = SocketStateChanged(
+                    trader, client, None, "fixture", state, UUID4(), now, now
+                )
+                self.on_socket_state(event)
+
+        def publish_data(self, data_type, data) -> None:
+            published.append((self.clock.timestamp_ns(), data.data))
+            super().publish_data(data_type, data)
+
+    out = session_run(
+        tmp_path, segments=lambda ts: pre if ts < pre.end_ns else rth, actor_cls=Gapped
+    )
+    assert out["actor"].errors == {} and out["actor"].resets == 1
+    after = [g for at, g in published if at >= rth.start_ns]
+    assert after and all(row.rank is None for g in after for row in g.rows)
+    later = json.loads((tmp_path / "receipts" / "ranking-2026-10-27-RTH.json").read_text())
+    assert later["gaps"] == 1 and later["observed"] is False
