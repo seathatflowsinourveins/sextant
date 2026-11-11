@@ -4,6 +4,7 @@ Trade step: ranking, shown to the owner. These units keep the newest ranked move
 
 - `sextant-tradingview-prestage.service` runs the producer, `python -m sextant.tradingview.prestage`, as a long-running service.
   - It sleeps across closed windows on its own, refreshes the unit on the J5 cadence and moves to the next segment.
+  - Restart it between segments, never inside one: a restart inside a segment costs one full baseline rebuild (about 16 minutes at 2026-11-11's size), while between ticks the ranked view carries its host ([#622](https://github.com/seathatflowsinourveins/sextant/pull/622)).
   - With `--ranked-view-dir` it also writes `ranked.html` and `ranked.json` under `$HOME/sextant-data/tradingview-prestage/ranked-view` each tick (`docs/tradingview.md`, the ranked page).
   - The display bounds come from the sourced `lanes/tradingview/display-bounds.params.json`, the module's default, so the unit passes no bound flag.
   - `Restart=on-failure` uses systemd's default limits, so a repeated refusal ends in `failed`.
