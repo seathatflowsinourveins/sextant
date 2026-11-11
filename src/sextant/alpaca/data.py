@@ -18,6 +18,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import timedelta
 from decimal import Decimal
+from functools import partial
 from threading import Thread
 from typing import Protocol, cast
 from weakref import ReferenceType, ref
@@ -28,7 +29,7 @@ from alpaca.data.historical.stock import StockHistoricalDataClient
 from alpaca.data.live.stock import StockDataStream
 from alpaca.data.models import Bar as StockBar
 from alpaca.data.models import BarSet, Quote, QuoteSet, Trade, TradeSet
-from alpaca.data.models.trades import TradingStatus
+from alpaca.data.models.trades import TradeCancel, TradeCorrection, TradingStatus
 from alpaca.data.requests import StockBarsRequest, StockQuotesRequest, StockTradesRequest
 from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 from nautilus_trader.common import Clock, Logger
@@ -58,6 +59,7 @@ from nautilus_trader.model import (
     Bar,
     BarAggregation,
     BarType,
+    CustomData,
     Equity,
     InstrumentId,
     InstrumentStatus,
@@ -71,13 +73,17 @@ from nautilus_trader.model import (
     Venue,
 )
 
+from sextant.alpaca.trade_updates import _trade_update
+
 _NY = ZoneInfo("America/New_York")
 _STREAM_STOP_TIMEOUT_S = 5.0  # E4 dsh build 48cb220, shutdown bound.
 _TRADE_ID_MAX = 36  # NautilusTrader rc8 crates/model/src/identifiers/trade_id.rs:50.
 _ROUND_LOT_SHARES = 100  # Alpaca's quote sizes and the incumbent SIP normalization.
-type _Tick = QuoteTick | TradeTick | Bar | InstrumentStatus
+type _Tick = QuoteTick | TradeTick | Bar | InstrumentStatus | CustomData
 type _StreamOwner = tuple[asyncio.AbstractEventLoop, asyncio.Task[None]]
-type _StockHandler = Callable[[Quote | Trade | StockBar | dict], Awaitable[None]]
+type _StockHandler = Callable[
+    [Quote | Trade | StockBar | TradeCorrection | TradeCancel | dict], Awaitable[None]
+]
 
 
 class _DataSettings(Protocol):
@@ -103,12 +109,18 @@ class AlpacaStockDataStream(StockDataStream):
     async def _dispatch(self, msg: dict) -> None:
         # alpaca-py cc4cb3b websocket.py:294-317,324-372 permits raw rows,
         # but its typed status cast happens before the handler's error boundary.
-        # Keep status parsing inside our per-row boundary; all other channels
-        # retain the SDK dispatch. No wildcard is registered or sent.
-        if msg.get("T") == "s":
-            handlers = self._handlers["statuses"]
+        # Keep status and amendment parsing inside our per-row boundary.
+        # Correction/cancel handlers are SDK-local wildcards, never wire subscriptions.
+        msg_type = msg.get("T")
+        channel = (
+            {"s": "statuses", "c": "corrections", "x": "cancelErrors"}.get(msg_type)
+            if isinstance(msg_type, str)
+            else None
+        )
+        if channel is not None:
+            handlers = self._handlers[channel]
             symbol = msg.get("S")
-            handler = handlers.get(symbol) if isinstance(symbol, str) else None
+            handler = handlers.get(symbol, handlers.get("*")) if isinstance(symbol, str) else None
             if handler is None and (not isinstance(symbol, str) or not symbol) and handlers:
                 # No instrument can be named: a subscribed handler counts and
                 # logs this malformed row, without publishing instrument data.
@@ -123,9 +135,18 @@ class AlpacaStockDataStream(StockDataStream):
             await super()._send_subscribe_msg()
 
     async def register(
-        self, channel: str, symbols: tuple[str, ...], handler: _StockHandler
+        self,
+        channel: str,
+        symbols: tuple[str, ...],
+        handler: _StockHandler,
+        updates: tuple[_StockHandler, _StockHandler] | None = None,
     ) -> None:
         async with self._subscription_lock:
+            if updates is not None:
+                # alpaca-py cc4cb3b stock.py:135-157; the SDK excludes these
+                # callback registries from subscribe frames (websocket.py:389-401).
+                self.register_trade_corrections(updates[0])
+                self.register_trade_cancels(updates[1])
             self._handlers[channel].update(dict.fromkeys(symbols, handler))
             if self._running:
                 await super()._send_subscribe_msg()
@@ -221,6 +242,8 @@ class AlpacaDataClient(MarketDataClient):
         self._stream_state = _StreamState()
         self._dropped_counts = dict.fromkeys(self._active, 0)
         self._unknown_status_count = 0
+        self._dropped_counts.update(corrections=0, cancelErrors=0)
+        self._update_counts: dict[str, int] = dict.fromkeys(("corrections", "cancelErrors"), 0)
 
     @property
     def dropped_quote_count(self) -> int:
@@ -242,6 +265,22 @@ class AlpacaDataClient(MarketDataClient):
     @property
     def unknown_status_count(self) -> int:
         return self._unknown_status_count
+
+    @property
+    def trade_correction_count(self) -> int:
+        return self._update_counts["corrections"]
+
+    @property
+    def trade_cancel_count(self) -> int:
+        return self._update_counts["cancelErrors"]
+
+    @property
+    def dropped_correction_count(self) -> int:
+        return self._dropped_counts["corrections"]
+
+    @property
+    def dropped_cancel_count(self) -> int:
+        return self._dropped_counts["cancelErrors"]
 
     async def _connect(self) -> None:
         if self.instrument_provider is None:
@@ -430,7 +469,9 @@ class AlpacaDataClient(MarketDataClient):
         client_ref: ReferenceType[AlpacaDataClient] = ref(self)
         state = self._stream_state
 
-        async def receive(row: Quote | Trade | StockBar | dict) -> None:
+        async def receive(
+            row: Quote | Trade | StockBar | TradeCorrection | TradeCancel | dict,
+        ) -> None:
             if state.failure is not None:
                 return
             receipt = time.time_ns()
@@ -483,10 +524,50 @@ class AlpacaDataClient(MarketDataClient):
                 _publish_on_owner, client_ref, channel, stock.symbol, key, tick, conversion_error
             )
 
+        venue, feed = self.venue, self._feed.value
+        assert venue is not None
+
+        async def receive_update(
+            update_channel: str,
+            row: Quote | Trade | StockBar | TradeCorrection | TradeCancel | dict,
+        ) -> None:
+            if state.failure is not None:
+                return
+            try:
+                if not isinstance(row, dict):
+                    raise TypeError("Expected raw Alpaca trade update")
+                envelope = _trade_update(row, venue, feed, time.time_ns())
+            except Exception as error:
+                owner.call_soon_threadsafe(
+                    _publish_on_owner, client_ref, update_channel, "", None, None, error
+                )
+                return
+            owner.call_soon_threadsafe(
+                _publish_on_owner,
+                client_ref,
+                update_channel,
+                envelope.data.symbol,
+                envelope.data.instrument_id,
+                envelope,
+                None,
+            )
+
         # alpaca-py installs these handlers before its wire send and retains
         # them for reconnect. Accept the earliest queued tick from each handler.
         active.update({symbol: key for symbol, (_, key) in stocks.items()})
-        await self._change_subscription(stream, stream.register, channel, tuple(stocks), receive)
+        updates = (
+            (partial(receive_update, "corrections"), partial(receive_update, "cancelErrors"))
+            if channel == "trades"
+            else None
+        )
+        if updates is None:
+            await self._change_subscription(
+                stream, stream.register, channel, tuple(stocks), receive
+            )
+        else:
+            await self._change_subscription(
+                stream, stream.register, channel, tuple(stocks), receive, updates
+            )
 
     def _publish(
         self,
@@ -498,11 +579,17 @@ class AlpacaDataClient(MarketDataClient):
     ) -> None:
         if tick is None:
             self._dropped_counts[channel] += 1
-            if channel == "statuses":
-                self._log.error(f"Dropped Alpaca statuses row: {type(conversion_error).__name__}")
+            if channel in ("statuses", "corrections", "cancelErrors"):
+                self._log.error(f"Dropped Alpaca {channel} row: {type(conversion_error).__name__}")
             elif conversion_error is not None:
                 self._log.error(f"Dropped Alpaca {channel} row for {symbol}: {conversion_error}")
-        elif not self._stream_state.closing and self._active[channel].get(symbol) == key:
+        elif (
+            not self._stream_state.closing
+            and self._active["trades" if isinstance(tick, CustomData) else channel].get(symbol)
+            == key
+        ):
+            if isinstance(tick, CustomData):
+                self._update_counts[channel] += 1
             if isinstance(tick, InstrumentStatus) and tick.action == MarketStatusAction.NONE:
                 self._unknown_status_count += 1
                 self._log.error("Unknown Alpaca status code; published unknown instrument status")
