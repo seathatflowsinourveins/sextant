@@ -24,11 +24,11 @@ publisher carrying its own emitter is refused. No socket, thread, file or bus of
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import replace
 from decimal import Decimal
 
-from nautilus_trader.model import Price, Quantity, TradeTick
+from nautilus_trader.model import TradeTick
 
 from sextant.ranking.engine import MoverState, ReferencePrices, price_counts
 from sextant.ranking.generation import Coverage, CoverageState, RankingGeneration
@@ -55,31 +55,37 @@ def _well_formed(asset: AssetState) -> bool:
     )
 
 
-Identity = tuple[str, Decimal, Decimal]  # trade id (exchange + original id), price, size
+Identity = tuple[str, Decimal, Decimal]  # trade id (exchange + original id), raw price, size
+Sent = Mapping[str, tuple[int, Decimal, Decimal]]  # trade id -> (ts_event, raw price, raw size)
 
 
-def _find(state: MoverState, identity: Identity) -> str:
-    """Where a print is while it still feeds a feature (a window bucket or its anchor):
-    ``inside`` on a full match of id, price and size; ``mismatched`` when only the id matches,
-    so the amendment does not name the stored print; ``outside`` otherwise (lead 04:2x).
+def _ticks(state: MoverState) -> list[TradeTick]:
+    """Every print that still feeds a feature: a window bucket or its anchor."""
+    ticks = []
+    for window in (state.history, state.volume_history):
+        ticks += [tick for bucket in window.buckets for tick in bucket.ticks]
+        ticks += [] if window.anchor is None else [window.anchor]
+    return ticks
 
-    The identity keeps the vendor's raw price and size. The stored tick holds them as the data
-    client built it, ``Price.from_decimal_dp(raw, instrument precision)`` (alpaca/data.py
-    ``_Stock``), and every equity has precision 4 (alpaca/parsing.py). So the raw values pass
-    through that same constructor at the tick's own precision before the comparison."""
+
+def _find(state: MoverState, identity: Identity, sent: Sent) -> str:
+    """Where a print is while it still feeds a feature. The tick holds its price only at
+    instrument precision, so the vendor's raw price and size travel beside it in the facts
+    record (stream_facts.py, N1e) and are compared raw to raw: ``inside`` on an exact match of
+    id, raw price and raw size; ``mismatched`` when only the id matches; ``unprimed`` when the
+    stored print has no raw record, never matched otherwise; ``outside`` when no stored print
+    carries the id (lead 04:2x and 07:1x)."""
     key, price, size = identity
     found = "outside"
-    for window in (state.history, state.volume_history):
-        ticks = [tick for bucket in window.buckets for tick in bucket.ticks]
-        if window.anchor is not None:
-            ticks.append(window.anchor)
-        for tick in ticks:
-            if tick.trade_id.value != key:
-                continue
-            sent_price = Price.from_decimal_dp(price, tick.price.precision)
-            sent_size = Quantity.from_decimal_dp(size, tick.size.precision)
-            if tick.price == sent_price and tick.size == sent_size:
-                return "inside"
+    for tick in _ticks(state):
+        if tick.trade_id.value != key:
+            continue
+        raw = sent.get(key)
+        if raw is None:
+            found = "unprimed"
+        elif raw[1:] == (price, size):
+            return "inside"
+        else:
             found = "mismatched"
     return found
 
@@ -95,6 +101,8 @@ class NodeRankingHost:
         self.publish_errors = 0
         self.amended: dict[str, set[Identity]] = {}  # pending corrected prints per name (N1f)
         self.amendments_inside = self.amendments_outside = self.amendments_mismatched = 0
+        self.amendments_unprimed = 0  # the named print has no raw vendor record
+        self.sent: dict[str, dict[str, tuple[int, Decimal, Decimal]]] = {}  # per name, in windows
         self.last_error: str | None = None
 
     def on_trade(
@@ -138,7 +146,10 @@ class NodeRankingHost:
         identity = (key, price, size)
         where = "outside"
         if name in self.publisher.states:
-            where = _find(self.publisher.states[name], identity)
+            where = _find(self.publisher.states[name], identity, self.sent.get(name, {}))
+        if where == "unprimed":
+            self.amendments_unprimed += 1  # no raw record to compare: nothing is withdrawn
+            return None
         if where == "mismatched":
             self.amendments_mismatched += 1  # not the stored print: nothing is withdrawn
             return None
@@ -150,13 +161,26 @@ class NodeRankingHost:
         self._hold(name)
         return self._publish(force=True)  # a withdrawal publishes at once
 
+    def on_vendor_print(self, tick: TradeTick, *, price: Decimal, size: Decimal) -> None:
+        """The vendor's raw price and size of a print the windows just took, from its facts
+        record; kept only while a window can still hold that print (bounded by the windows)."""
+        name = str(tick.instrument_id.symbol)
+        if name not in self.publisher.states:
+            return
+        sent = self.sent.setdefault(name, {})
+        sent[tick.trade_id.value] = (tick.ts_event, price, size)
+        oldest = min((t.ts_event for t in _ticks(self.publisher.states[name])), default=0)
+        while sent and next(iter(sent.values()))[0] < oldest:  # arrival order is time order
+            del sent[next(iter(sent))]
+
     def _hold(self, name: str) -> None:
         """Keep the row unranked while any pending print is contained; then let it stand."""
         pending = self.amended.get(name)
         if not pending:
             return
         state = self.publisher.states[name]
-        pending = {identity for identity in pending if _find(state, identity) == "inside"}
+        sent = self.sent.get(name, {})
+        pending = {identity for identity in pending if _find(state, identity, sent) == "inside"}
         if pending:
             self.amended[name] = pending
             self.publisher.states[name] = replace(state, latest=None)

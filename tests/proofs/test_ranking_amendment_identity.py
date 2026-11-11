@@ -50,14 +50,14 @@ def test_a_mismatched_amendment_is_its_own_receipt_class(tmp_path, monkeypatch) 
     assert receipt["amendments_mismatched"] == {"count": 1, "notional": "999.00"}
 
 
-# Review P1 (the gate's Codex trace at bf7ac594): the data client builds each tick through
-# ``Price.from_decimal_dp(raw, instrument.price_precision)`` (alpaca/data.py ``_Stock.price``)
-# and every equity has precision 4 (alpaca/parsing.py, Alpaca's sub-dollar increment), while
-# the amendment keeps the vendor's raw price. These run the real data-client tick builder.
+# Reviews at bf7ac594 and ed19739e: the data client builds each tick at instrument precision 4
+# (alpaca/data.py ``_Stock.price``, alpaca/parsing.py), so the vendor's raw price travels in the
+# facts record beside it and the identity is compared raw to raw. These run the data client's
+# own tick and facts builders; the backtest replays ticks only, so the facts are keyed here.
 SUB = Decimal("0.000056")  # a sub-dollar print with more than four decimals
 
 
-def _vendor_run(tmp_path, monkeypatch, *, original: Decimal, plan):
+def _vendor_run(tmp_path, monkeypatch, *, original: Decimal, plan, missing=()):
     from datetime import UTC, datetime
 
     import test_ranking_actor as actor
@@ -66,6 +66,17 @@ def _vendor_run(tmp_path, monkeypatch, *, original: Decimal, plan):
     from test_ranking import NS
 
     from sextant.alpaca.data import _Stock, _trade_tick
+    from sextant.alpaca.stream_facts import StreamFacts, trade_facts
+
+    records = {}
+
+    class Vendor(StreamFacts):
+        def __call__(self, tick):
+            return True, ("@",)
+
+        def vendor(self, tick):
+            facts = records.get(tick.trade_id.value)
+            return None if facts is None else (facts.price, facts.size)
 
     def equity(iid):  # the production precision (alpaca/parsing.py _PRICE_PRECISION)
         return Equity(
@@ -86,7 +97,10 @@ def _vendor_run(tmp_path, monkeypatch, *, original: Decimal, plan):
         at = datetime.fromtimestamp(tick.ts_event // NS, UTC)
         fields = {"t": at, "p": float(raw), "s": 100, "x": exchange, "i": int(number)}
         row = Trade(name, fields | {"c": ["@"], "z": "C"})
-        return _trade_tick(row, _Stock(tick.instrument_id, name, 4, 0), tick.ts_init)
+        built = _trade_tick(row, _Stock(tick.instrument_id, name, 4, 0), tick.ts_init)
+        if built.trade_id.value not in missing:
+            records[built.trade_id.value] = trade_facts(row, built)
+        return built
 
     make_trades, make_amendment = amendments.trades, amendments.amendment
 
@@ -97,6 +111,10 @@ def _vendor_run(tmp_path, monkeypatch, *, original: Decimal, plan):
     monkeypatch.setattr(actor, "equity", equity)
     monkeypatch.setattr(amendments, "trades", lambda: [vendor(t) for t in make_trades()])
     monkeypatch.setattr(amendments, "amendment", named)
+    run = amendments.session_run
+    monkeypatch.setattr(
+        amendments, "session_run", lambda *a, **k: run(*a, facts=Vendor("sip"), **k)
+    )
     return amendments.amended_run(tmp_path, *plan)
 
 
@@ -114,3 +132,21 @@ def test_a_sub_dollar_cancel_naming_another_price_is_still_a_mismatch(tmp_path, 
     out = _vendor_run(tmp_path, monkeypatch, original=other, plan=[(365, "cancel", "PENNY", 60)])
     assert amendments.rank(out, 420) is not None
     assert amendments.receipt(tmp_path)["amendments_mismatched"]["count"] == 1
+
+
+def test_a_cancel_differing_only_beyond_four_decimals_is_a_mismatch(tmp_path, monkeypatch):
+    # The gate's review at ed19739e: 0.500056 stored, 0.500057 named; both are 0.5001 as ticks.
+    near = Decimal("0.500057")
+    out = _vendor_run(tmp_path, monkeypatch, original=near, plan=[(365, "cancel", "PENNY", 60)])
+    body = amendments.receipt(tmp_path)
+    assert body["amendments"]["inside"] == 0, "a different vendor price matched by rounding"
+    assert body["amendments_mismatched"]["count"] == 1
+    assert amendments.rank(out, 420) is not None
+
+
+def test_a_print_without_a_raw_vendor_record_is_unprimed_never_matched(tmp_path, monkeypatch):
+    raw = Decimal("0.50") + SUB
+    plan = [(365, "cancel", "PENNY", 60)]
+    out = _vendor_run(tmp_path, monkeypatch, original=raw, plan=plan, missing={"D-60"})
+    assert amendments.receipt(tmp_path)["amendments"] == {"inside": 0, "outside": 0, "unprimed": 1}
+    assert amendments.rank(out, 420) is not None

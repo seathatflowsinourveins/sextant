@@ -178,8 +178,11 @@ class SegmentedHost:
             self.amendments["unprimed"] += 1
             return None
         host = self.host
-        before = host.amendments_inside, host.amendments_mismatched
+        before = host.amendments_inside, host.amendments_mismatched, host.amendments_unprimed
         generation = self._count(host.on_amendment(name, key, price=price, size=size))
+        if host.amendments_unprimed > before[2]:
+            self.amendments["unprimed"] += 1  # the named print has no raw vendor record
+            return generation
         if host.amendments_mismatched > before[1]:
             self.mismatched += 1  # its own class: the id names a print of another price or size
             self.mismatched_notional += notional or Decimal(0)
@@ -189,6 +192,11 @@ class SegmentedHost:
         if notional is not None:
             self.amendment_notional[side] += notional
         return generation
+
+    def on_vendor_print(self, tick: TradeTick, *, price: Decimal, size: Decimal) -> None:
+        """The raw vendor values of a print, for the current segment's adapter (N1f)."""
+        if self.host is not None:
+            self.host.on_vendor_print(tick, price=price, size=size)
 
     def set_coverage(self, coverage: Coverage) -> RankingGeneration | None:
         """Coverage is this host's observation; a non-READY word from the Actor is a gap.

@@ -33,6 +33,9 @@ class Regular(StreamFacts):
     def __call__(self, tick) -> tuple[bool, tuple[str, ...]]:
         return True, ("@",)
 
+    def vendor(self, tick):  # the catalog prints are the vendor's own values (N1f)
+        return tick.price.as_decimal(), tick.size.as_decimal()
+
 
 def inputs(segment: Segment) -> SegmentInputs:
     asset = AssetState(START - NS, segment.end_ns, None, "common", "fixture vendor")

@@ -464,7 +464,21 @@ class RankingActor(DataActor):
             generation = host.on_trade(trade, facts=facts)
         except Exception as exc:
             return self._fault("on_trade", exc)
+        self._vendor(trade)
         self._publish(generation)
+
+    def _vendor(self, trade: TradeTick) -> None:
+        """Hand the host the raw price and size of the facts record paired with this tick, so
+        an amendment is compared raw to raw (N1f). A tick without one stays unprimed."""
+        turn, source = getattr(self.host, "on_vendor_print", None), self._facts
+        if turn is None or not isinstance(source, StreamFacts):
+            return
+        try:
+            sent = source.vendor(trade)
+            if sent is not None:
+                turn(trade, price=sent[0], size=sent[1])
+        except Exception as exc:
+            self._fault("vendor_print", exc)
 
     def _withdraw(self) -> None:
         """Republish the last generation in its withheld form at once, so a consumer drops the

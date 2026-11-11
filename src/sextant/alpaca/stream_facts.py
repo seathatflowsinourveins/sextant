@@ -13,6 +13,7 @@ state for Python clients. DESIGN-N1E.md holds the cited reasoning.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal
 
 from alpaca.data.models import Trade
 from nautilus_trader.model import DataType, InstrumentId, TradeTick
@@ -26,6 +27,10 @@ class AlpacaTradeFacts:
     tape: str | None
     ts_event: int
     ts_init: int
+    # The vendor's own price and size, Decimal(str(value)) as the stream delivered them: the
+    # tick holds the price at instrument precision only (N1f; amendment identity, raw to raw).
+    price: Decimal | None = None
+    size: Decimal | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,6 +71,8 @@ def trade_facts(row: Trade, tick: TradeTick) -> AlpacaTradeFacts:
         tape,
         tick.ts_event,
         tick.ts_init,
+        Decimal(str(row.price)),
+        Decimal(str(row.size)),
     )
 
 
@@ -94,3 +101,10 @@ class StreamFacts:
         if facts is None or facts.trade_id != tick.trade_id.value or facts.conditions is None:
             return None
         return True, facts.conditions
+
+    def vendor(self, tick: TradeTick) -> tuple[Decimal, Decimal] | None:
+        """The raw price and size of the facts record paired with this tick, else None."""
+        facts = self._latest.get(tick.instrument_id)
+        if facts is None or facts.trade_id != tick.trade_id.value:
+            return None
+        return None if facts.price is None or facts.size is None else (facts.price, facts.size)
