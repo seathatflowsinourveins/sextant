@@ -15,7 +15,7 @@ from bisect import bisect_left
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass, field
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
 from functools import cache
 from statistics import median
@@ -23,6 +23,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 from exchange_calendars import ExchangeCalendar, get_calendar
+from nautilus_trader.core.datetime import dt_to_unix_nanos
 
 from sextant.paper.sessions import ET, Session, session_at
 
@@ -32,7 +33,6 @@ if TYPE_CHECKING:
 ZERO = Decimal(0)
 NS = 1_000_000_000
 MINUTE_NS = 60 * NS
-_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 _PROVENANCE_SUFFIX = (
     "; v*vw, n; explicit complete coverage; linear within minute; first POST minute omitted"
 )
@@ -330,8 +330,7 @@ def load_baseline(text: str) -> BaselineTable:
 
 
 def _nanos(value: datetime) -> int:
-    delta = value - _EPOCH
-    return (delta.days * 86_400 + delta.seconds) * NS + delta.microseconds * 1_000
+    return dt_to_unix_nanos(value)
 
 
 @cache
