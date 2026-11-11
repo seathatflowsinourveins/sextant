@@ -98,20 +98,6 @@ class RecordedSource:
         return {name: self.closes[name] for name in symbols if name in self.closes}
 
 
-class RecordingCloses(RecordedSource):
-    """Recorded source whose official-close requests are observable by day."""
-
-    def __init__(self, closes_by_day: dict[date, dict[str, Decimal]]) -> None:
-        super().__init__(())
-        self.closes_by_day = closes_by_day
-        self.days: list[date] = []
-
-    def daily_closes(self, symbols: Any, *, day: date) -> dict[str, Decimal]:
-        self.days.append(day)
-        closes = self.closes_by_day.get(day, {})
-        return {name: closes[name] for name in symbols if name in closes}
-
-
 def bar(
     segment_name: str, day: date, minute: int, symbol: str, close: str, volume: int, trades: int
 ) -> Bar:
@@ -468,34 +454,6 @@ def test_prestage_rejects_registry_values_that_need_coercion(tmp_path: Path) -> 
             load_registry(path)
 
 
-def test_prestage_reference_session_ignores_the_baseline_filter() -> None:
-    """A 13:00 early close still supplies the official close; the baseline filter skips it."""
-    from sextant.tradingview.prestage import (
-        baseline_sessions,
-        collect_references,
-        prior_sessions,
-    )
-
-    session_day = date(2026, 11, 30)
-    section = Segment(
-        "RTH",
-        session_day,
-        at(session_day, 9, 30),
-        at(session_day, 16),
-        "fixture XNYS regular close 16:00 ET",
-    )
-    sessions = baseline_sessions(session_day, section)
-    assert date(2026, 11, 27) not in sessions
-    assert sessions[-1] == date(2026, 11, 25)
-    reference_day = prior_sessions(session_day, 1)[-1]
-    assert reference_day == date(2026, 11, 27)
-    source = RecordingCloses({reference_day: {name: D("10.00") for name in SYMBOLS}})
-    available, closes = collect_references(source, day=reference_day, symbols=SYMBOLS)
-    assert source.days == [date(2026, 11, 27)]
-    assert available == SYMBOLS
-    assert closes == {name: D("10.00") for name in SYMBOLS}
-
-
 def test_prestage_refuses_a_missing_prior_close() -> None:
     from sextant.tradingview.prestage import collect_references
 
@@ -678,3 +636,325 @@ def test_segment_start_labels_the_fixture_boundaries() -> None:
         assert found is not None
         assert found.name == name
         assert session_date == DAY
+
+
+def directory_texts(tmp_path: Path) -> tuple[Path, Path]:
+    nasdaq = tmp_path / "nasdaqlisted.txt"
+    nasdaq.write_text(
+        "Symbol|Security Name|Test Issue|ETF\n"
+        "AAA|Alpha Corporation|N|N\n"
+        "BBB|Beta Corporation|N|N\n"
+        "CCC|Gamma Corporation|N|N\n"
+        "File Creation Time|2026-11-09 00:00:00.000\n",
+        encoding="utf-8",
+    )
+    other = tmp_path / "otherlisted.txt"
+    other.write_text(
+        "ACT Symbol|Security Name|Test Issue|ETF\n",
+        encoding="utf-8",
+    )
+    return nasdaq, other
+
+
+class DayCloses(RecordedSource):
+    """Recorded bars plus per-day official closes, so a reference day is observable."""
+
+    def __init__(
+        self, bars: tuple[Bar, ...], closes_by_day: dict[date, dict[str, Decimal]]
+    ) -> None:
+        super().__init__(bars)
+        self.closes_by_day = closes_by_day
+        self.days: list[date] = []
+
+    def daily_closes(self, symbols: Any, *, day: date) -> dict[str, Decimal]:
+        self.days.append(day)
+        closes = self.closes_by_day.get(day, {})
+        return {name: closes[name] for name in symbols if name in closes}
+
+
+def _run_fixture(tmp_path: Path) -> tuple[Path, Path, Path]:
+    nasdaq, other = directory_texts(tmp_path)
+    symbol_map = tmp_path / "map.json"
+    symbol_map.write_text(
+        json.dumps({name: f"NASDAQ:{name}" for name in SYMBOLS}), encoding="utf-8"
+    )
+    return nasdaq, other, symbol_map
+
+
+def test_prestage_post_reference_is_the_same_session_close(tmp_path: Path) -> None:
+    """POST moves are measured from D's official close, not D-1's (ADR-0003 K2)."""
+    from sextant.tradingview.prestage import run
+
+    nasdaq, other, symbol_map = _run_fixture(tmp_path)
+    closes = {
+        PRIOR[-1]: {name: D("10.00") for name in SYMBOLS},
+        DAY: {name: D("10.70") for name in SYMBOLS},
+    }
+    source = DayCloses(prior_bars("POST", PRIOR) + current_bars("POST"), closes)
+    code = run(
+        research_dir=tmp_path / "unit",
+        nasdaq_listed=nasdaq,
+        other_listed=other,
+        symbol_map_path=symbol_map,
+        bounds=bounds(),
+        state_root=tmp_path / "state",
+        once=True,
+        clock=lambda: at(DAY, 16, 8),
+        sleep=lambda seconds: None,
+        source_factory=lambda lease: source,
+        page=lambda line: None,
+    )
+    assert code == 0
+    assert source.days == [DAY]
+    j5 = json.loads((tmp_path / "state" / "j5-unit.json").read_text(encoding="utf-8"))
+    moves = {
+        row["symbol"]: D(feature["value"])
+        for row in j5["ranking_generation"]["rows"]
+        for feature in row["features"]
+        if feature["name"] == "move"
+    }
+    assert moves == {name: D("0") for name in SYMBOLS}
+
+
+def test_prestage_run_once_refuses_outside_supported_segments(tmp_path: Path) -> None:
+    from sextant.tradingview.prestage import run
+
+    nasdaq, other = directory_texts(tmp_path)
+    symbol_map = tmp_path / "map.json"
+    symbol_map.write_text(
+        json.dumps({name: f"NASDAQ:{name}" for name in SYMBOLS}), encoding="utf-8"
+    )
+    pages: list[str] = []
+    code = run(
+        research_dir=tmp_path / "unit",
+        nasdaq_listed=nasdaq,
+        other_listed=other,
+        symbol_map_path=symbol_map,
+        bounds=bounds(),
+        state_root=tmp_path / "state",
+        once=True,
+        clock=lambda: at(DAY, 2, 0),
+        sleep=lambda seconds: None,
+        page=pages.append,
+    )
+    assert code == 0
+    assert not (tmp_path / "unit" / "top100.json").exists()
+    assert any("overnight" in line.lower() or "closed" in line.lower() for line in pages)
+
+
+def test_prestage_run_once_publishes_a_fresh_unit(tmp_path: Path) -> None:
+    from sextant.tradingview.prestage import run
+
+    nasdaq, other = directory_texts(tmp_path)
+    symbol_map = tmp_path / "map.json"
+    symbol_map.write_text(
+        json.dumps({name: f"NASDAQ:{name}" for name in SYMBOLS}), encoding="utf-8"
+    )
+    source = RecordedSource(prior_bars("RTH", PRIOR) + current_bars("RTH"))
+    code = run(
+        research_dir=tmp_path / "unit",
+        nasdaq_listed=nasdaq,
+        other_listed=other,
+        symbol_map_path=symbol_map,
+        bounds=bounds(),
+        state_root=tmp_path / "state",
+        once=True,
+        clock=lambda: at(DAY, 9, 38),
+        sleep=lambda seconds: None,
+        source_factory=lambda lease: source,
+        page=lambda line: None,
+    )
+    assert code == 0
+    inputs = read_research_inputs(
+        tmp_path / "unit", now=datetime(2026, 11, 9, 9, 38, tzinfo=NY), max_age=1_200
+    )
+    assert inputs.memberships["NS movers"]
+
+
+def test_prestage_validation_failure_keeps_the_previous_unit(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """The three files are replaced only after the staged copy validates."""
+    from sextant.tradingview import prestage
+
+    publish("RTH", tmp_path, now_minute=8)
+    unit = tmp_path / "unit"
+    before = {name: (unit / name).read_bytes() for name in ("top100.json", "focus.json")}
+
+    def refuse(*args: Any, **kwargs: Any) -> Any:
+        raise ValueError("fixture post-write refusal")
+
+    monkeypatch.setattr(prestage, "read_research_inputs", refuse)
+    with pytest.raises(ValueError, match="fixture post-write refusal"):
+        publish("RTH", tmp_path, now_minute=9)
+    assert {name: (unit / name).read_bytes() for name in before} == before
+
+
+def test_prestage_refuses_an_incomplete_symbol_map(tmp_path: Path) -> None:
+    from sextant.tradingview.prestage import PrestageError, load_maps
+
+    nasdaq, other = directory_texts(tmp_path)
+    symbol_map = tmp_path / "map.json"
+    symbol_map.write_text(json.dumps({"AAA": "NASDAQ:AAA"}), encoding="utf-8")
+    with pytest.raises(PrestageError, match="symbol map"):
+        load_maps(nasdaq, other, symbol_map)
+
+
+def test_prestage_skips_a_tick_without_completed_bars(tmp_path: Path) -> None:
+    from sextant.tradingview.prestage import run
+
+    nasdaq, other = directory_texts(tmp_path)
+    symbol_map = tmp_path / "map.json"
+    symbol_map.write_text(
+        json.dumps({name: f"NASDAQ:{name}" for name in SYMBOLS}), encoding="utf-8"
+    )
+    unit = tmp_path / "unit"
+    unit.mkdir()
+    previous = unit / "top100.json"
+    previous.write_text('{"schema": "previous"}', encoding="utf-8")
+    source = RecordedSource(prior_bars("RTH", PRIOR))
+    code = run(
+        research_dir=unit,
+        nasdaq_listed=nasdaq,
+        other_listed=other,
+        symbol_map_path=symbol_map,
+        bounds=bounds(),
+        state_root=tmp_path / "state",
+        once=True,
+        clock=lambda: at(DAY, 9, 31),
+        sleep=lambda seconds: None,
+        source_factory=lambda lease: source,
+        page=lambda line: None,
+    )
+    assert code == 1
+    assert previous.read_text(encoding="utf-8") == '{"schema": "previous"}'
+
+
+def test_prestage_reference_session_ignores_the_baseline_filter(tmp_path: Path) -> None:
+    """A 13:00 early close is still the last completed session for the official close."""
+    from sextant.tradingview.prestage import baseline_sessions, prior_sessions, run
+
+    session_day = date(2026, 11, 30)
+    section = Segment(
+        "RTH",
+        session_day,
+        at(session_day, 9, 30),
+        at(session_day, 16, 0),
+        "fixture XNYS regular close 16:00 ET",
+    )
+    sessions = baseline_sessions(session_day, section)
+    assert date(2026, 11, 27) not in sessions
+    assert sessions[-1] == date(2026, 11, 25)
+    reference_day = prior_sessions(session_day, 1)[-1]
+    assert reference_day == date(2026, 11, 27)
+    current = tuple(
+        bar("RTH", session_day, minute, symbol, f"{D('10.10') + D('0.10') * minute:f}", 5_000, 40)
+        for minute in range(7)
+        for symbol in SYMBOLS
+    )
+    nasdaq, other, symbol_map = _run_fixture(tmp_path)
+    source = DayCloses(
+        prior_bars("RTH", sessions) + current,
+        {
+            date(2026, 11, 25): {name: D("10.00") for name in SYMBOLS},
+            date(2026, 11, 27): {name: D("10.00") for name in SYMBOLS},
+        },
+    )
+    code = run(
+        research_dir=tmp_path / "unit",
+        nasdaq_listed=nasdaq,
+        other_listed=other,
+        symbol_map_path=symbol_map,
+        bounds=bounds(),
+        state_root=tmp_path / "state",
+        once=True,
+        clock=lambda: at(session_day, 9, 38),
+        sleep=lambda seconds: None,
+        source_factory=lambda lease: source,
+        page=lambda line: None,
+    )
+    assert code == 0
+    assert source.days == [date(2026, 11, 27)]
+
+
+def test_operator_path_builds_the_client_from_the_with_keys_environment(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    from sextant.tradingview.prestage import KEY_NAMES, operator_source
+
+    monkeypatch.setenv(KEY_NAMES[0], "fixture-operator-key")
+    monkeypatch.setenv(KEY_NAMES[1], "fixture-operator-secret")
+    with reserve_stream(
+        tmp_path / "leases", paper_slot=2, existing_streams=0, source="fixture"
+    ) as lease:
+        source = operator_source(lease, requests_per_minute=60)
+    client = source._bars.client
+    assert client._api_key == os.environ[KEY_NAMES[0]]
+    assert client._secret_key == os.environ[KEY_NAMES[1]]
+    assert source._daily._client is client
+
+
+def test_operator_path_refuses_missing_credentials(tmp_path: Path, monkeypatch: Any) -> None:
+    from sextant.tradingview.prestage import KEY_NAMES, PrestageError, operator_source
+
+    monkeypatch.delenv(KEY_NAMES[0], raising=False)
+    monkeypatch.delenv(KEY_NAMES[1], raising=False)
+    with (
+        reserve_stream(
+            tmp_path / "leases", paper_slot=2, existing_streams=0, source="fixture"
+        ) as lease,
+        pytest.raises(PrestageError) as refusal,
+    ):
+        operator_source(lease, requests_per_minute=60)
+    message = str(refusal.value)
+    assert KEY_NAMES[0] in message and KEY_NAMES[1] in message
+    assert "with-keys" in message
+
+
+def test_prestage_request_budget_is_unavailable_until_measured() -> None:
+    from sextant.tradingview.prestage import PrestageError, load_request_budget
+
+    with pytest.raises(PrestageError, match="request budget"):
+        load_request_budget()
+
+
+def test_prestage_request_budget_reads_a_reviewed_row(tmp_path: Path) -> None:
+    from sextant.tradingview.prestage import load_request_budget
+
+    path = tmp_path / "prestage-parameters.json"
+    path.write_text(
+        json.dumps(
+            [
+                {
+                    "name": "prestage_request_budget",
+                    "unit": "requests/minute",
+                    "value": 60,
+                    "source": "fixture only; no authority",
+                    "calibration": "UNCALIBRATED",
+                    "last_change": "2026-11-10",
+                    "scope": "REVIEWED",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    assert load_request_budget(path) == 60
+
+
+def test_prestage_run_refuses_without_a_measured_request_budget(tmp_path: Path) -> None:
+    from sextant.tradingview.prestage import PrestageError, run
+
+    nasdaq, other, symbol_map = _run_fixture(tmp_path)
+    with pytest.raises(PrestageError, match="request budget"):
+        run(
+            research_dir=tmp_path / "unit",
+            nasdaq_listed=nasdaq,
+            other_listed=other,
+            symbol_map_path=symbol_map,
+            bounds=bounds(),
+            state_root=tmp_path / "state",
+            once=True,
+            clock=lambda: at(DAY, 9, 38),
+            sleep=lambda seconds: None,
+            page=lambda line: None,
+        )
