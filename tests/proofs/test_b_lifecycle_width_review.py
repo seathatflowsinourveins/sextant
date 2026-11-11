@@ -58,4 +58,9 @@ def test_invalid_width_period_after_warmup_refuses_modify(tmp_path, mutation):
     later = [r for r in journal if r["kind"] == "tighten" and r["ts"] > OPEN + 3 * W.MINUTE]
     assert not any(row["sent"] for row in later)
     assert any(row.get("reason") == "width_rows_invalid" for row in journal)
-    assert "cancel" not in [kind for kind, _, _ in strategy.sent]
+    # ADAPTED (ADR-0007:17, cancel plus one resubmit): a cancel now re-arms a changed quantity,
+    # never a width. Original: `"cancel" not in` the commands. Adapted: no modify, and each cancel
+    # is a re-arm.
+    kinds = [kind for kind, _, _ in strategy.sent]
+    assert "modify" not in kinds
+    assert kinds.count("cancel") == len([r for r in journal if r["kind"] == "rearm"])

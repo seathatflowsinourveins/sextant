@@ -39,6 +39,7 @@ from nautilus_trader.model import (
     Bar,
     BarType,
     ClientOrderId,
+    ContingencyType,
     CustomData,
     Equity,
     InstrumentId,
@@ -61,6 +62,7 @@ from sextant.entry.parameters import FIRST_LEG, SIZING, EntryParameters
 from sextant.entry.signals import EntryState
 from sextant.entry.sizing import SegmentBasis, Sizing, size_entry
 from sextant.entry.surge import SurgeState, advance_surge
+from sextant.exits.engine import CANCEL_RETRY_NS
 from sextant.exits.policy import ExitParams, buffer
 from sextant.paper.b_width import MAX_TRAIL_FRACTION, trail_fraction, trail_percent, view_from_quote
 from sextant.paper.sessions import Session, session_at, session_start_ns
@@ -180,6 +182,8 @@ class _Book:
     last: Decimal | None = None
     offsets: dict[ClientOrderId, Decimal] = field(default_factory=dict)  # bps in force
     session_bars: list[Bar] = field(default_factory=list)
+    rearm_from: int | None = None  # a re-arm's cancel was sent then; its new trail is owed
+    cancelling: set[ClientOrderId] = field(default_factory=set)  # cancels sent, until the end
 
 
 class BLifecycle(Strategy):
@@ -448,60 +452,82 @@ class BLifecycle(Strategy):
     def _on_order(self, event: Any) -> None:
         book = self.books.get(event.instrument_id)
         if book is not None:
+            for cid in [c for c in book.cancelling if self._ended(c)]:
+                book.cancelling.discard(cid)  # the cancel's terminal event: re-arm may follow
             self.reconcile(book)
 
-    def reconcile(self, book: _Book) -> None:
-        """Cover the unreserved whole long quantity with house trails (LEAD-2201 A4, B3).
+    def _ended(self, cid: ClientOrderId) -> bool:
+        order = self.cache.order(cid)
+        return order is not None and order.is_closed
 
-        Position and orders are the engine's cache under this strategy id, where claimed owner
-        fills and orders land. A triggered or partly filled house exit is never cancelled,
-        modified or resized here (B3 a): nothing is sent until it completes. An increase gets a
-        second trail for the added shares only (B3 b); a decrease that is not the trail's own
-        fill reduces the newest trail by quantity alone (B3 c), so its offset never moves.
+    def reconcile(self, book: _Book) -> None:
+        """One house trail of the full unreserved whole long quantity (ADR-0007:17, the owner's
+        2026-11-09 policy, ADR-0007:50): "protect every unreserved whole long share with exactly
+        one house trail of the full net quantity and re-arm it (cancel plus one resubmit)
+        whenever that quantity changes". Never a second trail beside a working one, never a
+        quantity modify. Position and orders are the engine's cache under this strategy id.
+
+        - target = floor(held - owner SELL reservations), an owner OCO or bracket pair counted
+          once (only one of its two exits can execute: Alpaca orders page :165);
+        - a trail that is TRIGGERED or partly filled is completing (LEAD-2201 B3 a): nothing is
+          sent; one page; the target is armed for what remains once it ends;
+        - a trail whose quantity in force differs from the target is cancelled, and one trail of
+          the full target is armed on the cancel's terminal event; between the two the shares
+          have no venue order (ADR-0007:25, the accepted gap), bounded by ``_rearm_due``.
         """
         iid, now = book.instrument_id, self.clock.timestamp_ns()
         live = [o for o in self.cache.orders(instrument_id=iid, strategy_id=self.strategy_id)]
         live = [o for o in live if not o.is_closed]
-        trails = sorted(
-            (o for o in live if self._house(o.client_order_id) and _is_trail(o)),
-            key=lambda o: o.ts_init,
+        trails = [o for o in live if self._house(o.client_order_id) and _is_trail(o)]
+        ids = {o.client_order_id for o in trails}
+        held = self._held(book)
+        reserved = _reserved(
+            [o for o in live if o.side is OrderSide.SELL and o.client_order_id not in ids]
         )
-        if any(o.is_inflight or o.is_pending_update or o.is_pending_cancel for o in trails):
-            return  # one command at a time per trail: wait for its answer
+        target = max(Decimal(0), held - reserved).to_integral_value(rounding=ROUND_FLOOR)
+        if held > 0 and target == 0:
+            self._page(book, now, "owner_reserved_unprotected")
         if any(o.status is OrderStatus.TRIGGERED or o.filled_qty.as_decimal() > 0 for o in trails):
             return self._page(book, now, "exit_triggered_left_to_complete")
-        ids = {o.client_order_id for o in trails}
-        sells = [o for o in live if o.side is OrderSide.SELL and o.client_order_id not in ids]
-        reserved = sum((o.leaves_qty.as_decimal() for o in sells), Decimal(0))  # owner's too
-        held = self._held(book)
-        unreserved = max(Decimal(0), held - reserved).to_integral_value(rounding=ROUND_FLOOR)
-        covered = sum((o.leaves_qty.as_decimal() for o in trails), Decimal(0))
-        if held > 0 and unreserved == 0:
-            self._page(book, now, "owner_reserved_unprotected")
-        if unreserved > covered:
-            self._arm(book, now, unreserved - covered)
-        excess = covered - unreserved
-        for order in reversed(trails):  # the newest trail first
-            if excess <= 0:
-                break
-            leaves = order.leaves_qty.as_decimal()
-            if excess >= leaves:
-                self._cancel(order.client_order_id)
-            else:  # quantity only: trigger and offset stay as they are
-                self._modify(
-                    order.client_order_id, quantity=Quantity.from_int(int(leaves - excess))
-                )
-            excess -= leaves
+        busy = [o for o in trails if o.is_inflight or o.is_pending_cancel]
+        if busy or any(o.client_order_id in book.cancelling for o in trails):
+            return  # a submit or a cancel in flight: one command at a time, wait for its answer
+        if not trails:
+            if target > 0:
+                cid = self._arm(book, now, target)
+                if cid is not None and book.rearm_from is not None:
+                    self._rearm_due(book, cid, now)
+            return
+        if len(trails) == 1 and trails[0].quantity.as_decimal() == target:
+            return
+        book.rearm_from = now  # cancel plus one resubmit: the new trail is owed at the end
+        for order in trails:
+            self._cancel(order.client_order_id)
 
-    def _arm(self, book: _Book, now: int, shares: Decimal) -> None:
+    def _rearm_due(self, book: _Book, cid: ClientOrderId, now: int) -> None:
+        """The re-arm's gap is bounded (ADR-0007:25, "asynchronous gaps are explicit"): a new
+        trail the venue has not accepted within the cancel bound (exits/engine.py:96) pages."""
+        self._record(kind="rearm", ts=now, order=str(cid), cancel_ns=book.rearm_from)
+        book.rearm_from = None
+
+        def check(_event: Any) -> None:
+            order = self.cache.order(cid)
+            if order is None or order.status in (OrderStatus.INITIALIZED, OrderStatus.SUBMITTED):
+                self._page(book, self.clock.timestamp_ns(), "rearm_not_accepted")
+
+        self.clock.set_time_alert_ns(f"b-rearm-{cid}", now + CANCEL_RETRY_NS, callback=check)
+
+    def _arm(self, book: _Book, now: int, shares: Decimal) -> ClientOrderId | None:
         native = self.native
         if native is None or not isinstance(native, Decimal) or not native.is_finite():
             book.rearm = True  # held and uncovered: re-arm on the first price with valid authority
             reason = "missing" if native is None else "invalid"
-            return self._page(book, now, f"native_trail_fraction_{reason}")
+            self._page(book, now, f"native_trail_fraction_{reason}")
+            return None
         if not 0 < native <= MAX_TRAIL_FRACTION:  # finite first: NaN never reaches a compare
             book.rearm = True
-            return self._page(book, now, "native_trail_fraction_invalid")  # ADR-0025's cap
+            self._page(book, now, "native_trail_fraction_invalid")  # ADR-0025's cap
+            return None
         width = book.width  # revalidated at each arm: the rows in force and the native cap
         bar = book.width_bar
         if width is not None and (
@@ -524,6 +550,7 @@ class BLifecycle(Strategy):
         self._record(kind="protect", ts=now, order=str(order.client_order_id), quantity=str(shares))
         book.offsets[order.client_order_id] = bps
         self.submit_order(order)
+        return order.client_order_id
 
     # -- S1-4: width from completed bars, tighten-only modify -----------------------------
 
@@ -624,6 +651,10 @@ class BLifecycle(Strategy):
     def _cancel(self, cid: ClientOrderId) -> None:
         if not self._house(cid):  # LEAD-1818 D-c: never an owner order
             return self._record(kind="guard_refused", order=str(cid))
+        order = self.cache.order(cid)
+        book = None if order is None else self.books.get(order.instrument_id)
+        if book is not None:  # an OrderUpdated clears PENDING_CANCEL (orders/mod.rs:1314-1316)
+            book.cancelling.add(cid)
         self.cancel_order(cid)
 
     def _modify(self, cid: ClientOrderId, **change: Any) -> None:
@@ -637,7 +668,12 @@ class BLifecycle(Strategy):
         book.paged = reason
 
     def on_order_cancel_rejected(self, event: Any) -> None:
+        """The order keeps working; its cover is computed again on the next event."""
         self._record(kind="page", ts=event.ts_event, order=str(event.client_order_id))
+        book = self.books.get(event.instrument_id)
+        if book is not None:
+            book.cancelling.discard(event.client_order_id)
+            book.rearm = True
 
     def _fresh_quote(self, book: _Book, now: int) -> QuoteTick | None:
         quote = book.quote
@@ -695,6 +731,21 @@ class BLifecycle(Strategy):
             self._journal(row)
         except Exception:  # containment: evidence never changes a decision
             self.journal_errors += 1
+
+
+def _reserved(sells: list[Any]) -> Decimal:
+    """The owner's SELL reservations: each unlinked order's leaves, and an OCO or bracket pair
+    once, at its larger leg, since only one of its two exits can execute (Alpaca orders page
+    :165), read from the engine's native contingency fields."""
+    single, pairs = Decimal(0), {}
+    for o in sells:
+        linked = o.linked_order_ids or []
+        if o.contingency_type in (ContingencyType.OCO, ContingencyType.OUO) and linked:
+            key = o.order_list_id or frozenset({o.client_order_id, *linked})
+            pairs[key] = max(pairs.get(key, Decimal(0)), o.leaves_qty.as_decimal())
+        else:
+            single += o.leaves_qty.as_decimal()
+    return single + sum(pairs.values(), Decimal(0))
 
 
 def _is_trail(order: Any) -> bool:
