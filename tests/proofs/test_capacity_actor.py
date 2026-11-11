@@ -167,7 +167,9 @@ def test_a_failed_receipt_write_is_counted_and_never_raises(tmp_path) -> None:
 
 def test_the_receipt_interval_has_no_default() -> None:
     with pytest.raises(TypeError):
-        CapacityActorConfig(instrument_ids=(PENNY,), receipt_path=Path("x"))  # type: ignore[call-arg]
+        CapacityActorConfig(  # type: ignore[call-arg]
+            instrument_ids=(PENNY,), receipt_path=Path("x")
+        )
     with pytest.raises(ValueError):
         CapacityActorConfig(
             instrument_ids=(PENNY,),
@@ -281,3 +283,31 @@ def test_a_failing_timer_registration_is_counted_and_the_node_keeps_running(tmp_
 
     actor = run(tmp_path, tmp_path / "capacity.json", cls=NoTimer)
     assert actor.faults["timer"] == 1 and actor.ticks == len(TRADES) + len(QUOTES)
+
+
+def test_the_engine_base_fields_reach_the_config_through_new_not_init() -> None:
+    """Counter-witness (gate review of #487): the pinned pattern passes ``actor_id`` and the log
+    settings to ``DataActorConfig.__new__`` and calls ``super().__init__()`` with none
+    (docs/concepts/actors.md:15-21); the base ``__init__`` is ``object.__init__`` and refuses
+    them, so forwarding ``**kwargs`` would break every config."""
+    from nautilus_trader.config import DataActorConfig
+    from nautilus_trader.model import ActorId
+
+    config = CapacityActorConfig(
+        instrument_ids=(PENNY,),
+        receipt_path=Path("x"),
+        receipt_interval_s=1,
+        bucket_window_s=60,
+        actor_id=ActorId("CAPACITY-PROOF"),
+        log_events=False,
+        log_commands=False,
+    )
+    assert config.actor_id == ActorId("CAPACITY-PROOF")
+    assert config.log_events is False and config.log_commands is False
+
+    class Forwarding(DataActorConfig):
+        def __init__(self, **kwargs: Any) -> None:
+            super().__init__(**kwargs)
+
+    with pytest.raises(TypeError, match=r"object\.__init__"):
+        Forwarding(log_events=False)
