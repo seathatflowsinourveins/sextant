@@ -925,25 +925,57 @@ class AlpacaExecutionClient(ExecutionClient):
         self.coverage_complete = self._orders_complete
         return reports
 
+    async def _list_fill_activities(self, params):
+        """Read GET /account/activities/FILL completely, newest first: page_size at most 100,
+        page_token the id of the previous page's last row (account activities reference, read
+        2026-11-11). More pages than the registered request budget is incomplete coverage."""
+        if self.gateway is None:
+            raise RuntimeError("account gateway is disconnected")
+        budget, size = self.gateway.pacer.controls["request_budget"], 100
+        query: dict[str, Any] = dict(params, page_size=size, direction="desc")
+        rows: list = []
+        for _ in range(budget):
+            page = await self._call(ActionKind.QUERY, "get", "/account/activities/FILL", query)
+            rows.extend(page)
+            if len(page) < size:
+                return rows
+            query = dict(query, page_token=page[-1]["id"])
+        raise IncompleteCoverage([], [(query, ValueError("fill activity pages exceed budget"))])
+
     async def _generate_fill_reports(self, command):
-        self.coverage_complete = False
+        """No fill report is built from history: a FILL row carries no stream execution id and
+        no fee (account activities reference, read 2026-11-11), and none is invented.
+
+        The engine infers each fill an order report explains (create_inferred_fill,
+        reconciliation/orders.rs:1065-1145), so a row whose order is listed with at least its
+        cumulative quantity needs no report. Any other row is refused; a holding that no order
+        report explains also stops the start in the engine (node/mod.rs:992-996).
+        """
         params = _bounds(command)
         params.pop("symbols", None)  # Activities accepts symbol, singular.
         instrument_id = getattr(command, "instrument_id", None)
         if instrument_id is not None:
             params["symbol"] = instrument_id.symbol.value
-        rows = await self._call(ActionKind.QUERY, "get", "/account/activities/FILL", params)
-        # No invented REST/stream trade-ID correspondence or fees. E3's parser
-        # needs explicit commission evidence; nonempty unqualified history fails.
-        if rows:
+        rows = await self._list_fill_activities(params)
+        if not rows:
+            return []
+        listed = {}  # The whole history: a fill in the window may be an older order's.
+        for row in await self._list_orders({"status": "all", "nested": True}):
+            for order in (row, *(row.get("legs") or ())) if isinstance(row, dict) else ():
+                if isinstance(order, dict) and isinstance(order.get("id"), str):
+                    listed[order["id"]] = order
+        failures = []
+        for row in rows:
+            try:
+                order = listed.get(row["order_id"])
+                if order is None or Decimal(order["filled_qty"]) < Decimal(row["cum_qty"]):
+                    raise ValueError("historical fill that no order report explains")
+            except Exception as exc:
+                failures.append((row, exc))
+        if failures:
             self.coverage_complete = False
-            raise IncompleteCoverage(
-                [],
-                [
-                    (row, ValueError("historical fill identity and fees unqualified"))
-                    for row in rows
-                ],
-            )
+            self.failures.extend(failures)
+            raise IncompleteCoverage([], failures)
         return []
 
     async def _on_trade_update(self, update: dict[str, Any]):

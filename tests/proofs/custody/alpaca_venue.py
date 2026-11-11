@@ -94,7 +94,11 @@ class Venue:
         if path == "/positions":
             return deepcopy(self.positions)
         if path == "/account/activities/FILL":
-            return deepcopy(self.activities)
+            # Account activities reference (read 2026-11-11): page_size default and maximum
+            # 100; page_token is the id of the previous page's last row. Kept newest first.
+            ids = [row.get("id") for row in self.activities]
+            start = ids.index(params["page_token"]) + 1 if "page_token" in params else 0
+            return deepcopy(self.activities[start : start + int(params.get("page_size", 100))])
         if path == "/orders:by_client_order_id":
             return deepcopy(
                 next(

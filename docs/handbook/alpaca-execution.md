@@ -122,3 +122,12 @@ One cancel and one replacement per order are unresolved at a time, each answered
 its own answer: its HTTP error, a terminal event or a confirmed replacement, a stream
 refusal, or a read issued after its own call ended. A read that refuses one owes the next
 stream refusal, which then answers nothing. Source: PR 569 gate reviews.
+
+Fill history needs no fill report where an order report already explains it. A FILL
+activity carries no stream execution id and no fee (account activities reference, read
+2026-11-11), so none is built from it. The engine infers each fill an order report shows
+(`reconciliation/orders.rs:1065-1145`): at the venue average price, with the client's
+commission hook, and with a deterministic reconciliation trade id. The client reads every
+FILL page. A row whose order is listed with at least its cumulative quantity passes;
+any other row is refused. A holding that no order report explains stops the start in the
+engine itself (`node/mod.rs:992-996`, `generate_missing_orders` off).
