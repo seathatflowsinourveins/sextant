@@ -1,5 +1,8 @@
 import json
+import os
 import re
+import shutil
+import subprocess
 from pathlib import Path
 
 import yaml
@@ -92,6 +95,33 @@ def test_scheduler_units_are_checked_in_and_name_the_bridge_scripts():
         assert rows[name]["value"] == value
         assert "v13.2" in rows[name]["source"]
     assert (SYSTEMD / "README.md").read_text(encoding="utf-8").count("%h/.dsh-full") == 1
+
+
+def test_install_substitutes_the_repo_path_literally(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    for name in ("install.sh", "sextant-monitor.service", "sextant-monitor.timer"):
+        shutil.copy2(SYSTEMD / name, repo / name)
+    home = tmp_path / "home"
+    home.mkdir()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    systemctl = bin_dir / "systemctl"
+    systemctl.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    systemctl.chmod(0o755)
+    literal = r"/work/a&b|c\d"
+    env = {
+        **os.environ,
+        "HOME": str(home),
+        "PATH": f"{bin_dir}:{os.environ['PATH']}",
+        "SEXTANT_REPO": literal,
+    }
+    subprocess.run(
+        ["bash", str(repo / "install.sh")], check=True, env=env, capture_output=True, text=True
+    )
+    unit = (home / ".config/systemd/user/sextant-monitor.service").read_text(encoding="utf-8")
+    assert f"WorkingDirectory={literal}" in unit
+    assert "%h/sextant" not in unit
 
 
 def test_grafana_provisions_one_staleness_rule_with_a_healthy_zero_path():
