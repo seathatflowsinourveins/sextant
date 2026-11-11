@@ -108,7 +108,10 @@ def enabled(monkeypatch):
 
 
 @pytest.mark.parametrize("setup", ["FIRST_LEG", "RECLAIM"])
-def test_off_entry_decisions_match_unwired_head_bytes(instrument, tmp_path, monkeypatch, setup):
+@pytest.mark.parametrize("supplied", [False, True])
+def test_off_entry_decisions_match_unwired_head_bytes(
+    instrument, tmp_path, monkeypatch, setup, supplied
+):
     # Removing the OFF branch or consulting ranking while disabled breaks this witness.
     assert gate_registry.RANK_GATE_ENABLED.value is False
 
@@ -116,7 +119,8 @@ def test_off_entry_decisions_match_unwired_head_bytes(instrument, tmp_path, monk
         raise AssertionError("OFF must not read ranking")
 
     monkeypatch.setattr(RankingConsumer, "entry_rank", unavailable)
-    result = episode(instrument, tmp_path, setup=setup)
+    inputs = {"ranking_consumer": ranked()} if supplied else {}
+    result = episode(instrument, tmp_path, setup=setup, **inputs)
     expected = json.loads(Path(__file__).with_name("rank-gate-off.json").read_bytes())[setup]
     assert (
         json.dumps(result.events, sort_keys=True, separators=(",", ":")).encode()
@@ -143,6 +147,7 @@ def test_enabled_native_entry_refuses_current_ranking_evidence(
 ):
     consumer = None if arguments.get("missing") == "consumer" else ranked(**arguments)
     if arguments.get("missing") == "invalid":
+        assert consumer is not None
         consumer.reader.invalidate(reason)
     result = episode(instrument, tmp_path, ranking_consumer=consumer)
     assert not result.failed, result.events
