@@ -593,8 +593,14 @@ def test_three_discovery_pages_and_first_tool_share_the_limiter(monkeypatch: pyt
         nonlocal current
         current += seconds
 
-    monkeypatch.setattr(sync, "time", SimpleNamespace(monotonic=lambda: current))
-    monkeypatch.setattr(sync, "asyncio", SimpleNamespace(Lock=asyncio.Lock, sleep=sleep))
+    from sextant.tradingview import account
+
+    monkeypatch.setattr(
+        account,
+        "_utcnow",
+        lambda: datetime(2026, 11, 11, 15, tzinfo=UTC) + timedelta(seconds=current),
+    )
+    monkeypatch.setattr(account, "_sleep", sleep)
     server = Server("three-page fixture", on_list_tools=list_tools, on_call_tool=call_tool)
 
     async def run():
@@ -606,9 +612,9 @@ def test_three_discovery_pages_and_first_tool_share_the_limiter(monkeypatch: pyt
     assert asyncio.run(run()) == {"watchlists": []}
     assert requests == [
         ("discovery", 10.0),
-        ("discovery", 10.75),
-        ("discovery", 11.5),
-        ("tool", 12.25),
+        ("discovery", 12.0),
+        ("discovery", 14.0),
+        ("tool", 16.0),
     ]
 
 
@@ -626,8 +632,9 @@ def test_expiry_is_checked_after_pacing(tmp_path: Path, monkeypatch: pytest.Monk
         async with Client(peer.server) as client:
             tools = sync.OfficialTools(client, now=lambda: current)
             await tools.discover()
-            tools.last_call = sync.time.monotonic()
-            monkeypatch.setattr(sync.asyncio, "sleep", sleep)
+            from sextant.tradingview import account
+
+            monkeypatch.setattr(account, "_sleep", sleep)
             with pytest.raises(sync.SyncError):
                 await tools.call(
                     "add_to_watchlist",
@@ -1938,6 +1945,7 @@ def test_the_first_keep_login_authentication_is_saved_before_sync(
         pytest.fail(f"unexpected mocked path {request.url.path}", pytrace=False)
 
     def http_client(**options):
+        options.pop("transport", None)  # This fixture supplies its own MockTransport.
         storage_types.append(type(options["auth"].context.storage).__name__)
         return original_http_client(
             transport=httpx2.MockTransport(handler), trust_env=False, **options
@@ -2269,6 +2277,7 @@ def wired_session(monkeypatch: pytest.MonkeyPatch, handler, events: list[str]):
             pytest.fail("this run must not call a tool", pytrace=False)
 
     def http_client(**options):
+        options.pop("transport", None)  # This fixture supplies its own MockTransport.
         return original(transport=httpx2.MockTransport(handler), trust_env=False, **options)
 
     monkeypatch.setattr(auth, "OwnerCallback", Callback)

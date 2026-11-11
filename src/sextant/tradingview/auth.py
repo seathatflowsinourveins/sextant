@@ -21,19 +21,22 @@ from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
 import httpx2
-from mcp import Client
+from mcp import Client as SDKClient
 from mcp.client.auth import AuthorizationCodeResult, OAuthClientProvider
 from mcp.client.streamable_http import streamable_http_client
 from mcp.shared.auth import OAuthClientInformationFull, OAuthClientMetadata, OAuthToken
 from pydantic import AnyUrl
 
 from sextant.tradingview import diagnostics
+from sextant.tradingview.account import Account, GuardedHTTPTransport, HTTPGate
+from sextant.tradingview.account import MeteredClient as Client
 from sextant.tradingview.stored_login import (
     RefreshGuard,
     StoredLogin,
     StoredLoginCorrupt,
     StoredLoginError,
     StoredTokenStorage,
+    _is_refresh,
 )
 from sextant.tradingview.sync import (
     LOGIN_NEEDS_CONSENT,
@@ -187,7 +190,7 @@ def _login_stop(guard: RefreshGuard | None) -> SyncError | None:
 @asynccontextmanager
 async def official_client(
     authorize: bool = False, login: StoredLogin | None = None
-) -> AsyncIterator[Client]:
+) -> AsyncIterator[SDKClient]:
     """RAM-only unless the owner's ``--keep-login`` store is passed; no other grant reuse.
 
     Only ``authorize`` opens a browser. With the store and no ``authorize`` the stored
@@ -202,7 +205,15 @@ async def official_client(
         guard = RefreshGuard(storage, consent=authorize)
     if not authorize and not stored:
         raise SyncError(OWNER_STEP if login is None else LOGIN_NEEDS_CONSENT, stage="authorize")
+    Account().preflight()
     callback = None
+    gate = HTTPGate(
+        lambda r: (
+            r.status_code == 401
+            or (r.status_code == 404 and r.request.url.path.startswith("/.well-known/"))
+            or (guard is not None and _is_refresh(r.request) and not guard.reason())
+        )
+    )
     with sensitive_logging():
         try:
             callback = OwnerCallback()
@@ -226,7 +237,10 @@ async def official_client(
                 storage.prime_expiry(oauth.context)
                 guard.context = oauth.context
                 hooks = {"request": [identify_request, guard.request], "response": [guard.response]}
+            hooks["request"].append(gate.request)
+            hooks.setdefault("response", []).append(gate.response)
             async with httpx2.AsyncClient(
+                transport=GuardedHTTPTransport(httpx2.AsyncHTTPTransport(), gate),
                 auth=oauth,
                 timeout=httpx2.Timeout(30.0, read=60.0),
                 event_hooks=hooks,
@@ -236,7 +250,12 @@ async def official_client(
                     await guard.discover(http_client)
                 transport = streamable_http_client(SERVER, http_client=http_client)
                 body_error = None
-                async with Client(transport, read_timeout_seconds=60.0) as client:
+                async with Client(
+                    transport,
+                    read_timeout_seconds=Account().timeout(),
+                    mode="legacy",
+                    http_gate=gate,
+                ) as client:
                     try:
                         yield client
                     except SyncError as error:
@@ -270,6 +289,7 @@ async def official_client(
                 )
             )
         finally:
+            gate.finish(False)
             if isinstance(storage, InMemoryTokenStorage):
                 storage.tokens = None
                 storage.client_info = None

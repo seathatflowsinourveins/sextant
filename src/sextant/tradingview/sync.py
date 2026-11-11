@@ -9,16 +9,17 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 from decimal import Decimal
+from functools import wraps
 from typing import Any, Never
 
 from jsonschema import Draft202012Validator
 from mcp import Client
 from mcp.shared.exceptions import MCPError
 
+from sextant.tradingview.account import Account, AccountError, MeteredClient
 from sextant.tradingview.inputs import NAMES, ResearchInputs
 
 ALLOWED = {
@@ -267,22 +268,41 @@ def _documented_write(value: Any) -> bool:
     )
 
 
+def _account_guard(method):
+    @wraps(method)
+    async def run(self, *args, **kwargs):
+        if method.__name__ in {"call", "call_raw"} and args[0] not in ALLOWED:
+            raise SyncError(NON_DISPLAY_INPUT, stage="tool call")
+        try:
+            with self.account.locked():
+                try:
+                    return await method(self, *args, **kwargs)
+                except BaseException:
+                    self.account.stop_day()
+                    raise
+        except AccountError:
+            raise SyncError(SESSION_REFUSED, stage="account guard") from None
+
+    return run
+
+
 class OfficialTools:
     """Exact display allowlist, discovered schemas, serial pacing and safe errors."""
 
     def __init__(
         self,
         client: Client,
-        interval: float = 0.75,
+        interval: float | None = None,
         *,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
     ):
-        self.client, self.interval, self.now = client, interval, now
+        self.client, self.now = client, now
+        self.account = Account()
         self.schemas: dict[str, Any] = {}
         self.wire: dict[str, str] = {}
-        self.last_call = 0.0
         self.lock = asyncio.Lock()
 
+    @_account_guard
     async def discover(self) -> None:
         self.schemas.clear()
         self.wire.clear()
@@ -290,8 +310,11 @@ class OfficialTools:
         offered: set[str] = set()
         for _ in range(100):
             async with self.lock:
-                await self._pace()
-                page = await self.client.list_tools(cursor=cursor, cache_mode="refresh")
+                page = await self._request(
+                    lambda cursor=cursor: self.client.list_tools(
+                        cursor=cursor, cache_mode="refresh"
+                    )
+                )
             for tool in page.tools:
                 if isinstance(tool.name, str) and _NAME.match(tool.name):
                     offered.add(tool.name)
@@ -338,27 +361,38 @@ class OfficialTools:
                 stage="tool call",
             )
 
-    async def _pace(self, inputs: ResearchInputs | None = None) -> None:
-        # Caller holds the one lock for discovery pages and tool requests alike.
-        delay = self.interval - (time.monotonic() - self.last_call)
-        if delay > 0:
-            await asyncio.sleep(delay)
-        if inputs is not None:
-            self.fresh(inputs)
-        self.last_call = time.monotonic()
+    async def _request(self, send):
+        if isinstance(self.client, MeteredClient):
+            return await send()
+        return await self.account.request(send)
 
+    @_account_guard
     async def call_raw(
         self, name: str, arguments: dict[str, Any], *, inputs=None
     ) -> tuple[Any, str]:
         """Transport and parse, plus the fixed shape class of what came back."""
         self.validate(name, arguments)
         async with self.lock:
-            await self._pace(inputs)
             # No high-level tool-call negotiation/replay on an ambiguous mutation.
             try:
-                result = await self.client.session.call_tool(
-                    self.wire[name], arguments, read_timeout_seconds=60.0
-                )
+
+                async def send():
+                    if inputs is not None:
+                        self.fresh(inputs)
+                    result = await self.client.session.call_tool(
+                        self.wire[name], arguments, read_timeout_seconds=self.account.timeout()
+                    )
+                    if result.is_error:
+                        raise SyncError(
+                            CALL_FAILED,
+                            stage="tool call",
+                            detail=f"tool {self.wire[name]}; {_error_word(result)}",
+                        )
+                    return result
+
+                result = await self._request(send)
+            except SyncError:
+                raise
             except MCPError as error:
                 _sanitized(
                     SyncError(
@@ -391,6 +425,7 @@ class OfficialTools:
             return _UNPARSED, "content:unparsed"
         return value, _write_shape(value, "content")
 
+    @_account_guard
     async def call(self, name: str, arguments: dict[str, Any], *, inputs=None) -> Any:
         value, shape = await self.call_raw(name, arguments, inputs=inputs)
         if value is _UNPARSED:
