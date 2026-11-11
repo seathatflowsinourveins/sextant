@@ -122,6 +122,23 @@ async def _two_hop_chain(node):
     return [venue.rows[row["id"]] for row in chain], chain[1]
 
 
+def test_full_report_with_replaced_middle_successor_is_complete_and_silent():
+    async def run():
+        node = client()
+        (o0, o1, o2), _ = await _two_hop_chain(node)
+        assert o0["status"] == o1["status"] == "replaced"
+        node.generate_order_updated.reset_mock()
+        reports = await node._generate_order_status_reports(
+            NS(open_only=False, instrument_id=None, start=None, end=None)
+        )
+        assert node.coverage_complete
+        assert [str(r.venue_order_id) for r in reports] == [o2["id"]]
+        node.generate_order_updated.assert_not_called()
+        assert node._active["fixture-entry"] == o2["id"]
+
+    asyncio.run(run())
+
+
 @pytest.mark.parametrize("event", ["new", "accepted", "replaced"])
 def test_late_middle_successor_after_newer_binding_emits_nothing(event):
     async def run():
