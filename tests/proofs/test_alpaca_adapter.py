@@ -14,12 +14,15 @@ No network: clients are faked and no proof reads a real credential.
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 from types import SimpleNamespace
 from typing import Any, cast
 
 import alpaca
 import pytest
+import requests
+from alpaca.common.exceptions import APIError
 from alpaca.data.enums import DataFeed
 from alpaca.trading import client as alpaca_client_module
 from alpaca.trading.enums import AssetClass
@@ -477,3 +480,40 @@ def test_an_unlisted_equity_is_refused_by_the_single_instrument_loader() -> None
     with pytest.raises(ValueError, match="does not list an equity"):
         asyncio.run(provider.load_async(InstrumentId.from_str("MSFT.ALPACA")))
     assert provider.find(InstrumentId.from_str("MSFT.ALPACA")) is None
+
+
+def _sdk(status: int) -> alpaca_client_module.TradingClient:
+    """The real SDK client; only its HTTP session is faked. GONE gets ``status``."""
+    sdk = alpaca_client_module.TradingClient("k", "s", paper=True, raw_data=True)
+
+    def request(method: str, url: str, **opts: Any) -> requests.Response:
+        symbol = url.rsplit("/", 1)[-1]
+        if symbol == "GONE" and not status:
+            raise requests.Timeout
+        response = requests.Response()
+        response.status_code = status if symbol == "GONE" else 200
+        response._content = json.dumps(_raw_row(symbol)).encode()
+        return response
+
+    sdk._session.request = request  # type: ignore[method-assign]
+    return sdk
+
+
+def test_an_unlisted_id_fails_closed_and_the_rest_of_the_batch_loads() -> None:
+    ids = ["GONE.ALPACA", "AAPL.ALPACA"]
+    provider = _provider(_sdk(404), InstrumentProviderConfig(load_ids=ids))
+    warnings: list[str] = []
+    provider._log = cast("Any", SimpleNamespace(warning=warnings.append))
+    asyncio.run(provider.initialize())
+    assert [str(instrument.id) for instrument in provider.list_all()] == ["AAPL.ALPACA"]
+    assert "Skipped 1 of 2" in warnings[0]
+    with pytest.raises(ValueError, match="does not list an equity"):
+        asyncio.run(provider.load_async(InstrumentId.from_str(ids[0])))
+
+
+@pytest.mark.parametrize("status", [0, 401, 403, 500])
+def test_an_sdk_failure_other_than_not_found_fails_the_load(status: int) -> None:
+    ids = ["AAPL.ALPACA", "GONE.ALPACA"]
+    provider = _provider(_sdk(status), InstrumentProviderConfig(load_ids=ids))
+    with pytest.raises(requests.Timeout if not status else APIError):
+        asyncio.run(provider.initialize())
