@@ -1,17 +1,11 @@
-"""Alpaca adapter client configuration without stored credentials.
+"""Alpaca client configuration without stored credentials.
 
-The subclass pattern, the "declare adapter fields as keyword arguments and accept
-``**kwargs`` for common fields" rule and the serialization warning follow
-nautilus_trader@d53849b216e20f2c122ca01b4dd0da377638b186
-``docs/developer_guide/python_adapters.md`` ("Config classes"). A config carries
-the name of an environment variable, never its value, following the repo key
-store's per-account entries (``scripts/keys.sh:26-31``). Both names are required:
-the adapter has no key name default, so a node states the account it runs as.
-Feed values are the vendor's own alpaca-py 0.44.0 enum
-(``alpaca/data/enums.py:56``, ``DataFeed``). The execution account id is also
-required and its issuer must be ``ALPACA``, so one writer per account is named
-explicitly (AGENTS.md custody rule); ``AccountId.value`` splits as
-``<issuer>-<number>``.
+The subclass and ``**kwargs`` pattern follows nautilus_trader@d53849b
+``docs/developer_guide/python_adapters.md``; a config carries an environment
+variable's name, never its value (``scripts/keys.sh:26-31``). Key names and the
+execution account id are required: no adapter default, and the account issuer
+must be ALPACA (AGENTS.md custody rule). Feeds are alpaca-py 0.44.0 ``DataFeed``
+values (``alpaca/data/enums.py:56``).
 """
 
 from __future__ import annotations

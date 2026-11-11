@@ -1,15 +1,13 @@
 """Alpaca instrument provider: assets by id, or every US equity.
 
-Follows nautilus_trader@d53849b216e20f2c122ca01b4dd0da377638b186
-``examples/live/_template/providers.py`` and
-``docs/developer_guide/python_adapters.md`` ("Instrument provider"): the provider
-holds configuration and local state only, and network work starts inside the
-async load hooks. alpaca-py 0.44.0 ``TradingClient`` asset calls are blocking, so
-each runs through ``asyncio.to_thread``. The provider's client uses the SDK's own
-``raw_data=True`` option: typed ``get_all_assets`` validates the whole list at
-once (``alpaca/trading/client.py:394-397``) and one vendor value the pinned SDK
-enum lacks would fail every instrument, so each raw row is read and validated on
-its own. A row that cannot be parsed is skipped, counted and the count logged.
+Follows nautilus_trader@d53849b ``examples/live/_template/providers.py`` and
+``docs/developer_guide/python_adapters.md``: configuration and local state only;
+network work starts in the async load hooks, each blocking SDK call through
+``asyncio.to_thread``. The provider's client uses ``raw_data=True``: typed
+``get_all_assets`` validates the whole list at once
+(``alpaca/trading/client.py:394-397``), so one unlisted vendor value would fail
+every instrument. Each raw row is read and validated on its own; a row that
+cannot be parsed is skipped, counted and the count logged.
 """
 
 from __future__ import annotations

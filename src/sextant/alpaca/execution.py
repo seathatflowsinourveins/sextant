@@ -1,12 +1,9 @@
 """Alpaca execution client shell for the live node.
 
-Follows nautilus_trader@d53849b216e20f2c122ca01b4dd0da377638b186
-``examples/live/_template/execution.py`` and
-``docs/developer_guide/python_adapters.md``: the factory constructs the client
-synchronously with the venue and account identity, and opens no wire. Order
-submission, reconciliation and account state land with the execution work item;
-until then connect refuses, so a paper node cannot run half-wired against the
-broker account it would trade (one writer per account).
+Follows nautilus_trader@d53849b ``examples/live/_template/execution.py``: the
+factory builds the client synchronously and opens no wire. Order submission,
+reconciliation and account state arrive with the execution work item; until then
+connect refuses, so a paper node cannot run half-wired (one writer per account).
 """
 
 from __future__ import annotations
