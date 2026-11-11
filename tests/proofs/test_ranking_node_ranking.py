@@ -84,8 +84,6 @@ def argv(tmp_path: Path, *drop: str) -> list[str]:
         "--registry": str(REGISTRY),
         "--duration-s": "600",
         "--receipt-dir": str(tmp_path / "receipts"),
-        "--page-window-s": "60",
-        "--status-snapshot-window-s": "60",
         "--feed": "sip",
         "--api-key-env": "FIXTURE_KEY_NAME",
         "--api-secret-env": "FIXTURE_SECRET_NAME",
@@ -160,7 +158,7 @@ def test_every_argument_is_required(tmp_path, flag: str) -> None:
 def test_an_abbreviated_option_or_another_feed_is_refused(tmp_path) -> None:
     args = argv(tmp_path)
     with pytest.raises(SystemExit):
-        node_ranking.parse([a.replace("--page-window-s", "--page-window") for a in args])
+        node_ranking.parse([a.replace("--receipt-dir", "--receipt") for a in args])
     args[args.index("--feed") + 1] = "iex"
     with pytest.raises(node_ranking.RankingRefused, match="sip"):
         node_ranking.parse(args)
@@ -228,14 +226,14 @@ def args_session_date(now: int):
 
 
 def test_the_ranking_windows_come_from_their_rows(tmp_path) -> None:
-    args, _ = node_ranking.parse(argv(tmp_path, "--page-window-s", "--status-snapshot-window-s"))
+    args, _ = node_ranking.parse(argv(tmp_path))
     assert args.page_window_s == 14400  # the UNCALIBRATED row
     assert args.status_snapshot_window_s is None  # UNAVAILABLE: the 2e recorder stays off
     assert args.parameters == {
         "page_window_s": (14400, "registry"),
         "status_snapshot_window_s": (None, "unavailable"),
     }
-    (tmp_path / "again").mkdir()
-    args, _ = node_ranking.parse(argv(tmp_path / "again"))
-    assert args.parameters is not None
-    assert args.parameters["status_snapshot_window_s"] == (60, "override")
+    for flag, row in node_ranking.RETIRED.items():  # lead ruling 04:2x: no flag exists
+        (tmp_path / flag.strip("-")).mkdir()
+        with pytest.raises(ValueError, match=row):
+            node_ranking.parse([*argv(tmp_path / flag.strip("-")), flag, "60"])

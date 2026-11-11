@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import sys
 import threading
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
@@ -38,6 +39,12 @@ NODE_NAME = "ranking-node"
 CLIENT_NAME = "ALPACA"
 TRADER_ID = TraderId.from_str("RANKING-001")  # the ranking host's bus identity (host.py)
 RECEIPT_NAME = "capacity.json"
+# Window flags that no longer exist (lead 04:2x): refused by the row they used to override.
+RETIRED = {
+    "--receipt-interval-s": "receipt_interval_s",
+    "--bucket-window-s": "bucket_window_s",
+    "--parameters": "the committed parameter registry",
+}
 _SYMBOL = re.compile(r"[A-Z][A-Z0-9.]{0,9}")
 
 
@@ -100,19 +107,17 @@ def parse(argv: list[str] | None = None) -> tuple[Arguments, LeaseArguments]:
     required.add_argument("--existing-streams", type=int, required=True)
     required.add_argument("--lease-source", required=True)
     parser.add_argument("--quotes", action="store_true", help="also count quotes")
-    overrides = parser.add_argument_group("explicit overrides of a registry row (recorded)")
-    overrides.add_argument("--receipt-interval-s", type=_positive)
-    overrides.add_argument("--bucket-window-s", type=_positive)
-    overrides.add_argument("--parameters", type=Path, default=node_parameters.DEFAULT_PATH)
+    node_parameters.refuse_retired(sys.argv[1:] if argv is None else argv, RETIRED)
     raw = parser.parse_args(argv)
-    rows = node_parameters.load(raw.parameters)
-    resolved = {
-        name: node_parameters.resolve(rows, name, getattr(raw, name))
-        for name in ("receipt_interval_s", "bucket_window_s")
+    rows = node_parameters.load()  # the committed rows only: no override (lead 04:2x)
+    resolved: dict[str, tuple[int | None, str]] = {
+        "receipt_interval_s": node_parameters.resolve(rows, "receipt_interval_s"),
+        # Not a tunable: every closed second of the run is kept. A run of D seconds touches at
+        # most D + 1 whole seconds, so the bound never drops one (dropped_buckets checks it).
+        "bucket_window_s": (raw.duration_s + 1, "derived: --duration-s + 1"),
     }
-    missing = [name for name, (value, _) in resolved.items() if value is None]
-    if missing:  # no source for the window: the capacity mode refuses rather than guess
-        raise ValueError(f"no registry value for {missing}: pass an explicit override")
+    if resolved["receipt_interval_s"][0] is None:
+        raise ValueError("no registry value for receipt_interval_s")
     data = AlpacaDataClientConfig(
         api_key_env=raw.api_key_env, api_secret_env=raw.api_secret_env, feed=raw.feed
     )

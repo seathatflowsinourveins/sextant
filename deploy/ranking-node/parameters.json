@@ -15,18 +15,11 @@
       "source": "The existing deploy/monitor/systemd/parameters.json row monitor_bridge_period_seconds = 60 (OpenTelemetry Periodic exporting MetricReader, OTEL_METRIC_EXPORT_INTERVAL default 60000 ms), which already governs how often a measurement is exported to the monitor; the capacity receipt is that measurement's export.",
       "last_change": "2026-11-11"
     },
-    "bucket_window_s": {
-      "value": null,
-      "unit": "seconds of closed per-second capacity buckets kept and written",
-      "status": "UNAVAILABLE",
-      "source": "No source found: the engine at the pin keeps no capacity buckets; no broker page, engine default or existing row governs how much per-second history a capacity receipt holds. Without an explicit override the capacity mode refuses to start.",
-      "last_change": "2026-11-11"
-    },
     "status_snapshot_window_s": {
       "value": null,
       "unit": "seconds after subscribing in which a name's first status is counted as a snapshot",
       "status": "UNAVAILABLE",
-      "source": "No source found: the vendor's stream page does not state whether or when current status is sent on subscribe (LEAD-0020 1). Without an explicit override the recorder stays off, its default.",
+      "source": "No source found: the vendor's stream page does not state whether or when current status is sent on subscribe (LEAD-0020 1). There is no flag (lead ruling 04:2x): the recorder stays off.",
       "last_change": "2026-11-11"
     }
   }

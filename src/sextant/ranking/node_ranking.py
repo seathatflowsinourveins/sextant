@@ -68,6 +68,14 @@ class RankingInputs:
     asset_source: str
 
 
+# Window flags that no longer exist (lead 04:2x): refused by the row they used to override.
+RETIRED = {
+    "--page-window-s": "page_window_s",
+    "--status-snapshot-window-s": "status_snapshot_window_s",
+    "--parameters": "the committed parameter registry",
+}
+
+
 class RankingRefused(ValueError):
     """The ranking mode will not start; the message names every missing or invalid input."""
 
@@ -108,10 +116,7 @@ def parse(argv: list[str] | None = None) -> tuple[RankingArguments, argparse.Nam
         ("--lease-source", str),
     ):
         required.add_argument(flag, type=kind, required=True)
-    overrides = parser.add_argument_group("explicit overrides of a registry row (recorded)")
-    overrides.add_argument("--page-window-s", type=positive)
-    overrides.add_argument("--status-snapshot-window-s", type=positive)
-    overrides.add_argument("--parameters", type=Path, default=node_parameters.DEFAULT_PATH)
+    node_parameters.refuse_retired(sys.argv[1:] if argv is None else argv, RETIRED)
     raw = parser.parse_args(argv)
     if raw.feed != "sip":
         raise RankingRefused("the ranking mode ranks the sip feed's PRE, RTH and POST only")
@@ -136,13 +141,13 @@ def load_inputs(raw: argparse.Namespace) -> RankingArguments:
     if failures:
         raise RankingRefused("invalid priming inputs: " + "; ".join(failures))
     symbols, digest = loaded["universe"]
-    rows = node_parameters.load(raw.parameters)
+    rows = node_parameters.load()  # the committed rows only: no override (lead 04:2x)
     resolved = {
-        name: node_parameters.resolve(rows, name, getattr(raw, name))
+        name: node_parameters.resolve(rows, name)
         for name in ("page_window_s", "status_snapshot_window_s")
     }
     if resolved["page_window_s"][0] is None:
-        raise RankingRefused("no registry value for page_window_s: pass an explicit override")
+        raise RankingRefused("no registry value for page_window_s")
     if loaded["ranking inputs"][1] != digest["sha256"]:
         raise RankingRefused("invalid priming inputs: ranking inputs are for another universe")
     return RankingArguments(

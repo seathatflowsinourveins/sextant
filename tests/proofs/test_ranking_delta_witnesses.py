@@ -1,3 +1,4 @@
+# pyright: reportIncompatibleMethodOverride=false
 from __future__ import annotations
 
 import json
@@ -8,21 +9,19 @@ from functools import partial
 from pathlib import Path
 
 import pytest
+import test_ranking_amendments as amendments
 from alpaca.data.models import Trade
 from nautilus_trader.model import CustomData, DataType
-
-import test_ranking_amendments as amendments
 from test_alpaca_data import INSTRUMENT_ID, TRADE
 from test_ranking import NS, START
 from test_ranking_actor import FakeHost, Logged, run
 from test_ranking_node_main import argv as capacity_argv
-from test_ranking_node_rollover import two_segments
 from test_ranking_node_ranking import argv as ranking_argv
+from test_ranking_node_rollover import two_segments
 from test_ranking_node_session import Regular
 
 from sextant.alpaca import data, stream_facts
-from sextant.ranking import node_main, node_parameters, node_ranking
-from sextant.ranking import node_actor
+from sextant.ranking import node_actor, node_main, node_parameters, node_ranking
 
 
 @pytest.fixture(autouse=True)
@@ -54,7 +53,9 @@ def test_an_amendment_must_match_the_original_price_and_size(tmp_path, monkeypat
     )
 
 
-@pytest.mark.parametrize("name", ["bucket_window_s", "status_snapshot_window_s"])
+# Adapted at the fix (lead ruling 04:2x): bucket_window_s has no row any more, which
+# test_an_override_cannot_hide_a_missing_row below covers unchanged.
+@pytest.mark.parametrize("name", ["status_snapshot_window_s"])
 def test_an_unavailable_row_cannot_gain_authority_from_a_bare_flag(name):
     rows = node_parameters.load()
     assert rows[name].status == "UNAVAILABLE" and rows[name].value is None
@@ -67,14 +68,16 @@ def test_an_override_cannot_hide_a_missing_row():
         node_parameters.resolve({}, "bucket_window_s", 600)
 
 
+# Adapted at the fix: the fixture no longer passes the retired flag, so the witness passes it.
 def test_capacity_entry_refuses_an_unsourced_bucket_window(tmp_path):
     with pytest.raises(ValueError, match="bucket_window_s"):
-        node_main.parse(capacity_argv(tmp_path))
+        node_main.parse([*capacity_argv(tmp_path), "--bucket-window-s", "60"])
 
 
+# Adapted at the fix: the fixture no longer passes the retired flag, so the witness passes it.
 def test_ranking_entry_refuses_an_unsourced_snapshot_window(tmp_path):
     with pytest.raises(ValueError, match="status_snapshot_window_s"):
-        node_ranking.parse(ranking_argv(tmp_path))
+        node_ranking.parse([*ranking_argv(tmp_path), "--status-snapshot-window-s", "60"])
 
 
 @pytest.mark.parametrize("field", ["unit", "last_change"])
@@ -161,7 +164,9 @@ def test_an_old_segments_amendment_cannot_taint_the_new_segment(tmp_path, monkey
     monkeypatch.setattr(
         amendments,
         "session_run",
-        partial(session_run, segments=lambda timestamp: first if timestamp < first.end_ns else second),
+        partial(
+            session_run, segments=lambda timestamp: first if timestamp < first.end_ns else second
+        ),
     )
     result = amendments.amended_run(
         tmp_path, (355, "correction", "PENNY", 60), (365, "cancel", "PENNY", 60)
@@ -207,7 +212,9 @@ def test_both_amendment_subscriptions_exist_only_for_stream_facts(tmp_path, stre
 def test_a_tick_cannot_republish_an_amended_name_in_either_callback_order(tmp_path, before_tick):
     class Racing(Logged):
         def on_trade(self, tick):
-            affected = str(tick.instrument_id.symbol) == "PENNY" and tick.ts_event == START + 420 * NS
+            affected = (
+                str(tick.instrument_id.symbol) == "PENNY" and tick.ts_event == START + 420 * NS
+            )
             event = amendments.amendment("correction", "PENNY", 60, self.clock.timestamp_ns())
             if affected and before_tick:
                 self.on_data(event)

@@ -11,8 +11,9 @@ with ``queue_depth`` and ``mean_dispatch_ns``, actors.md:196-250), which is reco
 delivered. A node-clock timer (``set_timer``) writes the receipt atomically every
 ``receipt_interval_s`` seconds, which the caller passes, and once more on stop. Only the last
 ``bucket_window_s`` closed seconds and queue events, also the caller's, are kept and written;
-older ones are counted as dropped. No socket, no order, and no handler raises: failures are
-counted.
+older ones are counted as dropped. The node entry passes the run's duration plus one, so a run
+keeps every second (lead ruling 04:2x: not a tunable). No socket, no order, and no handler
+raises: failures are counted.
 """
 
 from __future__ import annotations
