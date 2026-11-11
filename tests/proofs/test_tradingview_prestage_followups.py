@@ -33,7 +33,7 @@ def test_the_publication_clock_is_resampled_after_the_replay(tmp_path: Path) -> 
     source = RecordedSource(prior_bars("RTH", PRIOR) + current_bars("RTH"))
     baseline = _baseline(source, "RTH")
     with reserve_stream(
-        tmp_path / "leases", paper_slot=3, existing_streams=0, source="fixture"
+        tmp_path / "leases", paper_slot=2, existing_streams=0, source="fixture"
     ) as lease:
         receipt = publish_tick(
             lease=lease,
@@ -66,7 +66,7 @@ def test_a_tick_that_finishes_after_the_segment_closes_is_refused(tmp_path: Path
     baseline = _baseline(source, "PRE")
     with (
         reserve_stream(
-            tmp_path / "leases", paper_slot=3, existing_streams=0, source="fixture"
+            tmp_path / "leases", paper_slot=2, existing_streams=0, source="fixture"
         ) as lease,
         pytest.raises(PrestageError, match="closed before"),
     ):
