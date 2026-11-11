@@ -8,14 +8,18 @@ Core owns trading state. This client retains venue identity evidence only.
 """
 
 import asyncio
+import os
 import re
+import weakref
 from collections.abc import Callable
 from decimal import Decimal
 from threading import Event
 from typing import Any
 
 from alpaca.common.exceptions import APIError
+from alpaca.trading.client import TradingClient
 from alpaca.trading.models import Order
+from alpaca.trading.stream import TradingStream
 from nautilus_trader.core import dt_to_unix_nanos
 from nautilus_trader.live.clients import ExecutionClient
 from nautilus_trader.model import (
@@ -25,11 +29,11 @@ from nautilus_trader.model import (
     VenueOrderId,
 )
 
-from sextant.execution.pacer import ActionKind
+from sextant.execution.pacer import AccountPacer, ActionKind
+from sextant.risk.controls import Controls
 
-from .constants import NOT_IMPLEMENTED
 from .reports import _decimal, fill_report, order_status_report
-from .wire import AccountGateway, submit_payload
+from .wire import AccountGateway, house_id, submit_payload
 
 
 class IncompleteCoverage(RuntimeError):
@@ -41,6 +45,34 @@ class IncompleteCoverage(RuntimeError):
         super().__init__(
             "Alpaca reconciliation coverage incomplete" + (f": {named}" if named else "")
         )
+
+
+async def _deliver_update(reference, update):
+    # Dereference only on the node loop; no client or traceback crosses to SDK thread.
+    owner = reference()
+    if owner is not None:
+        try:
+            await owner._on_trade_update(update)
+        except IncompleteCoverage as exc:
+            owner.failures.extend((row, error.with_traceback(None)) for row, error in exc.failures)
+
+
+def _run_stream(stream, owner, ready, closing):
+    async def run():
+        task = asyncio.current_task()
+        owner.call_soon_threadsafe(ready.set_result, (asyncio.get_running_loop(), task))
+        try:
+            if not closing.is_set():
+                await stream._run_forever()
+        except asyncio.CancelledError:
+            pass
+        finally:
+            try:
+                await stream.close()
+            finally:
+                stream._trade_updates_handler = None
+
+    asyncio.run(run())
 
 
 class AlpacaExecutionClient(ExecutionClient):
@@ -87,11 +119,64 @@ class AlpacaExecutionClient(ExecutionClient):
     async def _query_account(self, command):
         self._queue_action(self._do_query_account(command), "alpaca-query-account")
 
-    async def _connect(self) -> None:
-        raise NotImplementedError(NOT_IMPLEMENTED)
+    async def _connect(self):
+        config: Any = self.config
+        house_id(self.house_prefix, self.house_prefix)
+        if config.pacing_rows is None:
+            raise ValueError("execution pacing rows unavailable")
+        controls = Controls.from_rows(config.pacing_rows)
+        if not callable(self.commission_for_fill):
+            raise ValueError("fill reports unavailable: commission evidence required")
+        key, secret = os.environ[config.api_key_env], os.environ[config.api_secret_env]
+        sdk = TradingClient(key, secret, paper=True, raw_data=True)
+        self.gateway = AccountGateway(
+            sdk, AccountPacer(controls, self.clock.timestamp_ns), self._position_counts
+        )
+        await self._do_query_account(None)
+        self._stream = TradingStream(key, secret, paper=True, raw_data=True)
+        loop = asyncio.get_running_loop()
+        reference = weakref.ref(self)
 
-    async def _disconnect(self) -> None:
-        """Disconnect from Alpaca: this shell opens no wire to close."""
+        async def receive(update):
+            # The SDK owns its own loop; every cache/output access stays on node loop.
+            await asyncio.wrap_future(
+                asyncio.run_coroutine_threadsafe(_deliver_update(reference, update), loop)
+            )
+
+        self._stream.subscribe_trade_updates(receive)
+        self._closing.clear()
+        self._stream_ready = loop.create_future()
+        self._stream_task = self.create_task(
+            asyncio.to_thread(_run_stream, self._stream, loop, self._stream_ready, self._closing),
+            "trade-updates",
+        )
+
+    async def _disconnect(self):
+        # Disconnect never cancels orders or closes positions.
+        self.coverage_complete = False
+        self._closing.set()
+        now = self.clock.timestamp_ns()
+        for token in tuple(self._submissions.values()):
+            if not token["sent"] and not token["cancelled"]:
+                # Positive not-sent evidence: the admission check now refuses it.
+                token["cancelled"] = True
+                self.generate_order_rejected(
+                    token["order"], "submission not sent before disconnect", now, False
+                )
+        actions = tuple(self._actions)
+        for action in actions:
+            action.cancel()
+        if actions:
+            await asyncio.gather(*actions, return_exceptions=True)
+        if self._stream_task is not None and self._stream_ready is not None:
+            if not self._stream_task.done():
+                loop, task = await asyncio.shield(self._stream_ready)
+                if not loop.is_closed():
+                    loop.call_soon_threadsafe(task.cancel)
+            await asyncio.shield(self._stream_task)
+            self._stream_task = self._stream_ready = None
+        if self.gateway is not None:
+            await self.gateway.close()
 
     def _position_counts(self):
         opened = len(self.cache.positions_open(venue=self.venue, account_id=self.account_id))

@@ -31,3 +31,14 @@ The native account balance follows rc8's IBKR mapping: net liquidation as total,
 available funds clamped to total for a nonnegative account, locked derived after
 currency rounding. Raw buying power remains separately identified in account
 info. Sources: IBKR `execution/account.rs:397-419`, `types/balance.rs:149-172`.
+
+An unavailable fill-report capability also keeps the writer unavailable at
+startup. Without an evidenced commission resolver, connect refuses before
+credential lookup or SDK construction; a running writer must not discard its
+first fill merely because its report cannot yet carry a commission. This applies
+the lead's no-invented-fee ruling and the adapter guide's fail-startup contract.
+
+The request budget has one authority: the reviewed account control rows. The
+client must not add another numeric pin after parsing them; otherwise another
+paper profile or a later sourced rate change needs a code change. The pacer still
+validates the budget against the broker ceiling and retains per-position reserves.
