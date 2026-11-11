@@ -361,8 +361,7 @@ scripts/with-keys.sh --strict \
   uv run --frozen python -m sextant.tradingview.prestage \
   --research-dir "$HOME/sextant-data/tradingview-prestage/unit" \
   --nasdaq-listed nasdaqlisted.txt --other-listed otherlisted.txt \
-  --symbol-map symbol_map.json \
-  --gap-bound 0.05 --rvol-bound 2 --bounds-max-age-s 600
+  --symbol-map symbol_map.json
 ```
 
 `--strict` refuses a missing or empty key. The process reads only
@@ -378,8 +377,11 @@ source still refuses (AGENTS.md Rule 2).
 
 The directory texts are the public NASDAQ Trader files read on the lane's
 published date; the symbol map is the operator's exact TradingView map and must
-cover the whole filtered universe; the three bounds are the caller-supplied
-display metadata from the bridge (there is no default authority). `--once`
+cover the whole filtered universe (no shipped source). The three display bounds
+are metadata the bridge validates and never applies, read from
+`lanes/tradingview/display-bounds.params.json` (`--display-bounds`, sourced
+UNCALIBRATED rows); all three of `--gap-bound`, `--rvol-bound` and
+`--bounds-max-age-s` replace the file, and only some refuse. `--once`
 publishes one tick and exits, nonzero if that tick is refused. Otherwise it
 sleeps the J5 cadence floor (150 s in the 07:00–10:30 and 15:00–16:00 ET onset
 windows, 300 s elsewhere in 04:00–20:00 ET; the 900 s weekly-usage floor never
