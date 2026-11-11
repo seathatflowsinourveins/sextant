@@ -121,3 +121,43 @@ def test_a_venue_rejected_trail_re_arms_on_the_next_quote_never_inside_the_refus
     assert engine.wire == [("arm", 100)], "re-armed inside the refusal"
     engine._rearm(book)
     assert engine.wire == [("arm", 100), ("arm", 100)]
+
+
+# Lead 09:1x: protection runs without a ranking consumer while the rank gate is off (the entry
+# is then refused: its session segment comes from the consumer), and a (re)started Strategy
+# reconciles every book at once (ADR-0007:17: "reconnects and starts").
+def test_no_ranking_consumer_while_the_gate_is_off_and_recovery_at_start():
+    from dataclasses import replace
+    from decimal import Decimal
+
+    import pytest
+    from test_b_lifecycle import EQUITY, GATE_ON
+    from test_b_lifecycle_protect import NATIVE
+    from test_b_protect_single import Probe
+
+    from sextant.paper.b_lifecycle import BLifecycleConfig
+
+    class Started(Probe):
+        @property
+        def cache(self):
+            cache = super().cache
+            cache.instrument = lambda iid: EQUITY
+            return cache
+
+    def config(gate):
+        return BLifecycleConfig(
+            namespace="BTEST",
+            instrument_ids=(PENNY,),
+            consumer=None,
+            rank_gate=gate,
+            native_trail_fraction=NATIVE,
+        )
+
+    engine = Started(config(replace(GATE_ON, value=False)))
+    engine.held = Decimal(100)
+    engine.subscribe_trades = engine.subscribe_quotes = lambda *args, **kwargs: None
+    engine.on_start()
+    assert engine.wire == [("arm", 100)], "a started Strategy left its holding uncovered"
+    assert "ranking_consumer" in engine.missing
+    with pytest.raises(ValueError, match="RankingConsumer"):
+        config(GATE_ON)
