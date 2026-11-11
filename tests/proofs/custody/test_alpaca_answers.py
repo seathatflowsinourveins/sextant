@@ -225,3 +225,51 @@ def test_an_unpaid_refusal_debt_leaves_the_next_attempt_to_its_own_read():
         assert node.generate_order_cancel_rejected.call_count == 2 and not node._cancels
 
     asyncio.run(run())
+
+
+def test_a_read_issued_before_a_patch_never_answers_it():
+    async def run():
+        node = client()
+        await node._submit_order(NS(order=order(), params={}))
+        venue = node.gateway.sdk
+        node.cache.order.return_value = order(status=OrderStatus.PENDING_UPDATE)
+        venue.patch = lambda path, body: venue.requests.append(("PATCH", path, {}))
+        entered, release, call = asyncio.Event(), asyncio.Event(), node._call
+
+        async def late(kind, method, path, data=None, **kwargs):
+            if method == "get" and not entered.is_set():
+                entered.set()
+                await release.wait()
+            return await call(kind, method, path, data, **kwargs)
+
+        node._call = late
+        read = asyncio.create_task(node._generate_order_status_report(QUERY))
+        await asyncio.wait_for(entered.wait(), 1)
+        await HOOK["modify"](node, cast(Any, _cmd("modify")))  # its PATCH is newer
+        await asyncio.gather(*tuple(node._actions))
+        release.set()
+        await read
+        node.generate_order_modify_rejected.assert_not_called()
+        assert node._proposals
+
+    asyncio.run(run())
+
+
+def test_a_late_replace_refusal_owed_to_a_settled_patch_never_answers_the_next():
+    async def run():
+        node = client()
+        await node._submit_order(NS(order=order(), params={}))
+        venue = node.gateway.sdk
+        row = next(iter(venue.rows.values()))
+        node.cache.order.return_value = order(status=OrderStatus.PENDING_UPDATE)
+        venue.patch = lambda path, body: venue.requests.append(("PATCH", path, {}))
+        for _ in range(2):  # PATCH 1, settled by a read; then PATCH 2
+            await HOOK["modify"](node, cast(Any, _cmd("modify")))
+            await asyncio.gather(*tuple(node._actions))
+            if not node.generate_order_modify_rejected.called:
+                await node._generate_order_status_report(QUERY)  # unchanged: 1 refused, owed
+        await node._on_trade_update(_event("order_replace_rejected", row))  # 1's, delayed
+        node.generate_order_modify_rejected.assert_called_once()
+        assert node._proposals  # PATCH 2 is still unresolved
+
+    asyncio.run(run())
