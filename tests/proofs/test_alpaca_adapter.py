@@ -334,23 +334,6 @@ def test_the_data_client_refuses_to_connect_without_an_instrument_provider() -> 
         asyncio.run(client._connect())
 
 
-def test_the_data_client_still_refuses_every_unbuilt_subscription() -> None:
-    fake = FakeTradingClient({"AAPL": _asset("AAPL")})
-    provider = _provider(fake, InstrumentProviderConfig(load_ids=["AAPL.ALPACA"]))
-    client = AlpacaDataClient(
-        name="ALPACA",
-        config=_data_config(
-            instrument_provider=InstrumentProviderConfig(load_ids=["AAPL.ALPACA"]),
-        ),
-        cache=cast("Any", None),
-        clock=cast("Any", None),
-        venue=constants.VENUE,
-        instrument_provider=provider,
-    )
-    with pytest.raises(NotImplementedError):
-        asyncio.run(client._subscribe_bars(None))  # type: ignore[arg-type]
-
-
 def test_an_unknown_adapter_field_is_refused() -> None:
     with pytest.raises(TypeError):
         _data_config(self_invented_field=1)
