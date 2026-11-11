@@ -20,7 +20,7 @@ from test_b_lifecycle_entry import house, run_entry
 
 from sextant.entry.parameters import COUNTS, FIRST_LEG, NAMES, SIZING, EntryParameters
 from sextant.entry.surge import DEFAULT_CONFIG
-from sextant.exits.policy import REGISTRY, ExitParams
+from sextant.exits.policy import CHASE, REGISTRY, ExitParams
 from sextant.reentry.policy import Params
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -39,6 +39,11 @@ GAIN_SHARED = {
     "prearm_range_window_s",
     "gain_lock_giveback_fraction",
 }
+EXIT_FIELDS = {f.name for f in fields(ExitParams)}
+# B's own exit file (LEAD-0310 ruling 6): every ExitParams row except chase_cap_fraction, whose one
+# home is the entry file, plus the gain lock's cost.
+GAIN_FILE = (EXIT_FIELDS - {"chase_cap_fraction"}) | {"round_trip_cost"}
+SHARED_PREFIX = "Shared src/sextant/exits/policy.py REGISTRY; "
 
 
 def _no_float(text: str) -> float:
@@ -51,6 +56,35 @@ def load(name: str) -> list[dict[str, Any]]:
 
 def entry_rows() -> list[dict[str, Any]]:
     return load("b-entry-parameters.json")
+
+
+def exit_params(rows: list[dict[str, Any]]) -> ExitParams:
+    """B's exit load from its own file only; an absent or UNAVAILABLE row is no authority.
+
+    LEAD-0310 ruling 6: a row absent there is unavailable, with no fall-through to another file.
+    Only the chase rows may stay unavailable (ExitParams: the chase is then off).
+    """
+    values: dict[str, Any] = {}
+    for row in rows:
+        name, value = row["name"], row["value"]
+        if name not in EXIT_FIELDS:
+            continue
+        if row["calibration_state"] == "UNAVAILABLE":
+            if value is not None:
+                raise ValueError(f"{name}: an UNAVAILABLE row is no authority for its value")
+            values[name] = None
+        elif row["calibration_state"] != "UNCALIBRATED" or not row["source"]:
+            raise ValueError(f"{name}: no sourced starting value")
+        elif name == "breach_persist_count":
+            values[name] = value if type(value) is int else None
+        else:
+            values[name] = D(value) if type(value) is str else None
+    for name in CHASE:
+        values.setdefault(name, None)
+    missing = sorted(EXIT_FIELDS - set(values))
+    if missing:
+        raise ValueError(f"no authority in B's exit file: {missing}")
+    return ExitParams(**values)  # a None in a required row raises here
 
 
 def reentry(rows: list[dict[str, Any]]) -> Params:
@@ -169,16 +203,57 @@ def test_reentry_file_holds_exactly_the_policy_params_and_stays_unavailable() ->
 
 def test_gain_lock_file_loads_into_the_exit_params_and_its_cost_keeps_arming_off() -> None:
     rows = {r["name"]: r for r in load("b-gain-lock.params.json")}
-    assert set(rows) == GAIN_SHARED | {"round_trip_cost"}
-    shared = {name: D(rows[name]["value"]) for name in GAIN_SHARED}
-    assert all(type(rows[name]["value"]) is str for name in GAIN_SHARED)
-    params = replace(ExitParams.starts(), **shared)
+    assert set(rows) == GAIN_FILE
+    params = exit_params(list(rows.values()))
     assert params == ExitParams.starts()  # the shared registry's starts, unchanged for B
+    assert params.chase_on is False  # no chase authority in B's file
     cost = rows["round_trip_cost"]["value"]
     assert cost is None
     assert advance(params=params)[1] is True  # a cost would arm on these inputs
     trigger, armed = advance(params=params, round_trip_cost=cost)
     assert armed is False and trigger == advance(params=params, confirmation_price=None)[0]
+
+
+def test_every_copied_exit_row_is_the_shared_registrys_value_and_source() -> None:
+    rows = {r["name"]: r for r in load("b-gain-lock.params.json")}
+    registry = {row.name: row for row in REGISTRY}
+    for name in GAIN_FILE - {"round_trip_cost"}:
+        row, shared = rows[name], registry[name]
+        assert set(row) == OTHER_KEYS and row["unit"] and row["last_change"]
+        if shared.start is None:
+            assert row["value"] is None and row["calibration_state"] == "UNAVAILABLE"
+            assert row["source"].startswith(f"UNAVAILABLE: {SHARED_PREFIX}{shared.source}")
+            continue
+        assert row["calibration_state"] == "UNCALIBRATED"
+        assert row["source"] == SHARED_PREFIX + shared.source
+        expected = int(shared.start) if name == "breach_persist_count" else shared.start
+        value = row["value"] if name == "breach_persist_count" else D(row["value"])
+        assert value == expected and type(value) is type(expected)
+
+
+@pytest.mark.parametrize(
+    ("change", "error"),
+    [
+        ({"breach_persist_count": {"value": None, "calibration_state": "UNAVAILABLE"}}, "int"),
+        ({"chase_min_interval_s": {"value": "1"}}, "no authority for its value"),
+        ({"take_profit_step_fraction": {"calibration_state": "UNAVAILABLE"}}, "no authority"),
+        ({"quote_max_age_s": {"source": ""}}, "no sourced starting value"),
+        ({"breach_persist_span_s": {"value": "inf"}}, "finite nonnegative Decimal"),
+    ],
+)
+def test_an_unavailable_or_unsourced_exit_row_is_refused_as_authority(change, error) -> None:
+    rows = [row | change.get(row["name"], {}) for row in load("b-gain-lock.params.json")]
+    with pytest.raises(ValueError, match=error):
+        exit_params(rows)
+
+
+def test_an_absent_exit_row_is_unavailable_with_no_fall_through() -> None:
+    rows = load("b-gain-lock.params.json")
+    with pytest.raises(ValueError, match="quote_max_age_s"):
+        exit_params([row for row in rows if row["name"] != "quote_max_age_s"])
+    # chase_cap_fraction lives in the entry file; B's exit never reads it from there
+    assert "chase_cap_fraction" not in {row["name"] for row in rows}
+    assert exit_params(rows).chase_cap_fraction is None
 
 
 # -- arms: their overrides through the same readers --------------------------------------
@@ -216,7 +291,7 @@ def test_every_b_row_has_a_reader_and_chase_cap_fraction_lives_once() -> None:
     rows = {
         "b-entry-parameters.json": NAMES,
         "b-reentry-parameters.json": {f.name for f in fields(Params)},
-        "b-gain-lock.params.json": GAIN_SHARED | {"round_trip_cost"},
+        "b-gain-lock.params.json": GAIN_FILE,
     }
     homes = [n for n, want in rows.items() if "chase_cap_fraction" in {r["name"] for r in load(n)}]
     assert homes == ["b-entry-parameters.json"]
