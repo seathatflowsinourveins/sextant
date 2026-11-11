@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -106,3 +107,86 @@ def test_interrupted_arm_leaves_three_attempts(env, monkeypatch: pytest.MonkeyPa
     assert len(rows) == 3
     assert [row["state"] for row in rows] == ["COMPLETE", "COMPLETE", "FAIL"]
     assert rows[2]["error"] == "RuntimeError"
+
+
+@pytest.mark.parametrize("failure", [RuntimeError, KeyboardInterrupt])
+def test_plan_failure_is_recorded_before_arm_work(env, monkeypatch, failure) -> None:
+    ledger, _seen, catalog = env
+
+    def fail_plan(arm, rows):
+        if arm == "k2_bar_proxy":
+            raise failure("plan construction failed")
+        return {}
+
+    monkeypatch.setattr(runner, "plan_for", fail_plan)
+    with pytest.raises(failure, match="plan construction failed"):
+        _run(catalog, catalog.parent / "plan-failure")
+    rows = TrialLog(ledger).records
+    assert len(rows) == 3, [(row["strategy"], row["state"]) for row in rows]
+    assert rows[-1]["strategy"] == "k2_bar_proxy"
+    assert rows[-1]["state"] == "FAIL"
+    assert rows[-1]["error"] == failure.__name__
+
+
+def test_trial_mask_describes_only_its_executed_arm(env) -> None:
+    ledger, _seen, catalog = env
+    assert _run(catalog, catalog.parent / "identity") == 0
+    for row in TrialLog(ledger).records:
+        identity = json.loads(row["config"])
+        expected = [row["strategy"]] if fs.ARMS[row["strategy"]]["kind"] == "factor" else []
+        assert identity["factor_mask"] == expected, {
+            "arm": row["strategy"],
+            "actual": identity["factor_mask"],
+            "expected": expected,
+        }
+
+
+def test_not_ready_arm_is_durable_when_append_is_interrupted(env, monkeypatch) -> None:
+    ledger, _seen, catalog = env
+    real_append = TrialLog.append
+    evaluated: list[str] = []
+
+    class ArmSpec(dict):
+        def __getitem__(self, key):
+            if key == "state":
+                evaluated.append(self["_arm"])
+            return super().__getitem__(key)
+
+    monkeypatch.setattr(
+        fs, "ARMS", {arm: ArmSpec({**spec, "_arm": arm}) for arm, spec in fs.ARMS.items()}
+    )
+
+    def interrupted_append(log, *args, **kwargs):
+        trial_id = real_append(log, *args, **kwargs)
+        if len(log.records) == 5:
+            raise KeyboardInterrupt("between rejected arms")
+        return trial_id
+
+    monkeypatch.setattr(TrialLog, "append", interrupted_append)
+    with pytest.raises(KeyboardInterrupt, match="between rejected arms"):
+        _run(catalog, catalog.parent / "rejected-interrupt")
+    rows = TrialLog(ledger).records
+    recorded = {row["strategy"] for row in rows}
+    assert set(evaluated) <= recorded, sorted(set(evaluated) - recorded)
+
+
+def test_engine_keyboard_interrupt_is_finalized_and_recovered(env, monkeypatch) -> None:
+    ledger, _seen, catalog = env
+
+    def interrupt(arm, plan, bars, instruments, days):
+        if arm == "k2_bar_proxy":
+            raise KeyboardInterrupt("engine interruption")
+        return _result(arm)
+
+    monkeypatch.setattr(runner, "arm_result", interrupt)
+    with pytest.raises(KeyboardInterrupt, match="engine interruption"):
+        _run(catalog, catalog.parent / "keyboard-interrupt")
+    rows = TrialLog(ledger).records
+    assert [row["state"] for row in rows] == ["COMPLETE", "COMPLETE", "FAIL"]
+    assert rows[-1]["error"] == "KeyboardInterrupt"
+    monkeypatch.setattr(runner, "arm_result", lambda arm, *args: _result(arm))
+    assert _run(catalog, catalog.parent / "after-keyboard-interrupt") == 0
+    continued = TrialLog(ledger).records
+    assert len(continued) == 15
+    assert continued[:3] == rows
+    assert [row["n_trials"] for row in continued] == list(range(1, 16))

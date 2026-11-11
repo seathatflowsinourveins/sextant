@@ -138,29 +138,28 @@ def main(argv: list[str] | None = None) -> int:
         "tier": "MODELED",
         "block_set_id": "|".join(days) or "NO_SESSIONS",
     }
-    weights = {arm: "1" for arm, spec in fs.ARMS.items() if spec["kind"] == "factor"}
     results = []
     for arm, spec in fs.ARMS.items():
+        weights = {arm: "1"} if spec["kind"] == "factor" else {}
         if spec["state"] != "RUNNABLE":
-            results.append(
-                {
-                    "arm": arm,
-                    "state": "FAIL",
-                    "kind": spec["kind"],
-                    "source": spec["source"],
-                    "error": f"{spec['state']}: {spec['missing']}",
-                    "sample_state": "INSUFFICIENT_N",
-                    "costs": {},
-                    "days": [],
-                    "daily_net_returns": [],
-                    "condition_returns": {},
-                }
-            )
+            fail = {
+                "arm": arm,
+                "state": "FAIL",
+                "kind": spec["kind"],
+                "source": spec["source"],
+                "error": f"{spec['state']}: {spec['missing']}",
+                "sample_state": "INSUFFICIENT_N",
+                "costs": {},
+                "days": [],
+                "daily_net_returns": [],
+                "condition_returns": {},
+            }
+            fs.append_trials(ledger, [fail], meta)
+            results.append(fail)
             continue
-        plan = plan_for(arm, rows)
         with ledger.attempts({arm: weights}, params, sandbox):
+            plan = plan_for(arm, rows)
             results.append(arm_result(arm, plan, bars, instruments, days))
-    fs.append_trials(ledger, [result for result in results if result["state"] == "FAIL"], meta)
     payload = {"meta": meta, "results": results}
     (args.out / "screen.json").write_text(
         json.dumps(payload, indent=2, sort_keys=True, default=str) + "\n"
