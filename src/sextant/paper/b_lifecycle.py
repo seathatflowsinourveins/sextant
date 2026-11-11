@@ -495,9 +495,12 @@ class BLifecycle(Strategy):
 
     def _arm(self, book: _Book, now: int, shares: Decimal) -> None:
         native = self.native
-        if native is None:
-            return self._page(book, now, "native_trail_fraction_missing")
-        if not isinstance(native, Decimal) or not 0 < native <= MAX_TRAIL_FRACTION:
+        if native is None or not isinstance(native, Decimal) or not native.is_finite():
+            book.rearm = True  # held and uncovered: re-arm on the first price with valid authority
+            reason = "missing" if native is None else "invalid"
+            return self._page(book, now, f"native_trail_fraction_{reason}")
+        if not 0 < native <= MAX_TRAIL_FRACTION:  # finite first: NaN never reaches a compare
+            book.rearm = True
             return self._page(book, now, "native_trail_fraction_invalid")  # ADR-0025's cap
         width = book.width  # revalidated at each arm: the rows in force and the native cap
         bar = book.width_bar
