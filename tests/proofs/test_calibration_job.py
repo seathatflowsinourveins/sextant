@@ -397,3 +397,35 @@ def test_service_memory_limit_matches_its_uncalibrated_registry_row():
     assert row["status"] == "UNCALIBRATED" and row["source"]
     assert service["Service"]["MemoryMax"] == row["value"]
     assert service["Service"]["MemorySwapMax"] == "0"
+
+
+@pytest.mark.parametrize("tokens", [("repeat", "repeat", None), ("a", "b", "a", None)])
+def test_repeated_sdk_pagination_token_never_lands(tmp_path, job, monkeypatch, tokens):
+    pages = [json.dumps({"quotes": {}, "next_page_token": token}) for token in tokens]
+    requests = []
+
+    def send(adapter: HTTPAdapter, request: PreparedRequest, **kwargs: Any) -> Response:
+        requests.append(request)
+        response = Response()
+        response.status_code = 200
+        response.request = request
+        response._content = pages[len(requests) - 1].encode()
+        return response
+
+    monkeypatch.setattr(HTTPAdapter, "send", send)
+    client = job.CalibrationHistory.__new__(job.CalibrationHistory)
+    StockHistoricalDataClient.__init__(
+        client,
+        api_key="offline",
+        secret_key="offline",  # noqa: S106 - inert SDK fixture
+        raw_data=True,
+    )
+    client.pacer = Pacer()
+    client.pages = []
+    client._session.hooks["response"].append(client._capture)
+    try:
+        with pytest.raises(ValueError, match="repeated"):
+            job.archive(client, tmp_path, "AAPL", date(2026, 11, 6), "quotes", "sip", NOW)
+    finally:
+        client.close()
+    assert not list(tmp_path.rglob("*.parquet"))
