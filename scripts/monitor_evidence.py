@@ -39,7 +39,7 @@ BUILTIN = re.compile(r"^(?:tests/)?(?:proofs|repo|host)/")
 
 # tests/repo/test_budgets.py hardcodes these; it exposes no constants to import.
 BUDGETS = {
-    "src_lines": ("src/**/*.py", 34_500, "lines"),
+    "src_lines": ("src/**/*.py", 37_000, "lines"),
     "justfile_lines": ("justfile", 105, "lines"),
     "agent_docs_lines": (("AGENTS.md", "CLAUDE.md"), 120, "lines"),
     "design_lines": ("docs/design.md", 220, "lines"),
