@@ -1,0 +1,125 @@
+"""The node's ranking host: a thin adapter over ``RankingPublisher`` (LEAD-0033 2b, N2b-1).
+
+It stands behind ``RankingHostProtocol`` (node_actor.py) and keeps exactly ruling 2b's
+fail-closed rules; every row-level fact stays per row, as the publisher and reader already
+enforce (ADR-0003:24; DESIGN-N2B1 sections 4-5):
+
+1. A tick that raises taints only that name for the rest of the segment: its latest row is
+   cleared and its prefix marked uncovered (the ``replace`` precedent of
+   tradingview/host.py:218-220, 237-238), so its score stays None (engine.py segment rule).
+2. A setter call that withdraws authority (coverage no longer READY-shaped, an eligible asset
+   no longer eligible, a reference change) publishes at once, unthrottled.
+3. A publish that raises sends one veto under a fresh DEGRADED coverage, unthrottled; if
+   that raises too the error leaves here and the Actor faults and pages.
+4. The caller's coverage lives only in ``supplied``, written only by ``set_coverage`` and
+   assigned to the publisher before every publish, so the publisher's own DEGRADED write on
+   a raising tick (publisher.py:132-134) never sticks.
+5. A reference change clears that name's latest state.
+
+An asset whose fields would make ``AssetState.eligible`` raise is stored as None (unknown,
+ineligible); otherwise every later publish, the veto included, would raise and leave an old
+rank readable (review witness b). The heartbeat is the node's (DESIGN-N2B1 section 1), so a
+publisher carrying its own emitter is refused. No socket, thread, file or bus of its own.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from dataclasses import replace
+
+from nautilus_trader.model import TradeTick
+
+from sextant.ranking.engine import ReferencePrices
+from sextant.ranking.generation import Coverage, CoverageState, RankingGeneration
+from sextant.ranking.publisher import AssetState, RankingPublisher
+
+
+def _ready_shaped(coverage: Coverage, size: int) -> bool:
+    """The publisher's own coverage test (publisher.py:142-150), without the clocks."""
+    return bool(
+        coverage.state is CoverageState.READY
+        and coverage.complete is True
+        and coverage.expected_symbols == coverage.observed_symbols == size
+        and coverage.missing_symbols == coverage.invalid_symbols == coverage.late_symbols == 0
+    )
+
+
+def _well_formed(asset: AssetState) -> bool:
+    ints = (asset.known_at, asset.expires_at)
+    return (
+        all(type(value) is int for value in ints)
+        and type(asset.halted) in (bool, type(None))
+        and isinstance(asset.security_type, str)
+        and isinstance(asset.source, str)
+    )
+
+
+class NodeRankingHost:
+    def __init__(self, publisher: RankingPublisher, *, clock: Callable[[], int]) -> None:
+        if publisher.heartbeat is not None:
+            raise ValueError("the node sends the heartbeat after the Actor publishes")
+        self.publisher, self._clock = publisher, clock
+        self.supplied = Coverage(CoverageState.UNKNOWN, False)
+        self.tainted: set[str] = set()
+        self.ingress_errors = self.ignored_trades = self.malformed_assets = 0
+        self.publish_errors = 0
+        self.last_error: str | None = None
+
+    def on_trade(self, tick: TradeTick) -> RankingGeneration | None:
+        publisher, name = self.publisher, str(tick.instrument_id.symbol)
+        if name not in publisher.states:
+            self.ignored_trades += 1  # publisher.py:119 would raise; nothing new to publish
+            return None
+        try:
+            publisher.on_trade(tick)
+        except Exception as exc:
+            self.ingress_errors += 1
+            self.last_error = f"on_trade: {type(exc).__name__}"
+            self.tainted.add(name)
+            # The engine never re-covers a prefix after the segment's first print
+            # (engine.py segment_covered), so the taint holds for the rest of the segment.
+            state = publisher.states[name]
+            publisher.states[name] = replace(state, latest=None, segment_covered=False)
+            return self._publish(force=True)  # rule 1 withdraws that name's rank
+        return self._publish(force=False)
+
+    def set_symbol(
+        self, name: str, *, references: ReferencePrices, asset: AssetState | None
+    ) -> RankingGeneration | None:
+        publisher, now = self.publisher, self._clock()
+        if asset is not None and not _well_formed(asset):
+            self.malformed_assets += 1
+            self.last_error = "set_symbol: malformed asset"
+            asset = None
+        before = publisher.assets.get(name)
+        was_eligible = before is not None and before.eligible(now)
+        previous = publisher.references.get(name)
+        publisher.set_symbol(name, references=references, asset=asset)
+        changed = previous is not None and previous != references
+        if changed:
+            publisher.states[name] = replace(publisher.states[name], latest=None)  # rule 5
+        withdrawn = was_eligible and not (asset is not None and asset.eligible(now))
+        return self._publish(force=changed or withdrawn)
+
+    def set_coverage(self, coverage: Coverage) -> RankingGeneration | None:
+        size = len(self.publisher.universe)
+        was_ready = _ready_shaped(self.supplied, size)
+        self.supplied = coverage
+        return self._publish(force=was_ready and not _ready_shaped(coverage, size))
+
+    def _publish(self, *, force: bool) -> RankingGeneration | None:
+        publisher, now = self.publisher, self._clock()
+        if force:
+            publisher.published_at = None  # unthrottled
+        publisher.coverage = self.supplied
+        try:
+            return publisher.publish(now=now)
+        except Exception as exc:
+            self.publish_errors += 1
+            self.last_error = f"publish: {type(exc).__name__}"
+            publisher.coverage = Coverage(CoverageState.DEGRADED, False)
+            publisher.published_at = None
+            return publisher.publish(now=now)  # a second failure is the Actor's to page
+
+    def close(self) -> None:
+        """Nothing to release: the publisher's bus is a private in-process sink."""
