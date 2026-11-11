@@ -779,10 +779,13 @@ class BLifecycle(Strategy):
         if order is not None and order.status is OrderStatus.SUBMITTED:
             due = now  # its retry waits for the acceptance event (_due_cancels)
         book.recancel[cid] = due
-        if due > now:  # on the clock too, so a quiet market still sends it
+        if order is None or order.status is not OrderStatus.SUBMITTED:
+            # On the clock too, so a quiet market still sends it; one already due fires at once
+            # from the engine's timer, never inside this callback (nautilus_trader rc8
+            # crates/common/src/clock/virtual.rs:327, live/clock.rs:215).
             name = f"b-recancel-{cid}-{book.cancel_tries.get(cid, 0)}"
             self.clock.set_time_alert_ns(
-                name, due, callback=lambda _e, b=book: self._due_cancels(b)
+                name, max(due, now), callback=lambda _e, b=book: self._due_cancels(b)
             )
 
     def _due_cancels(self, book: _Book) -> None:
