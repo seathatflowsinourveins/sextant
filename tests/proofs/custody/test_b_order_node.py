@@ -444,6 +444,72 @@ def test_a_replacement_cycle_or_missing_link_refuses() -> None:
     assert reasons == ["replacement_unresolved"] and gate.counts["unresolved_replacements"] == 2
 
 
+# The delta gate's P1 (cutterm2-56c8ba4-codex-r1): a populated replaced_by is followed on any
+# status, so a terminal-looking row in the middle of a chain never ends it early.
+
+
+def gate_over(*chain: tuple[str, str, str | None]) -> node_order.Gate:
+    """A Gate over withheld rows (id, status, replaced_by); the first has the old prefix."""
+    rows = []
+    for n, (ident, status, link) in enumerate(chain):
+        prefix = "BTEST-" if n == 0 else "other-"
+        row = dict(id=ident, client_order_id=f"{prefix}{ident}", status=status)
+        if link is not None:
+            row["replaced_by"] = link
+        rows.append((row, "fixture"))
+    gate = node_order.Gate("BTEST-", clients=[Fixture(withheld=rows, withheld_positions=[])])
+    gate.reasons = gate.check(Fixture(positions_open=lambda: [], orders_open=lambda: []))
+    return gate
+
+
+@pytest.mark.parametrize(
+    "chain",
+    [
+        # the gate's reproducer: replaced -> canceled (linked) -> new
+        (("p", "replaced", "m"), ("m", "canceled", "c"), ("c", "new", None)),
+        # (a) a working middle with a link, ending canceled
+        (("p", "replaced", "m"), ("m", "new", "c"), ("c", "canceled", None)),
+        (("p", "replaced", "m"), ("m", "accepted", "c"), ("c", "canceled", None)),
+        # (b) a filled middle with a link, ending working
+        (("p", "replaced", "m"), ("m", "filled", "c"), ("c", "new", None)),
+        # (c) four rows, the only working one third
+        (
+            ("p", "replaced", "a"),
+            ("a", "canceled", "b"),
+            ("b", "new", "d"),
+            ("d", "canceled", None),
+        ),
+        # (d) the old-prefix row itself terminal, linked to a working row
+        (("p", "canceled", "c"), ("c", "new", None)),
+    ],
+    ids=["gate-reproducer", "a-new-middle", "a-accepted-middle", "b", "c", "d"],
+)
+def test_a_working_row_anywhere_on_a_linked_chain_counts_once(chain) -> None:
+    gate = gate_over(*chain)
+    assert gate.reasons == ["house_order_open"], gate.counts
+    assert gate.counts["open_house_orders"] == 1 and gate.counts["unresolved_replacements"] == 0
+
+
+def test_a_linked_terminal_chain_with_no_working_row_starts_and_a_dangling_link_refuses() -> None:
+    ended = gate_over(("p", "replaced", "m"), ("m", "canceled", "c"), ("c", "filled", None))
+    assert ended.reasons == [] and ended.counts["open_house_orders"] == 0
+    dangling = gate_over(("p", "replaced", "m"), ("m", "canceled", "gone"))
+    assert dangling.reasons == ["replacement_unresolved"]
+
+
+def test_a_canceled_middle_still_linked_to_a_working_successor_refuses_on_the_venue(tmp_path):
+    """The gate's FakeVenue variant: two PATCH and confirm replacements, then the middle row's
+    status reads canceled while it still links to the working tail."""
+    venue = AccountVenue()
+    chain = old_writer_chain(venue, 2)
+    chain[1]["status"] = "canceled"  # replaced_by stays populated
+    seeded = len(venue.requests)
+    body, code, stand = start(tmp_path, venue)
+    assert (code, body["phase"], body["reason"]) == (2, "refused", "house_order_open")
+    assert body["gate"]["open_house_orders"] == 1 and stand.subscribed == 0
+    assert all(r[0] == "GET" for r in venue.requests[seeded:]), "nothing was sent"
+
+
 def test_the_unchunked_flush_at_the_directory_size_logs_a_full_queue_and_fails(tmp_path, capfd):
     """The engine fact at LEAD-0336's 5,200, built past the refusal: the flush overflows the
     execution client's queue and shutdown_on_error aborts before the Strategy runs."""
