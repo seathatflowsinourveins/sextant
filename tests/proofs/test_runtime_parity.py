@@ -326,37 +326,46 @@ def test_the_composed_headless_tree_gets_the_workflow_ceiling_from_the_research_
     assert final["workflow-ptc"]["config"]["maxConcurrentAgents"] == 8
 
 
-@pytest.mark.local
-def test_the_composed_interactive_tree_keeps_the_workflow_ceiling_at_the_subagent_cap(
-    tmp_path: Path,
+def _installed_interactive_bundle(package: str) -> Path | None:
+    """Resolve a bundle from an installed profile without writing to it."""
+    roots = (
+        Path.home() / ".dsh-full/profiles/dsh-tui/node_modules",
+        Path.home() / ".dsh-full/profiles/headless/node_modules",
+        Path.home() / ".local/share/sextant-agents/node_modules",
+    )
+    for root in roots:
+        candidate = root / package
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
+def _write_proof_profile(
+    dsh_home: Path, name: str, bundles: list[str], resolved: dict[str, Path]
 ) -> None:
-    """The patch file alone is not proof: the composed tree decides. The lock pins the
-    interactive bundle order with sextant-dsh-research last, and a later bundle replaces a
-    row's whole config (billion-context did), so compose base + the branch's research bundle
-    and read the effective rows."""
-    dsh = Path.home() / ".local/share/sextant-agents/node_modules/@deepseek-ai/dsh/lib/bin.js"
-    if not dsh.is_file():
-        pytest.skip("dsh is not installed in this checkout's runtime home")
-    lock = json.loads((ROOT / "config/dsh/profile.lock.json").read_text())
-    bundles = lock["interactive"]["bundles"]
-    assert bundles[-1] == "sextant-dsh-research"  # last wins: nothing composes after the cap
-    dsh_home = tmp_path / "dsh-home"
-    profile = dsh_home / "profiles/dsh-proof"
-    (profile / "node_modules").mkdir(parents=True)
-    bundle = ROOT / "config/dsh"
-    (profile / "node_modules/sextant-dsh-research").symlink_to(bundle, target_is_directory=True)
+    """Write a throwaway profile whose bundles are symlinked read-only."""
+    profile = dsh_home / "profiles" / name
+    modules = profile / "node_modules"
+    modules.mkdir(parents=True)
+    for package, source in resolved.items():
+        link = modules / package
+        link.parent.mkdir(parents=True, exist_ok=True)
+        link.symlink_to(source, target_is_directory=True)
     (profile / "package.json").write_text(
         json.dumps(
             {
-                "name": "dsh-profile-dsh-proof",
+                "name": f"dsh-profile-{name}",
                 "private": True,
-                "dependencies": {"sextant-dsh-research": f"link:{bundle}"},
-                "dsh": {"profile": {"bundles": ["@deepseek-ai/dsh-base", "sextant-dsh-research"]}},
+                "dependencies": {package: f"link:{source}" for package, source in resolved.items()},
+                "dsh": {"profile": {"bundles": bundles}},
             }
         )
     )
+
+
+def _composed_rows(dsh: Path, dsh_home: Path, profile: str) -> list[dict]:
     tree = subprocess.run(
-        [str(dsh), "--profile", "dsh-proof", "--dump-config"],
+        [str(dsh), "--profile", profile, "--dump-config"],
         capture_output=True,
         text=True,
         env={**os.environ, "DSH_HOME": str(dsh_home)},
@@ -364,9 +373,59 @@ def test_the_composed_interactive_tree_keeps_the_workflow_ceiling_at_the_subagen
         timeout=120,
     ).stdout
     rows = [row for row in yaml.safe_load(tree.replace("!!js ", "")) if isinstance(row, dict)]
-    final = {row["id"]: row for row in rows if "id" in row}  # the last layer's row wins
-    assert final["subagent"]["config"]["maxActiveSubagents"] == 8
-    assert final["workflow-ptc"]["config"]["maxConcurrentAgents"] == 8
+    return [row for row in rows if "id" in row]
+
+
+@pytest.mark.local
+def test_the_composed_interactive_tree_keeps_the_workflow_ceiling_at_the_subagent_cap(
+    tmp_path: Path,
+) -> None:
+    """The patch file alone is not proof: the composed tree decides. The lock pins the
+    interactive order, and a later bundle replaces a row's whole config (billion-context
+    did), so compose the lock's full order, read the effective rows, and compare them with
+    the same order truncated at sextant-dsh-research. Nothing after research may replace
+    the subagent or workflow-ptc row; the assertion reads the composed results, not bundle
+    positions."""
+    dsh = Path.home() / ".local/share/sextant-agents/node_modules/@deepseek-ai/dsh/lib/bin.js"
+    if not dsh.is_file():
+        pytest.skip("dsh is not installed in this checkout's runtime home")
+    lock = json.loads((ROOT / "config/dsh/profile.lock.json").read_text())
+    bundles = lock["interactive"]["bundles"]
+    assert "sextant-dsh-research" in bundles  # order-independent: a later bundle may follow
+    research = bundles.index("sextant-dsh-research")
+    resolved: dict[str, Path] = {}
+    for package in bundles:
+        if package == "sextant-dsh-research":
+            resolved[package] = ROOT / "config/dsh"
+            continue
+        installed = _installed_interactive_bundle(package)
+        if installed is None:
+            pytest.skip(f"cannot resolve {package} read-only from an installed profile")
+        resolved[package] = installed
+    dsh_home = tmp_path / "dsh-home"
+    _write_proof_profile(dsh_home, "dsh-proof-full", bundles, resolved)
+    _write_proof_profile(dsh_home, "dsh-proof-research", bundles[: research + 1], resolved)
+    full = _composed_rows(dsh, dsh_home, "dsh-proof-full")
+    through_research = _composed_rows(dsh, dsh_home, "dsh-proof-research")
+    full_final = {row["id"]: row for row in full}
+    research_final = {row["id"]: row for row in through_research}
+    assert full_final["subagent"]["config"]["maxActiveSubagents"] == 8
+    assert full_final["workflow-ptc"]["config"]["maxConcurrentAgents"] == 8
+    for row_id, key in (
+        ("subagent", "maxActiveSubagents"),
+        ("workflow-ptc", "maxConcurrentAgents"),
+    ):
+        assert research_final[row_id]["config"][key] == 8
+        full_rows = [row for row in full if row["id"] == row_id]
+        research_rows = [row for row in through_research if row["id"] == row_id]
+        if (
+            len(full_rows) != len(research_rows)
+            or full_rows[-1]["config"] != research_rows[-1]["config"]
+        ):
+            pytest.fail(
+                f"{row_id}: a bundle after sextant-dsh-research replaces this row; "
+                "STOP and report it to the lead (full order vs order truncated at research)"
+            )
 
 
 def _muse_layout(tmp_path: Path) -> tuple[Path, Path, Path]:
