@@ -24,6 +24,7 @@ from typing import Protocol, cast
 from weakref import ReferenceType, ref
 from zoneinfo import ZoneInfo
 
+from alpaca.common.enums import Sort
 from alpaca.data.enums import DataFeed
 from alpaca.data.historical.stock import StockHistoricalDataClient
 from alpaca.data.live.stock import StockDataStream
@@ -720,12 +721,17 @@ class AlpacaDataClient(MarketDataClient):
 
     async def _request_trades(self, request: RequestTrades) -> None:
         stocks = [await self._stock(instrument_id) for instrument_id in request.instrument_ids]
+        # A limit keeps the window's latest trades, as the official IB adapter does (rc8
+        # crates/adapters/interactive_brokers/src/data/core.rs:2056-2061); alpaca-py sorts
+        # ascending unless asked (cc4cb3b7 data/requests.py:32,40), so a limit of 1 would be
+        # the window's first trade. The response is sorted ascending below.
         params = StockTradesRequest(
             symbol_or_symbols=[stock.symbol for stock in stocks],
             start=request.start,
             end=request.end,
             limit=request.limit,
             feed=self._feed,
+            sort=None if request.limit is None else Sort.DESC,
         )
         result = await asyncio.to_thread(self._history_client().get_stock_trades, params)
         if not isinstance(result, TradeSet):

@@ -56,6 +56,7 @@ class EngineProbe(BLifecycle):
         self.commands = []
         self.rows = []
         self.trades = {}  # the last trade per instrument, as the engine's cache holds it
+        self.requests = []  # the trail seed's data requests (instrument, limit)
         self.books[PENNY].instrument = EQUITY
 
     @property
@@ -73,6 +74,9 @@ class EngineProbe(BLifecycle):
     def on_trade(self, trade):  # the engine caches a trade before on_trade (dispatch.rs:117-128)
         self.trades[trade.instrument_id] = trade
         super().on_trade(trade)
+
+    def request_trades(self, instrument_id, **kwargs):
+        self.requests.append((instrument_id, kwargs.get("limit")))
 
     def _held(self, book):
         return self.held
