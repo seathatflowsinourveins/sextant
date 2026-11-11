@@ -116,9 +116,11 @@ class _Setup(_Reclaim):
         self.retain = max(params.ns("first_leg_window_s"), params.ns("first_leg_span_s"))
         self.previous = self.vwap = self.last_atr = None
         self.dollars, self.volume, self.trusted, self.floor = Decimal(0), Decimal(0), True, -1
-        flows = () if params.first_leg_only else ("flow_share_window_s", "covered_flow_window_s")
+        flows = tuple(
+            name for name in ("flow_share_window_s", "covered_flow_window_s") if params.has(name)
+        )
         self.windows = {params.ns(name): (deque(), Decimal(0)) for name in flows}
-        if flows:
+        if params.has("covered_flow_baseline_min"):
             self.windows[params.ns("covered_flow_baseline_min") * 60] = deque(), Decimal(0)
 
     def window(self, duration, now):
@@ -155,7 +157,7 @@ class _Setup(_Reclaim):
                 if len(self.run) > self.params["first_leg_trades_count"] + 1:
                     self.run = self.run[:1] + self.run[2:]
         self.previous = price
-        if not self.params.first_leg_only:  # N1:46: the first leg is exempt from N2
+        if self.params.has("entry_max_vwap_extension_atr"):  # N1:46: the first leg is exempt
             max_extension = self.params["entry_max_vwap_extension_atr"]
             self.extension = classify(price, self.vwap, atr, max_extension)
             self._reclaim(tick, self.vwap, self.extension)
@@ -299,7 +301,10 @@ class EntryState:
         )
 
     def covered_flow(self, now: int, coverage: TradeCoverage | None) -> bool:
-        if self.params.first_leg_only:  # N1's mode never reads the flow rows
+        if not (
+            self.params.has("covered_flow_window_s")
+            and self.params.has("covered_flow_baseline_min")
+        ):  # a narrow mode never reads the flow rows
             return False
         baseline_ns = self.params.ns("covered_flow_baseline_min") * 60
         window_ns = self.params.ns("covered_flow_window_s")
