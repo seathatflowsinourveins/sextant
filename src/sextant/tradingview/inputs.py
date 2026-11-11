@@ -17,7 +17,8 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from exchange_calendars import get_calendar
-from nautilus_trader.core.datetime import _datetime_to_unix_nanos
+from nautilus_trader.core.datetime import _datetime_to_unix_nanos, dt_to_unix_nanos
+from pandas import Timestamp
 
 NAMES = ("NS movers", "NS focus")
 # Display units carry slot 2's label; slot 3 was revoked 2026-11-10 (D-46), so 3 refuses.
@@ -56,6 +57,12 @@ def _ns(value: Any) -> int:
             whole, decimal, zone = match.groups()
             fraction = int((decimal or "0").ljust(9, "0"))
             result = datetime.fromisoformat(whole + zone)
+        elif isinstance(value, Timestamp):
+            # Nautilus's own exact pair (core/datetime.py unix_nanos_to_dt/dt_to_unix_nanos)
+            # keeps the nanoseconds a datetime's microseconds would drop.
+            if value.tzinfo is not None:
+                return dt_to_unix_nanos(value)
+            raise ValueError
         elif isinstance(value, datetime):
             result = value
             fraction = result.microsecond * 1000
