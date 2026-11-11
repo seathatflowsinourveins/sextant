@@ -44,6 +44,7 @@ NAMES = ("ADR", "LARGE", "PENNY")
 REFS = ReferencePrices(D("0.50"), START - NS, "fixture official close")
 GOOD = AssetState(START - NS, SCOPE.end_ns, False, "common", "fixture vendor")
 AT = START + 360 * NS
+REGULAR = (True, ("@",))  # a regular print's vendor facts
 
 
 def ready(n: int) -> Coverage:
@@ -121,9 +122,18 @@ class Node:
             self.emitter.emit(generation)
         return generation
 
-    def tick(self, second: int, name: str, price: str = "0.50", *, now_s: int | None = None):
+    def tick(
+        self,
+        second: int,
+        name: str,
+        price: str = "0.50",
+        *,
+        now_s: int | None = None,
+        facts: tuple[bool, tuple[str, ...]] | None = REGULAR,
+    ):
         self.now = START + (second if now_s is None else now_s) * NS
-        return self.deliver(self.host.on_trade(trade(START + second * NS, name, price)))
+        tick = trade(START + second * NS, name, price)
+        return self.deliver(self.host.on_trade(tick, facts=facts))
 
     def warm(self, movers=("PENNY",), quiet=()) -> None:
         names = [name for name in self.names if name not in quiet]
@@ -310,7 +320,7 @@ def test_when_the_veto_also_raises_the_actor_faults_and_the_rank_ages_out() -> N
     node.publisher.publish = broken  # type: ignore[method-assign]
     node.now = AT + NS
     with pytest.raises(ValueError, match="fixture publication"):
-        node.host.on_trade(trade(AT + NS, "PENNY", "0.56"))
+        node.host.on_trade(trade(AT + NS, "PENNY", "0.56"), facts=REGULAR)
     assert node.host.publish_errors == 1
     withdrawn(node, AT + 3 * NS)  # past entry_generation_max_age_s
 
@@ -475,10 +485,34 @@ def test_the_taint_holds_after_a_late_print_at_the_segment_start() -> None:  # r
         START + NS,
     )
     node.now = START + NS
-    node.deliver(node.host.on_trade(late))
+    node.deliver(node.host.on_trade(late, facts=REGULAR))
     for second in (60, 120, 180, 240, 300):
         node.tick(second, "PENNY")
     for second in (310, 320, 330, 340, 350, 360):
         node.tick(second, "PENNY", "0.55")
     state = node.publisher.states["PENNY"]
     assert state.segment_covered is False and node.rank("PENNY") is None
+
+
+# --- N1e: the print's facts reach the publisher through the one mask ---------------------
+
+
+@pytest.mark.parametrize(
+    "facts",
+    [(True, ("Z",)), (True, ("6",)), (False, ("@",)), None],  # masked, closing, vendor, unknown
+)
+def test_a_print_the_mask_excludes_or_unknown_facts_never_move_the_rank(facts) -> None:
+    node = Node()
+    node.warm()
+    before = node.publisher.states["PENNY"]
+    node.tick(361, "PENNY", "0.90", facts=facts)
+    assert node.publisher.states["PENNY"].latest == before.latest  # neither price nor volume
+    assert node.publisher.last_event == AT
+
+
+def test_a_regular_print_moves_the_rank_with_its_conditions() -> None:
+    node = Node()
+    node.warm()
+    node.tick(361, "PENNY", "0.56", facts=(True, ("@", "I")))
+    latest = node.publisher.states["PENNY"].latest
+    assert latest is not None and latest.known_at == START + 361 * NS
