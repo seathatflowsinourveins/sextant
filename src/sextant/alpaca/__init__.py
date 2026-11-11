@@ -1,4 +1,6 @@
-"""Alpaca adapter package following NautilusTrader's Python live adapter template.
+"""Alpaca adapter: instrument provider, configs, factories and client shells.
 
-Source read 2026-11-10: NautilusTrader@d53849b examples/live/_template/__init__.py.
+Layout mirrors nautilus_trader@d53849b ``nautilus_trader/adapters/<venue>/``;
+alpaca-py imports stay absolute and never shadow the vendor package
+(``tests/proofs/test_alpaca_adapter.py``).
 """
