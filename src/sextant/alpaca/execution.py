@@ -178,8 +178,8 @@ class AlpacaExecutionClient(ExecutionClient):
         self._patches: dict[str, _Command] = {}  # proposal key -> its PATCH on the wire
         self._modify_owed: dict[str, int] = {}  # the same debt for replace refusals
         self._modify_seen: set[str] = set()
-        self._held: dict[str, list[dict]] = {}  # successor fills awaiting confirmed lineage
-        self._released: set[tuple[str, str]] = set()  # (venue id, execution id) released once
+        self._held: dict[str, list[dict]] = {}  # successor fills awaiting lineage
+        self._forwarded: set[tuple[str, str]] = set()  # (venue id, execution id)
         # No invented commission: caller supplies an evidenced Money per execution.
         self.commission_for_fill: Callable[[dict], Money] | None = None
 
@@ -245,12 +245,11 @@ class AlpacaExecutionClient(ExecutionClient):
         """The same rule for a PATCH (one per order: modifies are serialized): a refusal or a
         confirmed replacement answers it at once; a read only after its own call ended."""
         keys = [k for k, (_, parent) in self._proposals.items() if parent == row_id]
-        tokens = {k: self._patches.get(k) for k in keys}
+        keys = [k for k in keys if k in self._patches]  # Unsent ones stay reserved.
         if issued is not None:
-            keys = [k for k in keys if (t := tokens[k]) is not None and 0 < t.ended < issued]
+            keys = [k for k in keys if 0 < self._patches[k].ended < issued]
         for key in keys:
-            if (token := self._patches.pop(key, None)) is not None:
-                token.settled = True
+            self._patches.pop(key).settled = True
         return {self._proposals.pop(key)[0] for key in keys}
 
     def _answered(self, kind: str, key: str | None) -> None:
@@ -412,7 +411,7 @@ class AlpacaExecutionClient(ExecutionClient):
         # House successors are numbered r1, r2, ...: an older number is never bound again.
         stale = number < self._active_n.get(root, -1)
         if row.get("replaces"):
-            # Owner-generated successor IDs never acquire house authority from a parent.
+            # An owner successor never gains house authority from a parent.
             issued = self._now()
             parent = await self._call(ActionKind.QUERY, "get", f"/orders/{row['replaces']}")
             if (
@@ -420,16 +419,16 @@ class AlpacaExecutionClient(ExecutionClient):
                 or re.sub(r"-r[0-9]+$", "", parent["client_order_id"]) != root
                 or parent.get("replaced_by") != venue_id
                 or parent["status"] != "replaced"
-                or row["status"] in ("pending_new", "pending_replace")
+                or row["status"] == "pending_new"  # Confirmed ones may be replaced again.
             ):
                 raise ValueError("replacement lacks venue confirmation")
             proposal = self._proposals.get(wire_id)
             if proposal is not None and proposal != (root, parent["id"]):
                 raise ValueError("replacement differs from local proposal")
-            # Re-validated after the await: a newer successor may have bound meanwhile.
+            # Re-read after the await: a newer successor may have bound.
             stale = number < self._active_n.get(root, -1)
             previous = self._active.get(root)
-            # Already superseded: the venue named a successor, or a newer one is bound.
+            # Superseded: the venue named a successor, or a newer one is bound.
             superseded = (
                 stale
                 or bool(row.get("replaced_by"))
@@ -459,28 +458,27 @@ class AlpacaExecutionClient(ExecutionClient):
             self._active[root], self._active_n[root] = venue_id, number
         self._roots[venue_id] = root
         self._sequence[root] = max(self._sequence.get(root, 0), number)
+        await self._release(venue_id)  # Every confirming path releases.
         return ClientOrderId(root)
 
     def _settle(self, row, issued: int):
         """Resolve proposals against this order from an authoritative venue read.
 
-        Alpaca order statuses: replaced is terminal and pending_replace means a
-        replacement is still waiting; any other status proves no replacement is
-        pending, so a PATCH whose reply was lost cannot block later modifies.
+        Alpaca: replaced is terminal and pending_replace still waits; any other status
+        proves no replacement pending, so a lost PATCH reply cannot block later modifies.
         NT manager.rs check_inflight_orders likewise resolves PENDING_UPDATE by query.
         """
         if row["status"] in ("pending_replace", "pending_cancel"):
             return
         applied = row["status"] == "replaced" or bool(row.get("replaced_by"))
-        # A replacement the venue confirms answers its PATCH at once; otherwise a read answers
-        # only attempts whose own call ended before it was issued (PR 569 review).
+        # A confirmed replacement answers its PATCH at once; a read answers only attempts
+        # whose own call ended before it was issued (PR 569 review).
         dropped = self._answer_patches(row["id"], issued=None if applied else issued)
         cancel_lost = self._resolve(row["id"], issued=issued)
         if applied:
             return  # Applied: the successor binding updates the engine.
-        # The venue still works this order unchanged. After its retries the engine
-        # closes a PENDING_UPDATE or PENDING_CANCEL order (manager.rs:1935-1939),
-        # so return it to its venue state before then; never read it as closed.
+        # Unchanged at the venue: the engine closes a PENDING_UPDATE or PENDING_CANCEL
+        # order after its retries (manager.rs:1935-1939), so restore it first.
         now, venue_id = self.clock.timestamp_ns(), VenueOrderId(row["id"])
         for root in dropped:
             native = self.cache.order(ClientOrderId(root))
@@ -624,7 +622,7 @@ class AlpacaExecutionClient(ExecutionClient):
             token.settled = True
         except Exception as exc:
             if _unresolved(exc, token):
-                raise  # Sent: the proposal stays until an authoritative read settles it.
+                raise  # Sent: kept until an authoritative read settles it.
             self._refuse(token, "modification refused")
 
     async def _do_cancel_order(self, command, token: _Command | None = None):
@@ -720,7 +718,6 @@ class AlpacaExecutionClient(ExecutionClient):
             row = await self._call(ActionKind.QUERY, "get", f"/orders/{row['replaced_by']}")
         report = await self._report(row)
         self._settle(row, issued)
-        await self._release(row["id"])
         if (
             report is not None
             and command.client_order_id is not None
@@ -737,7 +734,6 @@ class AlpacaExecutionClient(ExecutionClient):
     async def _on_trade_update(self, update: dict[str, Any]):
         try:
             await self._process_update(update)
-            await self._release(update["data"]["order"]["id"])
         except Exception as exc:
             self.coverage_complete = False
             if isinstance(exc, IncompleteCoverage):
@@ -745,11 +741,17 @@ class AlpacaExecutionClient(ExecutionClient):
             raise IncompleteCoverage([], [(update, exc)]) from exc
 
     async def _release(self, venue_id: str) -> None:
-        """Forward, once, the executions held while this order's lineage was unconfirmed."""
-        if venue_id not in self._roots:
-            return
-        for update in self._held.pop(venue_id, []):
-            await self._process_update(update, released=True)
+        """Forward, in order, the fills held for this unconfirmed lineage."""
+        held = self._held.pop(venue_id, [])  # A replay's own release finds none.
+        try:
+            while held:
+                await self._process_update(held[0])
+                held.pop(0)  # Once processed.
+        except Exception:
+            self.coverage_complete = False
+        finally:
+            if held:  # Kept, in order, for the next one.
+                self._held[venue_id] = held + self._held.get(venue_id, [])
 
     def _record(self, event: str, row: dict) -> bool:
         """Every safety fact the event names, keyed by its venue order id, synchronously on
@@ -776,7 +778,7 @@ class AlpacaExecutionClient(ExecutionClient):
         self.late_answers += late
         return late
 
-    async def _process_update(self, update: dict[str, Any], *, released: bool = False):
+    async def _process_update(self, update: dict[str, Any]):
         if update.get("stream") != "trade_updates":
             raise ValueError("raw trade_updates envelope required")
         data = update["data"]
@@ -789,9 +791,6 @@ class AlpacaExecutionClient(ExecutionClient):
         if event not in _INGRESS:
             self.coverage_complete = False
             raise ValueError("unclassified trade update event")
-        execution = (row["id"], str(data.get("execution_id")))
-        if event in ("fill", "partial_fill") and execution in self._released:
-            return  # Already forwarded when its lineage was confirmed.
         late = self._record(event, row)
         # One identity resolution for every event: a successor binds before anything about
         # it is forwarded, and unconfirmed lineage fails here as incomplete coverage.
@@ -818,6 +817,9 @@ class AlpacaExecutionClient(ExecutionClient):
                 raise IncompleteCoverage(
                     [], [(update, ValueError("fill commission evidence unavailable"))]
                 )
+            execution = (row["id"], str(data.get("execution_id")))
+            if execution in self._forwarded:
+                return  # One forward per execution.
             report = fill_report(
                 update,
                 account_id=self.account_id,
@@ -826,9 +828,8 @@ class AlpacaExecutionClient(ExecutionClient):
                 commission=self.commission_for_fill(data),
                 client_order_id=stable,
             )
+            self._forwarded.add(execution)
             self._handle_report(report)
-            if released:
-                self._released.add(execution)
             return
         if event == "stopped" and native is not None:
             self.generate_order_triggered(native, VenueOrderId(row["id"]), now)

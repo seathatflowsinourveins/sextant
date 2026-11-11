@@ -10,13 +10,15 @@ re-validated after it. One proof per await; the list is EXIT-TABLE-r5.md.
 import asyncio
 from copy import deepcopy
 from types import SimpleNamespace as NS
+from unittest.mock import Mock
 
 import pytest
 from nautilus_trader.model import ClientOrderId, Money, OrderSide, OrderStatus, Quantity
 
+from .test_alpaca_answers import QUERY
 from .test_alpaca_client import client, client_module
 from .test_alpaca_execution import order
-from .test_alpaca_exits import _cmd
+from .test_alpaca_exits import _api, _cmd
 
 EXECUTING = ["partial_fill", "stopped"]
 
@@ -137,5 +139,83 @@ def test_a_replace_refusal_a_read_emitted_is_not_emitted_again():
         )  # the read finds the order unchanged and refuses the modify
         await node._on_trade_update(_event("order_replace_rejected", row | {"status": "new"}))
         node.generate_order_modify_rejected.assert_called_once()
+
+    asyncio.run(run())
+
+
+async def _held(node, ids=("a",)):  # Held fills, then the confirmed row.
+    await node._submit_order(NS(order=order(), params={}))
+    node.commission_for_fill = lambda data: Money.from_str("0 USD")
+    await node._modify_order(_cmd("modify"))
+    fills = [_event("partial_fill", node.gateway.sdk.pending[1]) for _ in ids]
+    for fill, execution in zip(fills, ids, strict=True):
+        fill["data"]["execution_id"] = execution
+        await asyncio.gather(node._on_trade_update(fill), return_exceptions=True)
+    return fills, node.gateway.sdk.confirm()
+
+
+def _fills(node):
+    reports = [c.args[0] for c in node._handle_report.call_args_list]
+    return [str(r.trade_id) for r in reports if hasattr(r, "trade_id")]
+
+
+def test_a_bound_successor_entering_its_own_replace_stays_confirmed():  # PR 588 P1-a
+    async def run():
+        node = client()
+        row = await _successor(node, sell=False)
+        await node._modify_order(_cmd("modify"))
+        await node._on_trade_update(_event("pending_replace", node.gateway.sdk.rows[row["id"]]))
+        assert str((await node._generate_order_status_report(QUERY)).venue_order_id) == row["id"]
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("parent", [True, False])  # P1-b; P2-a: the fill's own replay
+def test_each_confirming_event_releases_a_held_fill_exactly_once(parent):
+    async def run():
+        node = client()
+        fills, child = await _held(node)
+        replaced = _event("replaced", node.gateway.sdk.rows[child["replaces"]])
+        await node._on_trade_update(replaced if parent else fills[0])
+        assert _fills(node) == ["a"]
+
+    asyncio.run(run())
+
+
+def test_a_failed_replay_keeps_every_held_fill_in_order():  # P1-c
+    async def run():
+        node = client()
+        child = (await _held(node, ("a", "b")))[1]
+        reads, call = iter(range(9)), node._call
+
+        async def flaky(kind, method, where, data=None, **kwargs):
+            if where.endswith(child["replaces"]) and next(reads) == 1:  # The first replay
+                raise ConnectionError
+            return await call(kind, method, where, data, **kwargs)
+
+        node._call = flaky
+        await asyncio.gather(node._on_trade_update(_event("new", child)), return_exceptions=True)
+        await node._generate_order_status_report(QUERY)
+        assert _fills(node) == ["a", "b"]
+
+    asyncio.run(run())
+
+
+def test_a_late_refusal_leaves_an_unsent_modify_reserved():  # P2-b
+    async def run():
+        node = client()
+        await node._submit_order(NS(order=order(), params={}))
+        venue, pacer = node.gateway.sdk, node.gateway.pacer
+        row, venue.patch = next(iter(venue.rows.values())), Mock(side_effect=_api(422))
+        await node._modify_order(_cmd("modify"))  # Refused; its stream echo comes late.
+        node.generate_order_modify_rejected.reset_mock()
+        pacer.bucket.tokens = 1  # Read passes; PATCH waits, unsent.
+        task = asyncio.create_task(node._modify_order(_cmd("modify")))
+        await asyncio.sleep(0.01)
+        assert pacer.queue
+        await node._on_trade_update(_event("order_replace_rejected", row | {"status": "new"}))
+        node.generate_order_modify_rejected.assert_not_called()
+        assert list(node._proposals) == ["fixture-entry-r2"]
+        task.cancel()
 
     asyncio.run(run())
