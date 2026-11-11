@@ -174,7 +174,10 @@ def publish(segment_name: str, tmp_path: Path, *, now_minute: int = 8) -> Any:
     section = segment(segment_name)
     baseline, source = baseline_for(segment_name)
     with reserve_stream(
-        tmp_path / "leases", paper_slot=3, existing_streams=0, source="fixture"
+        tmp_path / "leases",
+        paper_slot=2,
+        existing_streams=0,
+        source="B's writer opens no market-data stream; fixture",
     ) as lease:
         receipt = publish_tick(
             lease=lease,
@@ -234,7 +237,10 @@ def publish_at(
         provenance="fixture five prior sessions",
     )
     with reserve_stream(
-        tmp_path / "leases", paper_slot=3, existing_streams=0, source="fixture"
+        tmp_path / "leases",
+        paper_slot=2,
+        existing_streams=0,
+        source="B's writer opens no market-data stream; fixture",
     ) as lease:
         receipt = publish_tick(
             lease=lease,
@@ -595,7 +601,10 @@ def test_prestage_replays_every_completed_minute(tmp_path: Path, monkeypatch: An
 
     monkeypatch.setattr(BarFidelityHost, "ingest", spy)
     with reserve_stream(
-        tmp_path / "leases", paper_slot=3, existing_streams=0, source="fixture"
+        tmp_path / "leases",
+        paper_slot=2,
+        existing_streams=0,
+        source="B's writer opens no market-data stream; fixture",
     ) as lease:
         publish_tick(
             lease=lease,
