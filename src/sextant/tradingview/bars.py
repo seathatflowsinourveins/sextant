@@ -39,6 +39,16 @@ NON_COMMON_NAME = re.compile(
     re.IGNORECASE,
 )
 NON_COMMON_SUFFIX = re.compile(r"-(?:P[A-Z]?|WT|W|UN|U|R|RT|CL|WS|PR|PA|PB|PC|PD|PE|PF|PG|PH|PI)\Z")
+# otherlisted.txt "Exchange" codes as NASDAQ Trader defines them
+# (https://www.nasdaqtrader.com/trader.aspx?id=symboldirdefs, read 2026-11-11). A row with
+# any other code has no documented listing venue, so it is skipped, never guessed.
+OTHER_LISTED_EXCHANGES = {
+    "A": "NYSE MKT",
+    "N": "New York Stock Exchange (NYSE)",
+    "P": "NYSE ARCA",
+    "Z": "BATS Global Markets (BATS)",
+    "V": "Investors' Exchange, LLC (IEXG)",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,6 +113,7 @@ class Listing:
     name: str
     test_issue: bool
     etf: bool
+    exchange: str | None = None
 
 
 def parse_directory(text: str) -> tuple[Listing, ...]:
@@ -129,6 +140,7 @@ def parse_directory(text: str) -> tuple[Listing, ...]:
                 name=fields[header.index("Security Name")],
                 test_issue=fields[header.index("Test Issue")] == "Y",
                 etf=fields[header.index("ETF")] == "Y",
+                exchange=fields[header.index("Exchange")] if "Exchange" in header else None,
             )
         )
     if header is None:
@@ -140,6 +152,7 @@ def _keeps(listing: Listing) -> bool:
     return (
         not listing.test_issue
         and not listing.etf
+        and (listing.exchange is None or listing.exchange in OTHER_LISTED_EXCHANGES)
         and DIRECTORY_SYMBOL.fullmatch(listing.symbol) is not None
         and NON_COMMON_NAME.search(listing.name) is None
         and NON_COMMON_SUFFIX.search(listing.symbol) is None
