@@ -176,6 +176,7 @@ def test_missing_fill_commission_is_unavailable_not_zero():
 
 def test_stream_fill_with_explicit_evidence_uses_execution_not_order_totals():
     async def run():
+        from nautilus_trader.model import Money
 
         node = client()
         await node._submit_order(NS(order=order(), params={}))
@@ -220,6 +221,60 @@ def test_bad_stream_row_preserves_payload_and_revokes_coverage():
     asyncio.run(run())
 
 
+def test_gateway_configuration_is_serialized_and_missing_rows_stop_before_sdk(monkeypatch):
+    from sextant.alpaca.config import AlpacaExecutionClientConfig
+
+    config = AlpacaExecutionClientConfig(
+        api_key_env="FIXTURE_KEY",
+        api_secret_env="FIXTURE_SECRET",  # noqa: S106 - environment name, not a key.
+        account_id="ALPACA-fixture",
+        house_prefix="fixture-",
+        pacing_rows=None,
+    )
+    assert config.dict()["house_prefix"] == "fixture-"
+    sdk = Mock()
+    monkeypatch.setattr(client_module(), "TradingClient", sdk)
+    node = client()
+    node.config = config
+    node.house_prefix = "fixture-"
+    with pytest.raises(ValueError, match="pacing"):
+        asyncio.run(node._connect())
+    sdk.assert_not_called()
+
+
+def test_stream_callback_does_not_hold_client_on_sdk_thread(monkeypatch):
+    import gc
+    import weakref
+    from unittest.mock import AsyncMock
+
+    from .conftest import controls
+
+    class Stream:
+        def subscribe_trade_updates(self, handler):
+            self.handler = handler
+
+        def run(self):
+            raise AssertionError("offline proof must not start SDK transport")
+
+    stream = Stream()
+    monkeypatch.setenv("FIXTURE_KEY", "dummy-key")
+    monkeypatch.setenv("FIXTURE_SECRET", "dummy-secret")
+    node = client()
+    fixture_controls = controls()
+    monkeypatch.setattr(client_module().Controls, "from_rows", lambda rows: fixture_controls)
+    monkeypatch.setattr(client_module(), "TradingClient", Mock())
+    monkeypatch.setattr(client_module(), "TradingStream", lambda *a, **k: stream)
+    node.config = NS(pacing_rows=[], api_key_env="FIXTURE_KEY", api_secret_env="FIXTURE_SECRET")  # noqa: S106 - fixture environment name
+    node._do_query_account = AsyncMock()
+    node.commission_for_fill = lambda data: Money.from_str("0.01 USD")  # Fixture evidence only.
+    node.create_task = lambda coroutine, name: coroutine.close()
+    asyncio.run(node._connect())
+    reference = weakref.ref(node)
+    del node
+    gc.collect()
+    assert reference() is None, "SDK callback must only retain a weak client reference"
+
+
 def test_account_report_rejects_float_money_before_emission():
     async def run():
         node = client()
@@ -237,3 +292,91 @@ def test_account_report_rejects_float_money_before_emission():
         node.generate_account_state.assert_not_called()
 
     asyncio.run(run())
+
+
+def test_trade_stream_shutdown_cancels_pending_connect_and_joins(monkeypatch):
+    from threading import Event
+    from unittest.mock import AsyncMock
+
+    from alpaca.trading.stream import TradingStream
+
+    from .conftest import controls
+
+    async def run():
+        node = client()
+        fixture_controls = controls()
+        stream = TradingStream("fixture-key", "fixture-secret", paper=True, raw_data=True)
+        started, closed = Event(), Event()
+        owner = []
+
+        async def connecting():
+            stream._loop = asyncio.get_running_loop()
+            owner.append((stream._loop, asyncio.current_task()))
+            started.set()
+            await asyncio.Event().wait()  # Model a connect/auth await that does not finish.
+
+        async def close():
+            closed.set()
+
+        monkeypatch.setattr(stream, "_run_forever", connecting)
+        monkeypatch.setattr(stream, "close", close)
+        monkeypatch.setenv("FIXTURE_KEY", "dummy-key")
+        monkeypatch.setenv("FIXTURE_SECRET", "dummy-secret")
+        monkeypatch.setattr(client_module().Controls, "from_rows", lambda rows: fixture_controls)
+        monkeypatch.setattr(client_module(), "TradingClient", Mock())
+        monkeypatch.setattr(client_module(), "TradingStream", lambda *a, **k: stream)
+        node.config = NS(pacing_rows=[], api_key_env="FIXTURE_KEY", api_secret_env="FIXTURE_SECRET")  # noqa: S106 - fixture environment name  # noqa: S106 - fixture env name
+        node._do_query_account = AsyncMock()
+        node.commission_for_fill = lambda data: Money.from_str("0.01 USD")  # Fixture evidence only.
+        node.create_task = lambda coro, name: asyncio.create_task(coro)
+        await node._connect()
+        assert await asyncio.to_thread(started.wait, 1)
+        try:
+            await asyncio.wait_for(node._disconnect(), 0.2)
+            assert closed.is_set()
+            assert node._stream_task is None or node._stream_task.done()
+        finally:
+            loop, task = owner[0]
+            if not loop.is_closed():
+                loop.call_soon_threadsafe(task.cancel)
+
+    asyncio.run(run())
+
+
+def test_missing_commission_evidence_keeps_writer_unavailable_before_sdk(monkeypatch):
+    from .conftest import controls
+
+    node = client()
+    fixture_controls = controls()
+    node.config = NS(pacing_rows=[], api_key_env="FIXTURE_KEY", api_secret_env="FIXTURE_SECRET")  # noqa: S106 - fixture environment name
+    monkeypatch.setattr(client_module().Controls, "from_rows", lambda rows: fixture_controls)
+    sdk = Mock()
+    monkeypatch.setattr(client_module(), "TradingClient", sdk)
+    monkeypatch.delenv("FIXTURE_KEY", raising=False)
+    monkeypatch.delenv("FIXTURE_SECRET", raising=False)
+    with pytest.raises(ValueError, match="commission"):
+        asyncio.run(node._connect())
+    sdk.assert_not_called()
+
+
+def test_connect_uses_registered_account_budget_without_a_second_code_pin(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from .conftest import controls
+
+    node = client()
+    fixture_controls = controls(request_budget=150)
+    node.config = NS(pacing_rows=[], api_key_env="FIXTURE_KEY", api_secret_env="FIXTURE_SECRET")  # noqa: S106 - fixture environment name
+    node.commission_for_fill = lambda data: Money.from_str("0.01 USD")  # Fixture evidence only.
+    node._do_query_account = AsyncMock()
+    node.create_task = lambda coroutine, name: coroutine.close()
+    monkeypatch.setenv("FIXTURE_KEY", "dummy-key")
+    monkeypatch.setenv("FIXTURE_SECRET", "dummy-secret")
+    monkeypatch.setattr(client_module().Controls, "from_rows", lambda rows: fixture_controls)
+    sdk = Mock()
+    monkeypatch.setattr(client_module(), "TradingClient", sdk)
+    monkeypatch.setattr(client_module(), "TradingStream", Mock())
+    asyncio.run(node._connect())
+    assert node.gateway.pacer.controls is fixture_controls
+    assert node.gateway.pacer.bucket.limit == fixture_controls["request_budget"]
+    sdk.assert_called_once()

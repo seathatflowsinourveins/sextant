@@ -248,7 +248,7 @@ def test_the_execution_factory_builds_a_margin_netting_alpaca_client() -> None:
     assert client.config is config
 
 
-def test_the_execution_client_connect_refuses_until_execution_lands() -> None:
+def test_the_execution_client_connect_refuses_without_gateway_authority() -> None:
     client = factories.AlpacaExecutionClientFactory.create(
         name="ALPACA",
         config=_exec_config(),
@@ -256,7 +256,7 @@ def test_the_execution_client_connect_refuses_until_execution_lands() -> None:
         clock=cast("Any", None),
         trader_id=TraderId("ALPACA-001"),
     )
-    with pytest.raises(NotImplementedError, match="Alpaca"):
+    with pytest.raises(ValueError, match="namespace"):
         asyncio.run(client._connect())
 
 

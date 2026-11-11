@@ -72,6 +72,8 @@ class AlpacaExecutionClientConfig(ExecutionClientConfig):
         api_key_env: str,
         api_secret_env: str,
         account_id: str,
+        house_prefix: str | None = None,
+        pacing_rows: list[dict[str, Any]] | None = None,
         **kwargs: Any,
     ) -> None:
         _refuse_unknown(kwargs, _EXECUTION_COMMON_FIELDS, type(self).__name__)
@@ -82,3 +84,5 @@ class AlpacaExecutionClientConfig(ExecutionClientConfig):
         if issuer != _ACCOUNT_ISSUER:
             raise ValueError(f"account_id issuer must be {_ACCOUNT_ISSUER}, was {issuer!r}")
         self.account_id = account.value
+        self.house_prefix = house_prefix
+        self.pacing_rows = pacing_rows
