@@ -172,14 +172,18 @@ def test_the_second_tick_feeds_only_the_new_minutes_and_matches_a_full_replay(
     assert unit_files and unit_files == _files((fresh / "unit").resolve())
 
 
-def test_a_revised_last_minute_falls_back_to_a_full_replay(
+def test_a_revised_last_minute_restarts_from_the_kept_state(
     tmp_path: Path, monkeypatch: Any
 ) -> None:
-    """The host's own rule: a revised bar needs a new publisher epoch, never a merge."""
+    """The host's own rule: a revised bar needs a new publisher epoch, never a merge.
+
+    The refused carry is dropped; the state kept before that minute, which never saw
+    the old bar, feeds it and the new minutes (test_tradingview_prestage_checkpoint.py).
+    """
     carried, fresh, carried_minutes, full_minutes = _run_pair(tmp_path, monkeypatch, revised=7)
     start = segment("RTH").start_ns
     assert carried_minutes[0] == start + 8 * MINUTE_NS
-    assert carried_minutes[1:] == full_minutes
+    assert carried_minutes[1:] == full_minutes[7:]
     assert _files(carried / "view") == _files(fresh / "view")
 
 

@@ -15,6 +15,7 @@ adds no ranking, projection or clock rule of its own.
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import os
@@ -464,7 +465,8 @@ class RankedView:
     universe_source: str = ""
     written: bool = False
     previous: Any = None
-    # (key, inputs kept alive for the key's ids, publisher, host, last fed close).
+    # (key, inputs kept alive for the key's ids, publisher, host, last fed close,
+    # the (publisher, host) kept before that close or None).
     carried: Any = None
 
     def write(self, now_ns: int, reason: str | None = None, generation: Any = None) -> None:
@@ -548,10 +550,13 @@ def _feed_minutes(
     by_minute: Mapping[int, list[Bar]],
     *,
     since_ns: int | None,
+    before_ns: int | None = None,
 ) -> int:
     ingested = 0
     for close_ns in sorted(by_minute):
-        if since_ns is not None and close_ns < since_ns:
+        if (since_ns is not None and close_ns < since_ns) or (
+            before_ns is not None and close_ns >= before_ns
+        ):
             continue
         ingested += host.ingest(
             BarPoll(bars=tuple(by_minute[close_ns]), requested=tuple(symbols)),
@@ -569,27 +574,60 @@ def _carry_key(
     return (segment, epoch, prior_close_ns, params, *map(id, inputs))
 
 
+def _checkpoint(publisher: RankingPublisher, host: BarFidelityHost) -> tuple | None:
+    """Copy a view's state; shared inputs and frozen per-symbol states are not copied.
+
+    The stdlib's seeded memo (CPython 3.13 copy.py:119-131) maps each shared object
+    to itself. A state the copy cannot take simply keeps no checkpoint.
+    """
+    shared = (publisher.bus, host.lease, publisher.registry, publisher.baseline, publisher.segment)
+    memo: dict[int, Any] = {id(item): item for item in shared}
+    memo.update({id(state): state for state in publisher.states.values()})
+    try:
+        return copy.deepcopy((publisher, host), memo)
+    except (TypeError, copy.Error):
+        return None
+
+
 def _view_replay(
     view: RankedView, by_minute: Mapping[int, list[Bar]], key: tuple, **replay: Any
-) -> tuple[RankingPublisher, BarFidelityHost]:
+) -> tuple[RankingPublisher, BarFidelityHost, tuple | None]:
     """Feed a carried view only its new minutes, else replay the segment in full.
 
     Streaming batches keep state between batches (nautilus_trader d53849b2,
     docs/concepts/backtesting/apis-and-runs.md:74-91). The last fed minute is fed
-    again, so the host's revised-bar rule (host.py:186-192) forces a full replay.
+    again, so the host's revised-bar rule (host.py:186-193) refuses a revision of it;
+    the view then restarts from the state kept before that minute, which never saw
+    the old bar, and only a refused kept state replays the segment in full. Returns
+    the publisher, its host and the state kept before this tick's newest minute.
     """
     carried, view.carried = view.carried, None
+    starts: list[tuple | None] = []
+    last_ns = None
     if carried is not None and carried[0] == key and by_minute:
-        _, _, publisher, host, last_ns = carried
+        _, _, publisher, host, last_ns, kept = carried
+        starts = [(publisher, host), kept]
+    # Release references so a refused start is freed before the next one.
+    carried = publisher = host = kept = None
+    newest = max(by_minute) if by_minute else None
+    while starts:
+        start = starts.pop(0)
+        if start is None:
+            continue
         try:
-            _feed_minutes(host, view.symbols, by_minute, since_ns=last_ns)
-            return publisher, host
+            _feed_minutes(start[1], view.symbols, by_minute, since_ns=last_ns, before_ns=newest)
+            kept = _checkpoint(*start)
+            _feed_minutes(start[1], view.symbols, by_minute, since_ns=newest)
+            return start[0], start[1], kept
         except (ValueError, KeyError, TypeError, ArithmeticError):
-            pass
-    # Release a refused carry before the full replay, so peak memory stays one view.
-    carried = publisher = host = None
-    publisher, host, _ = _replay(**replay, by_minute=by_minute)
-    return publisher, host
+            start = kept = None
+    publisher, host, _ = _replay(
+        **replay, by_minute={close: bars for close, bars in by_minute.items() if close != newest}
+    )
+    kept = _checkpoint(publisher, host) if newest is not None else None
+    if newest is not None:
+        _feed_minutes(host, view.symbols, by_minute, since_ns=newest)
+    return publisher, host, kept
 
 
 def _drop_stale(publisher: RankingPublisher, publish_clock_ns: int, max_age_ns: int) -> None:
@@ -700,7 +738,7 @@ def publish_tick(
             prior_close_ns=prior_close_ns,
             params=registry.params_hash,
         )
-        view_publisher, view_host = _view_replay(
+        view_publisher, view_host, kept = _view_replay(
             view,
             view_minutes,
             key,
@@ -732,7 +770,7 @@ def publish_tick(
         )
         if view_minutes:
             inputs = (lease, view.baseline, view.symbols, view.closes)
-            view.carried = (key, inputs, view_publisher, view_host, max(view_minutes))
+            view.carried = (key, inputs, view_publisher, view_host, max(view_minutes), kept)
 
     if not host.heartbeat(at=latest_close_ns, received_ns=publish_clock_ns):
         raise PrestageError("the bar-fidelity heartbeat was refused")
