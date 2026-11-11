@@ -6,6 +6,7 @@ reservation sit under two roots, the old writer's and the producer's (N3 part 4)
 
 from __future__ import annotations
 
+import gc
 import json
 import threading
 from contextlib import ExitStack
@@ -197,6 +198,8 @@ def start(
     tmp_path, venue=None, *, count=3, exec_factory=None, leases=None, with_consumer=False, **kw
 ):
     """Parse, then run the entry's own node on this thread; (receipt body, code, stand)."""
+    # rc8 permits one LiveNode per thread; failed report tracebacks can form client cycles.
+    gc.collect()
     # A publisher, when used, comes before the node: its MessageBus must not replace the node's.
     ranked = consumer(publisher()) if with_consumer else None
     stand = Stand(venue or AccountVenue())
@@ -351,10 +354,9 @@ def test_a_non_flat_account_stops_before_any_command(tmp_path, case) -> None:
     assert all(r[0] == "GET" for r in venue.requests[seeded:]), "nothing was sent"
 
 
-# The old writer's order in a name outside the claims is withheld whatever its status
-# (execution.py _owner_withheld: its instrument is not loaded). Only a working one is open
-# (stage 1 rehearsal RESULT-2; the engine's closed set, nautilus_trader d53849b
-# crates/model/src/enums.rs:1489-1500).
+# Terminal rows outside claims are withheld for the gate's lineage check; LEAD-1618
+# refuses an unloaded working row before the gate, without changing its refusal list.
+# Closed set: nautilus_trader d53849b crates/model/src/enums.rs:1489-1500.
 
 
 # "replaced" ends only its own row: it starts only through a resolved chain (below); a bare
@@ -376,8 +378,11 @@ def test_a_working_old_writer_order_outside_the_claims_still_refuses(tmp_path, s
     _owner(venue, "BTEST-trail-OUTX-1-1", symbol="OUTX", side="sell", status=status)
     seeded = len(venue.requests)
     body, code, stand = start(tmp_path, venue)
-    assert (code, body["phase"], body["reason"]) == (2, "refused", "house_order_open")
-    assert body["gate"]["open_house_orders"] == 1 and stand.subscribed == 0
+    assert (code, body["phase"]) == (2, "failed")
+    assert body["reconciliation"]["orders"]["reason"] == (
+        "report instrument is unavailable for non-terminal order"
+    )
+    assert body["gate"] == {} and stand.subscribed == 0
     assert all(r[0] == "GET" for r in venue.requests[seeded:]), "nothing was sent"
 
 
@@ -415,7 +420,10 @@ def test_a_replaced_old_writer_order_with_a_working_successor_refuses(tmp_path, 
     old_writer_chain(venue, ends)
     seeded = len(venue.requests)
     body, code, stand = start(tmp_path, venue)
-    assert (code, body["phase"], body["reason"]) == (2, "refused", "house_order_open")
+    assert (code, body["phase"]) == (2, "failed")
+    assert body["reconciliation"]["orders"]["reason"] == (
+        "report instrument is unavailable for non-terminal order"
+    )
     assert stand.subscribed == 0
     assert all(r[0] == "GET" for r in venue.requests[seeded:]), "nothing was sent"
 
@@ -508,8 +516,11 @@ def test_a_canceled_middle_still_linked_to_a_working_successor_refuses_on_the_ve
     chain[1]["status"] = "canceled"  # replaced_by stays populated
     seeded = len(venue.requests)
     body, code, stand = start(tmp_path, venue)
-    assert (code, body["phase"], body["reason"]) == (2, "refused", "house_order_open")
-    assert body["gate"]["open_house_orders"] == 1 and stand.subscribed == 0
+    assert (code, body["phase"]) == (2, "failed")
+    assert body["reconciliation"]["orders"]["reason"] == (
+        "report instrument is unavailable for non-terminal order"
+    )
+    assert body["gate"] == {} and stand.subscribed == 0
     assert all(r[0] == "GET" for r in venue.requests[seeded:]), "nothing was sent"
 
 

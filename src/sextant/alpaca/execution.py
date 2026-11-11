@@ -13,6 +13,7 @@ import os
 import re
 import weakref
 from collections.abc import Callable
+from contextlib import suppress
 from contextvars import ContextVar
 from dataclasses import dataclass
 from decimal import Decimal
@@ -89,7 +90,11 @@ def _traced(stage: str):
     def wrap(method):
         @functools.wraps(method)
         async def traced(self, command):
-            entry = self.report_trace[stage] = {"requests": {}, "failures": 0}
+            entry = self.report_trace[stage] = {
+                "requests": {},
+                "failures": 0,
+                "skipped_unloaded": 0,
+            }
             token = _STAGE.set(stage)
             try:
                 return await method(self, command)
@@ -110,6 +115,11 @@ def _traced(stage: str):
                 raise
             finally:
                 _STAGE.reset(token)
+                with suppress(Exception):
+                    if entry["skipped_unloaded"]:
+                        Logger("AlpacaExecution").warning(
+                            f"reconciliation {stage}: skipped_unloaded={entry['skipped_unloaded']}"
+                        )
 
         return traced
 
@@ -537,6 +547,20 @@ class AlpacaExecutionClient(ExecutionClient):
             raise ValueError("report instrument is unavailable")
         return instrument
 
+    def _unloaded_history(self, row, stage: str):
+        # NT d53849b spot/execution.rs:3542-3545: warn and skip uncached reports.
+        # Only terminal history may be withheld; working rows must stop the start.
+        if self.cache.instrument(self._instrument_id(row)) is not None:
+            return False
+        pending = [row]  # alpaca-py cc4cb3b7 models.py:241: legs are recursive Orders.
+        while pending:
+            part = pending.pop()
+            if part.get("status") not in _TERMINAL:
+                raise ValueError("report instrument is unavailable for non-terminal order")
+            pending.extend(part.get("legs") or [])
+        self.report_trace[stage]["skipped_unloaded"] += 1
+        return True
+
     async def _identity(self, row):
         wire_id, venue_id = row["client_order_id"], row["id"]
         if not wire_id.startswith(self.house_prefix) or not self.house_prefix:
@@ -958,6 +982,9 @@ class AlpacaExecutionClient(ExecutionClient):
         reports, failures = [], []
         for row in rows:
             try:
+                if self._unloaded_history(row, "orders"):
+                    self.withheld.append((row, "terminal order instrument unavailable"))
+                    continue
                 reason = self._owner_withheld(row)
                 if reason is not None:
                     self.withheld.append((row, reason))
@@ -1055,6 +1082,7 @@ class AlpacaExecutionClient(ExecutionClient):
                 order = listed.get(row["order_id"])
                 if order is None or Decimal(order["filled_qty"]) < Decimal(row["cum_qty"]):
                     raise ValueError("historical fill that no order report explains")
+                self._unloaded_history(order, "fills")  # Same terminal-only rule; no inferred fill.
             except Exception as exc:
                 failures.append((row, exc))
         if failures:
