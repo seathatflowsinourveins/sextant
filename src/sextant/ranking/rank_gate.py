@@ -17,7 +17,7 @@ class RankGateDecision:
 
 
 def decide_rank_gate(
-    *, enabled: bool = False, rank: int | None = None, consumer_reason: str | None = None
+    *, enabled: object = False, rank: int | None = None, consumer_reason: str | None = None
 ) -> RankGateDecision:
     """Evaluate one candidate's rank and reason from the same current ``entry_rank`` call.
 
