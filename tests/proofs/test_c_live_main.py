@@ -2204,3 +2204,99 @@ def test_raw_asset_listing_survives_unknown_enum_and_records_once_per_run(
     assert written["asset_rows_skipped"] == 2
     assert all(row["eligible"] == 1 for row in written["arming"])
     assert len([r for r in caplog.records if "asset rows" in r.message]) == 1
+
+
+def test_the_receipt_preserves_symbol_snapshot_and_refusals(live_env: Path) -> None:
+    client = FakeTradingClient()
+
+    def refuse_size(feed: FakeFeed) -> None:
+        replay(feed, entry_hook=lambda: setattr(client.account, "buying_power", "1"))
+
+    assert invoke(live_env, client, Clock(), Monotonic(), replays=[refuse_size]) == 0
+    written = receipt(live_env)
+    state = written["snapshot"][str(IID)]
+    assert state["armed"] is True
+    assert state["filled_qty"] == "0"
+    assert any(row["reason"].startswith("sizing: ") for row in state["refusals"])
+    assert written["flags"] == 1
+    assert written["commands"] == []
+
+
+def test_the_receipt_keeps_snapshots_across_segments(live_env: Path) -> None:
+    assert (
+        invoke(
+            live_env,
+            FakeTradingClient(),
+            Clock(PRE_OPEN_CLOCK),
+            Monotonic(),
+            baseline_dir=write_baseline_dir(live_env),
+            replays=[pre_fill_then_rth_replay, noop_replay],
+        )
+        == 0
+    )
+    snapshots = receipt(live_env)["segment_snapshots"]
+    assert [row["segment"] for row in snapshots] == ["PRE", "RTH"]
+    assert snapshots[0]["snapshot"][str(IID)]["armed"] is True
+
+
+def test_a_kill_after_receipt_publication_cannot_lose_the_trial(live_env: Path) -> None:
+    import signal
+
+    script = """
+import os, runpy, signal, sys
+from pathlib import Path
+ns = runpy.run_path(sys.argv[1])
+module = ns["c_live_main_module"]
+module.DEFAULT_LEASE_ROOT = Path.cwd() / "locks"
+original = module._write_receipt
+def die_after_receipt(**kwargs):
+    original(**kwargs)
+    os.kill(os.getpid(), signal.SIGKILL)
+module._write_receipt = die_after_receipt
+ns["invoke"](Path.cwd(), ns["FakeTradingClient"](), ns["Clock"](), ns["Monotonic"]())
+"""
+    child = subprocess.run([sys.executable, "-c", script, str(Path(__file__).resolve())])
+    assert child.returncode == -signal.SIGKILL
+    written = receipt(live_env)
+    rows = TrialLog(live_env / "trials.parquet").records
+    assert len(rows) == 1
+    assert json.loads(rows[0]["config"])["arm_run_id"] == written["receipt_id"]
+    assert rows[0]["state"] == "COMPLETE"
+
+
+def test_the_receipt_identifies_the_waiting_trial_file(live_env: Path) -> None:
+    import hashlib
+
+    path = live_env / "waiting-trials.parquet"
+    assert invoke(live_env, FakeTradingClient(), Clock(), Monotonic(), ledger=path) == 0
+    trial_file = receipt(live_env)["trial_file"]
+    assert trial_file == {
+        "path": str(path.resolve()),
+        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+    }
+
+
+def test_a_balance_refusal_is_in_the_receipt(live_env: Path) -> None:
+    client = FakeTradingClient()
+
+    def refuse_balance(feed: FakeFeed) -> None:
+        replay(feed, entry_hook=lambda: setattr(client, "fail_account_reads", True))
+
+    assert invoke(live_env, client, Clock(), Monotonic(), replays=[refuse_balance]) == 0
+    state = receipt(live_env)["snapshot"][str(IID)]
+    assert any(
+        "balance_read_failed: the account balance read failed" in row["reason"]
+        for row in state["refusals"]
+    )
+    assert client.submitted == []
+
+
+def test_a_receipt_write_failure_cannot_lose_the_trial(
+    live_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail_receipt(**_: Any) -> Path:
+        raise OSError("receipt unavailable")
+
+    monkeypatch.setattr(c_live_main_module, "_write_receipt", fail_receipt)
+    assert invoke(live_env, FakeTradingClient(), Clock(), Monotonic()) == 1
+    assert len(TrialLog(live_env / "trials.parquet").records) == 1

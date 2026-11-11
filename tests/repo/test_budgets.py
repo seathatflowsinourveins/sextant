@@ -58,7 +58,14 @@ def test_src_stays_under_budget() -> None:
     # review-fix rounds. This cap is interim, not the new normal: it ratchets down by the
     # retired hand-built paper runners' lines at C's engine cutover and again at B's, and the
     # tracking issue (#389) targets 29,500 or below after both.
-    assert sum(_lines(path) for path in (ROOT / "src").rglob("*.py")) < 31000
+    # Then to 34,500 on 2026-11-10 under the lead's ruling LEAD-2232: main ee4e5fc measured
+    # 29,191 of 31,000, while the queued work adds about 3,500 -- the event book 657, the
+    # engine Strategy parts 1 and 2 385, the publisher host 266, the rank gate wiring 19, the
+    # ledger writer port 217, and 2,000 estimated for the adapter and Strategy parts not yet
+    # measured -- so about 32,700 to 33,800. This cap is interim: the PR that completes Paper
+    # B's cutover lowers it to 31,000 and the one that completes Paper C's lowers it to 29,000
+    # in the same merge train, and the tracking issue (#389) owns that ratchet.
+    assert sum(_lines(path) for path in (ROOT / "src").rglob("*.py")) < 34500
 
 
 def test_design_stays_short() -> None:
