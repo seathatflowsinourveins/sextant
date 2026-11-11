@@ -90,7 +90,8 @@ still pass the operation's argument-key fence and discovered JSON Schema.
 Discovery is capability inventory, not authority to use new tools.
 `symbols.SymbolSearch`, a separate session for the producer's symbol map, admits
 one documented Read-only operation, `search_symbols` (keys `query` and
-`type_filter`), and none of the five above; it needs the lead's ruling before use.
+`type_filter`), and none of the five above. ADR-0021's 2026-11-11 amendment admits it for
+the display symbol map only; its result feeds the display mapping and nothing else.
 
 | Category | Documented count | Not admitted by the membership adapter |
 |---|---|---|
