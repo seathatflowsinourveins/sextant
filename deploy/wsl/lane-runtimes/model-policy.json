@@ -64,7 +64,7 @@
     "effort_source": "https://platform.claude.com/docs/en/build-with-claude/effort"
   },
   "claude_reviewer": {
-    "runtime": "anthropics/claude-code-action v1.0.263 (8041f1d17e0e7d2f2cfe35002962e9f26237c0bb)",
+    "runtime": "anthropics/claude-code-action v1.0.264 (d70510b174a1244958df0b03166a54912811f3e6)",
     "model": "claude-fable-5-2",
     "effort": "high",
     "read_date": "2026-11-09",
