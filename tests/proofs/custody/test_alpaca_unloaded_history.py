@@ -20,6 +20,7 @@ from .alpaca_venue import STAMP
 from .conftest import controls
 from .test_alpaca_client import client, client_module
 from .test_alpaca_node_owner import _owner
+from .test_alpaca_owner_rows import _bracket
 from .test_b_order_node import AccountVenue, expected, start  # noqa: F401
 
 SCOPE = NS(open_only=False, instrument_id=None, start=None, end=None)
@@ -212,3 +213,101 @@ def test_unloaded_fill_history_still_refuses_unexplained_or_excess_fills():
         assert not node.coverage_complete
 
     asyncio.run(run())
+
+
+def _nested_history(prefix, status, depth):
+    venue = AccountVenue()
+    parent = _bracket(venue)
+    parent.update(
+        symbol="UNSEEN",
+        client_order_id=prefix + "compound",
+        order_class="oco",
+        status="filled",
+        qty="5",
+        filled_qty="5",
+        filled_avg_price="0.1234",
+    )
+    leg = parent["legs"][0]
+    leg.update(symbol="UNSEEN", client_order_id=prefix + "leg", status="canceled")
+    if depth == 2:
+        leg["legs"] = [dict(leg, id="nested-fixture-leg", client_order_id=prefix + "deep-leg")]
+        leg = leg["legs"][0]
+    if status is None:
+        leg.pop("status")
+    else:
+        leg["status"] = status
+    venue.activities = [
+        dict(
+            id="fixture-compound-fill",
+            order_id=parent["id"],
+            activity_type="FILL",
+            transaction_time=STAMP,
+            type="fill",
+            symbol="UNSEEN",
+            price="0.1234",
+            qty="5",
+            side="buy",
+            leaves_qty="0",
+            cum_qty="5",
+            order_status="filled",
+        )
+    ]
+    return venue
+
+
+@pytest.mark.parametrize("prefix", ["O-", "BTEST-", "owner-"])
+@pytest.mark.parametrize("depth", [1, 2])
+@pytest.mark.parametrize("status", ["pending_cancel", "future_status", None])
+def test_unloaded_terminal_parent_cannot_hide_a_working_nested_leg(
+    tmp_path, capfd, prefix, depth, status
+):
+    venue = _nested_history(prefix, status, depth)
+    before, seeded = deepcopy(venue.rows), len(venue.requests)
+    body, code, stand = start(tmp_path, venue)
+    _no_mutations(venue, seeded, before)
+    assert code == 2, (body["phase"], body["gate"], body["reconciliation"])
+    assert body["gate"] == {} and stand.subscribed == 0
+    trace = body["reconciliation"]
+    assert trace["orders"]["reason"] == REASON
+    assert trace["orders"]["skipped_unloaded"] == 0
+    assert trace["fills"]["skipped_unloaded"] == 0
+    text = json.dumps(trace) + capfd.readouterr().err
+    assert "UNSEEN" not in text and "0.1234" not in text
+    assert all(row["id"] not in text for row in venue.rows.values())
+
+
+@pytest.mark.parametrize("depth", [1, 2])
+@pytest.mark.parametrize("status", ["pending_cancel", "future_status", None])
+def test_unloaded_fill_cannot_hide_a_working_nested_leg(depth, status):
+    # Native mass status stops after the order-stage refusal; exercise fills directly too.
+    async def run():
+        node = client()
+        node.cache.instrument.return_value = None
+        venue = node.gateway.sdk = _nested_history("owner-", status, depth)
+        before, seeded = deepcopy(venue.rows), len(venue.requests)
+        with pytest.raises(client_module().IncompleteCoverage):
+            await node._generate_fill_reports(SCOPE)
+        assert node.report_trace["fills"]["reason"] == REASON
+        assert node.report_trace["fills"]["skipped_unloaded"] == 0
+        assert not node.coverage_complete
+        _no_mutations(venue, seeded, before)
+
+    asyncio.run(run())
+
+
+def test_unloaded_all_terminal_nested_history_is_skipped_and_counted(tmp_path):
+    venue = _nested_history("owner-", "expired", 2)
+    # A sibling at each depth must be checked too; all five terminal statuses occur.
+    parent = next(iter(venue.rows.values()))
+    leg = parent["legs"][0]
+    leg["legs"].append(dict(leg["legs"][0], status="rejected"))
+    parent["legs"].append(dict(leg, status="replaced", legs=None))
+    before, seeded = deepcopy(venue.rows), len(venue.requests)
+    body, code, _ = start(tmp_path, venue)
+    _no_mutations(venue, seeded, before)
+    assert (code, body["phase"]) == (0, "stopped"), body
+    assert all(count == 0 for count in body["gate"].values())
+    trace = body["reconciliation"]
+    assert trace["orders"]["skipped_unloaded"] == 1
+    assert trace["fills"]["skipped_unloaded"] == 1
+    assert trace["positions"]["skipped_unloaded"] == 0

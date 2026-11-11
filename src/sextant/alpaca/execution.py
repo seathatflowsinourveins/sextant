@@ -552,8 +552,12 @@ class AlpacaExecutionClient(ExecutionClient):
         # Only terminal history may be withheld; working rows must stop the start.
         if self.cache.instrument(self._instrument_id(row)) is not None:
             return False
-        if row["status"] not in _TERMINAL:
-            raise ValueError("report instrument is unavailable for non-terminal order")
+        pending = [row]  # alpaca-py cc4cb3b7 models.py:241: legs are recursive Orders.
+        while pending:
+            part = pending.pop()
+            if part.get("status") not in _TERMINAL:
+                raise ValueError("report instrument is unavailable for non-terminal order")
+            pending.extend(part.get("legs") or [])
         self.report_trace[stage]["skipped_unloaded"] += 1
         return True
 

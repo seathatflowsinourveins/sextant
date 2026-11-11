@@ -81,8 +81,9 @@ reconciliation to it (lead ruling 2026-11-11): the owner's filled shares in a
 universe symbol are the position the Strategy protects, while no order outside
 the house namespace is ever modified or cancelled. Owner rows the engine would
 skip (replaced without fills) are withheld with their payload. Terminal rows in
-an unloaded instrument are also withheld, across every namespace; a working or
-unknown-status unloaded row refuses startup by name before the gate. Withheld
+an unloaded instrument are also withheld, across every namespace, only when the row
+and every nested leg at every depth are terminal; a working or unknown-status leg
+refuses startup by name before the gate, including a missing status. Withheld
 instruments lose bulk position coverage; an owner
 bracket refuses startup by name. The engine's lookback stays unbounded and the
 order listing pages newest first by `until`, past the 500-row cap, so a holding
@@ -151,5 +152,9 @@ working unloaded orders never disappear. No value is recorded. Sources: stage 1 
 Rehearse on the failed history's shape, including unloaded terminal orders and their
 fills, rather than only the claim list. The run-2 regression uses the real order node,
 engine and gate over the fake venue; it proves flat admission, named refusal for unloaded
-working orders in every namespace, and unresolved replacement refusal. It establishes
+working orders in every namespace, nested working legs behind terminal parents, and
+unresolved replacement refusal. A terminal parent alone does not prove a compound order
+has ended: inspect all recursive `Order.legs` (alpaca-py cc4cb3b7 `models.py:241`) before
+skipping either its order or explained fills. All-terminal nests remain counted once
+per skipped parent or fill activity; loaded owner compound orders still refuse. It establishes
 no broker behavior or permission to trade (`test_alpaca_unloaded_history.py`).
