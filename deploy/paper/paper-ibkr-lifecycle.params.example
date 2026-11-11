@@ -1,0 +1,13 @@
+# NON-SECRET run choices only. Copy to ~/.config/sextant/paper/paper-ibkr-lifecycle.params.
+# Complete every blank from the approved run kit; no defaults or account identity here.
+# Absolute paths only: systemd does not expand ~, $HOME or %h inside these values.
+IBKR_HOST=
+IBKR_PORT=
+IBKR_DATA_CLIENT_ID=
+IBKR_EXEC_CLIENT_ID=
+IBKR_INSTRUMENT=
+IBKR_ORDER_QTY=
+IBKR_DURATION_S=
+IBKR_RECEIPT_DIR=
+# Accepted for compatibility; the node uses its shared account-scoped lock root.
+IBKR_LEASE_ROOT=

@@ -16,10 +16,12 @@ ROOT = Path(__file__).resolve().parents[2]
 DEPLOY = ROOT / "deploy/paper"
 B = "sextant-paper-b-stage1.service"
 IBKR = "sextant-paper-ibkr-dry-run.service"
-UNITS = (B, IBKR)
+IBKR_LIFECYCLE = "sextant-paper-ibkr-lifecycle.service"
+UNITS = (B, IBKR, IBKR_LIFECYCLE)
 KEYS = {
     B: ["ALPACA_PAPER_2_API_KEY", "ALPACA_PAPER_2_SECRET_KEY"],
     IBKR: ["IB_PAPER_ACCOUNT_ID"],
+    IBKR_LIFECYCLE: ["IB_PAPER_ACCOUNT_ID"],
 }
 
 
@@ -214,3 +216,60 @@ def test_paper_installer_is_shellcheck_clean():
         ["shellcheck", str(DEPLOY / "install.sh")], capture_output=True, text=True
     )
     assert done.returncode == 0, done.stdout + done.stderr
+
+
+def test_ibkr_lifecycle_unit_only_adds_the_fixed_second_opt_in():
+    dry_run = (DEPLOY / IBKR).read_text()
+    lifecycle = DEPLOY / IBKR_LIFECYCLE
+    assert lifecycle.is_file(), "missing attended IBKR order-sending unit"
+    assert lifecycle.read_text() == dry_run.replace(
+        "Description=Sextant IBKR attended node dry run",
+        "Description=Sextant IBKR attended node lifecycle orders",
+    ).replace("paper-ibkr-dry-run.params", "paper-ibkr-lifecycle.params").replace(
+        "--profile lifecycle\n", "--profile lifecycle --send-orders\n"
+    )
+    service = _unit(lifecycle)["Service"]
+    command = shlex.split(service["ExecStart"])
+    assert command.count("--send-orders") == 1
+    assert "-c" not in command
+    assert command[command.index("--profile") + 1] == "lifecycle"
+    assert command[command.index("--order-qty") + 1] == "${IBKR_ORDER_QTY}"
+    assert command[command.index("--duration-s") + 1] == "${IBKR_DURATION_S}"
+
+
+def test_ibkr_lifecycle_command_uses_node_opt_in_without_reading_account(tmp_path, monkeypatch):
+    from decimal import Decimal
+
+    from sextant.paper import node_ibkr
+
+    monkeypatch.delenv("IB_PAPER_ACCOUNT_ID", raising=False)
+    values = dict(
+        IBKR_HOST="192.0.2.1",
+        IBKR_PORT="4002",
+        IBKR_DATA_CLIENT_ID="91001",
+        IBKR_EXEC_CLIENT_ID="91002",
+        IBKR_INSTRUMENT="TEST.NASDAQ",
+        IBKR_ORDER_QTY="2",
+        IBKR_DURATION_S="7",
+        IBKR_RECEIPT_DIR=str(tmp_path / "receipt dir $literal --profile bracket"),
+        IBKR_LEASE_ROOT=str(tmp_path / "compatibility lease"),
+    )
+    parsed = node_ibkr.parse(_arguments(IBKR_LIFECYCLE, values))
+    assert parsed.send_orders is True and parsed.profile == "lifecycle"
+    assert parsed.account_id_env == "IB_PAPER_ACCOUNT_ID"
+    assert parsed.duration_s == 7 and parsed.order_qty == "2"
+    assert parsed.receipt_dir == Path(values["IBKR_RECEIPT_DIR"])
+    tester = node_ibkr.tester_config(parsed)
+    assert tester.dry_run is False
+    assert tester.open_position_on_start_qty == Decimal("2")
+    assert tester.open_position_on_first_quote is True
+    assert tester.enable_limit_sells is False and tester.enable_stop_sells is False
+    assert tester.cancel_orders_on_stop is False and tester.close_positions_on_stop is False
+    for key, value in (
+        ("IBKR_DURATION_S", ""),
+        ("IBKR_DURATION_S", "7 --profile bracket"),
+        ("IBKR_ORDER_QTY", ""),
+        ("IBKR_ORDER_QTY", "2 --send-orders"),
+    ):
+        with pytest.raises((SystemExit, node_ibkr.IbkrNodeRefused)):
+            node_ibkr.parse(_arguments(IBKR_LIFECYCLE, values | {key: value}))

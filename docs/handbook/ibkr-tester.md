@@ -27,8 +27,20 @@ landing and the kit's pre-checks. The lead starts `sextant-paper-ibkr-dry-run.se
 with `systemctl --user start`, watches `journalctl --user -u <unit> -f`, and stops early
 with `systemctl --user stop <unit>`. Its receipt is `IBKR_RECEIPT_DIR/ibkr-node-receipt.json`.
 Paper B's stage 1 unit, start/watch/stop and receipt/journal locations are on the same page.
-Both use `Restart=no`; the IBKR unit requests only a dry run. This follows systemd's
+All use `Restart=no`; the dry-run unit requests only a dry run. This follows systemd's
 own supervision and the existing TradingView units, with sources in the manifest row.
 Lesson: a checked-in supervised start keeps key names in argv and non-secret run choices
 in a required `.params` file, without shell sourcing or a new launcher. CLI proofs must
 parse the current node flags: B's writer and stream roots must match their existing holders.
+
+## Attended lifecycle orders
+
+Only the lead starts `sextant-paper-ibkr-lifecycle.service` after the dry run's receipt
+is good and its venue/lease post-checks pass, with the reviewed handover confirmed.
+Its required `paper-ibkr-lifecycle.params` supplies explicit quantity, duration and a
+fresh receipt directory; the fixed `--send-orders` flag selects the node's second opt-in
+with profile `lifecycle` only. Use the same start/watch/stop procedure above, verify
+`dry_run: false` in `IBKR_RECEIPT_DIR/ibkr-node-receipt.json`, and perform the kit's
+post-checks. This builds on the dry-run unit at Sextant@7252b0f5 and systemd.service(5)
+`ExecStart=`/`Restart=`, systemd.exec(5) `EnvironmentFile=` (read 2026-11-11), reusing
+the node's profile and custody refusal; the [units row](../manifest.md) holds full pins.
