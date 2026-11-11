@@ -239,6 +239,17 @@ class ExitRecord:
         return _plain(_compact(body))
 
 
+@dataclass(frozen=True)
+class Row:
+    """A plain record body, such as one row of B's lifecycle Strategy journal; checked like an
+    exit record, so a float or a non-JSON value is refused and paged, never written."""
+
+    body: Mapping[str, object]
+
+    def as_record(self) -> dict[str, Any]:
+        return _plain(dict(self.body))
+
+
 class DecisionLog:
     """One append-only JSONL receipt, written by one daemon thread. ``append`` only serializes and
     enqueues: it never writes, starts a thread, blocks or raises on the caller's thread; the pager
@@ -288,7 +299,7 @@ class DecisionLog:
 
         return self._pages.qsize(), self._dropped
 
-    def append(self, record: ExitRecord) -> None:
+    def append(self, record: ExitRecord | Row) -> None:
         """Serialize one decision and hand it to the writer; never blocks the caller."""
 
         if self._closed:

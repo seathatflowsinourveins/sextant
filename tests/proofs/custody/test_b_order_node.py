@@ -1,7 +1,8 @@
 """N3: the order-mode entry's own node (``build``/``run``, ``node.run()`` here) on the E5 fake
 venue. Stand-ins: the data client and the execution client's venue (test_alpaca_node_owner.py's
 wiring). The command's own shape is the default here: no ranking consumer, with the rank gate row
-off (N3 part 3); a fixture consumer is passed only where named."""
+off (N3 part 3); a fixture consumer is passed only where named. The writer lease and the stream
+reservation sit under two roots, the old writer's and the producer's (N3 part 4)."""
 
 from __future__ import annotations
 
@@ -41,8 +42,10 @@ from sextant.execution.custody import AccountScope, CustodyError, WriterLease
 from sextant.execution.pacer import AccountPacer
 from sextant.paper import node_order
 from sextant.paper.b_protector_main import EXPECTED_FULL_ENV, EXPECTED_SUFFIX_ENV
+from sextant.paper.decision_record import DecisionLog
 from sextant.ranking.registry import RANK_GATE_ENABLED
 from sextant.tradingview.producer import SCOPE as MARKET
+from sextant.tradingview.producer import reserve_stream
 
 from .alpaca_venue import Venue as FakeVenue
 from .conftest import controls
@@ -109,7 +112,8 @@ def argv(tmp_path: Path, *, count: int = 3, slot: str = "2", **paths: Path) -> l
         "--api-key-env": "FIXTURE_KEY_NAME",
         "--api-secret-env": "FIXTURE_SECRET_NAME",
         "--paper-slot": slot,
-        "--lease-root": tmp_path / "locks",
+        "--writer-lease-root": paths.get("writer_root", tmp_path / "locks"),
+        "--stream-lease-root": paths.get("stream_root", tmp_path / "leases"),
         "--existing-streams": "0",
         "--lease-source": "fixture: no stream exists",
     }
@@ -216,6 +220,7 @@ def test_slots_one_and_three_are_refused_before_anything(tmp_path, slot) -> None
         node_order.parse(argv(tmp_path, slot=slot))
     assert node_order.main(argv(tmp_path, slot=slot)) == 2
     assert not (tmp_path / "locks").exists() and not (tmp_path / "receipts").exists()
+    assert not (tmp_path / "leases").exists()
 
 
 def test_rows_protection_needs_only_the_native_row_and_the_rest_are_named_off(tmp_path) -> None:
@@ -252,7 +257,7 @@ def test_a_gate_row_that_is_on_still_needs_the_consumer(tmp_path, monkeypatch, v
     monkeypatch.setattr(node_order, "RANK_GATE_ENABLED", replace(RANK_GATE_ENABLED, value=value))
     body, code, stand = start(tmp_path)
     assert (code, body["reason"]) == (2, "ranking_consumer") and stand.connected == 0
-    assert not (tmp_path / "locks").exists()
+    assert not (tmp_path / "locks").exists() and not (tmp_path / "leases").exists()
 
 
 def test_protection_only_starts_with_no_consumer_on_a_flat_account(tmp_path) -> None:
@@ -283,7 +288,7 @@ def test_an_execution_client_other_than_the_paper_one_is_refused(tmp_path) -> No
 
     body, code, stand = start(tmp_path, exec_factory=Other)
     assert (code, body["reason"]) == (2, "execution_client") and stand.connected == 0
-    free(tmp_path, SCOPE)  # the refusal released the lease
+    free(tmp_path / "locks", SCOPE)  # the refusal released the lease
 
 
 def test_an_old_writer_prefix_that_overlaps_the_house_prefix_is_refused(tmp_path) -> None:
@@ -308,12 +313,12 @@ def test_a_flat_account_starts_the_strategy_and_a_stop_releases_the_lease(tmp_pa
     assert "ranking_consumer" not in body["steps"]["entry"]  # the fixture consumer was passed
     assert "command queue is full" not in out.out + out.err  # LEAD-0336: a full queue fails
     assert not writes(venue)
-    free(tmp_path, SCOPE)
-    free(tmp_path, MARKET)
+    free(tmp_path / "locks", SCOPE)
+    free(tmp_path / "leases", MARKET)
 
 
-def free(tmp_path: Path, scope: AccountScope) -> None:
-    lease = WriterLease(scope, tmp_path / "locks", "after")
+def free(root: Path, scope: AccountScope) -> None:
+    lease = WriterLease(scope, root, "after")
     lease.acquire()  # raises CustodyError while any holder remains
     lease.close()
 
@@ -375,13 +380,13 @@ def test_both_leases_are_held_for_the_run_and_a_second_holder_is_refused(tmp_pat
     args = node_order.parse(argv(tmp_path))
     with ExitStack() as held:
         node_order.take_leases(held, args)
-        for scope in (SCOPE, MARKET):
+        for root, scope in ((tmp_path / "locks", SCOPE), (tmp_path / "leases", MARKET)):
             with pytest.raises(CustodyError):
-                free(tmp_path, scope)
+                free(root, scope)
         with ExitStack() as second, pytest.raises(node_order.OrderModeRefused, match="writer"):
             node_order.take_leases(second, args)
-    free(tmp_path, SCOPE)
-    free(tmp_path, MARKET)
+    free(tmp_path / "locks", SCOPE)
+    free(tmp_path / "leases", MARKET)
 
 
 def test_an_account_other_than_the_expected_one_stops_before_any_command(
@@ -402,7 +407,7 @@ def test_no_expected_account_refuses_before_any_lease(tmp_path, monkeypatch) -> 
     monkeypatch.delenv(EXPECTED_FULL_ENV)
     body, code, stand = start(tmp_path)
     assert (code, body["reason"]) == (2, "account_mismatch") and stand.connected == 0
-    assert not (tmp_path / "locks").exists()
+    assert not (tmp_path / "locks").exists() and not (tmp_path / "leases").exists()
 
 
 def test_a_holding_outside_the_claims_while_running_is_paged_once_per_name(tmp_path, capfd) -> None:
@@ -421,3 +426,106 @@ def test_a_holding_outside_the_claims_while_running_is_paged_once_per_name(tmp_p
     assert body["outside_holdings_paged"] == 2
     assert sorted(line.rsplit(" ", 1)[1] for line in lines) == ["OUTA", "OUTB"]  # once per name
     assert not writes(venue)
+
+
+# N3 part 4 (a): each lease excludes against its own current holder, under its own root.
+
+
+def hold(holder: str, tmp_path: Path, held: ExitStack) -> None:
+    """The old writer's lease under its own locks directory (b_protector_main.py:370-372), or the
+    prestage producer's reservation under its own leases directory (prestage.py:799-803)."""
+    if holder == "writer":
+        old = WriterLease(SCOPE, tmp_path / "locks", "b-protector")
+        old.acquire()
+        held.callback(old.close)
+    else:
+        source = "fixture: the producer opens no stream"
+        held.enter_context(
+            reserve_stream(tmp_path / "leases", paper_slot=2, existing_streams=0, source=source)
+        )
+
+
+@pytest.mark.parametrize(
+    ("holder", "reason"), [("writer", "writer_lease"), ("stream", "market_data_lease")]
+)
+def test_each_lease_refuses_against_its_own_holder_under_its_own_root(
+    tmp_path, holder, reason
+) -> None:
+    with ExitStack() as held:
+        hold(holder, tmp_path, held)
+        body, code, stand = start(tmp_path)
+    assert (code, body["phase"], body["reason"]) == (2, "refused", reason)
+    assert stand.connected == 0
+    assert body["lease"]["writer_root"] == str(tmp_path / "locks")
+    assert body["lease"]["stream_root"] == str(tmp_path / "leases")
+    free(tmp_path / "locks", SCOPE)  # the refusal released whatever the node had taken
+    free(tmp_path / "leases", MARKET)
+
+
+def test_one_shared_root_loses_the_stream_refusal(tmp_path) -> None:
+    """Why there are two roots: with the producer's reservation under its own directory, a
+    node given the old writer's directory for both leases is not refused and starts."""
+    venue = AccountVenue()
+    with ExitStack() as held:
+        hold("stream", tmp_path, held)
+        body, code, _ = start(tmp_path, venue, stream_root=tmp_path / "locks")
+    assert (code, body["phase"]) == (0, "stopped")  # the market_data_lease refusal is lost
+
+
+@pytest.mark.parametrize("flag", ["--writer-lease-root", "--stream-lease-root"])
+def test_each_lease_root_is_required_with_no_fallback(tmp_path, flag) -> None:
+    parts = argv(tmp_path)
+    index = parts.index(flag)
+    with pytest.raises(SystemExit):
+        node_order.parse(parts[:index] + parts[index + 2 :])
+    with pytest.raises(SystemExit):
+        node_order.parse([*parts, "--lease-root", str(tmp_path / "locks")])  # the old flag
+
+
+# N3 part 4 (b): any other start failure leaves a receipt and releases both leases.
+
+
+def test_an_exception_from_build_writes_a_failed_receipt_and_releases_the_leases(
+    tmp_path, monkeypatch
+) -> None:
+    def broken(**_kwargs):
+        raise ValueError("fixture: the Strategy config refused")
+
+    monkeypatch.setattr(node_order, "BLifecycleConfig", broken)
+    body, code, stand = start(tmp_path)
+    assert (code, body["phase"], body["reason"]) == (2, "failed", "ValueError")
+    assert "fixture: the Strategy config refused" in body["detail"] and stand.connected == 0
+    free(tmp_path / "locks", SCOPE)
+    free(tmp_path / "leases", MARKET)
+
+
+# N3 part 4 (c): the Strategy's records and pages are kept in the run's receipt directory.
+
+
+def journal_rows(tmp_path: Path) -> list[dict[str, Any]]:
+    path = tmp_path / "receipts" / node_order.JOURNAL
+    return [json.loads(line) for line in path.read_text().splitlines()]
+
+
+def test_the_strategy_records_of_a_run_reach_the_journal_file(tmp_path) -> None:
+    body, code, _ = start(tmp_path)
+    assert (code, body["phase"]) == (0, "stopped")
+    refused = [row for row in journal_rows(tmp_path) if row["kind"] == "entry_refused"]
+    assert len(refused) == 1 and "ranking_consumer" in refused[0]["missing"]
+    assert body["journal"] == {"file": node_order.JOURNAL, "errors": 0}
+
+
+def test_a_page_raised_by_the_strategy_reaches_the_journal_file(tmp_path) -> None:
+    args = node_order.parse(argv(tmp_path))
+    args = replace(args, universe=(InstrumentId.from_str("ZA.ALPACA"),))
+    log = DecisionLog(tmp_path / "receipts" / node_order.JOURNAL)
+    config = node_order.strategy_config(args, consumer=None, journal=node_order.journal_into(log))
+    strategy = node_order.GatedBLifecycle(config)
+    book = next(iter(strategy.books.values()))
+    strategy._page(book, 1, "width_unavailable")
+    log.close()
+    pages = [row for row in journal_rows(tmp_path) if row["kind"] == "page"]
+    assert pages == [
+        {"kind": "page", "ts": 1, "instrument": "ZA.ALPACA", "reason": "width_unavailable"}
+    ]
+    assert strategy.journal_errors == 0
