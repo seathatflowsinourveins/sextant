@@ -19,6 +19,12 @@ instruments a data client emits while connecting reach the execution client's 1,
 in one start-up flush (``crates/live/src/node/mod.rs:484-498``), so more than 1,024 names is
 refused and ``shutdown_on_error`` makes a logged full queue a failed start; custom Python
 clients run without a cache database (``docs/concepts/live.md:232-233``).
+
+Each lease excludes against its real current holder under that holder's own root (N3 part 4):
+the writer lease under the old writer's locks directory, the stream reservation under the
+prestage producer's leases directory (``tradingview/prestage.py:799-803``). Any other exception
+before the run writes a failed receipt. B's journal rows and pages are appended to the run's
+receipt directory through ``decision_record.DecisionLog``, the old writer's own append-only file.
 """
 
 from __future__ import annotations
@@ -57,7 +63,7 @@ from sextant.entry.parameters import EntryParameters
 from sextant.execution.custody import AccountScope, CustodyError, WriterLease
 from sextant.execution.pacer import ActionKind
 from sextant.execution.state import write_atomic
-from sextant.paper.b_lifecycle import BLifecycle, BLifecycleConfig
+from sextant.paper.b_lifecycle import BLifecycle, BLifecycleConfig, Journal
 from sextant.paper.b_protector import load_b_parameters
 from sextant.paper.b_protector_main import (
     EXPECTED_FULL_ENV,
@@ -65,6 +71,7 @@ from sextant.paper.b_protector_main import (
     load_account_config,
 )
 from sextant.paper.config import PaperAccount
+from sextant.paper.decision_record import DecisionLog, Row
 from sextant.ranking.consumer import RankingConsumer
 from sextant.ranking.registry import RANK_GATE_ENABLED
 
@@ -74,6 +81,7 @@ WRITER = "b-node"
 HOUSE_PREFIX = "O-"  # rc8's generator O-{date}-{time}-{trader}-{tag}-{n} (b_lifecycle._house)
 QUEUE = 1024  # rc8 crates/live/src/python/runtime.rs:39 COMMAND_CAPACITY, an engine constant
 RECEIPT = "order-mode-receipt.json"
+JOURNAL = "b-lifecycle-journal.jsonl"  # beside the receipt; the node keeps no other store
 WIDTH = ("alpaca_min_trail_fraction", "trail_atr_period", "trail_atr_bar_minutes")
 WIDTH += ("trail_atr_multiple",)
 TIMING = frozenset(f"timeout_{n}_secs" for n in ("connection", "reconciliation", "portfolio"))
@@ -115,7 +123,8 @@ class OrderArguments:
     receipt_dir: Path
     api_key_env: str
     api_secret_env: str
-    lease_root: Path
+    writer_lease_root: Path  # the old writer's locks directory: its WriterLease is there
+    stream_lease_root: Path  # the prestage producer's leases directory: its reservation is there
     existing_streams: int
     lease_source: str
     universe: tuple[InstrumentId, ...] = ()  # the claim list, read after the leases
@@ -204,7 +213,8 @@ def parse(argv: list[str] | None = None) -> OrderArguments:
         ("--api-key-env", str),
         ("--api-secret-env", str),
         ("--paper-slot", int),
-        ("--lease-root", Path),
+        ("--writer-lease-root", Path),
+        ("--stream-lease-root", Path),
         ("--existing-streams", int),
         ("--lease-source", str),
     ):
@@ -229,7 +239,8 @@ def parse(argv: list[str] | None = None) -> OrderArguments:
         raw.receipt_dir,
         raw.api_key_env,
         raw.api_secret_env,
-        raw.lease_root,
+        raw.writer_lease_root,
+        raw.stream_lease_root,
         raw.existing_streams,
         raw.lease_source,
     )
@@ -404,14 +415,37 @@ class _Retaining(ExecutionClientFactory):
         return client
 
 
+def journal_into(log: DecisionLog) -> Journal:
+    """B's ``Journal`` over the existing append-only log: append never raises or blocks."""
+    return lambda row: log.append(Row(row))
+
+
+def strategy_config(
+    args: OrderArguments, *, consumer: RankingConsumer | None, journal: Journal | None
+) -> BLifecycleConfig:
+    return BLifecycleConfig(
+        namespace=args.account.namespace,
+        instrument_ids=args.universe,
+        consumer=consumer,
+        rank_gate=RANK_GATE_ENABLED,
+        journal=journal,
+        entry_params=args.rows.entry,
+        native_trail_fraction=args.rows.native,
+        width_rows=args.rows.width,
+    )
+
+
 def build(
     args: OrderArguments,
     *,
     consumer: RankingConsumer | None,
+    journal: Journal | None = None,
     data_factory: Any = AlpacaDataClientFactory,
     exec_factory: Any = AlpacaExecutionClientFactory,
     timing: Mapping[str, float] | None = None,
 ) -> tuple[LiveNode, GatedBLifecycle]:
+    # The Strategy first, so a refused config leaves no node built on this thread.
+    strategy = GatedBLifecycle(strategy_config(args, consumer=consumer, journal=journal))
     config = node_config(args, **dict(timing or {}))
     exec_config = execution_config(args)
     refuse_non_paper([(CLIENT_NAME, exec_factory, exec_config)], config)
@@ -429,19 +463,12 @@ def build(
         .add_exec_client(CLIENT_NAME, _Retaining(exec_factory, gate.clients), exec_config)
         .build()
     )
-    strategy = GatedBLifecycle(
-        BLifecycleConfig(
-            namespace=args.account.namespace,
-            instrument_ids=args.universe,
-            consumer=consumer,
-            rank_gate=RANK_GATE_ENABLED,
-            entry_params=args.rows.entry,
-            native_trail_fraction=args.rows.native,
-            width_rows=args.rows.width,
-        )
-    )
     strategy.gate = gate
-    node.add_strategy(strategy)
+    try:
+        node.add_strategy(strategy)
+    except Exception:
+        node.dispose()
+        raise
     return node, strategy
 
 
@@ -464,7 +491,8 @@ def write_receipt(args: OrderArguments, phase: str, **body: Any) -> Path:
                 "writer": WRITER,
                 "scope_sha256": hashlib.sha256(scope.encode()).hexdigest(),
                 "market_data": "rank-live",
-                "root": str(args.lease_root),
+                "writer_root": str(args.writer_lease_root),
+                "stream_root": str(args.stream_lease_root),
             },
             "engine": {
                 "environment": "LIVE",
@@ -521,15 +549,21 @@ def run(
                     f"{QUEUE}-slot queue; the chunked load after start is not built",
                 )
             args = replace(args, universe=universe, universe_source=source)
+            log = DecisionLog(args.receipt_dir / JOURNAL, on_page=journal_page)
+            held.callback(log.close)
             node, strategy = build(
                 args,
                 consumer=consumer,
+                journal=journal_into(log),
                 data_factory=data_factory,
                 exec_factory=exec_factory,
                 timing=timing,
             )
         except OrderModeRefused as refusal:
             return write_receipt(args, "refused", reason=refusal.reason, detail=refusal.detail), 2
+        except Exception as error:  # any other start failure: a receipt, then the leases go
+            name = type(error).__name__
+            return write_receipt(args, "failed", reason=name, detail=f"{name}: {error}"), 2
         if strategy.missing:  # the Strategy's own list (P2 BLifecycle.missing): no house entry
             off = f"off: the Strategy refuses entries; missing {strategy.missing}"
             args = replace(args, rows=replace(args.rows, steps=args.rows.steps | {"entry": off}))
@@ -549,7 +583,9 @@ def run(
         phase = "stopped" if gate.open else "refused" if gate.checked else "aborted_at_start"
         phase = "failed" if failure else phase
         reason = failure or (None if gate.open else ",".join(gate.reasons) or "startup_aborted")
+        journal = {"file": JOURNAL, "errors": strategy.journal_errors}
         del node, strategy  # rc8 allows one LiveNode per thread until it is released
+        log.close()  # every row the Strategy appended is on disk before the final receipt
         receipt = write_receipt(
             args,
             phase,
@@ -557,17 +593,24 @@ def run(
             gate=gate.counts,
             refused_sends=gate.refused_sends,
             outside_holdings_paged=len(gate.paged),
+            journal=journal,
         )
         return receipt, 0 if phase == "stopped" else 2
 
 
+def journal_page(reason: str, _symbol: str | None, detail: str) -> None:
+    """The log's own failure pages (an invalid or unwritten row) go to the unit's journal."""
+    print(f"order node page {reason} {detail}", file=sys.stderr, flush=True)
+
+
 def take_leases(held: ExitStack, args: OrderArguments) -> None:
     """The account's one writer (custody.py ``WriterLease``, the old writer's scope) and the
-    key's one market-data stream (producer.py ``reserve_stream``), both for the whole run."""
+    key's one market-data stream (producer.py ``reserve_stream``), both for the whole run, each
+    under its own holder's root so neither exclusion is lost to a shared directory."""
     from sextant.tradingview.producer import reserve_stream
 
     scope = AccountScope(args.account.broker, args.account.account_id)
-    lease = WriterLease(scope, args.lease_root, WRITER)
+    lease = WriterLease(scope, args.writer_lease_root, WRITER)
     try:
         lease.acquire()
     except CustodyError as error:
@@ -576,7 +619,7 @@ def take_leases(held: ExitStack, args: OrderArguments) -> None:
     try:
         held.enter_context(
             reserve_stream(
-                args.lease_root,
+                args.stream_lease_root,
                 paper_slot=2,
                 existing_streams=args.existing_streams,
                 source=args.lease_source,
