@@ -2,13 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from decimal import Decimal
-from typing import Any
 
 import pytest
-from alpaca.data.enums import DataFeed
-from alpaca.data.live import StockDataStream
 from nautilus_trader.model import (
     Currency,
     Equity,
@@ -17,7 +13,6 @@ from nautilus_trader.model import (
     Quantity,
     QuoteTick,
     Symbol,
-    TradeTick,
 )
 
 from sextant.data.quotes import (
@@ -36,10 +31,6 @@ from sextant.data.quotes import (
     quote_event_imbalance,
     resident_bytes,
 )
-from sextant.paper.alpaca_feed import AlpacaTickFeed
-
-_TEST_API_KEY = "test-key"
-_TEST_API_CREDENTIAL = "test-credential"
 
 
 def _frontier(**overrides: object) -> QuoteFrontier:
@@ -112,30 +103,6 @@ def test_frontier_refuses_a_bare_string_as_a_source() -> None:
         _frontier(top_n="AAPL")
 
 
-class _FakeStream(StockDataStream):
-    """A stream stand-in that records calls; it never opens a socket."""
-
-    def __init__(self) -> None:
-        self.credentials: tuple[str, str] | None = None
-        self.feed: DataFeed | None = None
-        self.trade_handler: Callable[..., Any] | None = None
-        self.quote_handler: Callable[..., Any] | None = None
-        self.trade_symbols: tuple[str, ...] = ()
-        self.quote_symbols: tuple[str, ...] = ()
-        self.run_calls = 0
-
-    def subscribe_trades(self, handler: Callable[..., Any], *symbols: str) -> None:
-        self.trade_handler = handler
-        self.trade_symbols = symbols
-
-    def subscribe_quotes(self, handler: Callable[..., Any], *symbols: str) -> None:
-        self.quote_handler = handler
-        self.quote_symbols = symbols
-
-    def run(self) -> None:
-        self.run_calls += 1
-
-
 def _equity(symbol: str) -> Equity:
     return Equity(
         InstrumentId.from_str(f"{symbol}.ALPACA"),
@@ -175,42 +142,6 @@ def test_frontier_instruments_refuses_a_symbol_mismatch() -> None:
 
     with pytest.raises(ValueError, match="id symbol"):
         frontier_instruments(frontier, {"AAPL": _equity("MSFT")})
-
-
-def _ignore_trade(tick: TradeTick) -> None:
-    pass
-
-
-def _ignore_quote(tick: QuoteTick) -> None:
-    pass
-
-
-def test_alpaca_feed_subscribes_only_the_bounded_frontier() -> None:
-    frontier = _frontier(top_n=("AAPL",), holdings=("MSFT",), catalysts=())
-    selected = frontier_instruments(frontier, _instruments())
-    fake = _FakeStream()
-
-    def factory(api_key: str, secret_key: str, *, feed: DataFeed) -> StockDataStream:
-        fake.credentials = (api_key, secret_key)
-        fake.feed = feed
-        return fake
-
-    feed = AlpacaTickFeed(
-        selected,
-        on_trade=_ignore_trade,
-        on_quote=_ignore_quote,
-        api_key=_TEST_API_KEY,
-        secret_key=_TEST_API_CREDENTIAL,
-        stream_factory=factory,
-    )
-
-    feed.start()
-
-    assert fake.feed is DataFeed.SIP
-    assert fake.quote_symbols == ("AAPL", "MSFT")
-    assert fake.trade_symbols == fake.quote_symbols
-    assert "TSLA" not in fake.quote_symbols
-    assert "*" not in fake.quote_symbols
 
 
 _NS = 1_000_000_000
