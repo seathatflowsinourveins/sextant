@@ -98,3 +98,22 @@ class AlpacaInstrumentProvider(InstrumentProvider):
                 f"Skipped {skipped} of {len(instrument_ids)} Alpaca asset "
                 "lookup(s) that could not be parsed",
             )
+
+    @override
+    async def load_async(
+        self,
+        instrument_id: InstrumentId,
+        filters: dict | None = None,
+    ) -> None:
+        """Load one instrument through the ID-list loader, or fail closed.
+
+        The signature follows nautilus_trader@d53849b
+        ``python/nautilus_trader/live/providers.py:110``. A single-instrument
+        request never guesses: an id the venue does not list raises instead of
+        leaving the data client to fail later on a different message.
+        """
+        if self.find(instrument_id) is not None:
+            return
+        await self.load_ids_async([instrument_id], filters)
+        if self.find(instrument_id) is None:
+            raise ValueError(f"Alpaca does not list an equity for {instrument_id}")

@@ -438,3 +438,44 @@ def test_one_unparseable_asset_lookup_does_not_fail_the_rest() -> None:
     assert [str(instrument.id) for instrument in provider.list_all()] == ["AAPL.ALPACA"]
     assert len(warnings) == 1
     assert "Skipped 1" in warnings[0]
+
+
+def test_a_cache_miss_loads_the_requested_equity_through_the_id_list_loader() -> None:
+    """_stock() outside the startup set asks the single-instrument hook for it."""
+    fake = FakeTradingClient({"AAPL": _asset("AAPL"), "MSFT": _asset("MSFT")})
+    config = _data_config(
+        instrument_provider=InstrumentProviderConfig(load_ids=["AAPL.ALPACA"]),
+    )
+    provider = _provider(fake, config.instrument_provider)
+    seen: list[Any] = []
+
+    class RecordingClient(AlpacaDataClient):
+        def _handle_instrument(self, instrument: object) -> None:
+            seen.append(instrument)
+
+    client = RecordingClient(
+        name="ALPACA",
+        config=config,
+        cache=cast("Any", None),
+        clock=cast("Any", None),
+        instrument_provider=provider,
+        venue=constants.VENUE,
+    )
+    asyncio.run(provider.initialize())
+    assert [str(instrument.id) for instrument in provider.list_all()] == ["AAPL.ALPACA"]
+    stock = asyncio.run(client._stock(InstrumentId.from_str("MSFT.ALPACA")))
+    assert stock.symbol == "MSFT"
+    assert [str(instrument.id) for instrument in provider.list_all()] == [
+        "AAPL.ALPACA",
+        "MSFT.ALPACA",
+    ]
+    assert [str(instrument.id) for instrument in seen] == ["MSFT.ALPACA"]
+
+
+def test_an_unlisted_equity_is_refused_by_the_single_instrument_loader() -> None:
+    fake = FakeTradingClient({"AAPL": _asset("AAPL")})
+    provider = _provider(fake, InstrumentProviderConfig(load_ids=["AAPL.ALPACA"]))
+    asyncio.run(provider.initialize())
+    with pytest.raises(ValueError, match="does not list an equity"):
+        asyncio.run(provider.load_async(InstrumentId.from_str("MSFT.ALPACA")))
+    assert provider.find(InstrumentId.from_str("MSFT.ALPACA")) is None
