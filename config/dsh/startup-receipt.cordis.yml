@@ -15,5 +15,5 @@
           overlays: [context7, exa, deepwiki, paper-search, brooks-review, reference-checker, session-search, openviking, billion-context]
           holds:
             - {id: openresearch, reason: 'not selected for Sextant (ADR-0022)'}
-            - {id: weknora, reason: 'named hold: no service or credential provisioned (docs/design.md:126)'}
+            - {id: weknora, reason: 'worker profile only (config/dsh/weknora.cordis.yml, deploy/weknora); never the TUI'}
           orcaHooks: attached
