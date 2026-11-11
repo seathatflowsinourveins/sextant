@@ -341,3 +341,75 @@ admitted apply per tick, stale input leaves the lists unchanged and pages, and
 `enabled=1` is reviewed in this PR and effective at the next session boundary.
 Stream opening and controller activation still require landing and explicit lead
 enablement.
+
+## Segment unit producer for the display directory
+
+This part ships the unit publication step (`publish_tick`, whose clock is read
+again after the replay). The command line, the cadence loop and the request
+budget's consumer below arrive with the next part and are documented ahead of
+it: until then the command is not runnable and no keyed job is started.
+
+`tradingview/prestage.py` is the repo entry point that keeps the newest
+complete display unit fresh for the current PRE, RTH or POST segment, so the
+display loop above reads a fresh `--research-dir` without a manual step. One
+operator-started process holds one slot-2 data lease and takes the same
+environment seam as the other keyed jobs under ADR-0028:
+
+```sh
+scripts/with-keys.sh --strict \
+  -k ALPACA_PAPER_2_API_KEY -k ALPACA_PAPER_2_SECRET_KEY -- \
+  uv run --frozen python -m sextant.tradingview.prestage \
+  --research-dir "$HOME/sextant-data/tradingview-prestage/unit" \
+  --nasdaq-listed nasdaqlisted.txt --other-listed otherlisted.txt \
+  --symbol-map symbol_map.json \
+  --gap-bound 0.05 --rvol-bound 2 --bounds-max-age-s 600
+```
+
+`--strict` refuses a missing or empty key. The process reads only
+`ALPACA_PAPER_2_API_KEY` and `ALPACA_PAPER_2_SECRET_KEY` from its environment
+and passes them to the SDK; no key enters a file, flag, URL or log.
+
+The request budget is its own row in
+`lanes/tradingview/prestage-parameters.json`, never a K2 row. It has no value
+or authority today: the 2026-11-10 C REST-rate measure found no REST-call
+records, so no peak exists to derive one. The entry point refuses to start
+until a measured value and authority are recorded (AGENTS.md Rule 2).
+
+The directory texts are the public NASDAQ Trader files read on the lane's
+published date; the symbol map is the operator's exact TradingView map and must
+cover the whole filtered universe; the three bounds are the caller-supplied
+display metadata from the bridge (there is no default authority). `--once`
+publishes one tick and exits, nonzero if that tick is refused. Otherwise it
+sleeps the J5 cadence floor (150 s in the 07:00–10:30 and 15:00–16:00 ET onset
+windows, 300 s elsewhere in 04:00–20:00 ET; the 900 s weekly-usage floor never
+applies because no usage figure is supplied), releases the lease at the segment
+boundary, and moves to the next supported segment; after POST it waits for the
+next 04:00 ET open.
+Overnight is not produced until #138 supplies a BOATS baseline.
+
+Each tick fetches the current segment's completed SIP minutes (the in-progress
+minute is never replayed) and passes every completed minute through the
+bar-fidelity host. The publication clock is read again after the replay, so a
+tick whose fetch outlives its segment publishes nothing. The reference close is split-adjusted (`Adjustment.SPLIT`)
+and is the same session's official close for POST and the last prior session's
+official close for PRE and RTH; that reference session comes from the exchange
+calendar, not from the baseline filter, so a 13:00 early close still supplies
+the close even when the baseline skips it. The tick rebuilds the five-session
+baseline once per segment from the five prior XNYS sessions whose start and
+span match the current segment; an early close is skipped rather than treated
+as a full session. Halt eligibility stays unknown because this REST path has no
+status receipt, so no name is focus-eligible and the NS focus list is empty
+until a status source exists. The projected display bound carries the
+remaining J5 lifetime, so `read_research_inputs` refuses the generation after
+its `expires_at_ns` even when the caller allows a longer age. The tick projects
+the fresh J5 document with the bridge, writes the three documents into a
+content-addressed generation directory, validates that generation with
+`read_research_inputs(max_age=1200)`, and only then switches the display
+directory's symlink pointer to it. A refused tick leaves the previous complete
+unit in place; a segment whose five-session baseline or reference close cannot
+be assembled is skipped with its reason paged, and the producer waits for the
+next segment instead of exiting; an interruption before the pointer switch
+leaves the previous generation readable, and the switch itself is atomic. No
+stream is opened, no TradingView call is made, no order or controller exists,
+and no unattended service is installed: the operator starts the process,
+exactly as they start the display loop.

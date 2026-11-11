@@ -28,6 +28,7 @@ from alpaca.data.historical.stock import StockHistoricalDataClient
 from alpaca.data.live.stock import StockDataStream
 from alpaca.data.models import Bar as StockBar
 from alpaca.data.models import BarSet, Quote, QuoteSet, Trade, TradeSet
+from alpaca.data.models.trades import TradingStatus
 from alpaca.data.requests import StockBarsRequest, StockQuotesRequest, StockTradesRequest
 from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 from nautilus_trader.common import Clock, Logger
@@ -42,10 +43,12 @@ from nautilus_trader.live import (
     RequestQuotes,
     RequestTrades,
     SubscribeBars,
+    SubscribeInstrumentStatus,
     SubscribeQuotes,
     SubscribeTrades,
     TradesResponse,
     UnsubscribeBars,
+    UnsubscribeInstrumentStatus,
     UnsubscribeQuotes,
     UnsubscribeTrades,
 )
@@ -57,6 +60,8 @@ from nautilus_trader.model import (
     BarType,
     Equity,
     InstrumentId,
+    InstrumentStatus,
+    MarketStatusAction,
     Price,
     PriceType,
     Quantity,
@@ -70,9 +75,9 @@ _NY = ZoneInfo("America/New_York")
 _STREAM_STOP_TIMEOUT_S = 5.0  # E4 dsh build 48cb220, shutdown bound.
 _TRADE_ID_MAX = 36  # NautilusTrader rc8 crates/model/src/identifiers/trade_id.rs:50.
 _ROUND_LOT_SHARES = 100  # Alpaca's quote sizes and the incumbent SIP normalization.
-type _Tick = QuoteTick | TradeTick | Bar
+type _Tick = QuoteTick | TradeTick | Bar | InstrumentStatus
 type _StreamOwner = tuple[asyncio.AbstractEventLoop, asyncio.Task[None]]
-type _StockHandler = Callable[[Quote | Trade | StockBar], Awaitable[None]]
+type _StockHandler = Callable[[Quote | Trade | StockBar | dict], Awaitable[None]]
 
 
 class _DataSettings(Protocol):
@@ -94,6 +99,24 @@ class AlpacaStockDataStream(StockDataStream):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._subscription_lock = asyncio.Lock()
+
+    async def _dispatch(self, msg: dict) -> None:
+        # alpaca-py cc4cb3b websocket.py:294-317,324-372 permits raw rows,
+        # but its typed status cast happens before the handler's error boundary.
+        # Keep status parsing inside our per-row boundary; all other channels
+        # retain the SDK dispatch. No wildcard is registered or sent.
+        if msg.get("T") == "s":
+            handlers = self._handlers["statuses"]
+            symbol = msg.get("S")
+            handler = handlers.get(symbol) if isinstance(symbol, str) else None
+            if handler is None and (not isinstance(symbol, str) or not symbol) and handlers:
+                # No instrument can be named: a subscribed handler counts and
+                # logs this malformed row, without publishing instrument data.
+                handler = next(iter(handlers.values()))
+            if handler is not None:
+                await handler(msg)
+            return
+        await super()._dispatch(msg)
 
     async def _send_subscribe_msg(self) -> None:
         async with self._subscription_lock:
@@ -143,7 +166,7 @@ def _publish_on_owner(
     client_ref: ReferenceType[AlpacaDataClient],
     channel: str,
     symbol: str,
-    key: InstrumentId | BarType,
+    key: InstrumentId | BarType | None,
     tick: _Tick | None,
     conversion_error: Exception | None,
 ) -> None:
@@ -191,11 +214,13 @@ class AlpacaDataClient(MarketDataClient):
             "quotes": {},
             "trades": {},
             "bars": {},
+            "statuses": {},
         }
         self._stream_ready: asyncio.Future[_StreamOwner] | None = None
         self._stream_task: asyncio.Task[object] | None = None
         self._stream_state = _StreamState()
         self._dropped_counts = dict.fromkeys(self._active, 0)
+        self._unknown_status_count = 0
 
     @property
     def dropped_quote_count(self) -> int:
@@ -209,6 +234,14 @@ class AlpacaDataClient(MarketDataClient):
     @property
     def dropped_bar_count(self) -> int:
         return self._dropped_counts["bars"]
+
+    @property
+    def dropped_status_count(self) -> int:
+        return self._dropped_counts["statuses"]
+
+    @property
+    def unknown_status_count(self) -> int:
+        return self._unknown_status_count
 
     async def _connect(self) -> None:
         if self.instrument_provider is None:
@@ -363,6 +396,10 @@ class AlpacaDataClient(MarketDataClient):
     async def _subscribe_trades(self, command: SubscribeTrades) -> None:
         await self._subscribe_channel("trades", command.instrument_ids)
 
+    async def _subscribe_instrument_status(self, command: SubscribeInstrumentStatus) -> None:
+        # NautilusTrader d53849b live/clients.py:267-268 and live/__init__.pyi:1794-1808.
+        await self._subscribe_channel("statuses", command.instrument_ids)
+
     async def _subscribe_bars(self, command: SubscribeBars) -> None:
         for bar_type in command.bar_types:
             _bar_timeframe(bar_type, streaming=True)
@@ -393,13 +430,32 @@ class AlpacaDataClient(MarketDataClient):
         client_ref: ReferenceType[AlpacaDataClient] = ref(self)
         state = self._stream_state
 
-        async def receive(row: Quote | Trade | StockBar) -> None:
+        async def receive(row: Quote | Trade | StockBar | dict) -> None:
             if state.failure is not None:
                 return
             receipt = time.time_ns()
             tick: _Tick | None = None
             conversion_error: Exception | None = None
             try:
+                if channel == "statuses":
+                    # SDK raw status dictionaries reach this boundary before
+                    # model validation, including a missing symbol or timestamp.
+                    try:
+                        if not isinstance(row, dict):
+                            raise TypeError("Expected raw Alpaca trading status")
+                        stock, key = stocks[row["S"]]
+                        tick = _instrument_status(row, stock, receipt)
+                    except Exception as error:
+                        owner.call_soon_threadsafe(
+                            _publish_on_owner, client_ref, channel, "", None, None, error
+                        )
+                        return
+                    owner.call_soon_threadsafe(
+                        _publish_on_owner, client_ref, channel, stock.symbol, key, tick, None
+                    )
+                    return
+                if isinstance(row, dict):
+                    raise TypeError("Unexpected raw Alpaca market data")
                 stock, key = stocks[row.symbol]
                 if channel == "quotes" and isinstance(row, Quote):
                     try:
@@ -436,15 +492,20 @@ class AlpacaDataClient(MarketDataClient):
         self,
         channel: str,
         symbol: str,
-        key: InstrumentId | BarType,
+        key: InstrumentId | BarType | None,
         tick: _Tick | None,
         conversion_error: Exception | None = None,
     ) -> None:
         if tick is None:
             self._dropped_counts[channel] += 1
-            if conversion_error is not None:
+            if channel == "statuses":
+                self._log.error(f"Dropped Alpaca statuses row: {type(conversion_error).__name__}")
+            elif conversion_error is not None:
                 self._log.error(f"Dropped Alpaca {channel} row for {symbol}: {conversion_error}")
         elif not self._stream_state.closing and self._active[channel].get(symbol) == key:
+            if isinstance(tick, InstrumentStatus) and tick.action == MarketStatusAction.NONE:
+                self._unknown_status_count += 1
+                self._log.error("Unknown Alpaca status code; published unknown instrument status")
             self._handle_data(tick)
 
     async def _unsubscribe_quotes(self, command: UnsubscribeQuotes) -> None:
@@ -452,6 +513,10 @@ class AlpacaDataClient(MarketDataClient):
 
     async def _unsubscribe_trades(self, command: UnsubscribeTrades) -> None:
         await self._unsubscribe_channel("trades", command.instrument_ids)
+
+    async def _unsubscribe_instrument_status(self, command: UnsubscribeInstrumentStatus) -> None:
+        # NautilusTrader d53849b live/clients.py:309-313.
+        await self._unsubscribe_channel("statuses", command.instrument_ids)
 
     async def _unsubscribe_bars(self, command: UnsubscribeBars) -> None:
         await self._unsubscribe_channel("bars", command.bar_types)
@@ -638,4 +703,50 @@ def _bar(row: StockBar, stock: _Stock, bar_type: BarType, receipt: int | None = 
         stock.quantity(row.volume),
         event,
         event if receipt is None else receipt,
+    )
+
+
+def _instrument_status(raw: dict, stock: _Stock, receipt: int) -> InstrumentStatus:
+    """Alpaca's tape-scoped status codes; never infer trading from free text.
+
+    alpaca-py cc4cb3b models/trades.py:82-117; official real-time stock
+    pricing data, Trading Status tables (read 2026-11-10, cached offline).
+    NautilusTrader d53849b model/__init__.pyi:2408-2421,8035-8052 and
+    docs/concepts/data/instrument_status.md:24-29 preserve unknown booleans.
+    """
+    # Match SDK websocket.py:294-317's wire timestamp and typed model cast,
+    # inside the row boundary and without mutating a vendor dictionary.
+    row = TradingStatus(raw["S"], {**raw, "t": raw["t"].to_datetime()})
+    if row.timestamp.tzinfo is None or row.timestamp.utcoffset() is None:
+        raise ValueError("Trading status timestamp requires a timezone")
+    actions = {
+        "A": {
+            "2": MarketStatusAction.HALT,
+            "3": MarketStatusAction.TRADING,
+            "5": MarketStatusAction.NEW_PRICE_INDICATION,
+            "E": MarketStatusAction.SHORT_SELL_RESTRICTION_CHANGE,
+        },
+        "C": {
+            "H": MarketStatusAction.HALT,
+            "T": MarketStatusAction.TRADING,
+            "Q": MarketStatusAction.QUOTING,
+            "P": MarketStatusAction.PAUSE,
+        },
+    }
+    tape = {"B": "A", "O": "C"}.get(row.tape, row.tape)
+    action = actions.get(tape, {}).get(row.status_code, MarketStatusAction.NONE)
+    trading = None
+    if action == MarketStatusAction.TRADING:
+        trading = True
+    elif action in (MarketStatusAction.HALT, MarketStatusAction.PAUSE, MarketStatusAction.QUOTING):
+        trading = False
+    return InstrumentStatus(
+        stock.id,
+        action,
+        dt_to_unix_nanos(row.timestamp),
+        receipt,
+        reason=f"{row.reason_code}: {row.reason_message}",
+        trading_event="unknown" if action == MarketStatusAction.NONE else row.status_message,
+        is_trading=trading,
+        is_quoting=True if action == MarketStatusAction.QUOTING else None,
     )
