@@ -176,15 +176,19 @@ def _prior_curves(
     start: tuple[int, int],
     minutes: int,
 ) -> dict[str, tuple[tuple[Decimal, ...], ...]]:
-    start_ns = _at(prior[0], *start)
     per_symbol: dict[str, list[tuple[Decimal, ...]]] = {symbol: [] for symbol in symbols}
     for day in prior:
-        day_bars = bars.load_raw_day(root, day, symbols=set(symbols))
-        curves = baseline.cumulative_curves(day_bars, symbols, _at(day, *start), minutes)
-        for symbol in symbols:
+        requested: set[str] = set()
+        day_bars = bars.load_raw_day(root, day, symbols=set(symbols), requested_out=requested)
+        covered = [symbol for symbol in symbols if symbol in requested]
+        curves = (
+            baseline.cumulative_curves(day_bars, covered, _at(day, *start), minutes)
+            if covered
+            else {}
+        )
+        for symbol in covered:
             per_symbol[symbol].append(curves[symbol])
-        del day_bars, curves
-    del start_ns
+        del day_bars, curves, requested
     return {symbol: tuple(curves) for symbol, curves in per_symbol.items()}
 
 
@@ -244,6 +248,7 @@ def _onset_record(state: MoverState | None) -> dict[str, object]:
         "computable": row.score is not None and row.trades_accel is not None,
         "baseline_available": available,
         "baseline_reason": reason,
+        "baseline_sessions": row.observations.get("baseline_sessions"),
         "unknown_reasons": [str(item) for item in row.observations.get("unknown_reasons", ())],
     }
 
@@ -332,6 +337,7 @@ def _replay_arm(
                 retained: frozenset[str] = frozenset()
                 if keep is not None:
                     members = keep.update(ranked, qualifies=qualifies)
+                    keep.note_admission(members, tick_ns)
                     retained = keep.retained
                     out.retained_member_generations += len(retained)
                     out.ever_member |= members
@@ -667,7 +673,9 @@ def run_session(
     mean_first100 = {s: own(mean, s).first100.get(s) for s in truth_onsets}
     mean_universe = {s: own(mean, s).universe_at_onset.get(s) for s in truth_onsets}
     mean_state = {s: own(mean, s).onset_state.get(s, no_row) for s in truth_onsets}
-    ka_first = {s: own(k2, s).member_first.get(s) for s in truth_onsets}
+    # One admission clock for the whole session: a PRE admit is not reset by
+    # RTH's first generation (only the 20:00 reset clears it).
+    ka_first = {s: keep.first_member.get(s) for s in truth_onsets}
     ka_members = {s: own(k2, s).member_at_onset.get(s, False) for s in truth_onsets}
     # A control is never-crossed when no bar-close on the replayed path reaches
     # +5% over its prior close.  The cohort's close move alone cannot answer
@@ -765,7 +773,8 @@ def run_session(
             "note": (
                 "qualified top-N fresh admits; an uncomputable member is retained while its "
                 "last computable row qualified; fresh first, then retained in K2 order up to "
-                "top_n; first entry strictly before tau; 20:00 reset not reached at 11:35"
+                "top_n; first admission shared by PRE and RTH until the 20:00 reset; first "
+                "entry strictly before tau; 20:00 reset not reached at 11:35"
             ),
         }
         if covered
@@ -828,12 +837,14 @@ def run_session(
             "k2_universe_at_onset": k2_universe.get(symbol),
             "k2_computable_at_onset": k2_state[symbol]["computable"],
             "k2_baseline_available": k2_state[symbol]["baseline_available"],
+            "k2_baseline_sessions": k2_state[symbol].get("baseline_sessions"),
             "k2_unknown_reasons": k2_state[symbol]["unknown_reasons"],
             "mean_rank_at_onset": mean_rank.get(symbol),
             "mean_first_top100": mean_first100.get(symbol),
             "mean_universe_at_onset": mean_universe.get(symbol),
             "mean_computable_at_onset": mean_state[symbol]["computable"],
             "mean_baseline_available": mean_state[symbol]["baseline_available"],
+            "mean_baseline_sessions": mean_state[symbol].get("baseline_sessions"),
             "mean_unknown_reasons": mean_state[symbol]["unknown_reasons"],
             "keepalive_first": ka_first.get(symbol),
             "keepalive_member_at_onset": ka_members.get(symbol),

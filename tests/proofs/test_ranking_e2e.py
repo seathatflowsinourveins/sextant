@@ -46,8 +46,19 @@ def _ns(day: str, hh: int, mm: int) -> int:
     )
 
 
-def _write_day(root: Path, day: str, rows: dict[str, list[tuple[int, int, str, str, int]]]) -> None:
-    """rows: symbol -> [(start_hh, start_mm, open, close, volume)]."""
+def _write_day(
+    root: Path,
+    day: str,
+    rows: dict[str, list[tuple[int, int, str, str, int]]],
+    *,
+    requested: set[str] | None = None,
+) -> None:
+    """rows: symbol -> [(start_hh, start_mm, open, close, volume)].
+
+    ``requested`` adds symbols the recording asked for but that did not trade
+    (no bars); the batch metadata's ``symbols`` list is the recording's
+    coverage declaration.
+    """
     payload = {}
     for symbol, bars_ in rows.items():
         payload[symbol] = [
@@ -67,8 +78,10 @@ def _write_day(root: Path, day: str, rows: dict[str, list[tuple[int, int, str, s
         ]
     d = root / "1min" / day
     d.mkdir(parents=True, exist_ok=True)
+    declared = set(payload) | set(requested or ())
+    pages = [json.dumps({"bars": payload})] if payload else []
     (d / "batch-000.json").write_text(
-        json.dumps({"symbols": sorted(payload), "pages": [json.dumps({"bars": payload})]}),
+        json.dumps({"symbols": sorted(declared), "pages": pages}),
         encoding="utf-8",
     )
 
@@ -274,7 +287,9 @@ def _keep_tree(tmp_path: Path) -> Path:
         for symbol in ("KEEP", "SAME", "CTRL", "FAST", "LATE")
     }
     for day in KEEP_PRIOR[:2]:
-        _write_day(root, day, prior)
+        # THIN is declared on every prior session; it simply never traded on
+        # the first two.  A covered silent session is a zero, not an unknown.
+        _write_day(root, day, prior, requested={"THIN"})
     _write_day(
         root, KEEP_PRIOR[2], {**prior, "THIN": [(4, m, "10.00", "10.00", 1000) for m in range(11)]}
     )
@@ -954,3 +969,212 @@ def test_price_path_labels_stay_inside_the_replay_window(
     assert result.arms["k2"]["false_flags"]["never_crossed"]["controls"] == 1
     # Every onset in the window falls in exactly one stratum.
     assert counts["onsets"] == sum(result.report["strata"].values()) == 2
+
+
+# ------------------------------- round-3 fix witnesses (fail at 81f64bb)
+COVER_DAY = "2026-11-09"
+COVER_PRIOR = ("2026-11-02", "2026-11-03", "2026-11-04", "2026-11-05", "2026-11-06")
+
+
+def _coverage_tree(tmp_path: Path) -> Path:
+    """Two prior sessions requested OMH; three did not record it.
+
+    Sessions 1-2 carry a full OMH/CTRL path, sessions 3-4 declare only OTHER,
+    and session 5 has no recorded page at all.  Today OMH first closes above
+    +5% in its 04:06 bar, so its onset is 04:07.  Padding the three uncovered
+    sessions with zero curves makes the median normal zero; the covered two
+    are positive.
+    """
+    root = tmp_path / "coverage"
+    flat = [(4, m, "10.10", "10.10", 1000) for m in range(11)]
+    path = {"OMH": flat, "CTRL": list(flat)}
+    other = {"OTHER": [(4, m, "10.10", "10.10", 1000) for m in range(11)]}
+    for day in COVER_PRIOR[:2]:
+        _write_day(root, day, {**path, **other}, requested={"OMH", "CTRL", "OTHER"})
+    for day in COVER_PRIOR[2:4]:
+        _write_day(root, day, other)
+    _write_day(root, COVER_PRIOR[4], {})
+    _write_day(
+        root,
+        COVER_DAY,
+        {
+            "OMH": [(4, m, "10.10", "10.10", 3000) for m in range(6)]
+            + [(4, 6, "10.10", "10.60", 3000)],
+            "CTRL": [(4, m, "10.00", "10.00", 1000) for m in range(7)],
+        },
+    )
+    return root
+
+
+def _coverage_cohort(tmp_path: Path) -> Path:
+    path = tmp_path / "coverage-cohort.json"
+
+    def candidate(symbol: str, move: str) -> dict[str, str]:
+        return {
+            "symbol": symbol,
+            "move": move,
+            "premarket_dollar_volume": "1000000",
+            "full_dollar_volume": "1000000",
+            "prior_close": "10.00",
+            "prior_close_source": "official_prior_daily_close",
+        }
+
+    path.write_text(
+        json.dumps(
+            {
+                "schema": "ranking-e2e.cohort/1",
+                "session": COVER_DAY,
+                "prior_sessions": list(COVER_PRIOR),
+                "labels": {
+                    "survivor_only": True,
+                    "pit_verified": False,
+                    "inference_eligible": False,
+                },
+                "candidates": [candidate("OMH", "0.06"), candidate("CTRL", "0.00")],
+                "truth": ["OMH"],
+                "controls": ["CTRL"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+@pytest.fixture(scope="module")
+def coverage_run(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, runner.SessionResult]:
+    tmp_path = tmp_path_factory.mktemp("coverage")
+    result = _run(
+        tmp_path,
+        _coverage_tree(tmp_path),
+        _coverage_cohort(tmp_path),
+        out="coverage-out",
+        registry=_fixture_registry(tmp_path),
+    )
+    return tmp_path / "coverage-out", result
+
+
+def test_uncovered_prior_sessions_do_not_supply_zero_baselines(
+    coverage_run: tuple[Path, runner.SessionResult],
+) -> None:  # WITNESS (P1 historical coverage)
+    _, result = coverage_run
+    omh = result.rows["OMH"]
+    # Only the two sessions whose recording declared OMH may contribute; an
+    # absent prior bar is an unknown session, not a zero-dollar one.
+    assert omh["k2_baseline_available"] is True
+    assert omh["k2_rank_at_onset"] == 1
+    assert omh["k2_baseline_sessions"] == 2
+    assert omh["mean_baseline_sessions"] == 2
+    assert result.arms["k2"]["baseline_available_at_onset"]["available"] == 1
+    assert "baseline_zero_dollar_volume" not in omh["k2_unknown_reasons"]
+
+
+CROSS_DAY = "2026-11-09"
+CROSS_PRIOR = ("2026-11-04", "2026-11-05", "2026-11-06")
+
+
+def _cross_tree(tmp_path: Path) -> Path:
+    """KEEP is admitted in PRE, then crosses +5% only in an RTH bar.
+
+    Its first above-threshold close is the 09:30 bar, so the onset is 09:31 in
+    RTH, after PRE's last generation; membership began at its PRE rise.  CTRL
+    is a flat control.
+    """
+    root = tmp_path / "cross"
+    flat = [(4, m, "10.00", "10.00", 1000) for m in range(11)]
+    prior = {"KEEP": flat, "CTRL": list(flat)}
+    for day in CROSS_PRIOR:
+        _write_day(root, day, prior)
+    closes = ("10.12", "10.15", "10.18", "10.21", "10.24", "10.27", "10.30", "10.33")
+    _write_day(
+        root,
+        CROSS_DAY,
+        {
+            "KEEP": [(4, m, close, close, 3000) for m, close in enumerate(closes)]
+            + [(9, 30, "10.40", "10.60", 3000)],
+            "CTRL": [(4, m, "10.00", "10.00", 1000) for m in range(10)],
+        },
+    )
+    return root
+
+
+def _cross_cohort(tmp_path: Path) -> Path:
+    path = tmp_path / "cross-cohort.json"
+
+    def candidate(symbol: str, move: str) -> dict[str, str]:
+        return {
+            "symbol": symbol,
+            "move": move,
+            "premarket_dollar_volume": "1000000",
+            "full_dollar_volume": "1000000",
+            "prior_close": "10.00",
+            "prior_close_source": "official_prior_daily_close",
+        }
+
+    path.write_text(
+        json.dumps(
+            {
+                "schema": "ranking-e2e.cohort/1",
+                "session": CROSS_DAY,
+                "prior_sessions": list(CROSS_PRIOR),
+                "labels": {
+                    "survivor_only": True,
+                    "pit_verified": False,
+                    "inference_eligible": False,
+                },
+                "candidates": [candidate("KEEP", "0.06"), candidate("CTRL", "0.00")],
+                "truth": ["KEEP"],
+                "controls": ["CTRL"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+@pytest.fixture(scope="module")
+def cross_run(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, runner.SessionResult]:
+    tmp_path = tmp_path_factory.mktemp("cross")
+    result = _run(
+        tmp_path,
+        _cross_tree(tmp_path),
+        _cross_cohort(tmp_path),
+        out="cross-out",
+        registry=_fixture_registry(tmp_path),
+    )
+    return tmp_path / "cross-out", result
+
+
+def test_keep_alive_keeps_the_first_admission_across_pre_and_rth(
+    cross_run: tuple[Path, runner.SessionResult],
+) -> None:  # WITNESS (P1 cross-segment keep-alive admission)
+    _, result = cross_run
+    keep_row = result.rows["KEEP"]
+    assert keep_row["onset_segment"] == "RTH"
+    assert keep_row["onset_ts"] == _ns(CROSS_DAY, 9, 31)
+    assert keep_row["keepalive_member_at_onset"] is True
+    # Membership began during PRE; RTH's first generation must not overwrite
+    # the admission timestamp with the onset itself.
+    assert keep_row["keepalive_first"] < keep_row["onset_ts"]
+    keep = result.arms["keepalive"]
+    assert keep["persistence_denominator"] == 1
+    assert keep["persistence_at_onset"] == 1
+    assert keep["persistence_rate"] == "1"
+    assert keep["entered_at_onset_excluded"] == 0
+
+
+def test_ranking_metrics_leaves_recall_undefined_with_no_onsets() -> None:
+    # WITNESS (P2 empty recall denominator)
+    result = metrics.ranking_metrics({}, {}, {}, arm="k2")
+    assert result.total == 0 and result.rankable == 0
+    # No name could be recalled, so the rate is undefined, never a numeric zero.
+    assert result.recall == {30: None, 100: None}
+
+
+def test_paired_recall_leaves_recall_undefined_with_no_common_name() -> None:
+    # WITNESS (P2 empty paired denominator)
+    result = metrics.paired_recall({"X": 0}, {"X": None}, {"X": 1})
+    assert result["common"] == 0
+    # One arm ranks X and the other does not, so neither arm has a paired
+    # denominator; both rates are undefined, not "0".
+    assert result["recall_a"] == {30: None, 100: None}
+    assert result["recall_b"] == {30: None, 100: None}

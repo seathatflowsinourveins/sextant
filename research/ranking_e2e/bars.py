@@ -98,15 +98,29 @@ def parse_utc_ns(text: str) -> int:
 
 
 def load_raw_day(
-    root: Path, day: date, symbols: set[str] | None = None
+    root: Path,
+    day: date,
+    symbols: set[str] | None = None,
+    *,
+    requested_out: set[str] | None = None,
 ) -> dict[str, tuple[Bar, ...]]:
-    """Read the 48 batch files of one day, keeping only requested symbols."""
+    """Read the 48 batch files of one day, keeping only requested symbols.
+
+    Each batch file's outer ``symbols`` list is the recording's declared
+    coverage for that day: every name it asked for, whether or not a bar
+    printed.  ``requested_out`` collects the union across the day's files, so a
+    caller can distinguish a covered silent symbol (a zero) from a session
+    that never recorded the symbol at all (an unknown).  A day whose files
+    declare no symbols leaves the set empty; absence is never imputed.
+    """
     directory = Path(root) / "1min" / day.isoformat()
     if not directory.is_dir():
         raise FileNotFoundError(directory)
     out: dict[str, list[Bar]] = {}
     for path in sorted(directory.glob("*.json")):
         payload = json.loads(path.read_text(encoding="utf-8"))
+        if requested_out is not None:
+            requested_out.update(str(symbol) for symbol in payload.get("symbols", ()))
         for page in payload.get("pages", ()):
             bars = json.loads(page).get("bars", {})
             for symbol, rows in bars.items():
