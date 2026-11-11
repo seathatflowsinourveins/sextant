@@ -1,15 +1,12 @@
 """dsh-test-autofix: the first admitted third-party plugin, interactive dsh-tui only.
 
-CI-visible: the profile lock, the host installer spec and the register row carry the full-SHA
-pin, and neither headless profile takes it. Host-only: the installed tree is the pinned
-packlist byte for byte, as test_dsh_p10.py checks the goalloop pick on a composed profile.
+CI-visible: the lock, the host installer and the register row carry the pin, dsh-tui only.
+Host-only: the installed tree is the pinned packlist byte for byte.
 
 Source: 1250589385/dsh-test-autofix@2246371b2869db52c0f9a77098777d66dbdbad32 (package 0.1.3,
   committed 2026-10-23T16:23:03Z): README.md install (`dsh plugin --profile <profile> add
   github:1250589385/dsh-test-autofix`), package.json `files` and `dsh.bundle.patch`,
   index.js:888-915 (inject tools; registers run_tests).
-Disclosure: liuwenji007/dsh-trust-check@787912e37367e3b0e5cbe5a259253a88f3afd502, run
-  2026-11-10T21:33:27Z: yellow 58/100, shell, fs-read, env, no red lines.
 """
 
 import hashlib
@@ -30,8 +27,7 @@ MANIFEST = (ROOT / "docs/manifest.md").read_text()
 PACKAGE = "dsh-test-autofix"
 SHA = "2246371b2869db52c0f9a77098777d66dbdbad32"
 SPEC = f"github:1250589385/dsh-test-autofix#{SHA}"
-# The packlist `npm pack --dry-run --ignore-scripts` lists at the pin; pnpm installs a
-# git-hosted package as that packlist, bytes unchanged.
+# The pin's packlist (npm pack --dry-run); pnpm installs it with bytes unchanged.
 PINNED = {
     "CHANGELOG.md": "689c6873da00e6d03e031575e7b728b7d56dac1b596003aac0de6fb6c02b3909",
     "LICENSE": "b302e94d3f8df90b63f60ef05306ad13c320296f9fb09b57a3a5998627dd9561",
@@ -68,12 +64,9 @@ def test_the_lock_pins_it_in_the_interactive_profile_only() -> None:
 
 def test_the_host_installer_adds_it_to_dsh_tui_alone(tmp_path: Path) -> None:
     parity = _parity()
-    rows = [
-        row
-        for row in parity.SPEC["runtimes"]["dsh"]["quality"]["plugins"]
-        if row["package"] == PACKAGE
-    ]
-    assert rows == [{"package": PACKAGE, "spec": SPEC, "profiles": ["dsh-tui"]}]
+    rows = parity.SPEC["runtimes"]["dsh"]["quality"]["plugins"]
+    row = {"package": PACKAGE, "spec": SPEC, "profiles": ["dsh-tui"]}
+    assert [r for r in rows if r["package"] == PACKAGE] == [row]
     for name in ("dsh-tui", "acp", "headless"):
         (tmp_path / name).mkdir()
         missing = parity._quality_missing(tmp_path / name, name, ROOT)
@@ -92,22 +85,68 @@ def test_the_register_row_records_the_five_gates() -> None:
         "launches test processes",
         "can start a suite in any existing directory",
         "approval before `run_tests` starts a process was not established",
-        "dsh-tui",
         f"dsh plugin --profile dsh-tui remove {PACKAGE}",
         "test_dsh_test_autofix.py::test_the_installed_tree_is_the_pinned_tree",
     ):
         assert needed in row, needed
 
 
-def test_the_installed_tree_is_the_pinned_tree() -> None:
-    home = Path(os.environ.get("DSH_HOME", Path.home() / ".dsh-full")).expanduser()
+def _verify(home: Path, pinned: dict[str, str]) -> bool:
+    """False if absent; an AssertionError on any difference."""
     package = home / "profiles" / "dsh-tui" / "node_modules" / PACKAGE
-    if not (package / "package.json").is_file():
-        pytest.skip(f"{package}: the pinned dsh-test-autofix is not composed in this home")
+    if not package.exists() and not package.is_symlink():
+        return False
+    manifest = package / "package.json"
+    assert manifest.is_file(), f"{package} is present without its package.json"
+    found = json.loads(manifest.read_text())
+    assert (found.get("name"), found.get("version")) == (PACKAGE, "0.1.3"), found
+    # Nothing is exempt: the package has no dependencies, so a node_modules is unpinned.
     root = package.resolve()
     installed = {
         str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest()
         for path in root.rglob("*")
-        if path.is_file() and "node_modules" not in path.relative_to(root).parts
+        if path.is_file()
     }
-    assert installed == PINNED
+    assert installed == pinned
+    return True
+
+
+def _stand_in(home: Path, manifest: dict) -> dict[str, str]:
+    package = home / "profiles" / "dsh-tui" / "node_modules" / PACKAGE
+    package.mkdir(parents=True)
+    (package / "package.json").write_text(json.dumps(manifest))
+    (package / "index.js").write_text("export const inject = ['tools']\n")
+    return {
+        name: hashlib.sha256((package / name).read_bytes()).hexdigest()
+        for name in ("package.json", "index.js")
+    }
+
+
+def test_the_proof_fails_on_an_extra_file_under_node_modules(tmp_path: Path) -> None:
+    pinned = _stand_in(tmp_path, {"name": PACKAGE, "version": "0.1.3"})
+    assert _verify(tmp_path, pinned)
+    extra = tmp_path / "profiles/dsh-tui/node_modules" / PACKAGE / "node_modules/unexpected"
+    extra.mkdir(parents=True)
+    (extra / "index.js").write_text("module.exports = 1\n")
+    with pytest.raises(AssertionError):
+        _verify(tmp_path, pinned)
+
+
+@pytest.mark.parametrize(
+    "manifest",
+    [None, {"name": "other", "version": "0.1.3"}, {"name": PACKAGE, "version": "0.1.4"}],
+)
+def test_a_present_package_directory_never_skips(tmp_path: Path, manifest: dict | None) -> None:
+    pinned = _stand_in(tmp_path, manifest or {})
+    package = tmp_path / "profiles/dsh-tui/node_modules" / PACKAGE
+    if manifest is None:
+        (package / "package.json").unlink()
+    with pytest.raises(AssertionError):
+        _verify(tmp_path, pinned)
+    assert _verify(tmp_path / "absent", pinned) is False
+
+
+def test_the_installed_tree_is_the_pinned_tree() -> None:
+    home = Path(os.environ.get("DSH_HOME", Path.home() / ".dsh-full")).expanduser()
+    if not _verify(home, PINNED):
+        pytest.skip(f"{home}: the pinned dsh-test-autofix is not composed in dsh-tui")

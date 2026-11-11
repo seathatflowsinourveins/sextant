@@ -37,4 +37,4 @@ No row, no install. A plugin that fails any line stays in `## Watching, not inst
 
 ## Admitted
 
-The 2026-11-09 screen found no gap the shelf did not already cover. The first admission is test repair: [1250589385/dsh-test-autofix](https://github.com/1250589385/dsh-test-autofix)@`2246371b2869db52c0f9a77098777d66dbdbad32` registers one `run_tests` tool that runs the project suite and returns structured failures. Its fresh scan reads `dsh-test-autofix 0.1.3 · yellow 58/100 · shell, fs-read, env`, red lines none, and it launches test processes. It is composed in the interactive `dsh-tui` profile only, never the headless gate profile. The register row in `docs/manifest.md` records its five lines.
+The first admission is test repair: `dsh-test-autofix` (yellow 58/100; shell, fs-read, env; it launches test processes), in the interactive `dsh-tui` profile only.
