@@ -6,11 +6,9 @@ event clock, the baseline table, the native order sink and the subscribed
 instruments. The stream and ``AlpacaBridge`` are wired later.
 
 Behaviour follows ADR-0024's first rising second and ADR-0025's narrow protection
-cap. The first leg sizes in the instrument's ``size_increment`` (one share): the
-sizing authority is UNAVAILABLE (ADR-0002), so this is a measurement witness, not
-a fraction-of-equity decision. Outside RTH a native trailing stop would be refused
-by the bridge, so the session records the pending protection instead of sending
-one.
+cap. The first leg is sized per trade by ``size_entry`` from the registered row;
+a refusal sends no order. Outside RTH a native trailing stop would be refused,
+so the session records the pending protection instead of sending one.
 """
 
 from collections.abc import Callable, Mapping
@@ -21,8 +19,9 @@ from typing import Any
 from nautilus_trader.model import Equity, InstrumentId, QuoteTick, TradeTick
 
 from sextant.entry.orders import limit_price
-from sextant.entry.parameters import EntryParameters
+from sextant.entry.parameters import SIZING, EntryParameters
 from sextant.entry.signals import EntryState, Surge
+from sextant.entry.sizing import size_entry
 from sextant.entry.surge import SurgeState, advance_surge
 from sextant.execution.alpaca import OrderCommand
 from sextant.execution.custody import OrderFact
@@ -39,6 +38,7 @@ class CConfig:
     symbols: tuple[str, ...]
     chase_cap_fraction: Decimal
     trail_fraction: Decimal
+    basis: Decimal
     slot_count: int
     segment: Segment
     params: EntryParameters
@@ -57,6 +57,10 @@ class CConfig:
             raise ValueError("C needs a supplied session segment")
         if not isinstance(self.params, EntryParameters):
             raise ValueError("C needs parsed entry parameters")
+        for name in sorted(SIZING):
+            if not self.params.has(name):
+                raise ValueError(f"C needs the {name} entry registry row")
+        _money(self.basis, "basis", zero=True)
         _fraction(self.chase_cap_fraction, "chase_cap_fraction", zero=True)
         _fraction(self.trail_fraction, "trail_fraction", zero=False)
         if type(self.slot_count) is not int or isinstance(self.slot_count, bool):
@@ -82,6 +86,27 @@ def _fraction(value: Decimal, name: str, *, zero: bool) -> None:
         )
 
 
+def _money(value: Decimal, name: str, *, zero: bool) -> None:
+    if not isinstance(value, Decimal):
+        raise ValueError(f"{name} must be Decimal, never float")
+    if not value.is_finite():
+        raise ValueError(f"{name} must be finite")
+    if value < 0 or (value == 0 and not zero):
+        raise ValueError(
+            f"{name} must be a nonnegative Decimal" if zero else f"{name} must be positive"
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class EntryIntent:
+    """One ready first-leg entry awaiting the runner's fresh balance read."""
+
+    client_order_id: str
+    instrument: str
+    limit_price: Decimal
+    expiry_ns: int
+
+
 @dataclass(slots=True)
 class _SymbolState:
     instrument: Equity
@@ -94,14 +119,16 @@ class _SymbolState:
     pending: bool = False
     filled_qty: Decimal = field(default_factory=lambda: ZERO)
     protection: str | None = None
+    intent: EntryIntent | None = None
+    refused_surge: int | None = None
 
 
 class CSession:
     """Decision state for one C-lane segment and its subscribed instruments.
 
     ``instruments`` is keyed by the full instrument id in ``CConfig.symbols``. The
-    native instrument is the only source of the price ladder and the witness
-    quantity; it is an input, not a sizing decision.
+    native instrument supplies the price ladder; the size comes from the registered
+    risk fraction through ``size_entry``, and a refusal sends no order.
     """
 
     def __init__(
@@ -131,6 +158,8 @@ class CSession:
         self._now_ns = now_ns
         self._submit = submit
         self._instruments = dict(instruments)
+        # The runner freezes design.md:25's basis from each segment's own balance.
+        self._basis = config.basis
         self._states: dict[str, _SymbolState] = {}
         for symbol in config.symbols:
             instrument = instruments[symbol]
@@ -233,6 +262,8 @@ class CSession:
         surge = state.entry.surge
         if surge is None or state.pending or state.cid is not None:
             return
+        if state.refused_surge == surge.flag_ts:
+            return
         if str(state.instrument.id) in self.config.held_symbols:
             return
         ask = quote.ask_price.as_decimal()
@@ -253,20 +284,96 @@ class CSession:
 
         instrument = state.instrument
         native = limit_price(ask, instrument.price_increment.as_decimal())
-        command = OrderCommand(
+        state.intent = EntryIntent(
             client_order_id=_entry_cid(state, surge),
             instrument=str(instrument.id),
+            limit_price=native,
+            expiry_ns=expiry_ns,
+        )
+
+    def take_ready(self, now: int | None = None) -> tuple[EntryIntent, ...]:
+        """Consume ready intents; the runner reads the account, then calls ``enter``."""
+        moment = self._now() if now is None else now
+        available = self.config.slot_count - self._slots_used()
+        ready: list[EntryIntent] = []
+        for state in self._states.values():
+            intent = state.intent
+            if intent is None:
+                continue
+            state.intent = None
+            if available <= 0 or state.pending or state.cid is not None:
+                continue
+            if intent.expiry_ns <= moment:
+                continue
+            quote = state.quote
+            if quote is None or not _fresh_quote(quote, moment, self.config):
+                continue
+            ready.append(intent)
+            available -= 1
+        return tuple(ready)
+
+    def enter(
+        self,
+        intent: EntryIntent,
+        *,
+        equity: Decimal,
+        buying_power: Decimal,
+        now: int | None = None,
+    ) -> None:
+        """Size one consumed intent from the runner's fresh balance and submit it."""
+        if not isinstance(intent, EntryIntent):
+            raise ValueError("EntryIntent required")
+        moment = self._now() if now is None else now
+        state = self._states.get(intent.instrument)
+        if state is None or state.entry.surge is None:
+            return
+        if state.pending or state.cid is not None or intent.expiry_ns <= moment:
+            return
+        quote = state.quote
+        if quote is None or not _fresh_quote(quote, moment, self.config):
+            return
+        _money(equity, "equity", zero=False)
+        _money(buying_power, "buying_power", zero=True)
+        # ADR-0004:21: the trigger is entry minus the buffer; the trail uses 0.025.
+        sizing = size_entry(
+            instrument=state.instrument,
+            params=self.config.params,
+            setup="FIRST_LEG",
+            entry=intent.limit_price,
+            initial_trigger=intent.limit_price * (1 - self.config.trail_fraction),
+            equity=equity,
+            basis=self._basis,
+            buying_power=buying_power,
+            dollar_volume=state.entry.flow_dollars(moment),
+            confidence=None,
+            prearm_stopouts=0,
+            commission_rate=ZERO,
+        )
+        quantity = sizing.quantity.as_decimal()
+        if sizing.refusal is not None or quantity <= ZERO:
+            state.refused_surge = state.entry.surge.flag_ts
+            return
+        command = OrderCommand(
+            client_order_id=intent.client_order_id,
+            instrument=intent.instrument,
             side="BUY",
-            quantity=instrument.size_increment.as_decimal(),
+            quantity=quantity,
             order_type="LIMIT",
             time_in_force="DAY",
-            limit_price=native,
+            limit_price=intent.limit_price,
         )
         self._submit(command)
         state.cid = command.client_order_id
-        state.first_limit = native
-        state.expiry_ns = expiry_ns
+        state.first_limit = intent.limit_price
+        state.expiry_ns = intent.expiry_ns
         state.pending = True
+
+    def refuse(self, intent: EntryIntent) -> None:
+        """A failed or stale balance read refuses the entry until a new flag."""
+        state = self._states.get(intent.instrument)
+        surge = None if state is None else state.entry.surge
+        if state is not None and surge is not None:
+            state.refused_surge = surge.flag_ts
 
     def _slots_used(self) -> int:
         return sum(1 for state in self._states.values() if state.cid is not None)
@@ -313,4 +420,4 @@ def _fresh_quote(quote: QuoteTick, now: int, config: CConfig) -> bool:
     )
 
 
-__all__ = ["CConfig", "CSession"]
+__all__ = ["CConfig", "CSession", "EntryIntent"]

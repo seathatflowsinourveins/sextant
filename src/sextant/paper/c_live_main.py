@@ -4,11 +4,11 @@ The runner follows the merged B precedent (``b_protector_main.py``): keys and th
 expected account come only from the environment, every broker call after the
 startup checks goes through the repo's account pacer, one writer lease owns the
 account, and SIGTERM/SIGINT stop the stream without cancelling the broker-held
-trail.  The C decision core (``c_session.py``) is unchanged: this module only
+trail.  The C decision core (``c_session.py``) owns the decision: this module only
 wires it to alpaca-py's trading client (v0.44.0
 ``examples/stocks/stocks-trading-basic.ipynb`` cells 25-36), selects SIP in the
 day sessions and BOATS overnight, loads the current segment's baseline, submits
-the one witness-size LIMIT entry, then the native GTC trailing stop in RTH or a
+the one sized LIMIT entry, then the native GTC trailing stop in RTH or a
 resting GTC LIMIT at the ADR-0025 trail price outside it, re-priced as the trail
 rises.
 
@@ -121,6 +121,14 @@ def _declared_slots(rows: Sequence[dict[str, Any]]) -> int | None:
 
 class LiveRefusal(RuntimeError):
     """The C runner will not act, or cannot know an order's state; it stops."""
+
+
+class _OrderEnded(LiveRefusal):
+    """A broker order reached a terminal status; the final order is attached."""
+
+    def __init__(self, message: str, order: Any) -> None:
+        super().__init__(message)
+        self.order = order
 
 
 class PacerRefused(RuntimeError):
@@ -343,7 +351,7 @@ def _await_order(
         if status == "FILLED":
             return order
         if status in STOP_STATUSES:
-            raise LiveRefusal(f"order {cid} ended {status}")
+            raise _OrderEnded(f"order {cid} ended {status}", order)
         current = monotonic()
         if current >= deadline:
             raise LiveRefusal(
@@ -917,11 +925,38 @@ def _flag_count(snapshot: dict[str, Any]) -> int:
     )
 
 
+def _account_money(value: object, name: str, *, zero: bool) -> Decimal:
+    """The broker account's Decimal field; a missing or float value is unavailable."""
+    if isinstance(value, bool) or not isinstance(value, (str, int, Decimal)):
+        raise ValueError(f"the broker account {name} is unavailable")
+    result = Decimal(value)
+    if not result.is_finite() or result < 0 or (result == 0 and not zero):
+        kind = "nonnegative" if zero else "positive"
+        raise ValueError(f"the broker account {name} is not a finite {kind} Decimal")
+    return result
+
+
+def _read_balance(client: Any) -> tuple[Decimal, Decimal]:
+    """One paced account read; a failure refuses the entry, never a cached number."""
+    try:
+        account = client.get_account()
+    except Exception as exc:
+        raise LiveRefusal(f"the account balance read failed: {type(exc).__name__}: {exc}") from exc
+    try:
+        return (
+            _account_money(getattr(account, "equity", None), "equity", zero=False),
+            _account_money(getattr(account, "buying_power", None), "buying_power", zero=True),
+        )
+    except ValueError as exc:
+        raise LiveRefusal(str(exc)) from exc
+
+
 def _config_for(
     symbols: Sequence[str],
     params: EntryParameters,
     segment: Segment,
     *,
+    basis: Decimal,
     slot_count: int = 2,
     held_symbols: frozenset[str] = frozenset(),
 ) -> CConfig:
@@ -929,6 +964,7 @@ def _config_for(
         symbols=tuple(symbols),
         chase_cap_fraction=Decimal("0.03"),  # 0.03 = the recorded first_leg_max_move
         trail_fraction=Decimal("0.025"),  # ADR-0025 C-scope, UNCALIBRATED
+        basis=basis,
         slot_count=slot_count,  # --symbols keeps ADR-0024's 2-of-5; --universe uses the pool
         segment=segment,
         params=params,
@@ -1083,7 +1119,7 @@ def main(
         if first is None:
             raise SystemExit("C live main refused: the XNYS session is closed")
         try:
-            params = EntryParameters.from_rows(entry_rows, first_leg_only=True)
+            params = EntryParameters.from_rows(entry_rows, sizing_only=True)
         except (ValueError, KeyError) as exc:
             raise SystemExit(f"C live main refused: entry parameters unavailable: {exc}") from exc
         try:
@@ -1159,6 +1195,7 @@ def main(
             config: CConfig,
         ) -> tuple[dict[str, Any], str | None, bool, bool]:
             pending_fills: list[OrderFact] = []
+            entry_ended: list[str | None] = [None]
             protections: dict[str, _LimitProtection] = {}
 
             def _place_limit_exit(
@@ -1416,15 +1453,52 @@ def main(
                         )
                     run.protection_cid = cid
                     return
-                final = _await_order(
-                    client,
-                    cid,
-                    ack,
-                    sleep=sleep,
-                    monotonic=monotonic,
-                    poll_interval_s=poll_interval_s,
-                    timeout_s=order_timeout_s,
-                )
+                try:
+                    final = _await_order(
+                        client,
+                        cid,
+                        ack,
+                        sleep=sleep,
+                        monotonic=monotonic,
+                        poll_interval_s=poll_interval_s,
+                        timeout_s=order_timeout_s,
+                    )
+                except _OrderEnded as ended:
+                    if command.side != "BUY":
+                        raise
+                    final = ended.order
+                    filled = _filled_quantity(final)
+                    row["status"] = _status(final)
+                    if filled <= Decimal(0):
+                        entry_ended[0] = f"entry {cid} ended {row['status']} with no fill"
+                        return
+                    row["fill"] = _decimal_text(filled)
+                    _observe_fill(
+                        book,
+                        scope,
+                        command.instrument,
+                        filled,
+                        source=f"alpaca partial fill {cid}",
+                        now=now_ns(),
+                    )
+                    pending_fills.append(
+                        OrderFact(
+                            cid,
+                            command.instrument,
+                            "BUY",
+                            command.quantity,
+                            filled,
+                            row["status"],
+                            _order_id(final),
+                        )
+                    )
+                    if segment.name != "RTH":
+                        _place_limit_exit(cid, command.instrument, filled, final)
+                    entry_ended[0] = (
+                        f"entry {cid} ended {row['status']} after a "
+                        f"{_decimal_text(filled)}-share fill; the filled shares are protected"
+                    )
+                    return
                 filled = _filled(final)
                 row["fill"] = _decimal_text(filled)
                 row["status"] = _status(final)
@@ -1481,9 +1555,35 @@ def main(
                 flush_fills()
                 _reprice_protection(tick)
 
+            def enter_ready() -> None:
+                intents = session.take_ready(now_ns())
+                if not intents:
+                    return
+                # Each intent reads the balance again: the earlier intent's order
+                # is already committed, so one wave must never spend the same
+                # buying power twice (design.md:25).
+                for index, intent in enumerate(intents):
+                    try:
+                        current_equity, current_buying_power = _read_balance(client)
+                    except LiveRefusal:
+                        for remaining in intents[index:]:
+                            session.refuse(remaining)
+                        return
+                    session.enter(
+                        intent,
+                        equity=current_equity,
+                        buying_power=current_buying_power,
+                    )
+                    if entry_ended[0] is not None:
+                        return
+
             def on_quote(tick: Any) -> None:
                 session.on_quote(tick)
+                enter_ready()
                 flush_fills()
+                ended = entry_ended[0]
+                if ended is not None:
+                    raise LiveRefusal(ended)
 
             feed_name = _feed_for(segment)
             feed_kwargs: dict[str, Any] = {
@@ -1561,10 +1661,12 @@ def main(
                 final_segment = current.name
                 final_baseline = current_baseline
                 try:
+                    _, current_buying_power = _read_balance(client)
                     final_config = _config_for(
                         current_symbols,
                         params,
                         current,
+                        basis=current_buying_power * params["bp_target_fraction"],
                         slot_count=current_slot_count,
                         held_symbols=_retained_symbols(book),
                     )
