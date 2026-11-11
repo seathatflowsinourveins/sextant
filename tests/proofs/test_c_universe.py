@@ -68,6 +68,7 @@ def asset(
 ) -> dict[str, Any]:
     return {
         "id": f"instrument-{symbol}",
+        "exchange": "NASDAQ",
         "symbol": symbol,
         "status": status,
         "class": asset_class,
@@ -265,6 +266,7 @@ def test_overnight_eligibility_reads_the_assets_api_attributes() -> None:
     # alpaca-py v0.44.0 has no top-level overnight_tradable on Asset; the live
     # GET /v2/assets response carries it in attributes. This is the real shape.
     asset = SimpleNamespace(
+        exchange="NASDAQ",
         symbol="AAPL",
         status=AssetStatus.ACTIVE,
         asset_class=AssetClass.US_EQUITY,
@@ -275,3 +277,32 @@ def test_overnight_eligibility_reads_the_assets_api_attributes() -> None:
     chosen = select_universe([asset], "overnight")
     assert [row.symbol for row in chosen] == ["AAPL"]
     assert chosen[0].overnight_tradable is True
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("exchange", "TXSE"),
+        ("status", "future-status"),
+        ("class", "future-class"),
+        ("tradable", "true"),
+        ("symbol", ""),
+        ("id", None),
+        ("id", 123),
+        ("attributes", 1),
+        ("attributes", [1]),
+        ("overnight_tradable", "true"),
+        ("overnight_halted", "true"),
+    ],
+)
+def test_unknown_asset_rows_are_skipped_counted_and_logged(field, value, caplog) -> None:
+    unknown = {**asset("UNKNOWN"), field: value}
+    payload = scan_fixture(
+        [unknown, unknown, asset("KEEP")],
+        {"KEEP": two_session_bars("KEEP", "10", "11", "1000", "1500")},
+    )
+    assert [row["symbol"] for row in payload["rows"]] == ["KEEP"]
+    assert payload["asset_rows_skipped"] == 2
+    messages = [r for r in caplog.records if "asset rows" in r.message]
+    assert len(messages) == 1
+    assert "UNKNOWN" not in messages[0].message

@@ -346,6 +346,7 @@ def asset(symbol: str, *, overnight_tradable: bool = True) -> Any:
     attributes = ["overnight_tradable"] if overnight_tradable else []
     return SimpleNamespace(
         id=f"id-{symbol}",
+        exchange="NASDAQ",
         status="active",
         asset_class="us_equity",
         symbol=symbol,
@@ -578,6 +579,7 @@ def invoke(
     feed_tap: bool = False,
     feed_tap_universe: Path | None = None,
     feed_factory_override: Any = None,
+    client_factory_override: Any = None,
 ) -> int:
     calls = {"index": 0}
 
@@ -615,7 +617,7 @@ def invoke(
         argv += ["--feed-tap-universe", str(feed_tap_universe)]
     return main(
         argv,
-        client_factory=lambda **_: client,
+        client_factory=client_factory_override or (lambda **_: client),
         data_factory=lambda **_: data if data is not None else FakeDataClient({}),
         feed_factory=feed_factory_override or feed_factory,
         now_ns=clock,
@@ -2151,6 +2153,57 @@ def test_zero_size_stream_trade_is_dropped_and_runner_delivers_later_rows(
     assert errors[0].levelno == logging.ERROR
     assert symbol in errors[0].message
     assert "size" in errors[0].message and "not positive" in errors[0].message
+
+
+def test_raw_asset_listing_survives_unknown_enum_and_records_once_per_run(
+    live_env: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from alpaca.trading.client import TradingClient
+    from alpaca.trading.enums import AssetExchange
+
+    assert "TXSE" not in {row.value for row in AssetExchange}
+    client = FakeTradingClient(assets=(asset("OMH"),))
+    rows = [
+        {**vars(asset("OMH")), "class": "us_equity", "exchange": "NASDAQ"},
+        {**vars(asset("UNKNOWN")), "class": "us_equity", "exchange": "TXSE"},
+    ]
+    for row in rows:
+        row.update(
+            id="b0b6dd9d-8b9b-48a9-ba46-3ee76b1a03cc",
+            marginable=True,
+            shortable=True,
+            easy_to_borrow=True,
+            fractionable=True,
+        )
+
+    def factory(**kwargs: Any) -> Any:
+        sdk = TradingClient(**kwargs)
+        sdk.get = lambda *args, **kw: rows
+        if kwargs.get("raw_data"):
+            return sdk
+        client.get_all_assets = sdk.get_all_assets
+        return client
+
+    assert (
+        invoke(
+            live_env,
+            client,
+            Clock(),
+            Monotonic(),
+            universe=True,
+            data=FakeDataClient({"OMH": daily_bars("1.10", "500")}),
+            baseline_dir=write_baseline_dir(live_env),
+            replays=[rth_close_replay, noop_replay],
+            client_factory_override=factory,
+        )
+        == 0
+    )
+    written = receipt(live_env)
+    assert len(written["arming"]) == 2
+    assert written["asset_rows_skipped"] == 2
+    assert all(row["eligible"] == 1 for row in written["arming"])
+    assert len([r for r in caplog.records if "asset rows" in r.message]) == 1
 
 
 def test_the_receipt_preserves_symbol_snapshot_and_refusals(live_env: Path) -> None:
