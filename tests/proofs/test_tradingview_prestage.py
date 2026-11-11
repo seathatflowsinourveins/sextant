@@ -911,11 +911,30 @@ def test_operator_path_refuses_missing_credentials(tmp_path: Path, monkeypatch: 
     assert "with-keys" in message
 
 
-def test_prestage_request_budget_is_unavailable_until_measured() -> None:
+def test_the_shipped_request_budget_is_the_ruled_200_per_minute() -> None:
+    """The shipped row carries the ruled value, both authorities and no calibration claim."""
+    from sextant.tradingview.prestage import DEFAULT_PRESTAGE_PARAMETERS, load_request_budget
+
+    assert load_request_budget() == 200
+    (row,) = json.loads(DEFAULT_PRESTAGE_PARAMETERS.read_text(encoding="utf-8"))
+    assert (row["calibration"], row["scope"]) == ("UNCALIBRATED", "REVIEWED")
+    source = row["source"]
+    assert "docs/handbook/rank-live.md:124-125" in source
+    assert "https://docs.alpaca.markets/us/docs/about-market-data-api" in source
+    assert "200 / min" in source
+    assert "lead's header read, 2026-11-10 23:17 EST" in source
+    assert "shared" in source
+
+
+def test_a_request_budget_row_without_a_value_is_refused(tmp_path: Path) -> None:
+    """The earlier unavailable shape still refuses: a null value is never a default."""
     from sextant.tradingview.prestage import PrestageError, load_request_budget
 
+    path = tmp_path / "prestage-parameters.json"
+    row = {"name": "prestage_request_budget", "value": None, "scope": "UNAVAILABLE"}
+    path.write_text(json.dumps([row]), encoding="utf-8")
     with pytest.raises(PrestageError, match="request budget"):
-        load_request_budget()
+        load_request_budget(path)
 
 
 def test_prestage_request_budget_reads_a_reviewed_row(tmp_path: Path) -> None:
@@ -941,11 +960,16 @@ def test_prestage_request_budget_reads_a_reviewed_row(tmp_path: Path) -> None:
     assert load_request_budget(path) == 60
 
 
-def test_prestage_run_refuses_without_a_measured_request_budget(tmp_path: Path) -> None:
-    from sextant.tradingview.prestage import PrestageError, run
+def test_prestage_run_with_the_shipped_budget_still_needs_the_with_keys_pair(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """The shipped budget passes; the key seam is the next refusal, before any request."""
+    from sextant.tradingview.prestage import KEY_NAMES, PrestageError, run
 
+    for name in KEY_NAMES:
+        monkeypatch.delenv(name, raising=False)
     nasdaq, other, symbol_map = _run_fixture(tmp_path)
-    with pytest.raises(PrestageError, match="request budget"):
+    with pytest.raises(PrestageError, match="with-keys"):
         run(
             research_dir=tmp_path / "unit",
             nasdaq_listed=nasdaq,
@@ -958,3 +982,4 @@ def test_prestage_run_refuses_without_a_measured_request_budget(tmp_path: Path) 
             sleep=lambda seconds: None,
             page=lambda line: None,
         )
+    assert not (tmp_path / "unit").exists()

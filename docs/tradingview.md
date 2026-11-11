@@ -366,10 +366,11 @@ scripts/with-keys.sh --strict \
 and passes them to the SDK; no key enters a file, flag, URL or log.
 
 The request budget is its own row in
-`lanes/tradingview/prestage-parameters.json`, never a K2 row. It has no value
-or authority today: the 2026-11-10 C REST-rate measure found no REST-call
-records, so no peak exists to derive one. The entry point refuses to start
-until a measured value and authority are recorded (AGENTS.md Rule 2).
+`lanes/tradingview/prestage-parameters.json`, never a K2 row: 200 requests per
+minute, UNCALIBRATED, the lead's 2026-11-11 ruling. The row cites its bound and
+measurement; it is the producer's share of a key that Paper B's reads and the
+nightly calibration job also use. A row without a value, a REVIEWED scope or a
+source still refuses (AGENTS.md Rule 2).
 
 The directory texts are the public NASDAQ Trader files read on the lane's
 published date; the symbol map is the operator's exact TradingView map and must
