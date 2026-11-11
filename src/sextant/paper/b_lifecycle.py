@@ -200,6 +200,7 @@ class _Book:
     stale_since: int | None = None
     paged: str | None = None
     rearm: bool = False  # a trail the RiskEngine denied: cover again on the next price
+    no_trade: bool = False  # denied with no trade cached: cover again on the next trade
     width_bar: BarType | None = None
     oracle: AverageTrueRange | None = None  # the engine's float ATR, compared only
     atr: DecimalATR | None = None  # the value used (ADR-0004's Decimal carry)
@@ -352,7 +353,7 @@ class BLifecycle(Strategy):
             return
         now = self.clock.timestamp_ns()
         self._session(book, now)
-        self._rearm(book)
+        self._rearm(book, trade=True)  # the engine caches the trade first (dispatch.rs:117-128)
         price, book.last = trade.price.as_decimal(), trade.price.as_decimal()
         book.high = None if self._held(book) <= 0 else max(book.high or price, price)
         allowed = self.candidate(book, now)
@@ -505,17 +506,30 @@ class BLifecycle(Strategy):
     def _refused(self, event: Any, reason: str) -> None:
         """OrderDenied, by Nautilus before the venue (events/order/denied.rs:36-39), and
         OrderRejected, by the venue (rejected.rs:36): either pages, and a refused trail re-arms
-        on the book's next quote or trade, never by a resubmit inside the refusal."""
-        cid = event.client_order_id
-        self._record(kind="page", ts=event.ts_event, reason=reason, order=str(cid))
-        book, order = self.books.get(event.instrument_id), self.cache.order(cid)
-        if book is not None and order is not None and _is_trail(order):
+        on the book's next quote or trade, never by a resubmit inside the refusal. A trail denied
+        with no trade cached waits for the next trade, paged once: rc8's RiskEngine prices a
+        default-trigger trail from the last trade only (crates/risk/src/engine/mod.rs:2368-2391,
+        denied at :2144), so a quote cannot change it (stage 1 rehearsal finding 2)."""
+        cid, iid = event.client_order_id, event.instrument_id
+        book, order = self.books.get(iid), self.cache.order(cid)
+        if book is None or order is None or not _is_trail(order):
+            return self._record(kind="page", ts=event.ts_event, reason=reason, order=str(cid))
+        priced = reason != "denied" or self.cache.trade(iid) is not None
+        if priced or not book.no_trade:
+            page = reason if priced else "denied_no_trade"
+            self._record(kind="page", ts=event.ts_event, reason=page, order=str(cid))
+        if priced:
             book.rearm = True
+        else:
+            book.no_trade = True
 
-    def _rearm(self, book: _Book) -> None:
+    def _rearm(self, book: _Book, trade: bool = False) -> None:
         """A trail the RiskEngine denied (its submit rate, or no price) is armed again on the
-        book's next quote or trade, not recursively inside the denial."""
+        book's next quote or trade, or on its next trade when no trade was cached, not
+        recursively inside the denial."""
         self._due_cancels(book)
+        if trade and book.no_trade:
+            book.no_trade, book.rearm = False, True
         if book.rearm:
             book.rearm = False
             self.reconcile(book)
@@ -583,6 +597,8 @@ class BLifecycle(Strategy):
         if busy or any(o.client_order_id in held_back for o in trails):
             return  # a submit or a cancel in flight: one command at a time, wait for its answer
         if not trails:
+            if book.no_trade and self.cache.trade(iid) is None:
+                return  # it would be denied again: no order id spent until the next trade
             if target > 0:
                 cid = self._arm(book, now, target)
                 if cid is not None and book.rearm_from is not None:

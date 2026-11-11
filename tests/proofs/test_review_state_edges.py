@@ -55,6 +55,7 @@ class EngineProbe(BLifecycle):
         self.arms = []
         self.commands = []
         self.rows = []
+        self.trades = {}  # the last trade per instrument, as the engine's cache holds it
         self.books[PENNY].instrument = EQUITY
 
     @property
@@ -66,7 +67,12 @@ class EngineProbe(BLifecycle):
         return SimpleNamespace(
             orders=lambda **filters: list(self.orders.values()),
             order=lambda client_order_id: self.orders.get(client_order_id),
+            trade=lambda instrument_id: self.trades.get(instrument_id),
         )
+
+    def on_trade(self, trade):  # the engine caches a trade before on_trade (dispatch.rs:117-128)
+        self.trades[trade.instrument_id] = trade
+        super().on_trade(trade)
 
     def _held(self, book):
         return self.held
@@ -258,7 +264,11 @@ def test_refused_trail_rearms_on_the_next_trade(refusal):
     getattr(engine, f"on_order_{refusal}")(
         SimpleNamespace(instrument_id=PENNY, client_order_id=CID, ts_event=engine.now)
     )
-    assert engine.books[PENNY].rearm and not engine.arms
+    # A denial with no trade cached waits for the next trade, never the next quote (the trail
+    # price part: the RiskEngine prices this trail from the last trade only); a rejection
+    # re-arms on the next price.
+    book = engine.books[PENNY]
+    assert (book.no_trade if refusal == "denied" else book.rearm) and not engine.arms
     engine.on_trade(trade(engine.now, "0.5200"))
     print("TRADE_REARM", refusal, engine.arms)
     assert engine.arms == [Decimal(100)]
