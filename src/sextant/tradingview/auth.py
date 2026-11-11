@@ -1,4 +1,7 @@
-"""RAM-only SDK OAuth, adapted from northstar-trading@8256c16c auth.py.
+"""RAM-only SDK OAuth by default, adapted from northstar-trading@8256c16c auth.py.
+
+The owner's D-23 ``--keep-login`` store is the one opt-in that keeps the official
+SDK's tokens and registration encrypted at rest (``stored_login.py``).
 
 MCP SDK v2.3.0 docs_src/oauth_clients/tutorial001.py supplies the memory store
 and provider. Upstream's quiet loopback callback avoids pasted codes or URLs.
@@ -25,13 +28,36 @@ from mcp.shared.auth import OAuthClientInformationFull, OAuthClientMetadata, OAu
 from pydantic import AnyUrl
 
 from sextant.tradingview import diagnostics
-from sextant.tradingview.sync import SyncError, _sanitized
+from sextant.tradingview.stored_login import (
+    RefreshGuard,
+    StoredLogin,
+    StoredLoginCorrupt,
+    StoredLoginError,
+    StoredTokenStorage,
+)
+from sextant.tradingview.sync import (
+    LOGIN_NEEDS_CONSENT,
+    LOGIN_REFUSED,
+    LOGIN_STOPS,
+    LOGIN_STORE_UNAVAILABLE,
+    LOGIN_UNAVAILABLE,
+    LOGIN_UNREADABLE,
+    LOGIN_UNUSABLE,
+    SyncError,
+    _sanitized,
+)
 
 SERVER = "https://mcp.tradingview.com/mcp"
+LOGIN_STOP_BY_REASON = {
+    "refused": LOGIN_REFUSED,
+    "unavailable": LOGIN_UNAVAILABLE,
+    "unusable": LOGIN_UNUSABLE,
+    "consent": LOGIN_NEEDS_CONSENT,
+}
 OWNER_STEP = (
     "TradingView owner browser consent required each session: run --authorize on the owner's "
-    "machine with Essential+ (non-trial). Authorization stays in RAM; never paste credentials "
-    "or callback URLs into a terminal or chat."
+    "machine with Essential+ (non-trial). Authorization stays in RAM unless --keep-login keeps "
+    "it in the encrypted store; never paste credentials or callback URLs into a terminal or chat."
 )
 
 
@@ -142,12 +168,40 @@ async def identify_request(request: httpx2.Request) -> None:
     request.headers.setdefault("Accept", "application/json")
 
 
+def _stored_storage(login: StoredLogin) -> tuple[StoredTokenStorage, bool]:
+    """Read the store before any session, so a bad value stops with its own owner step."""
+    storage = StoredTokenStorage(login)
+    try:
+        return storage, storage.preload()
+    except StoredLoginCorrupt:
+        _sanitized(SyncError(LOGIN_UNREADABLE, stage="authorize"))
+    except (OSError, StoredLoginError):
+        _sanitized(SyncError(LOGIN_STORE_UNAVAILABLE, stage="authorize"))
+
+
+def _login_stop(guard: RefreshGuard | None) -> SyncError | None:
+    reason = guard.reason() if guard is not None else ""
+    return SyncError(LOGIN_STOP_BY_REASON[reason], stage="token") if reason else None
+
+
 @asynccontextmanager
-async def official_client(authorize: bool = False) -> AsyncIterator[Client]:
-    """No grant reuse, file/keychain fallback, or transport without owner consent."""
-    if not authorize:
-        raise SyncError(OWNER_STEP, stage="authorize")
-    storage = InMemoryTokenStorage()
+async def official_client(
+    authorize: bool = False, login: StoredLogin | None = None
+) -> AsyncIterator[Client]:
+    """RAM-only unless the owner's ``--keep-login`` store is passed; no other grant reuse.
+
+    Only ``authorize`` opens a browser. With the store and no ``authorize`` the stored
+    sign-in is used or the run stops with the owner step (an unattended unit's mode).
+    """
+    storage: InMemoryTokenStorage | StoredTokenStorage = InMemoryTokenStorage()
+    guard = None
+    stored = False
+    if login is not None:
+        # A first --keep-login must write the consent into the store, not RAM.
+        storage, stored = _stored_storage(login)
+        guard = RefreshGuard(storage, consent=authorize)
+    if not authorize and not stored:
+        raise SyncError(OWNER_STEP if login is None else LOGIN_NEEDS_CONSENT, stage="authorize")
     callback = None
     with sensitive_logging():
         try:
@@ -158,14 +212,28 @@ async def official_client(authorize: bool = False) -> AsyncIterator[Client]:
                     client_name="Sextant display-only sync", redirect_uris=[AnyUrl(callback.uri)]
                 ),
                 storage=storage,
-                redirect_handler=callback.redirect,
+                redirect_handler=(
+                    callback.redirect if authorize or guard is None else guard.redirect
+                ),
                 callback_handler=callback.wait,
             )
+            hooks: dict[str, list[Any]] = {"request": [identify_request]}
+            if isinstance(storage, StoredTokenStorage) and guard is not None:
+                # The pinned SDK's `_initialize` loads the document without setting
+                # `token_expiry_time` (oauth2.py:565-569), so it would treat an old access
+                # token as valid and answer a 401 with browser consent instead of the
+                # stored refresh token. Prime the same field `update_token_expiry` sets.
+                storage.prime_expiry(oauth.context)
+                guard.context = oauth.context
+                hooks = {"request": [identify_request, guard.request], "response": [guard.response]}
             async with httpx2.AsyncClient(
                 auth=oauth,
                 timeout=httpx2.Timeout(30.0, read=60.0),
-                event_hooks={"request": [identify_request]},
+                event_hooks=hooks,
             ) as http_client:
+                if guard is not None and stored:
+                    # Any later refresh needs the published token endpoint, not a fallback.
+                    await guard.discover(http_client)
                 transport = streamable_http_client(SERVER, http_client=http_client)
                 body_error = None
                 async with Client(transport, read_timeout_seconds=60.0) as client:
@@ -175,13 +243,24 @@ async def official_client(authorize: bool = False) -> AsyncIterator[Client]:
                         # SDK task groups wrap errors leaving Client; close normally
                         # before propagating a trusted local refusal to the caller.
                         body_error = error
+            # A stored-login stop outranks what the body made of it, including a body
+            # (the loop) that caught the failure and returned normally.
+            stop = _login_stop(guard)
+            if stop is not None:
+                _sanitized(stop)
             if body_error is not None:
                 raise body_error
         except asyncio.CancelledError:
             _sanitized(asyncio.CancelledError())
-        except SyncError:
+        except SyncError as error:
+            stop = _login_stop(guard)
+            if stop is not None and str(error) not in LOGIN_STOPS:
+                _sanitized(stop)
             raise
         except Exception as error:
+            stop = _login_stop(guard)
+            if stop is not None:
+                _sanitized(stop)
             _sanitized(
                 SyncError(
                     "TradingView session stopped; re-inventory before retry. " + OWNER_STEP,
@@ -191,8 +270,9 @@ async def official_client(authorize: bool = False) -> AsyncIterator[Client]:
                 )
             )
         finally:
-            storage.tokens = None
-            storage.client_info = None
+            if isinstance(storage, InMemoryTokenStorage):
+                storage.tokens = None
+                storage.client_info = None
             if callback is not None:
                 callback.server.server_close()
                 callback.result = None
