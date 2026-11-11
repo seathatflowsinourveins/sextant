@@ -116,6 +116,20 @@ class SegmentedHost:
             return entered
         return self._count(self.host.on_trade(tick, facts=facts)) or entered
 
+    def on_clock(self, now: int) -> tuple[RankingGeneration | None, int | None]:
+        """The node clock's turn (N2b-4): roll at a boundary even with no tick, and name the
+        next boundary, so a consumer never waits on a tick for the next segment's generation."""
+        segment = self._segment_of(now)
+        rankable = segment is not None and (segment.name == "OVERNIGHT") == (self.feed == "boats")
+        generation = None
+        if segment is not None and rankable:
+            if self.segment is None or segment.start_ns >= self.segment.end_ns:
+                generation = self._enter(segment)
+        elif self.segment is not None and now >= self.segment.end_ns:
+            self._write()  # the segment ended into one this feed does not rank
+            self.segment, self.host, self._current = None, None, None
+        return generation, None if segment is None else segment.end_ns
+
     def set_symbol(
         self, name: str, *, references: ReferencePrices, asset: AssetState | None
     ) -> RankingGeneration | None:
