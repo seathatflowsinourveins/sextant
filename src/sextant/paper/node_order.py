@@ -614,6 +614,7 @@ def run(
             timer.cancel()
             node.dispose()
         gate = strategy.gate
+        cause = startup_cause(gate.clients) if failure else None
         phase = "stopped" if gate.open else "refused" if gate.checked else "aborted_at_start"
         phase = "failed" if failure else phase
         reason = failure or (None if gate.open else ",".join(gate.reasons) or "startup_aborted")
@@ -628,8 +629,27 @@ def run(
             refused_sends=gate.refused_sends,
             outside_holdings_paged=len(gate.paged),
             journal=journal,
+            **({"reconciliation": cause} if cause else {}),
         )
         return receipt, 0 if phase == "stopped" else 2
+
+
+def startup_cause(clients: list[Any]) -> dict[str, Any] | None:
+    """The client's per-stage startup trace (counts, classes, status, our own reason texts),
+    when a stage failed: the engine logs only "Failed to get mass status" (FAILED-START-1.md).
+    One ERROR line goes to the unit's output; no value is in either."""
+    trace = {k: v for client in clients for k, v in getattr(client, "report_trace", {}).items()}
+    failed = {stage: entry for stage, entry in trace.items() if "error" in entry}
+    if not failed:
+        return None
+    parts = [
+        f"stage={stage} error={e['error']} first={e['first']} status={e['status']} "
+        f"failures={e['failures']} reason={e['reason']!r} requests="
+        + ",".join(f"{k}:{v['requests']}/{v['rows']}" for k, v in e["requests"].items())
+        for stage, e in failed.items()
+    ]
+    print(f"order node ERROR startup reconciliation failed: {'; '.join(parts)}", file=sys.stderr)
+    return trace
 
 
 def journal_page(reason: str, _symbol: str | None, detail: str) -> None:

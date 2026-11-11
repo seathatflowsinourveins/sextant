@@ -131,3 +131,9 @@ commission hook, and with a deterministic reconciliation trade id. The client re
 FILL page. A row whose order is listed with at least its cumulative quantity passes;
 any other row is refused. A holding that no order report explains stops the start in the
 engine itself (`node/mod.rs:992-996`, `generate_missing_orders` off).
+
+A failed startup reconciliation names its cause. The engine keeps only "Failed to get mass
+status" (`python/node.rs:676`), so each report generator records its requests, rows and
+first failure (class, HTTP status, our own reason text), and the order node writes them to
+the receipt's `reconciliation` block and one ERROR line. No value is recorded. Source:
+stage 1 start 1, FAILED-START-1.md.

@@ -8,10 +8,12 @@ Core owns trading state. This client retains venue identity evidence only.
 """
 
 import asyncio
+import functools
 import os
 import re
 import weakref
 from collections.abc import Callable
+from contextvars import ContextVar
 from dataclasses import dataclass
 from decimal import Decimal
 from threading import Event
@@ -49,6 +51,65 @@ class IncompleteCoverage(RuntimeError):
         super().__init__(
             "Alpaca reconciliation coverage incomplete" + (f": {named}" if named else "")
         )
+
+
+# The startup trace (FAILED-START-1.md): the engine's composer keeps only the outer context of
+# a generator's error (common/clients/execution.rs:543-561; python/node.rs:676), so each stage
+# records its own counts and first failure. Only these texts of ours are copied: they name no
+# symbol, price, quantity, id or key. A venue body or a validation error is never copied.
+_STAGE: ContextVar[str | None] = ContextVar("alpaca_report_stage", default=None)
+_REASONS = (
+    "historical fill that no order report explains",
+    "order pages are not contiguous",
+    "order page made no progress",
+    "order listing needs more requests than the registered request budget",
+    "fill activity pages exceed budget",
+    "Alpaca ",
+    "replacement ",
+    "report instrument is unavailable",
+    "venue quantity exceeds instrument size precision",
+)
+
+
+_FIELDS = frozenset({"id", "order_id", "cum_qty", "filled_qty", "qty", "status", "symbol"})
+_FIELDS |= {"client_order_id", "submitted_at", "replaces", "replaced_by", "side", "type"}
+
+
+def _reason(error: BaseException) -> str | None:
+    if isinstance(error, KeyError) and error.args and error.args[0] in _FIELDS:
+        return f"missing field {error.args[0]}"
+    text = str(error) if type(error).__module__.startswith(("sextant.", "builtins")) else ""
+    return text[:200] if text.startswith(_REASONS) else None
+
+
+def _traced(stage: str):
+    """Record a report generator's requests, rows and first failure in ``report_trace``."""
+
+    def wrap(method):
+        @functools.wraps(method)
+        async def traced(self, command):
+            entry = self.report_trace[stage] = {"requests": {}, "failures": 0}
+            token = _STAGE.set(stage)
+            try:
+                return await method(self, command)
+            except Exception as exc:
+                failures = exc.failures if isinstance(exc, IncompleteCoverage) else []
+                first = failures[0][1] if failures else exc
+                status = getattr(first, "status_code", None)
+                entry.update(
+                    error=type(exc).__name__,
+                    first=type(first).__name__,
+                    status=status if isinstance(status, int) else None,
+                    failures=len(failures) or 1,
+                    reason=_reason(first),
+                )
+                raise
+            finally:
+                _STAGE.reset(token)
+
+        return traced
+
+    return wrap
 
 
 def execution_engine_config(*, universe, **kwargs) -> LiveExecutionEngineConfig:
@@ -208,6 +269,7 @@ class AlpacaExecutionClient(ExecutionClient):
         self._proposals: dict[str, tuple[str, str]] = {}
         self._sequence: dict[str, int] = {}
         self.failures: list[tuple[object, Exception]] = []
+        self.report_trace: dict[str, dict[str, Any]] = {}  # per stage, counts only
         # Owner rows the engine would skip anyway; kept with payload and reason.
         self.withheld: list[tuple[dict, str]] = []
         self.withheld_positions: list[tuple[dict, str]] = []
@@ -439,10 +501,18 @@ class AlpacaExecutionClient(ExecutionClient):
         )
         return opened, exiting
 
-    async def _call(self, kind, method, path, data=None, **kwargs):
+    async def _call(self, kind, method, path, data=None, **kwargs) -> Any:
         if self.gateway is None:
             raise RuntimeError("account gateway is disconnected")
-        return await self.gateway.call(kind, method, path, data, **kwargs)
+        stage = _STAGE.get()
+        if stage is None:
+            return await self.gateway.call(kind, method, path, data, **kwargs)
+        name = "/orders/{id}" if path.startswith("/orders/") else path  # Never an id.
+        count = self.report_trace[stage]["requests"].setdefault(name, {"requests": 0, "rows": 0})
+        count["requests"] += 1
+        result = await self.gateway.call(kind, method, path, data, **kwargs)
+        count["rows"] += len(result) if isinstance(result, list) else 1
+        return result
 
     def _instrument_id(self, row):
         from nautilus_trader.model import InstrumentId
@@ -854,6 +924,7 @@ class AlpacaExecutionClient(ExecutionClient):
         reason = "order listing needs more requests than the registered request budget"
         raise IncompleteCoverage([], [(params, ValueError(reason))])
 
+    @_traced("orders")
     async def _generate_order_status_reports(self, command):
         self.coverage_complete = self._orders_complete = False
         self.withheld = []
@@ -897,6 +968,7 @@ class AlpacaExecutionClient(ExecutionClient):
             for row, _ in (*self.withheld, *self.withheld_positions)
         )
 
+    @_traced("positions")
     async def _generate_position_status_reports(self, command):
         self.coverage_complete = False
         rows = await self._call(ActionKind.QUERY, "get", "/positions")
@@ -942,6 +1014,7 @@ class AlpacaExecutionClient(ExecutionClient):
             query = dict(query, page_token=page[-1]["id"])
         raise IncompleteCoverage([], [(query, ValueError("fill activity pages exceed budget"))])
 
+    @_traced("fills")
     async def _generate_fill_reports(self, command):
         """No fill report is built from history: a FILL row carries no stream execution id and
         no fee (account activities reference, read 2026-11-11), and none is invented.
