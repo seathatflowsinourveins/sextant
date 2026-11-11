@@ -118,6 +118,7 @@ class BLifecycleConfig(StrategyConfig):
         baseline: BaselineTable | None = None,
         native_trail_fraction: Decimal | None = None,
         width_rows: Mapping[str, Decimal] | None = None,
+        trail_reduce_only: bool = True,
         **engine: object,
     ) -> None:
         unknown = sorted(set(engine) - ENGINE_FIELDS)
@@ -160,6 +161,13 @@ class BLifecycleConfig(StrategyConfig):
                 if width_rows[name] % 1 or width_rows[name] < 1:
                     raise ValueError(f"{name} must be a whole number of at least one")
         self.width_rows = width_rows
+        # The venue's row for the trail's reduce-only flag, read where the trail is built: True on
+        # Alpaca (ADR-0005:34); False on the official Interactive Brokers adapter, which denies a
+        # reduce-only order (nautilus_trader rc8 adapters/interactive_brokers/src/execution/
+        # core.rs:1032-1043, :2191-2196). Never an `if venue` in the Strategy.
+        if not isinstance(trail_reduce_only, bool):
+            raise ValueError("trail_reduce_only must be True or False")
+        self.trail_reduce_only = trail_reduce_only
 
 
 @dataclass(slots=True)
@@ -599,7 +607,7 @@ class BLifecycle(Strategy):
             bps,
             trailing_offset_type=TrailingOffsetType.BASIS_POINTS,
             time_in_force=TimeInForce.GTC,
-            reduce_only=True,
+            reduce_only=self._config.trail_reduce_only,  # the venue's row
             tags=["protect"],
         )
         self._record(kind="protect", ts=now, order=str(order.client_order_id), quantity=str(shares))
