@@ -342,6 +342,34 @@ def test_a_non_flat_account_stops_before_any_command(tmp_path, case) -> None:
     assert all(r[0] == "GET" for r in venue.requests[seeded:]), "nothing was sent"
 
 
+# The old writer's order in a name outside the claims is withheld whatever its status
+# (execution.py _owner_withheld: its instrument is not loaded). Only a working one is open
+# (stage 1 rehearsal RESULT-2; the engine's closed set, nautilus_trader d53849b
+# crates/model/src/enums.rs:1489-1500).
+
+
+@pytest.mark.parametrize("status", ["canceled", "filled", "expired", "rejected", "replaced"])
+def test_a_terminal_old_writer_order_outside_the_claims_does_not_refuse(tmp_path, status) -> None:
+    venue = AccountVenue()
+    _owner(venue, "BTEST-trail-OUTX-1-1", symbol="OUTX", side="sell", status=status)
+    seeded = len(venue.requests)
+    body, code, _ = start(tmp_path, venue)
+    assert (code, body["phase"], body["reason"]) == (0, "stopped", None)
+    assert body["gate"]["open_house_orders"] == 0
+    assert all(r[0] == "GET" for r in venue.requests[seeded:]), "nothing was sent"
+
+
+@pytest.mark.parametrize("status", ["new", "pending_cancel", "done_for_day"])
+def test_a_working_old_writer_order_outside_the_claims_still_refuses(tmp_path, status) -> None:
+    venue = AccountVenue()
+    _owner(venue, "BTEST-trail-OUTX-1-1", symbol="OUTX", side="sell", status=status)
+    seeded = len(venue.requests)
+    body, code, stand = start(tmp_path, venue)
+    assert (code, body["phase"], body["reason"]) == (2, "refused", "house_order_open")
+    assert body["gate"]["open_house_orders"] == 1 and stand.subscribed == 0
+    assert all(r[0] == "GET" for r in venue.requests[seeded:]), "nothing was sent"
+
+
 def test_the_unchunked_flush_at_the_directory_size_logs_a_full_queue_and_fails(tmp_path, capfd):
     """The engine fact at LEAD-0336's 5,200, built past the refusal: the flush overflows the
     execution client's queue and shutdown_on_error aborts before the Strategy runs."""
