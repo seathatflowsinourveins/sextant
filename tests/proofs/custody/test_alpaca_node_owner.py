@@ -7,7 +7,9 @@ orders. Design: handoffs/tasks/e5-execution-client-gpt/DESIGN-owner-activity.md.
 """
 
 import asyncio
+import gc
 import threading
+from types import SimpleNamespace
 from uuid import UUID
 
 from nautilus_trader.common import Environment
@@ -120,13 +122,31 @@ def _run_node(venue, *, claims=(), lookback=None):
         )
         node.add_strategy(Consumer(StrategyConfig(external_order_instrument_ids=list(claims))))
 
-        async def run():
-            await asyncio.wait_for(node.run_async(), 10)
+        async def run(owned):
+            await asyncio.wait_for(owned.run_async(), 10)
 
         try:
-            asyncio.run(run())
+            asyncio.run(run(node))
         except Exception as exc:  # The witness records the node's own outcome.
             seen["error"] = str(exc)
+        finally:
+            try:
+                node.dispose()
+            finally:
+                # Keep observations, not unsendable clients, across the thread boundary.
+                seen["clients"] = [
+                    SimpleNamespace(
+                        withheld=client.withheld,
+                        withheld_positions=client.withheld_positions,
+                        failures=[(row, str(error)) for row, error in client.failures],
+                        gateway=SimpleNamespace(
+                            pacer=SimpleNamespace(wire_actions=client.gateway.pacer.wire_actions)
+                        ),
+                    )
+                    for client in seen["clients"]
+                ]
+                del node
+                gc.collect()
 
     thread = threading.Thread(target=target)
     thread.start()

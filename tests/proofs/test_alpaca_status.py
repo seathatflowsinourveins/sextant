@@ -7,6 +7,7 @@ from importlib import import_module
 
 import msgpack
 import pytest
+from nautilus_trader.common import logging_sync_to_disk
 from nautilus_trader.core import dt_to_unix_nanos
 from nautilus_trader.model import InstrumentStatus, MarketStatusAction
 from test_alpaca_data import (
@@ -144,7 +145,7 @@ def test_bad_status_rows_do_not_stop_later_statuses_or_later_tick_subscriptions(
         ("unsubscribe", [symbol]),
     ]
     assert all("*" not in frame.get("statuses", ()) for frame in frames)
-    client._log.flush()
+    logging_sync_to_disk()
     captured = capfd.readouterr()
     logs = re.sub(r"\x1b\[[0-9;]*m", "", captured.out + captured.err)
     dropped = [line for line in logs.splitlines() if "Dropped Alpaca statuses row" in line]

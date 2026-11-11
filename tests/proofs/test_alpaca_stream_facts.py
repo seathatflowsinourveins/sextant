@@ -9,6 +9,7 @@ execution client and a RankingActor whose host records what it is handed.
 from __future__ import annotations
 
 import asyncio
+import gc
 import time
 from decimal import Decimal as D
 from typing import Any, cast
@@ -189,7 +190,11 @@ async def run_node(scripts: list[list[Any]], trades: int):
         try:
             await asyncio.wait_for(task, timeout=10)
         finally:
-            node.dispose()
+            try:
+                node.dispose()
+            finally:
+                del node, task
+                gc.collect()
     return log, actor, clients[0], stream
 
 
