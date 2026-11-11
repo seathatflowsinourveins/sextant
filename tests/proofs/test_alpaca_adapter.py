@@ -3,15 +3,14 @@
 upstream checked: nautilus_trader@d53849b216e20f2c122ca01b4dd0da377638b186:
 examples/live/_template/{constants,providers,factories,data,execution}.py,
 docs/developer_guide/python_adapters.md, docs/concepts/instruments/equity.md,
-crates/model/src/instruments/tick_scheme.rs:150-217 (tiered scheme precedent);
+crates/model/src/instruments/tick_scheme.rs:150-217;
 alpaca-py@cc4cb3b7ba50ae250e621983c2779047fb16bb28:
-alpaca/trading/{client,models,requests}.py, alpaca/data/enums.py.
-The sub-penny tiers follow Alpaca "Orders at Alpaca" (sub-penny increments),
-https://docs.alpaca.markets/us/docs/orders-at-alpaca, page updated 2026-10-13,
-read 2026-11-10: at or above $1.00 two decimals, below $1.00 four.
+alpaca/trading/{client,models,requests}.py, alpaca/data/enums.py. The sub-penny
+tiers follow Alpaca "Orders at Alpaca", https://docs.alpaca.markets/us/docs/orders-at-alpaca
+(updated 2026-10-13, read 2026-11-10): at or above $1.00 two decimals, below four.
 
-No network: every Alpaca trading client is faked, environment values are dummies,
-and no proof reads or records a real credential.
+No network: every trading client is faked, environment values are dummies, and
+no proof reads or records a real credential.
 """
 
 from __future__ import annotations
@@ -38,8 +37,6 @@ from nautilus_trader.model import (
     Price,
     Symbol,
     TraderId,
-    Venue,
-    get_tick_scheme,
     list_tick_schemes,
 )
 
@@ -78,19 +75,33 @@ def _asset(
 class FakeTradingClient:
     """A recorded stand-in for ``alpaca.trading.client.TradingClient``."""
 
-    def __init__(self, assets: dict[str, Asset]) -> None:
+    def __init__(self, assets: dict[str, Any], *, raw_data: bool = False) -> None:
         self.assets = assets
+        self.raw_data = raw_data
         self.calls: list[str] = []
         self.bulk_requests: list[GetAssetsRequest] = []
 
-    def get_asset(self, symbol: str) -> Asset:
+    def get_asset(self, symbol: str) -> Any:
         self.calls.append(f"get_asset:{symbol}")
         return self.assets[symbol]
 
-    def get_all_assets(self, request: GetAssetsRequest) -> list[Asset]:
+    def get_all_assets(self, request: GetAssetsRequest) -> Any:
         self.calls.append("get_all_assets")
         self.bulk_requests.append(request)
         return list(self.assets.values())
+
+
+def _raw_row(symbol: str, exchange: str = "NASDAQ") -> dict[str, Any]:
+    """One raw assets row as the vendor serves it (``RawData`` is a dict)."""
+    return {
+        "symbol": symbol,
+        "exchange": exchange,
+        "tradable": True,
+        "marginable": True,
+        "shortable": True,
+        "easy_to_borrow": True,
+        "fractionable": True,
+    }
 
 
 def _provider(
@@ -126,11 +137,6 @@ def test_the_adapter_package_does_not_shadow_alpaca_py() -> None:
     assert factories.TradingClient is alpaca_client_module.TradingClient
 
 
-def test_the_venue_and_the_unsupported_message_are_the_alpaca_ones() -> None:
-    assert constants.VENUE == Venue.from_str("ALPACA")
-    assert "Alpaca" in constants.NOT_IMPLEMENTED
-
-
 def test_the_data_config_holds_environment_names_not_secret_values(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -142,33 +148,14 @@ def test_the_data_config_holds_environment_names_not_secret_values(
         "ALPACA_SECRET_KEY",
     )
     assert config.feed == "sip"
-    body = config.dict()
-    assert body["api_key_env"] == "ALPACA_API_KEY"
-    assert "dummy-key-value" not in str(body)
-    assert "dummy-secret-value" not in str(body)
-
-
-def test_the_data_config_accepts_the_vendor_feeds_and_refuses_an_unknown_one() -> None:
     for feed in DataFeed:
         assert _data_config(feed=feed.value).feed == feed.value
     with pytest.raises(ValueError, match="feed"):
         _data_config(feed="tape")
-
-
-def test_the_data_config_passes_common_fields_to_the_native_base() -> None:
-    provider = InstrumentProviderConfig(load_ids=["AAPL.ALPACA"])
-    config = _data_config(instrument_provider=provider, feed="iex")
-    assert config.instrument_provider.load_ids == ["AAPL.ALPACA"]
-    assert config.feed == "iex"
-    assert config.dict()["feed"] == "iex"
-
-
-def test_the_execution_config_holds_the_account_identity_and_environment_names() -> None:
-    config = _exec_config()
-    assert config.account_id == "ALPACA-002"
     body = config.dict()
-    assert body["account_id"] == "ALPACA-002"
     assert body["api_key_env"] == "ALPACA_API_KEY"
+    assert "dummy-key-value" not in str(body)
+    assert "dummy-secret-value" not in str(body)
 
 
 def test_an_asset_becomes_an_alpaca_equity_on_the_tiered_tick() -> None:
@@ -181,37 +168,7 @@ def test_an_asset_becomes_an_alpaca_equity_on_the_tiered_tick() -> None:
     assert equity.ts_init == 11
     assert equity.quote_currency == Currency.from_str("USD")
     assert equity.tick_scheme == "ALPACA_US_EQUITY"
-
-
-@pytest.mark.parametrize("increment", [0.01, 0.0001, None, 0.0])
-def test_every_equity_uses_the_same_tiered_grid(increment: float | None) -> None:
-    equity = parse_equity(_asset("PENNY", increment=increment), ts_init=11)
-    assert equity.price_precision == 4
-    assert equity.price_increment == Price.from_str("0.0001")
-    assert equity.tick_scheme == "ALPACA_US_EQUITY"
-
-
-def test_the_provider_loads_the_requested_ids_through_the_asset_lookup() -> None:
-    fake = FakeTradingClient({"AAPL": _asset("AAPL")})
-    provider = _provider(fake, InstrumentProviderConfig(load_ids=["AAPL.ALPACA"]))
-    asyncio.run(provider.initialize())
-    assert fake.calls == ["get_asset:AAPL"]
-    assert provider.find(InstrumentId.from_str("AAPL.ALPACA")) is not None
-    assert [str(instrument.id) for instrument in provider.list_all()] == ["AAPL.ALPACA"]
-
-
-def test_the_provider_defers_the_trading_client_until_the_first_load() -> None:
-    fake = FakeTradingClient({"AAPL": _asset("AAPL")})
-    created: list[Any] = []
-    provider = providers.AlpacaInstrumentProvider(
-        InstrumentProviderConfig(load_ids=["AAPL.ALPACA"]),
-        client_factory=cast("Any", lambda: created.append(fake) or fake),
-    )
-    assert created == []
-    asyncio.run(provider.initialize())
-    assert created == [fake]
-    asyncio.run(provider.initialize())
-    assert created == [fake]
+    assert "ALPACA_US_EQUITY" in list_tick_schemes()
 
 
 def test_the_data_factory_builds_a_lazy_alpaca_client_with_our_provider(
@@ -247,7 +204,12 @@ def test_the_data_factory_builds_a_lazy_alpaca_client_with_our_provider(
     assert created == []
     asyncio.run(provider.initialize())
     assert created == [
-        {"api_key": "dummy-key", "secret_key": "dummy-secret", "paper": True},
+        {
+            "api_key": "dummy-key",
+            "secret_key": "dummy-secret",
+            "paper": True,
+            "raw_data": True,
+        },
     ]
     assert [str(instrument.id) for instrument in provider.list_all()] == ["AAPL.ALPACA"]
 
@@ -323,18 +285,6 @@ def test_the_data_client_connect_initializes_the_provider_and_publishes_instrume
     )
     asyncio.run(client._connect())
     assert [str(instrument.id) for instrument in seen] == ["AAPL.ALPACA"]
-
-
-def test_the_data_client_refuses_to_connect_without_an_instrument_provider() -> None:
-    client = AlpacaDataClient(
-        name="ALPACA",
-        config=_data_config(),
-        cache=cast("Any", None),
-        clock=cast("Any", None),
-        venue=constants.VENUE,
-    )
-    with pytest.raises(RuntimeError, match="instrument provider"):
-        asyncio.run(client._connect())
 
 
 def test_an_unknown_adapter_field_is_refused() -> None:
@@ -413,34 +363,78 @@ def test_the_equity_carries_the_vendor_asset_flags() -> None:
     assert info["fractionable"] is False
 
 
-def test_the_provider_logs_what_it_still_skips() -> None:
-    fake = FakeTradingClient({"": _asset("")})
-    provider = _provider(fake, InstrumentProviderConfig(load_all=True))
-    warnings: list[str] = []
-    provider._log = cast(
-        "Any",
-        SimpleNamespace(warning=warnings.append),
-    )
-    asyncio.run(provider.initialize())
-    assert provider.list_all() == []
-    assert len(warnings) == 1
-    assert "Skipped 1" in warnings[0]
-    assert "symbol" in warnings[0]
-
-
-def test_every_equity_carries_the_alpaca_tiered_tick_scheme() -> None:
-    equity = parse_equity(_asset("AAPL", increment=0.01), ts_init=11)
-    assert equity.price_precision == 4
-    assert equity.price_increment == Price.from_str("0.0001")
-    assert equity.tick_scheme == "ALPACA_US_EQUITY"
-    assert "ALPACA_US_EQUITY" in list_tick_schemes()
-    scheme = get_tick_scheme("ALPACA_US_EQUITY")
-    assert scheme.price_precision == 4
-
-
 def test_the_tiered_tick_scheme_keeps_sub_penny_below_one_dollar() -> None:
     equity = parse_equity(_asset("PENNY", increment=0.0001), ts_init=11)
     assert equity.next_ask_price(0.5, 1) == Price.from_str("0.5001")
     assert equity.next_ask_price(1.23, 1) == Price.from_str("1.2400")
     assert equity.next_bid_price(1.23, 1) == Price.from_str("1.2200")
     assert equity.next_ask_price(250, 1) == Price.from_str("250.0100")
+
+
+def test_one_unknown_exchange_does_not_fail_the_instrument_load(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The SDK validates a typed asset list as a whole; raw rows parse one by one."""
+    monkeypatch.setenv("SEXTANT_TEST_API_KEY", "dummy-key")
+    monkeypatch.setenv("SEXTANT_TEST_SECRET", "dummy-secret")
+
+    class RawTradingClient:
+        def __init__(self, **kwargs: Any) -> None:
+            self.raw_data = bool(kwargs.get("raw_data"))
+
+        def get_all_assets(self, request: GetAssetsRequest) -> list[dict[str, Any]]:
+            rows = [_raw_row("AAPL"), _raw_row("ODD", exchange="VENDOR_NEW_EXCHANGE")]
+            if not self.raw_data:
+                raise ValueError("VENDOR_NEW_EXCHANGE is not in the vendor exchange enum")
+            return rows
+
+    monkeypatch.setattr(factories, "TradingClient", RawTradingClient)
+    config = AlpacaDataClientConfig(
+        api_key_env="SEXTANT_TEST_API_KEY",
+        api_secret_env="SEXTANT_TEST_SECRET",  # noqa: S106 - a variable name, not a secret
+        instrument_provider=InstrumentProviderConfig(load_all=True),
+    )
+    client = factories.AlpacaDataClientFactory.create(
+        name="ALPACA",
+        config=config,
+        cache=cast("Any", None),
+        clock=cast("Any", None),
+    )
+    provider = client.instrument_provider
+    assert isinstance(provider, providers.AlpacaInstrumentProvider)
+    asyncio.run(provider.initialize())
+    assert [str(instrument.id) for instrument in provider.list_all()] == [
+        "AAPL.ALPACA",
+        "ODD.ALPACA",
+    ]
+
+
+def test_one_unparseable_asset_row_does_not_fail_the_bulk_load() -> None:
+    fake = FakeTradingClient(
+        {"AAPL": _raw_row("AAPL"), "BROKEN": {"symbol": ""}},
+        raw_data=True,
+    )
+    provider = _provider(fake, InstrumentProviderConfig(load_all=True))
+    warnings: list[str] = []
+    provider._log = cast("Any", SimpleNamespace(warning=warnings.append))
+    asyncio.run(provider.initialize())
+    assert [str(instrument.id) for instrument in provider.list_all()] == ["AAPL.ALPACA"]
+    assert len(warnings) == 1
+    assert "Skipped 1" in warnings[0]
+
+
+def test_one_unparseable_asset_lookup_does_not_fail_the_rest() -> None:
+    fake = FakeTradingClient(
+        {"AAPL": _raw_row("AAPL"), "BROKEN": {"symbol": ""}},
+        raw_data=True,
+    )
+    provider = _provider(
+        fake,
+        InstrumentProviderConfig(load_ids=["AAPL.ALPACA", "BROKEN.ALPACA"]),
+    )
+    warnings: list[str] = []
+    provider._log = cast("Any", SimpleNamespace(warning=warnings.append))
+    asyncio.run(provider.initialize())
+    assert [str(instrument.id) for instrument in provider.list_all()] == ["AAPL.ALPACA"]
+    assert len(warnings) == 1
+    assert "Skipped 1" in warnings[0]

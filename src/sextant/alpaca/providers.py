@@ -3,14 +3,13 @@
 Follows nautilus_trader@d53849b216e20f2c122ca01b4dd0da377638b186
 ``examples/live/_template/providers.py`` and
 ``docs/developer_guide/python_adapters.md`` ("Instrument provider"): the provider
-holds configuration and local state only, and all network work starts inside the
-async load hooks. alpaca-py 0.44.0 ``TradingClient.get_asset`` and
-``get_all_assets`` are blocking ``requests.Session`` calls, so each one runs
-through ``asyncio.to_thread`` instead of stalling the node loop. The bulk load
-asks the vendor for every US equity and adds each parseable row, tradable or
-not: an open order or position whose instrument was skipped cannot be reconciled
-(``docs/developer_guide/python_adapters.md``, "Reconciliation"). A row without a
-symbol is the only remaining skip, and it is logged.
+holds configuration and local state only, and network work starts inside the
+async load hooks. alpaca-py 0.44.0 ``TradingClient`` asset calls are blocking, so
+each runs through ``asyncio.to_thread``. The provider's client uses the SDK's own
+``raw_data=True`` option: typed ``get_all_assets`` validates the whole list at
+once (``alpaca/trading/client.py:394-397``) and one vendor value the pinned SDK
+enum lacks would fail every instrument, so each raw row is read and validated on
+its own. A row that cannot be parsed is skipped, counted and the count logged.
 """
 
 from __future__ import annotations
@@ -18,11 +17,10 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import Callable
-from typing import cast, override
+from typing import Any, cast, override
 
 from alpaca.trading.client import TradingClient
 from alpaca.trading.enums import AssetClass
-from alpaca.trading.models import Asset
 from alpaca.trading.requests import GetAssetsRequest
 from nautilus_trader.config import InstrumentProviderConfig
 from nautilus_trader.live.providers import InstrumentProvider
@@ -59,20 +57,21 @@ class AlpacaInstrumentProvider(InstrumentProvider):
         """Load every US-equity asset, tradable or not, from Alpaca."""
         client = self._trading_client()
         request = GetAssetsRequest(asset_class=AssetClass.US_EQUITY)
-        assets = cast(
-            "list[Asset]",
+        rows = cast(
+            "list[Any]",
             await asyncio.to_thread(client.get_all_assets, request),
         )
         ts_init = time.time_ns()
         skipped = 0
-        for asset in assets:
-            if not asset.symbol:
+        for row in rows:
+            try:
+                self.add(parse_equity(row, ts_init=ts_init))
+            except (AttributeError, KeyError, TypeError, ValueError):
                 skipped += 1
-                continue
-            self.add(parse_equity(asset, ts_init=ts_init))
         if skipped:
             self._log.warning(
-                f"Skipped {skipped} Alpaca asset(s) without a symbol",
+                f"Skipped {skipped} of {len(rows)} Alpaca asset row(s) that "
+                "could not be parsed (missing or invalid symbol/fields)",
             )
 
     @override
@@ -84,9 +83,18 @@ class AlpacaInstrumentProvider(InstrumentProvider):
         """Load the named instruments through one asset lookup each."""
         client = self._trading_client()
         ts_init = time.time_ns()
+        skipped = 0
         for instrument_id in instrument_ids:
-            asset = cast(
-                "Asset",
-                await asyncio.to_thread(client.get_asset, instrument_id.symbol.value),
+            try:
+                row = await asyncio.to_thread(
+                    client.get_asset,
+                    instrument_id.symbol.value,
+                )
+                self.add(parse_equity(row, ts_init=ts_init))
+            except (AttributeError, KeyError, TypeError, ValueError):
+                skipped += 1
+        if skipped:
+            self._log.warning(
+                f"Skipped {skipped} of {len(instrument_ids)} Alpaca asset "
+                "lookup(s) that could not be parsed",
             )
-            self.add(parse_equity(asset, ts_init=ts_init))

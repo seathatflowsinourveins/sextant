@@ -1,23 +1,21 @@
-"""Parse an alpaca-py ``Asset`` into a Nautilus ``Equity`` on Alpaca's tick ladder.
+"""Parse an Alpaca assets row into a Nautilus ``Equity`` on Alpaca's tick ladder.
 
-alpaca-py 0.44.0 ``alpaca/trading/models.py:32`` exposes ``price_increment`` as
-a float or ``None``; the paper runners already observed ``None`` for US equities.
 The Equity shape (zero size precision, multiplier and size increment one, USD
 quote currency) follows nautilus_trader@d53849b216e20f2c122ca01b4dd0da377638b186
-``docs/concepts/instruments/equity.md``. The instrument uses the engine's own
-tiered tick scheme mechanism (``register_tick_scheme``; the Rust precedent is
+``docs/concepts/instruments/equity.md``. Prices use the engine's tiered tick
+scheme (``register_tick_scheme``; precedent
 ``crates/model/src/instruments/tick_scheme.rs:150-217``): Alpaca accepts at most
-two decimals for a limit or stop price at or above $1.00 and at most four below
-$1.00, rejecting an excess increment with error 42210000 (Alpaca "Orders at
-Alpaca", sub-penny increments, https://docs.alpaca.markets/us/docs/orders-at-alpaca,
-page updated 2026-10-13, read 2026-11-10). Every equity therefore carries
-``price_precision`` 4 and the 0.0001 unit increment, and the
-``ALPACA_US_EQUITY`` scheme supplies the 0.01 penny at and above $1.00. The
-scheme's open tier expands to its last bounded tick (1,000,000 ticks, ending at
-$10,000.99); the engine reports no farther tick from the scheme.
+two decimals at or above $1.00 and four below, rejecting an excess increment with
+error 42210000 (https://docs.alpaca.markets/us/docs/orders-at-alpaca, page
+updated 2026-10-13, read 2026-11-10). Every equity gets ``price_precision`` 4,
+the 0.0001 unit increment and the ``ALPACA_US_EQUITY`` scheme, whose open tier
+ends at $10,000.99.
 """
 
 from __future__ import annotations
+
+from collections.abc import Mapping
+from typing import Any
 
 from alpaca.trading.models import Asset
 from nautilus_trader.model import (
@@ -58,9 +56,23 @@ def register_alpaca_equity_tick_scheme() -> str:
     return ALPACA_TICK_SCHEME
 
 
-def parse_equity(asset: Asset, *, ts_init: int) -> Equity:
-    """Build an ALPACA-venue Equity from an Alpaca assets response row."""
-    symbol = Symbol(asset.symbol)
+def _read(asset: Asset | Mapping[str, Any], name: str) -> Any:
+    if isinstance(asset, Mapping):
+        return asset.get(name)
+    return getattr(asset, name, None)
+
+
+def parse_equity(asset: Asset | Mapping[str, Any], *, ts_init: int) -> Equity:
+    """Build an ALPACA-venue Equity from one raw or typed assets row.
+
+    Only the symbol and the five vendor flags are read; the client uses
+    ``raw_data=True`` so an exchange code the pinned SDK enum lacks cannot fail
+    the whole typed list (alpaca-py 0.44.0 ``alpaca/trading/client.py:394-397``).
+    """
+    symbol_value = _read(asset, "symbol")
+    if not isinstance(symbol_value, str) or not symbol_value:
+        raise ValueError("Alpaca asset row has no symbol")
+    symbol = Symbol(symbol_value)
     return Equity(
         instrument_id=InstrumentId(symbol, VENUE),
         raw_symbol=symbol,
@@ -70,5 +82,5 @@ def parse_equity(asset: Asset, *, ts_init: int) -> Equity:
         ts_event=ts_init,
         ts_init=ts_init,
         tick_scheme=register_alpaca_equity_tick_scheme(),
-        info={name: bool(getattr(asset, name, False)) for name in _VENDOR_FLAGS},
+        info={name: bool(_read(asset, name)) for name in _VENDOR_FLAGS},
     )

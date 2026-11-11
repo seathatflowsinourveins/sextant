@@ -40,6 +40,7 @@ def trading_client(
         api_key=resolve_credential(config.api_key_env),
         secret_key=resolve_credential(config.api_secret_env),
         paper=True,
+        raw_data=True,
     )
 
 
