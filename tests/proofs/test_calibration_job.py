@@ -358,9 +358,9 @@ def test_user_unit_injects_keys_only_into_the_job_command():
     command = shlex.split(service["Service"]["ExecStart"])
     assert command[:4] == ["/usr/bin/bash", "%h/sextant/scripts/with-keys.sh", "--strict", "-k"]
     assert command[4:8] == [
-        "ALPACA_PAPER_3_API_KEY:APCA_API_KEY_ID",
+        "ALPACA_PAPER_2_API_KEY:APCA_API_KEY_ID",
         "-k",
-        "ALPACA_PAPER_3_SECRET_KEY:APCA_API_SECRET_KEY",
+        "ALPACA_PAPER_2_SECRET_KEY:APCA_API_SECRET_KEY",
         "--",
     ]
     assert command[8:] == [
