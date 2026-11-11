@@ -136,6 +136,7 @@ def test_the_page_window_has_no_default() -> None:
             host_factory=cast(Any, FakeHost),
             priming=cast(Any, lambda: None),
             page_window_s=60,
+            trade_facts=None,
             page_windows=60,
         )
 
@@ -186,12 +187,16 @@ def test_a_setter_generation_never_reuses_or_regresses(tmp_path, offset) -> None
 def test_a_status_the_host_cannot_apply_leaves_the_name_unknown(tmp_path) -> None:  # F2
     class FailingStatusSetter(Recording):
         def set_symbol(self, name, *, references, asset) -> Any:
-            if name == "PENNY" and asset.halted is not False:
+            # N1d: priming and the first print apply; every later non-clear state fails.
+            if name == "PENNY" and asset.halted is not False and asset.known_at > START:
                 raise RuntimeError("fixture status setter unavailable")
             return super().set_symbol(name, references=references, asset=asset)
 
     out = run(
-        tmp_path, host_cls=FailingStatusSetter, statuses=[status(355, MarketStatusAction.NONE)]
+        tmp_path,
+        host_cls=FailingStatusSetter,
+        statuses=[status(355, MarketStatusAction.HALT)],
+        facts=lambda _tick: (True, ()),  # PENNY is cleared by its first print, then HALT fails
     )
     last = out["receiver"].received[-1]
     (penny,) = [row for row in last.rows if row.symbol == "PENNY"]
@@ -206,14 +211,21 @@ def test_a_status_veto_lifts_once_the_host_applies_it(tmp_path) -> None:  # F2 r
         failed = False
 
         def set_symbol(self, name, *, references, asset) -> Any:
-            if name == "PENNY" and asset.halted is None and not self.failed:
+            unknown = asset.halted is None and asset.known_at > START
+            if name == "PENNY" and unknown and not self.failed:
                 self.failed = True
                 raise RuntimeError("fixture status setter unavailable once")
             return super().set_symbol(name, references=references, asset=asset)
 
-    out = run(tmp_path, host_cls=FailsOnce, statuses=[status(305, MarketStatusAction.NONE)])
+    out = run(
+        tmp_path,
+        host_cls=FailsOnce,
+        statuses=[status(305, MarketStatusAction.NONE)],
+        facts=lambda _tick: (True, ()),
+    )
     assert out["actor"].vetoed == set() and out["actor"].errors == {"instrument_status": 1}
-    assert out["hosts"][0].publisher.assets["PENNY"].halted is None  # applied on the retry
+    moves = statuses_after_priming(out["hosts"][0])
+    assert ("PENNY", None, D("0.50")) in moves  # the unknown state applied on the retry
 
 
 def test_a_refused_halt_withdraws_the_readable_rank_at_once(tmp_path) -> None:  # review P2
@@ -225,7 +237,12 @@ def test_a_refused_halt_withdraws_the_readable_rank_at_once(tmp_path) -> None:  
                 raise RuntimeError("fixture halt setter unavailable")
             return super().set_symbol(name, references=references, asset=asset)
 
-    out = run(tmp_path, host_cls=RefusesHalt, statuses=[status(361, MarketStatusAction.HALT)])
+    out = run(
+        tmp_path,
+        host_cls=RefusesHalt,
+        statuses=[status(361, MarketStatusAction.HALT)],
+        facts=lambda _tick: (True, ()),  # PENNY cleared by its first print, as in N1d
+    )
     consumer, at = out["consumer"], START + 361 * NS
     beat = HeartbeatEmitter(registry=registry(), clock=lambda: at, sink=consumer.accept_heartbeat)
     beat.emit(out["receiver"].received[-2])  # a beat for the last READY generation

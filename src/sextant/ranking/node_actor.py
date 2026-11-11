@@ -18,6 +18,10 @@ N1c: the universe's native instrument status (``subscribe_instrument_status``,
 primed references kept; only a halting action or TRADING is classified, everything else is
 an unknown halt state, so the ranking refuses the name (``AssetState.eligible`` needs
 ``halted is False``). A generation a setter returns is published at once, as for a trade.
+
+N1d (LEAD-0020 2b): halt state starts unknown; a halt stops trading on all Trading Centers
+(UTP Plan X.A.10, X.G; CTA XI(a)(vii); FINRA 6120(a)(1), 6121.01), so the first print that
+counts for price after the status watch, with no halt since, clears it (N1D-SOURCES.md).
 """
 
 from __future__ import annotations
@@ -26,7 +30,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Protocol
 
-from nautilus_trader.common import DataActor
+from nautilus_trader.common import DataActor, SocketStateChanged
 from nautilus_trader.config import DataActorConfig
 from nautilus_trader.model import (
     CustomData,
@@ -36,11 +40,13 @@ from nautilus_trader.model import (
     TradeTick,
 )
 
-from sextant.ranking.engine import ReferencePrices
+from sextant.ranking.engine import ReferencePrices, price_counts
 from sextant.ranking.generation import Coverage, CoverageState, RankingGeneration
 from sextant.ranking.publisher import AssetState, ranking_data_type
 
 Page = Callable[[str, str], None]
+# A print's (price_eligible, conditions) from the data client, or None when they are unknown.
+TradeFacts = Callable[[TradeTick], tuple[bool, tuple[str, ...]] | None]
 # The engine's own DataActorConfig fields, the only keys the catch-all may carry: the
 # documented config pattern passes them through to DataActorConfig.__new__
 # (docs/concepts/actors.md:15-21; common stub :132-151). Any other key is refused by name.
@@ -105,7 +111,9 @@ class RankingActorConfig(DataActorConfig):
         host_factory: Callable[[], RankingHostProtocol],
         priming: Callable[[], Priming],
         page_window_s: int,
+        trade_facts: TradeFacts | None,
         page: Page | None = None,
+        status_snapshot_window_s: int | None = None,
         **kwargs: object,
     ) -> None:
         refuse_unknown(kwargs, type(self).__name__)
@@ -118,8 +126,14 @@ class RankingActorConfig(DataActorConfig):
         self.instrument_ids, self.feed = ids, feed
         if type(page_window_s) is not int or page_window_s <= 0:
             raise ValueError("page_window_s must be a positive int the caller supplies")
+        if trade_facts is not None and not callable(trade_facts):
+            raise ValueError("trade_facts must be a callable or None (no print clears)")
+        window = status_snapshot_window_s
+        if window is not None and (type(window) is not int or window <= 0):
+            raise ValueError("status_snapshot_window_s must be None (off) or a positive int")
         self.host_factory, self.priming, self.page = host_factory, priming, page
-        self.page_window_s = page_window_s
+        self.page_window_s, self.trade_facts = page_window_s, trade_facts
+        self.status_snapshot_window_s = window
 
 
 def withheld(generation: RankingGeneration) -> RankingGeneration:
@@ -130,6 +144,12 @@ def withheld(generation: RankingGeneration) -> RankingGeneration:
     )
     coverage = replace(generation.coverage, state=CoverageState.DEGRADED, complete=False)
     return replace(generation, coverage=coverage, rows=rows)
+
+
+def advance(current: bool | None, status: InstrumentStatus) -> bool | None:
+    """One status on a name's halt state: only a resume clears a halt (LEAD-0020 2b)."""
+    halted = classify(status)
+    return True if halted is None and current is True else halted
 
 
 class StaleGeneration(Exception):
@@ -144,7 +164,16 @@ class RankingActor(DataActor):
         self._ids, self._feed = config.instrument_ids, config.feed
         self._factory, self._priming, self._page = config.host_factory, config.priming, config.page
         self._window_ns = config.page_window_s * NS
+        self._facts = config.trade_facts
         self._primed: dict[str, tuple[ReferencePrices, AssetState | None]] = {}
+        self._halted: dict[str, bool | None] = {str(iid.symbol): None for iid in self._ids}
+        self._watch_from: int | None = None  # node time the status subscription went active
+        self._subscribed_at: int | None = None  # ... first, never moved by a reset (2e)
+        self.cleared_by_print = self.resets = 0
+        snapshot = config.status_snapshot_window_s
+        self._snapshot_ns = None if snapshot is None else snapshot * NS
+        self.snapshot_statuses: dict[str, int] | None = None if snapshot is None else {}
+        self._status_seen: set[str] = set()
         self.ignored_statuses = 0
         self.host: RankingHostProtocol | None = None
         self.primed = False
@@ -155,11 +184,14 @@ class RankingActor(DataActor):
         self._lineage: tuple[str, int] | None = None  # the last published (epoch, sequence)
         self._retired: set[str] = set()
         self._last: RankingGeneration | None = None  # the last generation on the bus
-        self._early: dict[str, InstrumentStatus] = {}  # statuses before priming (review F1)
-        self._veto: dict[str, tuple[bool | None, int, str]] = {}  # unapplied statuses (F2)
+        # Review F1: statuses before priming, folded per name (state, time, reason).
+        self._early: dict[str, tuple[bool | None, int, str]] = {}
+        # Review F2: names whose halt state the host refused, retried before each tick.
+        self._veto: dict[str, tuple[bool | None, int, str]] = {}
 
     def on_start(self) -> None:
         """Build, then prime, then subscribe: never a tick to an unprimed host."""
+        self._reset_run()
         try:
             self.host = self._factory()
         except Exception as exc:
@@ -170,41 +202,106 @@ class RankingActor(DataActor):
             if set(priming.symbols) != names:
                 raise ValueError("priming must name exactly the universe")
             self._publish(self.host.set_coverage(priming.coverage))
-            for name in sorted(names):
-                references, asset = priming.symbols[name]
-                self._publish(self.host.set_symbol(name, references=references, asset=asset))
             self._primed = dict(priming.symbols)
+            for name in sorted(names):  # unknown whatever priming says (LEAD-0020 2b)
+                references, asset = priming.symbols[name]
+                unknown = None if asset is None else replace(asset, halted=None)
+                self._publish(self.host.set_symbol(name, references=references, asset=unknown))
         except Exception as exc:
             return self._fault("priming", exc)
         self.primed = True
-        for name in sorted(self._early):  # applied in name order, the latest per name
-            self.on_instrument_status(self._early.pop(name))
+        for name in sorted(self._early):  # kept, never dropped (review F1)
+            self._move(name, *self._early.pop(name), stage="instrument_status")
         try:  # a registration failure faults and pages; the shared node runs on (review F4)
+            self.subscribe_socket_state()  # a reported transport change is a stream gap
+            self.watch_statuses()
             self.subscribe_trades(list(self._ids))
-            self.subscribe_instrument_status(list(self._ids))
         except Exception as exc:
             self._fault("subscribe", exc)
 
+    def _reset_run(self) -> None:
+        """A (re)start builds a new host: no evidence, lineage or pending state from an earlier
+        run carries over (review G1)."""
+        self.host, self.primed, self._primed = None, False, {}
+        self._halted = dict.fromkeys(self._halted)  # every name unknown again
+        self._watch_from = self._subscribed_at = self._lineage = self._last = None
+        if self.snapshot_statuses is not None:  # the 2e recorder counts this run only (P2)
+            self.snapshot_statuses = {}
+        for pending in (self._status_seen, self._early, self._veto, self._retired):
+            pending.clear()
+
+    def watch_statuses(self) -> None:
+        """Subscribe the universe's statuses; prints count as evidence only after this."""
+        self.subscribe_instrument_status(list(self._ids))
+        self._watch_from = self._subscribed_at = self.clock.timestamp_ns()
+
     def on_instrument_status(self, status: InstrumentStatus) -> None:
-        """Map one status to the host, keeping that name's primed references and asset."""
+        """A halt sets halted, a resume clears it, anything else from halted stays halted."""
         name = str(status.instrument_id.symbol)
+        why = f"instrument status {status.action.name}"
         if not self.primed:
-            if status.instrument_id in self._ids:
-                self._early[name] = status  # kept, never dropped: applied once primed (F1)
+            if status.instrument_id in self._ids:  # kept and applied once primed (review F1)
+                current = self._early.get(name, (None, 0, ""))[0]
+                self._early[name] = (advance(current, status), status.ts_init, why)
             return
         if self.host is None or status.instrument_id not in self._ids or name not in self._primed:
             self.ignored_statuses += 1
             return
-        why = f"instrument status {status.action.name}"
-        self._apply(name, classify(status), status.ts_init, why)
+        self._record_first(name, status)
+        halted = advance(self._halted[name], status)
+        self._move(name, halted, status.ts_init, why, stage="instrument_status")
+
+    def _record_first(self, name: str, status: InstrumentStatus) -> None:
+        """2e: a name's first status soon after subscribing may be the vendor's current state."""
+        first, start = name not in self._status_seen, self._subscribed_at
+        self._status_seen.add(name)
+        if self.snapshot_statuses is None or self._snapshot_ns is None or start is None:
+            return
+        if first and status.ts_init - start <= self._snapshot_ns:
+            action = status.action.name
+            self.snapshot_statuses[action] = self.snapshot_statuses.get(action, 0) + 1
+
+    def on_socket_state(self, event: SocketStateChanged) -> None:
+        self.reset_evidence(f"socket {event.state}")  # either state: the stream had a gap
+
+    def reset_evidence(self, reason: str = "stream gap reported by the node entry") -> None:
+        """Every name unknown again; prints count only after this moment."""
+        if self.host is None or not self.primed:
+            return
+        self.resets += 1
+        now = self.clock.timestamp_ns()
+        if self._watch_from is not None:
+            self._watch_from = now
+        for name in sorted(self._halted):
+            self._move(name, None, now, reason)
+
+    def _clear_on_print(self, trade: TradeTick) -> None:
+        name, start = str(trade.instrument_id.symbol), self._watch_from
+        if trade.instrument_id not in self._ids or self._halted.get(name, True) is not None:
+            return  # outside the universe, halted (a print never clears), or already clear
+        if start is None or self._facts is None or min(trade.ts_event, trade.ts_init) <= start:
+            return
+        facts = self._facts(trade)
+        if facts is None or not price_counts(*facts):
+            return
+        self.cleared_by_print += 1
+        self._move(name, False, trade.ts_init, "first eligible print after the status watch")
+
+    def _move(
+        self, name: str, halted: bool | None, at: int, why: str, *, stage: str = "set_symbol"
+    ) -> None:
+        if self.host is None or (self._halted[name] is halted and name not in self._veto):
+            return
+        self._halted[name] = halted
+        self._apply(name, halted, at, why, stage)
 
     @property
     def vetoed(self) -> set[str]:
         return set(self._veto)
 
-    def _apply(self, name: str, halted: bool | None, at: int, why: str) -> None:
-        """One status into the host. If the host refuses it, the name is unknown until a retry
-        succeeds, and every generation is withheld meanwhile (review F2)."""
+    def _apply(self, name: str, halted: bool | None, at: int, why: str, stage: str) -> None:
+        """One halt state into the host. If the host refuses it, the name is unknown (or halted)
+        until a retry succeeds, and every generation is withheld meanwhile (review F2)."""
         references, asset = self._primed[name]
         updated = (
             None  # no primed asset: the name stays ineligible (publisher.py AssetState)
@@ -215,18 +312,34 @@ class RankingActor(DataActor):
             assert self.host is not None
             generation = self.host.set_symbol(name, references=references, asset=updated)
         except Exception as exc:
-            self._veto[name] = (True if halted is True else None, at, why)
-            self._fault("instrument_status", exc)
+            fallback = True if halted is True else None
+            self._veto[name] = (fallback, at, why)
+            self._halted[name] = fallback
+            self._fault(stage, exc)
             return self._withdraw()
         self._veto.pop(name, None)
         self._publish(generation)
+
+    def evidence(self) -> dict[str, int]:
+        states = list(self._halted.values())
+        return dict(
+            unknown=states.count(None),
+            not_halted=sum(state is False for state in states),
+            halted=sum(state is True for state in states),
+            cleared_by_print=self.cleared_by_print,
+            resets=self.resets,
+        )
 
     def on_trade(self, trade: TradeTick) -> None:
         host = self.host
         if host is None or not self.primed:
             return
-        for name in sorted(self._veto):  # retry an unapplied status before the next tick
-            self._apply(name, *self._veto[name])
+        for name in sorted(self._veto):  # retry a refused halt state before the next tick
+            self._apply(name, *self._veto[name], "instrument_status")
+        try:  # before the host, so this print's own generation already sees the evidence
+            self._clear_on_print(trade)
+        except Exception as exc:
+            self._fault("trade_facts", exc)
         try:
             generation = host.on_trade(trade)
         except Exception as exc:
@@ -249,7 +362,7 @@ class RankingActor(DataActor):
         """A returned generation reaches the node bus at once; None publishes nothing."""
         if generation is None or not self._advances(generation):
             return
-        if self._veto:  # an unapplied status: the publisher's own not-ready form, every row
+        if self._veto:  # a refused halt state: the publisher's own not-ready form, every row
             generation = withheld(generation)
         data_type = ranking_data_type(self._feed)
         try:  # a DEGRADED veto is published too, so a consumer drops its names at once
