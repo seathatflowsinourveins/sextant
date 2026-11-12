@@ -44,5 +44,14 @@
     "source": "https://docs.alpaca.markets/us/docs/paper-trading, read 2026-11-11: \"Specifically, paper trading does not account for:\" listing \"Regulatory fees\" (SEC fee, FINRA TAF and CAT, per https://docs.alpaca.markets/us/docs/regulatory-fees, read 2026-11-11). A live account accrues these per account per day and posts them at end of day (BrokFeeSched.pdf p.4, read 2026-11-11), not per fill, so the live account's fees are NOT covered by this row",
     "calibration_state": "UNCALIBRATED",
     "last_change": "2026-11-11"
+  },
+  {
+    "name": "attended_test_entry_qty",
+    "unit": "whole shares; attended test only, not sizing",
+    "value": 1,
+    "source": "LEAD-1452 section 1 (2026-11-11); lanes/paper/README.md:30-32 plain LIMIT managed-paper entry; test quantity, no sizing or merit claim",
+    "calibration_state": "UNCALIBRATED",
+    "last_change": "2026-11-11",
+    "lane_scope": "alpaca-paper-b"
   }
 ]

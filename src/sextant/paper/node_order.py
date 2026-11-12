@@ -2,7 +2,8 @@
 
 With the rank gate row off (``ranking/registry.py:50-61``) the command runs B's Strategy with no
 ranking consumer, so no rank is read and the Strategy refuses every house entry; it protects.
-Every other start condition below still refuses by default.
+Every other start condition below still refuses by default. LEAD-1452 adds the explicit
+``--attended-test-entry INSTRUMENT`` evaluation intent inside the same admitted Strategy.
 
 One command builds the paper account's live node in the official engine's shape: the Alpaca data
 client, the Alpaca execution client and B's lifecycle Strategy through
@@ -30,10 +31,12 @@ receipt directory through ``decision_record.DecisionLog``, the old writer's own 
 from __future__ import annotations
 
 import argparse
+import asyncio
 import hashlib
 import hmac
 import json
 import os
+import signal
 import sys
 import threading
 import time
@@ -54,7 +57,17 @@ from nautilus_trader.live import (
     SubmissionRecoveryPolicy,
 )
 from nautilus_trader.live.clients import ExecutionClientFactory
-from nautilus_trader.model import InstrumentId, Symbol, TraderId
+from nautilus_trader.model import (
+    ClientOrderId,
+    InstrumentId,
+    OrderSide,
+    OrderStatus,
+    Quantity,
+    QuoteTick,
+    Symbol,
+    TimeInForce,
+    TraderId,
+)
 
 from sextant.alpaca.config import AlpacaDataClientConfig, AlpacaExecutionClientConfig
 from sextant.alpaca.constants import DEFAULT_FEED, VENUE
@@ -74,6 +87,7 @@ from sextant.paper.b_protector_main import (
 )
 from sextant.paper.config import PaperAccount
 from sextant.paper.decision_record import DecisionLog, Row
+from sextant.paper.sessions import Session, session_at
 from sextant.ranking import node_ranking
 from sextant.ranking.consumer import RankingConsumer
 from sextant.ranking.registry import RANK_GATE_ENABLED
@@ -118,6 +132,13 @@ class Rows:
 
 
 @dataclass(frozen=True)
+class AttendedEntry:
+    instrument_id: InstrumentId
+    quantity: Quantity
+    max_age_ns: int
+
+
+@dataclass(frozen=True)
 class OrderArguments:
     account: PaperAccount
     rows: Rows
@@ -133,6 +154,7 @@ class OrderArguments:
     universe: tuple[InstrumentId, ...] = ()  # the claim list, read after the leases
     universe_source: str = "not read"
     ranking: node_ranking.RankingArguments | None = None
+    attended: AttendedEntry | None = None
 
 
 def _rows(path: Path) -> list[dict[str, Any]]:
@@ -202,6 +224,7 @@ def read_universe(path: Path) -> tuple[tuple[InstrumentId, ...], str]:
 
 def parse(argv: list[str] | None = None) -> OrderArguments:
     parser = argparse.ArgumentParser(prog="python -m sextant.paper.node_order", allow_abbrev=False)
+    parser.add_argument("--attended-test-entry", metavar="INSTRUMENT")
     required = parser.add_argument_group("required")
     for flag, kind in (
         ("--account-config", Path),
@@ -254,7 +277,36 @@ def parse(argv: list[str] | None = None) -> OrderArguments:
         raw.existing_streams,
         raw.lease_source,
         ranking=ranking,
+        attended=load_attended(raw),
     )
+
+
+def load_attended(raw: argparse.Namespace) -> AttendedEntry | None:
+    """LEAD-1452: explicit intent only; use the existing row/freshness loaders."""
+    if raw.attended_test_entry is None:
+        return None
+    try:
+        iid = InstrumentId.from_str(raw.attended_test_entry)
+    except ValueError as error:
+        raise OrderModeRefused("attended_test_entry_instrument", "invalid instrument") from error
+    try:
+        rows = [r for r in _rows(raw.node_parameters) if r["name"] == "attended_test_entry_qty"]
+        if len(rows) != 1:
+            raise ValueError("attended_test_entry_qty missing or duplicated")
+        row = rows[0]
+        qty = row.get("value")
+        if (
+            type(qty) is not int
+            or qty <= 0
+            or row.get("calibration_state") != "UNCALIBRATED"
+            or row.get("lane_scope") != "alpaca-paper-b"
+            or not all(row.get(k) for k in ("source", "unit", "last_change"))
+        ):
+            raise ValueError("attended_test_entry_qty lacks whole-share starting authority")
+        fresh = EntryParameters.from_rows(_rows(raw.entry_parameters), first_leg_only=True)
+        return AttendedEntry(iid, Quantity.from_int(qty), fresh.ns("max_data_age_s"))
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        raise OrderModeRefused("attended_test_entry_parameters", str(error)) from error
 
 
 def execution_config(args: OrderArguments) -> AlpacaExecutionClientConfig:
@@ -393,6 +445,124 @@ class GatedBLifecycle(BLifecycle):
 
     gate: Gate
 
+    def __init__(self, config: BLifecycleConfig) -> None:
+        super().__init__(config)
+        self.attended: AttendedEntry | None = None
+        self.attended_attempted = False
+        self.attended_order_id: ClientOrderId | None = None
+        self.attended_stopping = False
+        self.attended_stop: Callable[[], None] | None = None
+        self.attended_deadline = 0
+        self.attended_outcome: dict[str, Any] = {}
+        self.ask_reason = "no_quote"
+
+    def on_quote(self, quote: QuoteTick) -> None:
+        super().on_quote(quote)
+        intent = self.attended
+        if intent is None or self.attended_attempted or not self.gate.open:
+            return
+        if self.attended_stopping:
+            return
+        book, now = self.books.get(quote.instrument_id), self.clock.timestamp_ns()
+        if quote.instrument_id == intent.instrument_id:
+            self.ask_reason = "stale" if now - quote.ts_event > intent.max_age_ns else "crossed"
+        if (
+            quote.instrument_id != intent.instrument_id
+            or book is None
+            or book.instrument is None
+            or book.quote is not quote
+            or now - quote.ts_event > intent.max_age_ns
+            or not 0 < quote.bid_price.as_decimal() <= quote.ask_price.as_decimal()
+        ):
+            return
+        # Consume before any fallible routing/factory/send, like rc8 testkit strategy.rs:503-515.
+        self.attended_attempted = True
+        routed, client = self._route(book, instrument=str(book.instrument_id))
+        if not routed:
+            return
+        order = self.order_factory.limit(
+            intent.instrument_id,
+            OrderSide.BUY,
+            intent.quantity,
+            quote.ask_price,
+            time_in_force=TimeInForce.DAY,
+            tags=["attended-test-entry"],
+        )  # rc8 common stub:1388-1406; same native factory/Strategy identity as ordinary B.
+        self.attended_order_id = order.client_order_id
+        self._record(
+            kind="attended_test_entry",
+            ts=now,
+            order=str(order.client_order_id),
+            quantity=str(intent.quantity),
+            limit=str(quote.ask_price),
+        )
+        self.submit_order(
+            order, client_id=client, params={"extended_hours": session_at(now) is not Session.RTH}
+        )
+
+    def stop_attended(self, stop: Callable[[], None], bound_ns: int) -> None:
+        """Node-owned pre-stop: rc8 callbacks require RUNNING (strategy/mod.rs:1397)."""
+        if self.attended_stopping:
+            return
+        self.attended_stopping, self.attended_stop = True, stop
+        try:
+            self.attended_deadline = self.clock.timestamp_ns() + bound_ns
+            self.clock.set_time_alert_ns(
+                "b-entry-stop", self.attended_deadline, self._attended_done
+            )
+            cid = self.attended_order_id
+            order = None if cid is None else self.cache.order(cid)
+            if cid is not None and order is not None and not order.is_closed:
+                self._cancel(cid)
+        except Exception:
+            return self._attended_done(failed=True)
+        self._attended_done()
+
+    def _on_order(self, event: Any) -> None:
+        try:
+            super()._on_order(event)
+        except Exception:
+            self._attended_done(failed=True)
+            if not self.attended_stopping:
+                raise
+        self._attended_done()
+
+    def _attended_done(self, _event: Any = None, *, failed: bool = False) -> None:
+        if self.attended_stop is None:
+            return
+        counts = {"sequence_errors": 1}
+        try:
+            book = None if self.attended is None else self.books.get(self.attended.instrument_id)
+            if not failed and book is not None:
+                cid = self.attended_order_id
+                order = None if cid is None else self.cache.order(cid)
+                pending = int(cid is not None and (order is None or not order.is_closed))
+                cover = Decimal(0)
+                for own_id in book.offsets:  # only B's own native protective trails
+                    trail = self.cache.order(own_id)
+                    if trail is not None and trail.status is OrderStatus.ACCEPTED:
+                        cover += trail.leaves_qty.as_decimal()
+                missing = max(Decimal(0), self._held(book) - cover)
+                if (pending or missing) and self.clock.timestamp_ns() < self.attended_deadline:
+                    return
+                counts = {"entry_pending": pending, "unprotected_shares": int(missing)}
+            elif not failed:
+                counts = {"book_missing": 1}
+        except Exception:
+            counts = {"sequence_errors": 1}
+        stop, self.attended_stop = self.attended_stop, None
+        try:
+            stop()
+        except Exception:
+            counts = {"sequence_errors": 1}
+        if any(counts.values()):
+            self.attended_outcome = {"entry_unresolved_at_stop": counts}
+        if self.attended_outcome:
+            try:
+                print(f"ERROR entry_unresolved_at_stop {counts}", file=sys.stderr, flush=True)
+            except Exception:
+                self.journal_errors += 1  # diagnostics cannot strand the stop
+
     def on_start(self) -> None:
         gate = self.gate
         gate.reasons, gate.checked = gate.check(self.cache), True
@@ -509,6 +679,7 @@ def build(
             raise OrderModeRefused("ranking", str(error)) from error
     # The Strategy first, so a refused config leaves no node built on this thread.
     strategy = GatedBLifecycle(strategy_config(args, consumer=consumer, journal=journal))
+    strategy.attended = args.attended
     config = node_config(args, **dict(timing or {}))
     exec_config = execution_config(args)
     refuse_non_paper([(CLIENT_NAME, exec_factory, exec_config)], config)
@@ -577,6 +748,25 @@ def write_receipt(args: OrderArguments, phase: str, **body: Any) -> Path:
     return args.receipt_dir / RECEIPT
 
 
+async def run_attended(node: LiveNode, strategy: GatedBLifecycle, args: OrderArguments) -> None:
+    """Hosted rc8 run leaves duration/signals with us (python/node.rs:968-994)."""
+    loop = asyncio.get_running_loop()
+    bound = int(LiveNodeConfig().timeout_shutdown_secs * 1_000_000_000)
+
+    def stop() -> None:
+        strategy.stop_attended(node.handle().stop, bound)
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, stop)
+    timer = loop.call_later(args.duration_s, stop)
+    try:
+        await node.run_async()
+    finally:
+        timer.cancel()
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            loop.remove_signal_handler(sig)
+
+
 def run(
     args: OrderArguments,
     *,
@@ -614,6 +804,10 @@ def run(
                     f"{QUEUE}-slot queue; the chunked load after start is not built",
                 )
             args = replace(args, universe=universe, universe_source=source)
+            if args.attended is not None and args.attended.instrument_id not in universe:
+                raise OrderModeRefused(
+                    "attended_test_entry_instrument", "instrument is outside the claim list"
+                )
             log = DecisionLog(args.receipt_dir / JOURNAL, on_page=journal_page)
             held.callback(log.close)
             node, strategy = build(
@@ -637,8 +831,11 @@ def run(
         timer.daemon = True
         failure = None
         try:
-            timer.start()
-            node.run()
+            if args.attended is not None:
+                asyncio.run(run_attended(node, strategy, args))
+            else:
+                timer.start()
+                node.run()
         except Exception as error:  # the run's own failure is recorded, then the exit is nonzero
             failure = f"{type(error).__name__}: {error}"
         finally:
@@ -646,6 +843,13 @@ def run(
             node.dispose()
         gate = strategy.gate
         cause = startup_cause(gate.clients)
+        outcome = strategy.attended_outcome
+        if args.attended and gate.open and not strategy.attended_attempted and not outcome:
+            counts = dict(last_reason=strategy.ask_reason, attempts=0, submits=0)
+            outcome = {"test_entry_not_sent": counts}
+        failure = failure or (
+            "entry_unresolved_at_stop" if "entry_unresolved_at_stop" in outcome else None
+        )
         phase = "stopped" if gate.open else "refused" if gate.checked else "aborted_at_start"
         phase = "failed" if failure else phase
         reason = failure or (None if gate.open else ",".join(gate.reasons) or "startup_aborted")
@@ -661,6 +865,7 @@ def run(
             outside_holdings_paged=len(gate.paged),
             journal=journal,
             **({"reconciliation": cause} if cause else {}),
+            **outcome,
         )
         return receipt, 0 if phase == "stopped" else 2
 
