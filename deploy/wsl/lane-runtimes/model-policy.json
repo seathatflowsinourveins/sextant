@@ -85,12 +85,14 @@
   },
   "google": {
     "preferred": "Gemini 4 Carbon (High)",
-    "antigravity": "gemini-4-argon-high",
+    "antigravity": "gemini-4-hydrogen-xhigh",
     "router_connections": ["agy", "antigravity"],
-    "effort": "high",
+    "effort": "xhigh",
+    "read_date": "2026-11-13",
     "status": "interim: Carbon not in this account's catalog (Google staged trusted-partner rollout)",
-    "catalog_witness": "agy 1.4.6 models, authenticated vendor list, 2026-11-06",
+    "catalog_witness": "agy 1.4.6 models, authenticated vendor list, 2026-11-06; the 2026-11-13 detector read the vendor plan table and the CLI reference, not this account's catalog",
     "vendor_source": "https://antigravity.google/docs/models",
+    "effort_source": "https://antigravity.google/docs/cli/commands/effort, read 2026-11-13: xhigh is available only for the models that publish an xhigh variant, and Gemini 4 Hydrogen does",
     "thinking_source": "https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/start/get-started-with-gemini-4",
     "carbon_source": "https://blog.google/innovation-and-ai/models-and-research/gemini-models/introducing-gemini-4-carbon/"
   },

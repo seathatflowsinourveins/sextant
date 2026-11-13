@@ -695,7 +695,7 @@ def test_antigravity_sessions_are_keyed_and_its_config_commands_are_keyless(
         )
     assert log.read_text().splitlines() == [
         "keyed",
-        "agy --model gemini-4-argon-high --effort high",
+        "agy --model gemini-4-hydrogen-xhigh --effort xhigh",
         "agy mcp list",
         "agy plugin list --json",
         "agy --version",

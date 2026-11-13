@@ -13,4 +13,4 @@ esac
 model=$(jq -r '.google.antigravity' "$prefix/model-policy.json")
 IFS= read -r repository < "$prefix/repository-path"
 exec "$repository/scripts/with-keys.sh" --strict -k CONTEXT7_API_KEY -k EXA_API_KEY \
-  -- "$prefix/bin/antigravity/antigravity" --model "$model" --effort high "$@"
+  -- "$prefix/bin/antigravity/antigravity" --model "$model" --effort xhigh "$@"
