@@ -106,8 +106,8 @@ def test_model_policy_keeps_the_approved_google_interim_and_native_claude() -> N
     }
     assert policy["gpt"]["effort_calibration"] == "uncalibrated"
     assert "developers.openai.com/api/docs/guides/reasoning" in policy["gpt"]["effort_source"]
-    assert policy["google"]["antigravity"] == "gemini-4-argon-high"
-    assert policy["google"]["effort"] == "high"
+    assert policy["google"]["antigravity"] == "gemini-4-hydrogen-xhigh"
+    assert policy["google"]["effort"] == "xhigh"
     assert policy["google"]["router_connections"] == ["agy", "antigravity"]
     assert policy["google"]["status"].startswith("interim: Carbon not in this account's catalog")
     # ADR-0030's 2026-11-09 second amendment: the blanket environment pin gives way to the
@@ -218,8 +218,8 @@ def test_the_model_mix_table_matches_the_settings_and_launches() -> None:
     assert "dsh, Muse, agy (Google)" in screens[0]
     assert screens[1] == "the runtime's pin"
     assert (policy["google"]["antigravity"], policy["google"]["effort"]) == (
-        "gemini-4-argon-high",
-        "high",
+        "gemini-4-hydrogen-xhigh",
+        "xhigh",
     )
     assert (policy["meta"]["model"], policy["meta"]["effort"]) == ("muse-wonder-full-1.0", "max")
     assert "reasoningEffort: max" in (ROOT / "config/dsh/mcp/max-effort.cordis.yml").read_text()

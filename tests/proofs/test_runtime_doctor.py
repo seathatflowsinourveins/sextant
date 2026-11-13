@@ -173,7 +173,7 @@ class World:
             "gpt": {"model": "gpt-6.1-sol", "effort": "max"},
             "claude": {"model": "claude-opus-5-5", "effort": "high"},
             "claude_reflection": {"model": "fable", "effort": "high"},
-            "google": {"antigravity": "gemini-4-argon-high", "effort": "high"},
+            "google": {"antigravity": "gemini-4-hydrogen-xhigh", "effort": "xhigh"},
             "meta": {"model": "muse-wonder-full-1.0", "effort": "max", "contributor_mode": "off"},
         }
 
@@ -348,7 +348,7 @@ class World:
             "# reasoning-effort\n# runtime_capabilities\n"
         )
         dsh = "#!/bin/sh\n"
-        agy = '#!/bin/sh\n# AGY_CLI_DISABLE_AUTO_UPDATE=true\n# --model "$model"\n# --effort high\n'
+        agy = '#!/bin/sh\n# AGY_CLI_DISABLE_AUTO_UPDATE=true\n# --model "$model"\n# --effort xhigh\n'
         for name, text in (
             ("codex-launch.sh", codex),
             ("muse-launch.sh", muse),
@@ -616,7 +616,7 @@ class Fake:
         if cmd == ["agy", "--version"]:
             return ok(w.versions["agy"])
         if cmd == ["agy", "models"]:
-            return ok("gemini-4-argon-high\n")
+            return ok("gemini-4-hydrogen-xhigh\n")
         if cmd == ["agy", "plugin", "list", "--json"]:
             superpowers = ["writing-plans"]
             shelf = [name for name in SHELF if name not in superpowers]
