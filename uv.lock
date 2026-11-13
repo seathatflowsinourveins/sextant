@@ -1438,7 +1438,7 @@ requires-dist = [
     { name = "pyyaml", specifier = "==6.0.3" },
     { name = "requests", git = "https://github.com/psf/requests?rev=6e83187b8feb273ed4c6cdab5efd8d54901dfab3" },
     { name = "river", specifier = "==0.26.1" },
-    { name = "skfolio", specifier = "==1.12.2" },
+    { name = "skfolio", specifier = "==1.12.5" },
     { name = "typesafe-sdk", specifier = "==0.7.5" },
 ]
 provides-extras = ["tradingview"]
@@ -1485,7 +1485,7 @@ wheels = [
 
 [[package]]
 name = "skfolio"
-version = "1.12.2"
+version = "1.12.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "clarabel" },
@@ -1496,9 +1496,9 @@ dependencies = [
     { name = "scikit-learn" },
     { name = "scipy" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/6a/5b/99a83dd5a157607c393b4611a13b4ca1d1b6dc3a1ba74af977398c2cbeee/skfolio-1.12.2.tar.gz", hash = "sha256:852867eafdd7381fd2cf3684be66e003c22d47d5d54fff2ddce18b9fb79187ca", size = 1254652, upload-time = "2026-10-26T12:26:54.253Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/cd/ea/2cf414635f7af21615edf76a9537dd6403c7ea0931ffa5f6fea7eefd9f61/skfolio-1.12.5.tar.gz", hash = "sha256:4a271dc9b657357b30e8058c2311d2290fdb8113f393a820fbc9a7c7be61eb55", size = 1255419, upload-time = "2026-10-29T18:45:36.733Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/5e/c3/50bdd5c06d0cff9676dbecfde4e9994a114ea34f59b7c029f4b650b339c3/skfolio-1.12.2-py3-none-any.whl", hash = "sha256:2d324c62a4188dc0b62a713f8d5cea177e208a5b45987e3d3f204dd56d3a669b", size = 1465874, upload-time = "2026-10-26T12:26:52.283Z" },
+    { url = "https://files.pythonhosted.org/packages/44/95/81275751efe35a987c3726ea599442ab32c9eda18b82cfc61d0119b20eed/skfolio-1.12.5-py3-none-any.whl", hash = "sha256:2db6ea7058a1fffa4c3d0930045b6822bdc9cd4474cc748f3bc7e9889dd4b7c4", size = 1466644, upload-time = "2026-10-29T18:45:34.351Z" },
 ]
 
 [[package]]
